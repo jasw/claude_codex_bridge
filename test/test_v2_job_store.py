@@ -93,26 +93,26 @@ def test_event_and_submission_stores_roundtrip(tmp_path: Path) -> None:
     assert latest.job_ids == ['job-1', 'job-2']
 
 
-def test_submission_store_preserves_cmd_sender(tmp_path: Path) -> None:
+def test_submission_store_preserves_user_sender(tmp_path: Path) -> None:
     layout = PathLayout(tmp_path / 'repo')
     submission_store = SubmissionStore(layout)
 
     submission_store.append(
         SubmissionRecord(
-            submission_id='sub-cmd',
+            submission_id='sub-user',
             project_id='proj-1',
-            from_actor='CMD',
+            from_actor='USER',
             target_scope='single',
-            task_id='task-cmd',
+            task_id='task-user',
             job_ids=['job-9'],
             created_at='2026-03-18T00:00:00Z',
             updated_at='2026-03-18T00:00:01Z',
         )
     )
 
-    latest = submission_store.get_latest('sub-cmd')
+    latest = submission_store.get_latest('sub-user')
     assert latest is not None
-    assert latest.from_actor == 'cmd'
+    assert latest.from_actor == 'user'
 
 
 def test_job_store_supports_explicit_target_lookup(tmp_path: Path) -> None:

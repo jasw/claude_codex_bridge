@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 import os
 import uuid
+from types import SimpleNamespace
 
 from agents.config_identity import project_config_identity_payload
 from agents.config_loader import load_project_config
@@ -36,7 +37,7 @@ from provider_execution.state_store import ExecutionStateStore
 from storage.paths import PathLayout
 
 from .handlers import register_handlers
-from .request_guard import rejection_for_request
+from .request_guard import lifecycle_is_stopping, rejection_for_request
 
 APP_REQUEST_TIMEOUT_S = 0.0
 JOB_HEARTBEAT_SILENCE_START_AFTER_S = 600.0
@@ -96,6 +97,8 @@ def initialize_app(app, project_root: str | Path, *, clock, pid: int | None) -> 
         remount_project_fn=app._remount_project_from_policy,
         clock=app.clock,
         generation_getter=lambda: app.lease.generation if app.lease is not None else None,
+        mount_missing_runtime_fn=lambda agent_name: app._mount_missing_runtime_requested(agent_name),
+        supervision_suspended_fn=lambda: lifecycle_is_stopping(_safe_load_lifecycle(app)),
     )
     app.snapshot_writer = SnapshotWriter(app.paths, clock=app.clock)
     app.execution_registry = build_default_execution_registry()
@@ -113,6 +116,13 @@ def initialize_app(app, project_root: str | Path, *, clock, pid: int | None) -> 
         app.provider_catalog,
         request_timeout_s=APP_REQUEST_TIMEOUT_S,
     )
+    app.control_plane_metrics = SimpleNamespace(
+        last_request_queue_wait_s=None,
+        last_submit_duration_s=None,
+        last_ping_duration_s=None,
+        last_maintenance_duration_s=None,
+        pending_maintenance_ticks=0,
+    )
     app.dispatcher = JobDispatcher(
         app.paths,
         app.config,
@@ -124,6 +134,7 @@ def initialize_app(app, project_root: str | Path, *, clock, pid: int | None) -> 
         completion_tracker=app.completion_tracker,
         provider_catalog=app.provider_catalog,
         snapshot_writer=app.snapshot_writer,
+        timing_sink=app.control_plane_metrics,
         clock=app.clock,
     )
     app.heartbeat_state_store = HeartbeatStateStore(app.paths)
@@ -146,9 +157,27 @@ def initialize_app(app, project_root: str | Path, *, clock, pid: int | None) -> 
         namespace_state_store=app.namespace_state_store,
     )
     app.socket_server = CcbdSocketServer(app.paths.ccbd_socket_path)
+    app.socket_server._record_request_queue_wait = lambda value: setattr(
+        app.control_plane_metrics,
+        'last_request_queue_wait_s',
+        value,
+    )
+    app.socket_server._record_pending_maintenance_ticks = lambda value: setattr(
+        app.control_plane_metrics,
+        'pending_maintenance_ticks',
+        value,
+    )
     app.socket_server.set_request_guard(lambda op: rejection_for_request(app, op))
     app.lease = None
+    app.project_stop_requested = False
     register_handlers(app)
+
+
+def _safe_load_lifecycle(app):
+    try:
+        return app.lifecycle_store.load()
+    except Exception:
+        return None
 
 
 __all__ = ['initialize_app']

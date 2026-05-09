@@ -7,7 +7,7 @@
   <img src="https://img.shields.io/badge/模型皆可控-CF1322?style=for-the-badge" alt="模型皆可控">
 </p>
 
-[![Version](https://img.shields.io/badge/version-6.0.29-orange.svg)]()
+[![Version](https://img.shields.io/badge/version-6.1.0-orange.svg)]()
 [![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-lightgrey.svg)]()
 
 [English](README.md) | **中文**
@@ -74,10 +74,10 @@
 <details>
 <summary><b>最新版本亮点</b></summary>
 
-- **WSL Runtime State 已迁移**：挂载盘 WSL 项目中，项目 authority 仍留在 `.ccb`，`ccbd` 和 agent runtime state 会迁到本机 Linux state root，并带有显式 marker 与诊断映射。
-- **Provider Lookup 和 Ask Routing 保持稳定**：relocated runtime 目录仍能回溯到 project anchor，用于 session discovery 和 ask sender attribution。
-- **Control-plane socket 保持抗抖**：慢 client 不再阻塞新探测，短暂 connect race 会在原 timeout 预算内重试。
-- **README 持续对齐当前版本**：安装、配置、更新和委派说明继续对齐当前 CLI 表面。
+- **Ask 在真实负载下保持快速**：provider 执行、mailbox refresh 和后台维护继续异步推进，submit receipt 仍保持有界。
+- **ccbd 生命周期稳定化**：stop-all、shutdown、restart 和后台 supervision 不再通过 stale maintenance 把 stopped runtime 或 terminal job 拉回去。
+- **Observer 命令明确弱化**：`pend`、`watch`、`queue`、`inbox` 都是非权威快照；终态判断请使用 `ccb ask wait <job_id>`。
+- **Linux/macOS/WSL 真实平台验证扩展**：发布验证加入真实 tmux ccbd/ask smoke、通讯矩阵、soak 和 fastpath stress。
 
 完整历史见 [新版本记录](#新版本记录)。
 
@@ -280,7 +280,7 @@ ccb reinstall
 感谢 [Linux.do 社区](https://linux.do) 在测试、反馈和讨论中的支持。
 
 <div align="center">
-<img src="assets/weixin.png" alt="微信群" width="300">
+<img src="assets/weixin.jpg" alt="微信群" width="300">
 </div>
 
 ---
@@ -291,11 +291,25 @@ ccb reinstall
 历史说明：下面较旧的发布记录里仍可能出现 `askd`、旧 flag 或已移除命令。这些内容仅作为 changelog 历史保留，不代表当前 CLI 入口。
 
 <details open>
+<summary><b>v6.1.0</b> - CCBD Ask 稳定化和 Observer 收敛</summary>
+
+- **Ask Submit Fastpath 稳定化**：`ccb ask` 不再等待 provider readiness、mailbox history projection 或长 maintenance tick，提交回执保持有界
+- **Lifecycle / Shutdown Race 收口**：stop-all、shutdown、restart 和后台 supervision 不再通过 stale work 复活 stopped runtime 或回退 terminal job
+- **Provider Completion Recovery 加固**：Codex polling 会跟随 restart 后的新 session binding，从当前 managed session log 读取回复并推进 job 终态
+- **Mailbox Summary Read Model 落地**：日常 `queue`、`inbox`、`pend` 路径优先读取维护好的 summary，summary 缺失或损坏时显式 degraded
+- **Observer Surface 明确弱化**：`pend`、`watch`、`queue`、`inbox` 都是非权威快照；`ccb ask wait <job_id>` 才是终态 authority
+- **真实平台验证补齐**：GitHub Actions 新增 macOS 和 WSL ccbd/ask smoke、通讯矩阵、短 soak、fastpath stress
+
+</details>
+
+<details>
 <summary><b>v6.0.29</b> - WSL Runtime State 迁移</summary>
 
 - **运行态移出挂载盘**：在 `/mnt/<drive>/...` 下的 WSL 项目中，项目 authority 仍留在 `.ccb`，`ccbd/` 和 agent runtime state 会迁移到本机 Linux state root，并写入显式 marker
 - **诊断和 Bundle 映射更新**：doctor 输出和 support bundle 现在会暴露 project anchor、runtime-state root、迁移原因，并把 relocated runtime 文件映射回逻辑 `.ccb` archive 路径
 - **Provider Lookup 和 Ask Routing 保持稳定**：relocated runtime 目录仍能回溯到 project anchor，用于 session discovery 和 ask sender attribution，Linux/macOS 默认布局不变
+- **Runtime marker 会校验**：relocated runtime marker 和 ref 现在会拒绝格式错误或归属不匹配的 payload，避免旧残留悄悄把一个项目映射到另一个项目
+- **WSL Smoke 与最终合同一致**：发布 smoke 现在检查 relocation 的最终 runtime-root 路径，而不是把第一阶段的迁移结果当成 socket fallback 终点
 
 </details>
 

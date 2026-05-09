@@ -1,0 +1,174 @@
+name: CCBD Real Platform Smoke
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - "**"
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  macos-real:
+    name: macOS real ccbd/ask smoke
+    runs-on: macos-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          python -m pip install pytest tomli
+          brew install tmux
+
+      - name: Syntax check
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m compileall -q lib bin ccb
+          bash -n test/system_comm_matrix.sh test/system_linux_soak.sh test/system_fastpath_stress.sh
+
+      - name: Lifecycle smoke
+        shell: bash
+        run: |
+          set -euo pipefail
+          export TERM=xterm-256color
+          python -m pytest -q -m ccb_lifecycle_smoke \
+            test/test_v2_phase2_entrypoint.py \
+            test/test_v2_ccbd_start_matrix.py
+
+      - name: Communication matrix
+        shell: bash
+        run: |
+          set -euo pipefail
+          export TERM=xterm-256color
+          bash test/system_comm_matrix.sh
+
+      - name: Short soak
+        shell: bash
+        run: |
+          set -euo pipefail
+          export TERM=xterm-256color
+          CCB_LINUX_SOAK_SECONDS=35 \
+          CCB_LINUX_SOAK_KILL_EVERY=2 \
+          CCB_LINUX_SOAK_STUB_DELAY=0.2 \
+          CCB_LINUX_SOAK_ASK_WAIT_TIMEOUT_S=90 \
+            bash test/system_linux_soak.sh
+
+      - name: Fastpath stress smoke
+        shell: bash
+        run: |
+          set -euo pipefail
+          export TERM=xterm-256color
+          CCB_FASTPATH_STRESS_ASK_COUNT=12 \
+          CCB_FASTPATH_STRESS_STUB_DELAY=0.3 \
+          CCB_FASTPATH_STRESS_ASK_WAIT_TIMEOUT_S=240 \
+            bash test/system_fastpath_stress.sh
+
+      - name: Upload macOS artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-ccbd-real-artifacts
+          path: |
+            ${{ runner.workspace }}/test_ccb*
+          if-no-files-found: ignore
+
+  wsl-real:
+    name: WSL mounted-drive ccbd/ask smoke
+    runs-on: windows-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup WSL
+        uses: Vampire/setup-wsl@v3
+        with:
+          distribution: Ubuntu-22.04
+
+      - name: Install dependencies in WSL
+        shell: wsl-bash {0}
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y python3 python3-venv python3-pip tmux git
+          python3 -m pip install --upgrade pip
+          python3 -m pip install pytest tomli
+
+      - name: Syntax check in WSL
+        shell: wsl-bash {0}
+        run: |
+          set -euo pipefail
+          python3 -m compileall -q lib bin ccb
+          bash -n test/system_comm_matrix.sh test/system_linux_soak.sh test/system_fastpath_stress.sh
+
+      - name: Lifecycle smoke in WSL
+        shell: wsl-bash {0}
+        run: |
+          set -euo pipefail
+          export TERM=xterm-256color
+          python3 -m pytest -q -m ccb_lifecycle_smoke \
+            test/test_v2_phase2_entrypoint.py \
+            test/test_v2_ccbd_start_matrix.py
+
+      - name: WSL path and relocation tests
+        shell: wsl-bash {0}
+        run: |
+          set -euo pipefail
+          python3 -m pytest -q \
+            test/test_v2_storage_paths.py \
+            test/test_wsl_path_utils.py \
+            test/test_opencode_paths_runtime.py \
+            test/test_project_id.py \
+            -k "wsl or mounted or relocation or socket or path or storage"
+
+      - name: Communication matrix in WSL mounted checkout
+        shell: wsl-bash {0}
+        run: |
+          set -euo pipefail
+          export TERM=xterm-256color
+          bash test/system_comm_matrix.sh
+
+      - name: Short soak in WSL mounted checkout
+        shell: wsl-bash {0}
+        run: |
+          set -euo pipefail
+          export TERM=xterm-256color
+          CCB_LINUX_SOAK_SECONDS=35 \
+          CCB_LINUX_SOAK_KILL_EVERY=2 \
+          CCB_LINUX_SOAK_STUB_DELAY=0.2 \
+          CCB_LINUX_SOAK_ASK_WAIT_TIMEOUT_S=90 \
+            bash test/system_linux_soak.sh
+
+      - name: Fastpath stress smoke in WSL mounted checkout
+        shell: wsl-bash {0}
+        run: |
+          set -euo pipefail
+          export TERM=xterm-256color
+          CCB_FASTPATH_STRESS_ASK_COUNT=12 \
+          CCB_FASTPATH_STRESS_STUB_DELAY=0.3 \
+          CCB_FASTPATH_STRESS_ASK_WAIT_TIMEOUT_S=240 \
+            bash test/system_fastpath_stress.sh
+
+      - name: Upload WSL artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: wsl-ccbd-real-artifacts
+          path: |
+            ${{ runner.workspace }}/test_ccb*
+          if-no-files-found: ignore

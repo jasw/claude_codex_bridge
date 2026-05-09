@@ -7,7 +7,7 @@
   <img src="https://img.shields.io/badge/Every_Model_Controllable-CF1322?style=for-the-badge" alt="Every Model Controllable">
 </p>
 
-[![Version](https://img.shields.io/badge/version-6.0.29-orange.svg)]()
+[![Version](https://img.shields.io/badge/version-6.1.0-orange.svg)]()
 [![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-lightgrey.svg)]()
 
 **English** | [Chinese](README_zh.md)
@@ -74,10 +74,10 @@ Build project-local teams with roles, pane layout, provider state, worktree isol
 <details>
 <summary><b>Latest release highlights</b></summary>
 
-- **WSL Runtime State Relocated**: on mounted-drive WSL projects, project authority stays under `.ccb` while `ccbd` and agent runtime state move to a local Linux state root with explicit runtime-root markers and diagnostics mapping.
-- **Provider Lookup and Ask Routing Stay Stable**: relocated runtime directories still resolve back to the project anchor for session discovery and ask sender attribution.
-- **Control-plane sockets remain resilient**: slow clients no longer block new probes, and transient connect races are retried inside the existing timeout budget.
-- **README stays aligned with the current release**: install, config, update, and delegation guidance continue to match the current CLI surface.
+- **Ask stays fast under real load**: submit receipts stay bounded even while provider work, mailbox refresh, and background maintenance continue asynchronously.
+- **ccbd lifecycle stabilization**: stop-all, shutdown, restart, and background supervision no longer revive stopped runtimes or regress terminal jobs through stale maintenance work.
+- **Observer commands are explicitly weak**: `pend`, `watch`, `queue`, and `inbox` render as non-authoritative snapshots; use `ccb ask wait <job_id>` for terminal truth.
+- **Linux/macOS/WSL real-platform validation expanded**: release validation now includes real tmux ccbd/ask smoke, communication matrix, soak, and fastpath stress coverage with stub providers.
 
 See [Release Notes](#release-notes) for the full history.
 
@@ -282,7 +282,7 @@ ccb reinstall
 Thanks to the [Linux.do community](https://linux.do) for testing, feedback, and discussion support.
 
 <div align="center">
-<img src="assets/weixin.png" alt="WeChat Group" width="300">
+<img src="assets/weixin.jpg" alt="WeChat Group" width="300">
 </div>
 
 ---
@@ -293,11 +293,25 @@ Thanks to the [Linux.do community](https://linux.do) for testing, feedback, and 
 Historical note: older release notes below may mention `askd`, legacy flags, or removed commands. Those references are kept only as changelog history and do not redefine the current CLI surface.
 
 <details open>
+<summary><b>v6.1.0</b> - CCBD Ask Stability and Observer Convergence</summary>
+
+- **Ask Submit Fastpath Stabilized**: `ccb ask` returns bounded receipts without waiting on provider readiness, mailbox history projection, or long maintenance ticks
+- **Lifecycle and Shutdown Races Closed**: stop-all, shutdown, restart, and background supervision now keep stopped runtimes and terminal jobs from being revived by stale work
+- **Provider Completion Recovery Hardened**: Codex polling follows rebound session bindings after restart so jobs complete from the current managed session log
+- **Mailbox Summary Read Model Landed**: routine `queue`, `inbox`, and `pend` paths prefer maintained summaries and explicitly degrade when summaries are missing or corrupt
+- **Observer Surfaces Weakened**: `pend`, `watch`, `queue`, and `inbox` are non-authoritative snapshots; `ccb ask wait <job_id>` remains the terminal authority
+- **Real Platform Validation Added**: GitHub Actions now runs macOS and WSL ccbd/ask smoke, communication matrix, short soak, and fastpath stress jobs
+
+</details>
+
+<details>
 <summary><b>v6.0.29</b> - WSL Runtime State Relocation</summary>
 
 - **Runtime State Moved Off Mounted Drives**: on WSL projects rooted under `/mnt/<drive>/...`, project authority remains in `.ccb` while `ccbd/` and agent runtime state relocate to a local Linux state root with explicit marker files
 - **Diagnostics and Bundle Mapping Updated**: doctor output and support bundles now expose the project anchor, runtime-state root, relocation reason, and logical `.ccb` archive paths for relocated runtime files
 - **Provider Lookup and Ask Routing Kept Stable**: relocated runtime directories still resolve back to the project anchor for session discovery and ask sender attribution without changing Linux or macOS default layout behavior
+- **Runtime Markers Are Validated**: relocated runtime markers and refs now reject malformed or mismatched payloads, so stale relocation residue cannot silently remap one project to another
+- **WSL Smoke Matches the Final Contract**: the release smoke now expects the runtime-root relocation path that the relocated project actually writes, instead of treating the first relocation step as the final socket fallback
 
 </details>
 

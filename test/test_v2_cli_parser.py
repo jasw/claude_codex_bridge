@@ -235,14 +235,42 @@ def test_parse_removed_attach_command_is_not_active(parser: CliParser) -> None:
 
 def test_parse_ps_and_pend(parser: CliParser) -> None:
     assert parser.parse(['ps']) == ParsedPsCommand(project=None)
+    assert parser.parse(['doctor', 'ps']) == ParsedPsCommand(project=None)
+    assert parser.parse(['doctor', '--runtime']) == ParsedPsCommand(project=None)
     assert parser.parse(['pend', 'job_123', '5']) == ParsedPendCommand(project=None, target='job_123', count=5)
-    assert parser.parse(['queue', 'all']) == ParsedQueueCommand(project=None, target='all')
+    assert parser.parse(['queue', 'all']) == ParsedQueueCommand(project=None, target='all', detail=False)
+
+
+def test_parse_pend_observer_modes(parser: CliParser) -> None:
+    assert parser.parse(['pend', '--watch', 'job_123']) == ParsedPendCommand(
+        project=None,
+        target='job_123',
+        count=None,
+        observer_mode='watch',
+        detail=False,
+    )
+    assert parser.parse(['pend', '--inbox', '--detail', 'agent1']) == ParsedPendCommand(
+        project=None,
+        target='agent1',
+        count=None,
+        observer_mode='inbox',
+        detail=True,
+    )
+    assert parser.parse(['pend', '--queue', '--detail', 'all']) == ParsedPendCommand(
+        project=None,
+        target='all',
+        count=None,
+        observer_mode='queue',
+        detail=True,
+    )
 
 
 def test_parse_trace(parser: CliParser) -> None:
     assert parser.parse(['trace', 'job_123']) == ParsedTraceCommand(project=None, target='job_123')
     assert parser.parse(['resubmit', 'msg_123']) == ParsedResubmitCommand(project=None, message_id='msg_123')
+    assert parser.parse(['repair', 'resubmit', 'msg_123']) == ParsedResubmitCommand(project=None, message_id='msg_123')
     assert parser.parse(['retry', 'att_123']) == ParsedRetryCommand(project=None, target='att_123')
+    assert parser.parse(['repair', 'retry', 'att_123']) == ParsedRetryCommand(project=None, target='att_123')
     assert parser.parse(['wait-any', 'msg_123']) == ParsedWaitCommand(
         project=None,
         mode='any',
@@ -264,17 +292,38 @@ def test_parse_trace(parser: CliParser) -> None:
         quorum=2,
         timeout_s=None,
     )
-    assert parser.parse(['inbox', 'agent1']) == ParsedInboxCommand(project=None, agent_name='agent1')
+    assert parser.parse(['inbox', 'agent1']) == ParsedInboxCommand(project=None, agent_name='agent1', detail=False)
     assert parser.parse(['ack', 'agent1']) == ParsedAckCommand(project=None, agent_name='agent1')
+    assert parser.parse(['repair', 'ack', 'agent1']) == ParsedAckCommand(project=None, agent_name='agent1')
     assert parser.parse(['ack', 'agent1', 'iev_123']) == ParsedAckCommand(
+        project=None,
+        agent_name='agent1',
+        inbound_event_id='iev_123',
+    )
+    assert parser.parse(['repair', 'ack', 'agent1', 'iev_123']) == ParsedAckCommand(
         project=None,
         agent_name='agent1',
         inbound_event_id='iev_123',
     )
 
 
+def test_parse_queue_and_inbox_detail_flags(parser: CliParser) -> None:
+    assert parser.parse(['queue', '--detail', 'claude']) == ParsedQueueCommand(
+        project=None,
+        target='claude',
+        detail=True,
+    )
+    assert parser.parse(['inbox', '--detail', 'agent1']) == ParsedInboxCommand(
+        project=None,
+        agent_name='agent1',
+        detail=True,
+    )
+
+
 def test_parse_logs(parser: CliParser) -> None:
     assert parser.parse(['logs', 'agent1']) == ParsedLogsCommand(project=None, agent_name='agent1')
+    assert parser.parse(['doctor', 'logs', 'agent1']) == ParsedLogsCommand(project=None, agent_name='agent1')
+    assert parser.parse(['doctor', '--logs', 'agent1']) == ParsedLogsCommand(project=None, agent_name='agent1')
 
 
 def test_parse_doctor_bundle(parser: CliParser) -> None:
@@ -287,6 +336,13 @@ def test_parse_doctor_bundle(parser: CliParser) -> None:
     )
     with pytest.raises(CliUsageError, match='doctor --bundle'):
         parser.parse(['doctor', '--bundle'])
+
+
+def test_parse_repair_rejects_invalid_forms(parser: CliParser) -> None:
+    with pytest.raises(CliUsageError, match='repair requires one of'):
+        parser.parse(['repair'])
+    with pytest.raises(CliUsageError, match='repair only supports'):
+        parser.parse(['repair', 'unknown'])
 
 
 def test_parse_config_validate(parser: CliParser) -> None:

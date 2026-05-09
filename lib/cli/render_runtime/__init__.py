@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from .common import render_mapping, write_lines
+from .common import render_mapping, render_observer_notice, write_lines
 from .fault_views import render_fault_arm, render_fault_clear, render_fault_list
 from .job_views import (
     render_ask,
@@ -35,6 +35,7 @@ __all__ = [
     'render_kill',
     'render_logs',
     'render_mapping',
+    'render_observer_notice',
     'render_pend',
     'render_ps',
     'render_queue',

@@ -13,6 +13,8 @@ from .path_helpers import (
     SocketPlacement,
     choose_runtime_state_placement,
     choose_socket_placement,
+    read_runtime_root_marker_payload,
+    read_runtime_root_ref_payload,
     runtime_root_marker_path,
     runtime_root_ref_path,
     runtime_state_placement_payload,
@@ -117,8 +119,9 @@ class PathLayout(
 
     def _project_socket_placement(self, stem: str) -> SocketPlacement:
         return choose_socket_placement(
-            preferred_path=self.ccb_dir / 'ccbd' / f'{stem}.sock',
+            preferred_path=self.ccbd_dir / f'{stem}.sock',
             project_socket_key=self.project_socket_key,
+            preferred_root_kind='runtime' if self.runtime_state_placement.root_kind == 'relocated' else 'project',
         )
 
     def _project_socket_path(self, stem: str) -> Path:
@@ -152,11 +155,13 @@ class PathLayout(
         }
 
     def _validate_runtime_root_marker(self, *, allow_missing: bool = False) -> None:
-        payload = _read_json_object(self.runtime_root_marker_path)
+        payload = read_runtime_root_marker_payload(self.runtime_root_marker_path)
         if not payload:
-            if allow_missing:
+            if allow_missing and not self.runtime_root_marker_path.exists():
                 return
-            raise FileNotFoundError(str(self.runtime_root_marker_path))
+            if not self.runtime_root_marker_path.exists():
+                raise FileNotFoundError(str(self.runtime_root_marker_path))
+            raise RuntimeError(f'{self.runtime_root_marker_path} is invalid')
         expected = {
             'project_id': self.project_id,
             'project_root': str(self.project_root),
@@ -166,11 +171,13 @@ class PathLayout(
         _validate_expected_fields(payload, expected, label=str(self.runtime_root_marker_path))
 
     def _validate_runtime_root_ref(self, *, allow_missing: bool = False) -> None:
-        payload = _read_json_object(self.runtime_root_ref_path)
+        payload = read_runtime_root_ref_payload(self.ccb_dir, project_id=self.project_id)
         if not payload:
-            if allow_missing:
+            if allow_missing and not self.runtime_root_ref_path.exists():
                 return
-            raise FileNotFoundError(str(self.runtime_root_ref_path))
+            if not self.runtime_root_ref_path.exists():
+                raise FileNotFoundError(str(self.runtime_root_ref_path))
+            raise RuntimeError(f'{self.runtime_root_ref_path} is invalid')
         expected = {
             'project_id': self.project_id,
             'runtime_state_root': str(self.runtime_state_root),

@@ -243,6 +243,9 @@ Runtime start policy rules:
   - daemon-owned recovery mount, pane recovery, namespace reflow, and post-crash remount must always use `restore=true`
   - those same daemon-owned recovery paths must reuse the persisted `auto_permission` policy from `.ccb/ccbd/start-policy.json`
 - `ccb kill` / project stop-all must clear `.ccb/ccbd/start-policy.json`
+- daemon-owned background maintenance must not proactively create a missing
+  runtime from scratch unless persisted `.ccb/ccbd/start-policy.json`
+  authority exists for the current project run
 
 ### 5.5 Startup Transaction
 
@@ -342,6 +345,8 @@ Foreground command split:
   - stop waiting at control-plane readiness
   - must not enter namespace attach waits
   - must not reinterpret a namespace/UI delay as backend startup failure
+  - may rely on externally attached actionable runtime authority without first
+    forcing daemon-owned provider-session mount authority
 - `ccb -n`
   - is an explicit destructive project reset before start
   - must require interactive confirmation
@@ -406,6 +411,16 @@ This responsibility belongs to a daemon-owned supervision loop, not to:
 - health inspection paths such as `HealthMonitor.check_all()`
 
 The supervision loop must run on backend heartbeat/tick and reconcile every desired agent, regardless of whether there is queued work.
+
+That daemon-owned responsibility is still bounded by runtime authority rules:
+
+- externally attached actionable runtimes are current runtime authority, not an
+  implicit request to start a daemon-owned provider-session mount
+- daemon authority adoption must not rewrite an `external-attach` runtime into
+  `provider-session` only to stamp current daemon generation
+- background maintenance may recover or observe an externally attached runtime,
+  but missing-runtime proactive mount remains gated by persisted start-policy
+  authority
 
 For `cmd`-enabled projects:
 
@@ -596,7 +611,7 @@ Required fields for backend liveness:
 
 Write rule:
 
-- `lease.json.socket_path` and lifecycle authority `socket_path` must always record the effective active socket path for the current generation; preferred project-local socket paths are diagnostics only and belong in startup/ping/doctor payloads, not authority.
+- `lease.json.socket_path` and lifecycle authority `socket_path` must always record the effective active socket path for the current generation; preferred socket paths are diagnostics only and may live under the project anchor or a relocated runtime root, but they do not redefine authority.
 
 ### 7.2 Startup Report
 
@@ -654,6 +669,12 @@ Required write semantics:
 - `started_at`, `binding_generation`, `runtime_generation`, and `daemon_generation` must advance only when a new runtime authority epoch is created
 - a no-op reattach or repeated observation of the same binding within the same daemon generation must not silently bump `binding_generation`
 - when daemon generation changes, the resulting runtime authority must remain self-consistent even if the binding facts are otherwise reused
+- a supervision mount/recovery attempt must not overwrite a newer runtime authority epoch that was attached or adopted concurrently; once superseded, the older attempt may emit evidence but must not write failed or stale runtime authority back into `runtime.json`
+- mount-attempt ownership is represented by `mount_attempt_id` on
+  `runtime.json`; daemon-owned mount start, attach, success finalize, and
+  failure finalize must all compare against that token before writing authority
+- if an external attach supersedes a daemon-owned mount attempt, older attach or
+  finalize paths may emit diagnostics evidence but must not retake authority
 - runtime authority writes must go through the explicit agent-authority path (`attach` / authority-adopt / authority-mutate equivalents), not through generic outer-layer state patching
 - generic runtime state patching may update operational fields such as `state`, `health`, queue/reconcile markers, and last-seen timestamps, but must not mutate epoch/binding ownership fields
 - registry persistence must reject non-authority writes that attempt to change authority-owned fields for an existing runtime record

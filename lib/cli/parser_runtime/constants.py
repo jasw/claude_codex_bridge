@@ -19,6 +19,7 @@ SUBCOMMANDS = {
     'ack',
     'logs',
     'doctor',
+    'repair',
     'config',
     'fault',
 }

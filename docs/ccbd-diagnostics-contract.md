@@ -14,6 +14,8 @@ It is the authoritative design anchor for:
 - `.ccb/ccbd/heartbeats/<subject-kind>/*.json`
 - project-scoped backend log retention under `.ccb/ccbd/`
 - `ccb doctor`
+- `ccb doctor ps`
+- `ccb doctor logs <agent>`
 - `ccb doctor --bundle`
 
 The repo-local memory file [AGENTS.md](/home/bfly/yunwei/ccb_source/AGENTS.md) must point to this document instead of duplicating the rules.
@@ -135,6 +137,10 @@ Rules:
 - `ping('ccbd')` and `doctor` must surface current socket placement diagnostics, including preferred/effective socket path, root kind, fallback reason, and filesystem hint when known
 - `doctor` must also surface preferred/effective socket path byte lengths and an equivalent `tmux -S <effective-socket> start-server` command when a project tmux socket path is known, so macOS and WSL socket pathname failures can be diagnosed from one report
 - malformed namespace diagnostics must surface as diagnostics errors, not silently disappear
+- supervision diagnostics must preserve mount-attempt distinctions:
+  - `mount_started` details should include `mount_attempt_id` when present
+  - superseded finalize paths should remain visible as `mount_superseded`
+    instead of collapsing into missing history
 
 ### 3.6 Doctor Read Path
 
@@ -143,6 +149,20 @@ Rules:
 Rules:
 
 - it must summarize current backend inspection plus latest persisted reports
+- `doctor ps` and `doctor logs <agent>` are converged diagnostics subviews of
+  the same diagnostics surface
+- if top-level `ps` and `logs` are retained, they must remain compatibility
+  entrypoints over the same diagnostics meaning rather than drifting into a
+  second independent diagnostics surface
+- it should surface current mailbox summary authority for configured agents when
+  present, including at minimum summary version/source/freshness plus head and
+  queue facts needed to diagnose summary-vs-ledger drift
+- it should also surface mailbox summary consistency status for configured
+  agents by comparing persisted summary authority against a diagnostics-grade
+  ledger projection without mutating mailbox artifacts
+- missing, unreadable, or drifted mailbox summaries must remain visible in
+  doctor output as explicit consistency mismatch/error state rather than being
+  silently repaired during the read path
 - agent binding diagnostics must include both `tmux_socket_name` and `tmux_socket_path` when known so project-scoped namespace bugs can be diagnosed from logs alone
 - startup failure diagnostics must retain chained cause detail in CLI output and in `ccbd_startup_last_failure_reason` when the backend recorded it
 - Codex agent diagnostics should surface managed in-pane session-switch state
