@@ -104,6 +104,8 @@ def _walk_files(root: Path):
 def _classify_path(layout: PathLayout, root: Path, path: Path, *, root_kind: str) -> StorageEntry:
     size = _safe_size(path)
     relative_path = _relative_display(layout, root, path, root_kind=root_kind)
+    if _is_allowed_provider_secret_symlink(path, layout):
+        return _classify_relative(layout, path, relative_path, size=size, root_kind=root_kind)
     symlink_reason = _unsafe_symlink_reason(path, layout)
     if symlink_reason is not None and not _is_marked_projected_symlink(path):
         return StorageEntry(
@@ -299,6 +301,8 @@ def _classify_claude_home(
     name = remainder[-1]
     if name == '.claude.json':
         return _entry(path, relative_path, StorageClass.SESSION, size, provider=provider, agent=agent, reason='claude_trust_authority', root_kind=root_kind)
+    if remainder[:2] == ('Library', 'Keychains'):
+        return _entry(path, relative_path, StorageClass.SECRET, size, provider=provider, agent=agent, reason='macos_keychain_link', root_kind=root_kind)
     if remainder[:3] == ('.local', 'share', 'claude') and len(remainder) >= 4 and remainder[3] == 'versions':
         is_active_version = _claude_version_active(path, remainder)
         return _entry(
@@ -513,6 +517,22 @@ def _unsafe_symlink_reason(path: Path, layout: PathLayout) -> str | None:
     if any(_is_within(target, root) for root in allowed_roots):
         return None
     return 'symlink_out_of_bounds'
+
+
+def _is_allowed_provider_secret_symlink(path: Path, layout: PathLayout) -> bool:
+    try:
+        relative = path.relative_to(layout.ccb_dir)
+    except Exception:
+        return False
+    parts = relative.parts
+    return (
+        len(parts) >= 7
+        and parts[0] == 'agents'
+        and parts[2] == 'provider-state'
+        and parts[3] == 'claude'
+        and parts[4] == 'home'
+        and parts[5:7] == ('Library', 'Keychains')
+    )
 
 
 def _is_marked_projected_symlink(path: Path) -> bool:

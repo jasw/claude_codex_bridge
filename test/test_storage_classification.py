@@ -61,6 +61,11 @@ def test_storage_classification_keeps_provider_authority_and_cache_separate(tmp_
     _write(claude_home / '.claude' / '.credentials.json', '{}\n')
     _write(claude_home / '.config' / 'claude-code' / 'auth.json', '{}\n')
     _write(claude_home / '.claude' / 'settings.json', '{}\n')
+    source_keychains = tmp_path / 'source-home' / 'Library' / 'Keychains'
+    source_keychains.mkdir(parents=True, exist_ok=True)
+    if hasattr(os, 'symlink'):
+        (claude_home / 'Library').mkdir(parents=True, exist_ok=True)
+        os.symlink(source_keychains, claude_home / 'Library' / 'Keychains')
     _write(claude_home / '.local' / 'share' / 'claude' / 'versions' / '2.1.137' / 'claude', 'bin\n')
     if hasattr(os, 'symlink'):
         (claude_home / '.local' / 'bin').mkdir(parents=True, exist_ok=True)
@@ -108,6 +113,9 @@ def test_storage_classification_keeps_provider_authority_and_cache_separate(tmp_
     assert records['agents/agent2/provider-state/claude/home/.claude.json']['storage_class'] == 'session'
     assert records['agents/agent2/provider-state/claude/home/.claude/.credentials.json']['storage_class'] == 'secret'
     assert records['agents/agent2/provider-state/claude/home/.config/claude-code/auth.json']['storage_class'] == 'secret'
+    if hasattr(os, 'symlink'):
+        assert records['agents/agent2/provider-state/claude/home/Library/Keychains']['storage_class'] == 'secret'
+        assert records['agents/agent2/provider-state/claude/home/Library/Keychains']['reason'] == 'macos_keychain_link'
     assert records['agents/agent2/provider-state/claude/home/.claude/settings.json']['storage_class'] == 'projected_config'
     assert (
         records['agents/agent2/provider-state/claude/home/.local/share/claude/versions/2.1.137/claude']['storage_class']
