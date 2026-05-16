@@ -618,7 +618,7 @@ def test_handle_watch_emits_non_terminal_observer_preamble_before_stream_batches
         'observer_view: watch',
         'observer_authority: supplementary_snapshot',
         'observer_terminal: false',
-        'observer_notice: weak observer surface; non-terminal state may change; prefer ccb ask --wait / ccb ask wait <job_id>',
+        'observer_notice: weak observer surface; non-terminal state may change; use ccb trace <id> for lineage when needed',
     )
     assert writes[1] == ('event: evt-1 job_demo codex job_started 2026-03-18T00:00:00Z',)
 

@@ -3215,6 +3215,7 @@ def test_execution_service_droid_adapter_emits_legacy_items_from_events(monkeypa
 
     fixed_req_id = '20260318-000000-000-7-1'
     sent: list[tuple[str, str]] = []
+    reader_inits: list[dict[str, object]] = []
 
     class FakeBackend:
         def send_text(self, pane_id: str, text: str) -> None:
@@ -3224,7 +3225,7 @@ def test_execution_service_droid_adapter_emits_legacy_items_from_events(monkeypa
             return pane_id == '%5'
 
     class FakeSession:
-        data = {}
+        data = {'droid_sessions_root': str(tmp_path / 'factory-home' / 'sessions')}
         droid_session_path = str(tmp_path / 'droid-session.jsonl')
         droid_session_id = 'droid-session-id'
         work_dir = str(tmp_path)
@@ -3234,7 +3235,8 @@ def test_execution_service_droid_adapter_emits_legacy_items_from_events(monkeypa
 
     class FakeReader:
         def __init__(self, *args, **kwargs) -> None:
-            del args, kwargs
+            del args
+            reader_inits.append(dict(kwargs))
             self._events = [
                 ('user', f'CCB_REQ_ID: {fixed_req_id}\n\nprompt'),
                 ('assistant', 'partial'),
@@ -3264,6 +3266,7 @@ def test_execution_service_droid_adapter_emits_legacy_items_from_events(monkeypa
     service.start(_anchored_job_for_provider('droid', fixed_req_id, body='real droid'), runtime_context=_runtime_context(tmp_path))
     update = service.poll()[0]
 
+    assert reader_inits[0]['root'] == tmp_path / 'factory-home' / 'sessions'
     assert sent and sent[0][0] == '%5'
     assert fixed_req_id in sent[0][1]
     assert [item.kind for item in update.items] == [

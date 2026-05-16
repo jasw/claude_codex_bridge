@@ -191,10 +191,12 @@ When `ccb` starts a managed Claude agent:
 - when auth inheritance is disabled, startup must not silently keep stale
   managed Claude auth env state, stale copied login credential artifacts, or
   stale inherited Claude account metadata in `.claude.json`
-- when skill inheritance is enabled, startup must refresh inherited Claude
-  `skills/` into the managed home on each managed launch
-- when command inheritance is enabled, startup must refresh inherited Claude
-  `commands/` into the managed home on each managed launch
+- when skill inheritance is enabled, startup must route inherited Claude
+  `skills/` into the managed home as a CCB projected asset on each managed
+  launch
+- when command inheritance is enabled, startup must route inherited Claude
+  `commands/` into the managed home as a CCB projected asset on each managed
+  launch
 - when memory inheritance is enabled, startup must refresh the managed
   `.claude/CLAUDE.md` projection on each managed launch so source-home and
   project-memory updates become visible after restart

@@ -21,13 +21,13 @@ def test_ask_alias_forwards_to_phase2(monkeypatch, tmp_path: Path) -> None:
     stdout = io.StringIO()
     stderr = io.StringIO()
     code = ask_main_module.main(
-        ['--project', '/tmp/demo', '--wait', 'agent1', 'from', 'agent2', '--', 'hello'],
+        ['--project', '/tmp/demo', '--compact', 'agent1', 'from', 'agent2', '--', 'hello'],
         stdout=stdout,
         stderr=stderr,
     )
 
     assert code == 17
-    assert captured['argv'] == ['--project', '/tmp/demo', 'ask', '--wait', 'agent1', 'from', 'agent2', '--', 'hello']
+    assert captured['argv'] == ['--project', '/tmp/demo', 'ask', '--compact', 'agent1', 'from', 'agent2', '--', 'hello']
     assert captured['cwd'] == Path.cwd()
     assert captured['stdout'] is stdout
     assert captured['stderr'] is stderr
@@ -62,7 +62,13 @@ def test_ask_alias_help_uses_canonical_usage(monkeypatch) -> None:
 
     assert code == 0
     text = stdout.getvalue()
-    assert 'ask [--wait] [--output FILE] [--timeout SECONDS]' in text
+    assert 'ask [--compact] [--silence] <target> [--] <message...>' in text
+    assert '--compact request a distilled reply that preserves key information' in text
+    assert '--silence request silent-on-success delivery; failures/blockers still surface' in text
+    assert 'ask --compact agent1 review latest diff' in text
+    assert 'ask --silence agent1 run smoke check' in text
+    assert '--wait' not in text
+    assert '--timeout' not in text
     assert '--task-id' not in text
     assert '[from <sender>]' not in text
     assert '`ask` is a compatibility alias for `ccb ask`.' in text

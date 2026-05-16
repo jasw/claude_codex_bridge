@@ -460,7 +460,7 @@ Historical note: older release notes below may mention `askd`, legacy flags, or 
 - **Lifecycle and Shutdown Races Closed**: stop-all, shutdown, restart, and background supervision now keep stopped runtimes and terminal jobs from being revived by stale work
 - **Provider Completion Recovery Hardened**: Codex polling follows rebound session bindings after restart so jobs complete from the current managed session log
 - **Mailbox Summary Read Model Landed**: routine `queue`, `inbox`, and `pend` paths prefer maintained summaries and explicitly degrade when summaries are missing or corrupt
-- **Observer Surfaces Weakened**: `pend`, `watch`, `queue`, and `inbox` are non-authoritative snapshots; `ccb ask wait <job_id>` remains the terminal authority
+- **Observer Surfaces Weakened**: `pend`, `watch`, `queue`, and `inbox` are non-authoritative snapshots; use `ccb trace <id>` when lineage details are needed
 - **Real Platform Validation Added**: GitHub Actions now runs macOS and WSL ccbd/ask smoke, communication matrix, short soak, and fastpath stress jobs
 
 </details>
@@ -660,7 +660,7 @@ Historical note: older release notes below may mention `askd`, legacy flags, or 
 - **WSL Compatibility Fixed**: project runtime now avoids binding Unix sockets onto unsupported WSL mounted-drive filesystems and hardens installer staging plus tmux namespace readiness
 - **macOS Lifecycle Hardening**: startup, restore, and project identity paths were tightened so macOS follows the same lifecycle authority model as Linux without intermittent startup drift
 - **Respawn Retry Boundary**: transient tmux respawn fork, server-exit, and readiness failures are retried inside runtime supervision instead of leaking outward as false lifecycle failures
-- **Watch Reconnect Recovery**: `watch` and ask wait can recover terminal results from persisted state after short daemon interruptions, while reconnect loops still honor timeout deadlines
+- **Watch Reconnect Recovery**: observer recovery can resume from persisted state after short daemon interruptions, while reconnect loops still honor their internal deadlines
 - **Cross-Platform CI Coverage**: GitHub Actions now exercises macOS install smoke and WSL compatibility paths alongside the existing Linux matrix
 
 </details>
@@ -1104,7 +1104,7 @@ Highlights:
 
 ### v4.0.9
 - **Project_ID Simplification**: `ccb_project_id` uses current-directory `.ccb/` anchor (no ancestor traversal, no git dependency)
-- **Codex Skills Stability**: Codex `oask/gask` skills default to waiting (`--timeout -1`) to avoid sending the next task too early
+- **Codex Skills Stability**: Codex `oask/gask` skills were adjusted to avoid sending the next task too early
 
 ### v4.0.8
 - **Codex Log Binding Refresh**: the Codex runtime now periodically refreshes `.codex-session` log paths by parsing `start_cmd` and scanning latest logs

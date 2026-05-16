@@ -332,27 +332,16 @@ ask <provider[:instance]> -- <message...>
 - 输出 `target`
 - 立即退出
 
-### 5.2 阻塞等待
+### 5.2 结果跟踪
 
 ```bash
-ask wait <job_id>
-```
-
-或：
-
-```bash
-ask <provider[:instance]> --wait -- <message...>
+ask get <job_id>
 ```
 
 行为：
 
-- 如果是 `wait <job_id>`，直接 watch 到 terminal
-- 如果是 `--wait`，先 submit，再 watch 到 terminal
-
-注意：
-
-- `--wait` 只是 submit 之后立刻 watch
-- 它不是另一套执行模式
+- submit 总是立即返回
+- 后续结果通过 job 状态、trace 或内部 watcher 路径观察
 
 ### 5.3 状态查看
 
@@ -718,7 +707,6 @@ ask cancel <job_id>
 重写后行为：
 
 - `ask <provider> -- <message>` -> submit provider job
-- `ask wait <job_id>` -> watch
 - `ask get <job_id>` -> get
 - `ask cancel <job_id>` -> cancel
 
@@ -778,7 +766,6 @@ ask cancel <job_id>
 ### 9.1 命令行为
 
 - `ask <provider> -- <message>` 总是立即返回 `job_id`
-- `ask wait <job_id>` 能稳定拿到 terminal reply
 - `ask get <job_id>` 能返回当前状态与最终 reply
 - `ask cancel <job_id>` 能取消尚未完成的 job
 

@@ -34,7 +34,7 @@ def start_submission(
     if not isinstance(prepared, PreparedActiveStart):
         return prepared
 
-    reader = reader_cls(work_dir=Path(prepared.session.work_dir))
+    reader = _reader_for_session(reader_cls, prepared.session)
     preferred = preferred_session_path(str(getattr(prepared.session, "droid_session_path", "") or ""), context.session_ref)
     if preferred is not None:
         reader.set_preferred_session(preferred)
@@ -77,6 +77,30 @@ def state_session_path(state: dict[str, object]) -> str:
     from .helpers import state_session_path as _state_session_path
 
     return _state_session_path(state)
+
+
+def _reader_for_session(reader_cls, session):
+    work_dir = Path(session.work_dir)
+    root = _sessions_root_for_session(session)
+    if root is None:
+        return reader_cls(work_dir=work_dir)
+    try:
+        return reader_cls(root=root, work_dir=work_dir)
+    except TypeError:
+        return reader_cls(work_dir=work_dir)
+
+
+def _sessions_root_for_session(session) -> Path | None:
+    data = getattr(session, 'data', None)
+    if not isinstance(data, dict):
+        return None
+    raw = str(data.get('droid_sessions_root') or data.get('factory_sessions_root') or '').strip()
+    if raw:
+        return Path(raw).expanduser()
+    home = str(data.get('droid_home') or data.get('factory_home') or '').strip()
+    if home:
+        return Path(home).expanduser() / 'sessions'
+    return None
 
 
 __all__ = ["start_submission"]

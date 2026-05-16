@@ -263,7 +263,7 @@ def test_render_queue_includes_runtime_health_fields() -> None:
         'observer_view: queue',
         'observer_authority: supplementary_snapshot',
         'observer_terminal: false',
-        'observer_notice: weak observer surface; non-terminal state may change; prefer ccb ask --wait / ccb ask wait <job_id>',
+        'observer_notice: weak observer surface; non-terminal state may change; use ccb trace <id> for lineage when needed',
         'target: codex',
         'agent_name: codex',
         'mailbox_id: mbx_codex',
@@ -488,7 +488,7 @@ def test_render_observer_notice_marks_watch_stream_as_weak_non_terminal_surface(
         'observer_view: watch',
         'observer_authority: supplementary_snapshot',
         'observer_terminal: false',
-        'observer_notice: weak observer surface; non-terminal state may change; prefer ccb ask --wait / ccb ask wait <job_id>',
+        'observer_notice: weak observer surface; non-terminal state may change; use ccb trace <id> for lineage when needed',
     )
 
 

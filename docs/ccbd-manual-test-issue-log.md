@@ -778,12 +778,12 @@
 - 状态：`fixed-retested`
 - 标题：`Codex session rebound 后 completion reader 仍盯旧日志，导致真实 ask 已回复但 job 不 terminal`
 - 根因分类：`provider-facts`
-- 测试场景：`Linux soak 中 kill/restart 后继续对 Codex agent 执行 ask wait`
+- 测试场景：`Linux soak 中 kill/restart 后继续对 Codex agent 执行 ask 并观察 terminal convergence`
 - 最小复现：
   - 执行 `CCB_LINUX_SOAK_SECONDS=90 CCB_LINUX_SOAK_KILL_EVERY=2 CCB_LINUX_SOAK_STUB_DELAY=0.2 CCB_LINUX_SOAK_ASK_WAIT_TIMEOUT_S=90 bash test/system_linux_soak.sh`
   - 在 kill/restart 后提交 Codex ask
   - provider stub 已在新 Codex session log 中写入 reply
-  - execution polling 仍使用旧 session reader，`ask wait` 超时
+  - execution polling 仍使用旧 session reader，terminal convergence 超时
 - 预期结果：
   - restart/rebind 后 polling 应跟随当前 agent session binding
   - 新 session log 中出现 `CCB_REQ_ID`、assistant chunk、turn boundary 后，job 应进入 terminal
@@ -817,11 +817,11 @@
 - 状态：`fixed-retested`
 - 标题：`Linux soak / fastpath stress 脚本把健康输出或深队列任务误判为失败`
 - 根因分类：`read-path`
-- 测试场景：`真实 Linux soak 与 fastpath stress 使用 bash pipefail、grep -q 和固定 ask wait timeout`
+- 测试场景：`真实 Linux soak 与 fastpath stress 使用 bash pipefail、grep -q 和固定 terminal convergence timeout`
 - 最小复现：
   - 5 分钟 Linux soak 中 `doctor-20.out` 同时包含 `ccbd_state: mounted` 与 `ccbd_health: healthy`
   - 但脚本仍报 `doctor health` 失败
-  - fastpath stress 中 60 个 ask 分摊到 3 个串行 provider，尾部 gamma job 未在固定 180 秒窗口内完成，脚本报 `ask wait` 失败
+  - fastpath stress 中 60 个 ask 分摊到 3 个串行 provider，尾部 gamma job 未在固定 180 秒窗口内完成，脚本报 terminal convergence 失败
 - 预期结果：
   - shell harness 不应因 `grep -q` 提前退出触发 `printf` SIGPIPE 而误判健康输出
   - fastpath stress 的 submit receipt 验证与深队列 terminal convergence 验证应使用不同预算
@@ -836,7 +836,7 @@
   - fastpath stress 同时验证 fast receipt 与 eventual convergence，但只配置了一个固定等待预算
 - 系统性修复方案：
   - soak / stress 脚本统一使用 here-string `grep` helper，避免 `pipefail + grep -q` SIGPIPE 假失败
-  - fastpath stress 默认根据 ask 数量、provider 数量和 stub delay 计算深队列 `ask wait` 预算
+  - fastpath stress 默认根据 ask 数量、provider 数量和 stub delay 计算深队列 terminal convergence 预算
   - submit p95 仍使用独立毫秒阈值，避免把等待预算放大误当成 fastpath 放宽
 - 回归测试：
   - `bash -n test/system_linux_soak.sh test/system_fastpath_stress.sh`
@@ -844,7 +844,7 @@
 - 复测结论：
   - 2026-05-09 复测通过
   - 5 分钟 Linux soak：23 轮、7 次 kill/restart，全部通过
-  - fastpath stress：60 ask，submit p95 `227ms`，首/中/尾 `ask wait`、doctor、kill、unmounted 全部通过
+  - fastpath stress：60 ask，submit p95 `227ms`，首/中/尾 terminal convergence、doctor、kill、unmounted 全部通过
 
 ## 6. 关闭标准
 

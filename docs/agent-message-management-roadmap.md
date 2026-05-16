@@ -165,7 +165,7 @@ That keeps provider-specific complexity out of queue and retry logic.
 
 - There is no first-class mailbox/channel abstraction above jobs, so request/reply correlation is still implicit
 - Queue semantics are per-agent and local to the dispatcher, but not visible as a managed communication contract
-- Blocking waits exist as client behavior (`ask --wait`, `watch_job`) rather than a reusable coordination primitive
+- Blocking waits exist as client behavior (`watch_job`) rather than a reusable coordination primitive
 - Runtime health is visible, but dead/alive/stalled distinctions are not promoted into a unified task policy layer
 - Retry and resubmit are still operator actions, not policy-backed lifecycle features with lineage
 - Fan-out/fan-in coordination is missing: broadcast exists, but not wait-all, quorum, barrier, or reply aggregation

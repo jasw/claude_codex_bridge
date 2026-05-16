@@ -28,7 +28,14 @@ def initialize_state(
 def ensure_log_reader(comm, *, log_reader_cls) -> None:
     if comm._log_reader is not None:
         return
-    comm._log_reader = log_reader_cls(work_dir=_work_dir_hint(comm.session_info))
+    root = _sessions_root_hint(comm.session_info)
+    if root is None:
+        comm._log_reader = log_reader_cls(work_dir=_work_dir_hint(comm.session_info))
+    else:
+        try:
+            comm._log_reader = log_reader_cls(root=root, work_dir=_work_dir_hint(comm.session_info))
+        except TypeError:
+            comm._log_reader = log_reader_cls(work_dir=_work_dir_hint(comm.session_info))
     preferred_session = comm.session_info.get('droid_session_path')
     if preferred_session:
         comm._log_reader.set_preferred_session(Path(str(preferred_session)))
@@ -51,6 +58,16 @@ def _required_session_info(comm):
 def _work_dir_hint(session_info: dict) -> Path | None:
     work_dir = session_info.get('work_dir')
     return Path(work_dir) if isinstance(work_dir, str) and work_dir else None
+
+
+def _sessions_root_hint(session_info: dict) -> Path | None:
+    raw = str(session_info.get('droid_sessions_root') or session_info.get('factory_sessions_root') or '').strip()
+    if raw:
+        return Path(raw).expanduser()
+    home = str(session_info.get('droid_home') or session_info.get('factory_home') or '').strip()
+    if home:
+        return Path(home).expanduser() / 'sessions'
+    return None
 
 
 __all__ = ['ensure_log_reader', 'initialize_state']

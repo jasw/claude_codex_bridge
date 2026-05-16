@@ -451,7 +451,7 @@ ccb reinstall
 - **Lifecycle / Shutdown Race 收口**：stop-all、shutdown、restart 和后台 supervision 不再通过 stale work 复活 stopped runtime 或回退 terminal job
 - **Provider Completion Recovery 加固**：Codex polling 会跟随 restart 后的新 session binding，从当前 managed session log 读取回复并推进 job 终态
 - **Mailbox Summary Read Model 落地**：日常 `queue`、`inbox`、`pend` 路径优先读取维护好的 summary，summary 缺失或损坏时显式 degraded
-- **Observer Surface 明确弱化**：`pend`、`watch`、`queue`、`inbox` 都是非权威快照；`ccb ask wait <job_id>` 才是终态 authority
+- **Observer Surface 明确弱化**：`pend`、`watch`、`queue`、`inbox` 都是非权威快照；需要 lineage 细节时使用 `ccb trace <id>`
 - **真实平台验证补齐**：GitHub Actions 新增 macOS 和 WSL ccbd/ask smoke、通讯矩阵、短 soak、fastpath stress
 
 </details>
@@ -651,7 +651,7 @@ ccb reinstall
 - **WSL 兼容性修复**：项目 runtime 现在会避开不支持 Unix socket 的 WSL 挂载盘路径，同时加固 installer staging 与 tmux namespace readiness
 - **macOS 生命周期加固**：启动、恢复与项目身份识别路径已收紧，macOS 现在按与 Linux 一致的 lifecycle authority 模型收口，不再间歇性漂移
 - **Respawn 重试边界收口**：tmux respawn 期间的瞬时 fork、server exit、readiness 失败现在在 runtime supervision 边界内重试，不再向上冒泡成伪生命周期故障
-- **Watch 重连恢复**：`watch` 与 ask wait 在 daemon 短暂失联后可以从持久化状态恢复终态结果，同时继续严格遵守超时截止时间
+- **Watch 重连恢复**：observer recovery 在 daemon 短暂失联后可以从持久化状态恢复，同时继续严格遵守内部截止时间
 - **跨平台 CI 覆盖扩展**：GitHub Actions 现在同时覆盖 macOS install smoke、WSL 兼容路径与既有 Linux 测试矩阵
 
 </details>

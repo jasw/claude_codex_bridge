@@ -12,10 +12,8 @@ class ParsedAskCommand:
     task_id: str | None = None
     reply_to: str | None = None
     mode: str | None = None
+    compact: bool = False
     silence: bool = False
-    wait: bool = False
-    output_path: str | None = None
-    timeout_s: float | None = None
     kind: str = 'ask'
 
 

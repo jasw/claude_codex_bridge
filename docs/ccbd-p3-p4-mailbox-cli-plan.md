@@ -108,7 +108,7 @@ This document prevents that drift by defining a narrower sequence.
 - observer render/help wording is now aligned across the whole group:
   - `pend` / `watch` / `queue` / `inbox` all render as weak observer surfaces
   - non-terminal observer views explicitly redirect to
-    `ccb ask --wait` / `ccb ask wait <job_id>`
+    `ccb trace <id>`
   - terminal observer views still remain weaker than `ask` and redirect to
     `ccb trace <id>` for lineage
 - `watch` now emits weak-observer framing before live event streaming instead
@@ -596,7 +596,7 @@ Required changes:
 - ensure all observer commands use the same "supplementary / weak /
   non-authoritative" framing
 - ensure non-terminal observer renders explicitly direct the user toward
-  `ask`, `ask --wait`, or `trace` instead of presenting observer commands as
+  `ask` or `trace` instead of presenting observer commands as
   authoritative result checks
 - ensure terminal observer renders still keep weaker framing than `ask` /
   `trace`, even if they confirm terminality
@@ -620,8 +620,7 @@ Implementation notes now true on the branch:
 - `queue` now appears in primary help as an advanced backlog view rather than a
   peer observer entrypoint
 - command help for all four commands uses the same weak-observer framing
-- non-terminal observer notices redirect to `ccb ask --wait` /
-  `ccb ask wait <job_id>`
+- non-terminal observer notices redirect to `ccb trace <id>`
 - terminal observer notices remain explicitly weak and redirect to
   `ccb trace <id>` for lineage
 - `watch` now emits weak-observer framing before streaming events

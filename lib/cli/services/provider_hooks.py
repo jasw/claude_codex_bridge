@@ -10,6 +10,7 @@ from provider_core.source_home import current_provider_source_home
 from provider_backends.claude.launcher_runtime.binary_cache import route_claude_binary_cache
 from provider_backends.claude.launcher_runtime import materialize_claude_home_config, resolve_claude_home_layout
 from provider_backends.codex.launcher_runtime import resolve_codex_home_layout
+from provider_backends.droid.home import materialize_droid_home_config
 from provider_backends.gemini.launcher_runtime.home import materialize_gemini_home_config
 from provider_backends.opencode.launcher import materialize_opencode_memory_config
 from provider_hooks.settings import build_hook_command, install_workspace_completion_hooks
@@ -164,6 +165,12 @@ def _materialize_provider_home(
             workspace_path=workspace_path,
             memory_projection_event_path=layout.agent_events_path(spec.name),
             memory_projection_marker_path=Path(runtime_dir) / 'codex-memory-projection.json',
+        )
+        return
+    if provider == 'droid':
+        materialize_droid_home_config(
+            layout.agent_provider_state_dir(spec.name, 'droid') / 'home',
+            profile=resolved_profile,
         )
         return
     if provider == 'opencode':

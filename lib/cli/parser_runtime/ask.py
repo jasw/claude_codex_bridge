@@ -6,11 +6,12 @@ from cli.models import ParsedAskCommand, ParsedAskWaitCommand, ParsedCancelComma
 from .constants import ASK_FLAG_OPTIONS, ASK_JOB_ACTIONS, ASK_OPTIONS_WITH_VALUES
 
 _REMOVED_ASK_FLAGS = {
-    '--sync': 'use `--wait`',
+    '--sync': 'async submit is already the default',
     '--async': 'omit the flag; async submit is already the default',
-    '-o': 'use `--output`',
-    '-t': 'use `--timeout`',
 }
+
+_HIDDEN_LEGACY_ASK_FLAGS = {'--wait'}
+_HIDDEN_LEGACY_ASK_OPTIONS_WITH_VALUES = {'--output', '--timeout', '-o', '-t'}
 
 
 def _parse_job_action(tokens: list[str], *, project: str | None, error_type):
@@ -31,52 +32,41 @@ def _default_options() -> dict[str, str | float | None]:
         'task_id': None,
         'reply_to': None,
         'mode': None,
-        'output_path': None,
-        'timeout_s': None,
     }
 
 
 def _set_option_value(options: dict[str, str | float | None], option: str, value: str, *, error_type) -> None:
-    if option == '--output':
-        options['output_path'] = value
-        return
-    if option == '--timeout':
-        try:
-            options['timeout_s'] = float(value)
-        except ValueError as exc:
-            raise error_type(f'invalid {option}: {exc}') from exc
-        return
+    del error_type
     options[option[2:].replace('-', '_')] = value
 
 
 def _parse_route_options(remaining: list[str], *, error_type):
     options = _default_options()
+    compact = False
     silence = False
-    wait = False
     while remaining and remaining[0].startswith('-'):
         option = remaining.pop(0)
         if option in _REMOVED_ASK_FLAGS:
             raise error_type(f'{option} is no longer supported; {_REMOVED_ASK_FLAGS[option]}')
+        if option in _HIDDEN_LEGACY_ASK_FLAGS:
+            continue
+        if option in _HIDDEN_LEGACY_ASK_OPTIONS_WITH_VALUES:
+            if remaining:
+                remaining.pop(0)
+            continue
         if option in ASK_FLAG_OPTIONS:
+            if option == '--compact':
+                compact = True
+                continue
             if option == '--silence':
                 silence = True
-                continue
-            if option == '--wait':
-                wait = True
                 continue
         if option not in ASK_OPTIONS_WITH_VALUES:
             raise error_type(f'unknown ask option: {option}')
         if not remaining:
             raise error_type(f'{option} requires a value')
         _set_option_value(options, option, remaining.pop(0), error_type=error_type)
-    return options, silence, wait
-
-
-def _validate_wait_options(*, route, options: dict[str, str | float | None], wait: bool, error_type) -> None:
-    if options['output_path'] is not None and not wait:
-        raise error_type('--output requires --wait')
-    if wait and route.target == 'all':
-        raise error_type('ccb ask --wait requires a single target; broadcast is not supported')
+    return options, compact, silence
 
 
 def parse_ask(
@@ -91,7 +81,7 @@ def parse_ask(
         return action_command
 
     remaining = list(tokens)
-    options, silence, wait = _parse_route_options(remaining, error_type=error_type)
+    options, compact, silence = _parse_route_options(remaining, error_type=error_type)
 
     stdin_text = read_optional_stdin()
     if stdin_text:
@@ -101,7 +91,6 @@ def parse_ask(
         route = parse_ask_route(remaining, command_name='ccb ask')
     except ValueError as exc:
         raise error_type(str(exc)) from exc
-    _validate_wait_options(route=route, options=options, wait=wait, error_type=error_type)
     return ParsedAskCommand(
         project=project,
         target=route.target,
@@ -110,10 +99,8 @@ def parse_ask(
         task_id=options['task_id'],
         reply_to=options['reply_to'],
         mode=options['mode'],
+        compact=compact,
         silence=silence,
-        wait=wait,
-        output_path=str(options['output_path']) if options['output_path'] is not None else None,
-        timeout_s=float(options['timeout_s']) if options['timeout_s'] is not None else None,
     )
 
 

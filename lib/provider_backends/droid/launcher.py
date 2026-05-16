@@ -16,14 +16,32 @@ from provider_core.contracts import ProviderRuntimeLauncher
 from provider_core.runtime_shared import provider_start_parts
 from workspace.models import WorkspacePlan
 
+from .home import managed_droid_home_for_runtime
+
 
 def build_runtime_launcher() -> ProviderRuntimeLauncher:
     return ProviderRuntimeLauncher(
         provider='droid',
         launch_mode='simple_tmux',
+        prepare_launch_context=prepare_launch_context,
         build_start_cmd=build_start_cmd,
         build_session_payload=build_session_payload,
     )
+
+
+def prepare_launch_context(
+    context: CliContext,
+    spec: AgentSpec,
+    plan: WorkspacePlan,
+    runtime_dir: Path,
+    prepared_state: dict[str, object],
+) -> dict[str, object]:
+    del context, spec, plan
+    payload = dict(prepared_state or {})
+    droid_home = managed_droid_home_for_runtime(runtime_dir)
+    payload['droid_home'] = str(droid_home)
+    payload['droid_sessions_root'] = str(droid_home / 'sessions')
+    return payload
 
 
 def build_start_cmd(
@@ -34,14 +52,22 @@ def build_start_cmd(
     *,
     prepared_state: dict[str, object] | None = None,
 ) -> str:
-    del prepared_state
     cmd_parts = provider_start_parts('droid')
     if command.restore:
         cmd_parts.append('-r')
     cmd_parts.extend(spec.startup_args)
     cmd = ' '.join(shlex.quote(str(part)) for part in cmd_parts)
     runtime_dir = Path(runtime_dir)
+    droid_home = _droid_home(runtime_dir, prepared_state)
+    droid_sessions_root = _droid_sessions_root(droid_home, prepared_state)
     env_prefix = join_env_prefix(
+        export_env_clause(
+            {
+                'FACTORY_HOME': str(droid_home),
+                'FACTORY_SESSIONS_ROOT': str(droid_sessions_root),
+                'DROID_SESSIONS_ROOT': str(droid_sessions_root),
+            }
+        ),
         export_env_clause(provider_user_session_env()),
         export_env_clause(
             caller_context_env(actor=spec.name, runtime_dir=runtime_dir, launch_session_id=launch_session_id)
@@ -64,7 +90,8 @@ def build_session_payload(
     launch_session_id: str,
     prepared_state: dict[str, object],
 ) -> dict[str, object]:
-    del prepared_state
+    droid_home = _droid_home(Path(runtime_dir), prepared_state)
+    droid_sessions_root = _droid_sessions_root(droid_home, prepared_state)
     return {
         'ccb_session_id': launch_session_id,
         'agent_name': spec.name,
@@ -78,8 +105,26 @@ def build_session_payload(
         'workspace_path': str(plan.workspace_path),
         'work_dir': str(run_cwd),
         'start_dir': str(context.project.project_root),
+        'droid_home': str(droid_home),
+        'factory_home': str(droid_home),
+        'droid_sessions_root': str(droid_sessions_root),
+        'factory_sessions_root': str(droid_sessions_root),
         'start_cmd': start_cmd,
     }
 
 
-__all__ = ['build_runtime_launcher', 'build_start_cmd']
+def _droid_home(runtime_dir: Path, prepared_state: dict[str, object] | None) -> Path:
+    raw = str((prepared_state or {}).get('droid_home') or '').strip()
+    if raw:
+        return Path(raw).expanduser()
+    return managed_droid_home_for_runtime(runtime_dir)
+
+
+def _droid_sessions_root(droid_home: Path, prepared_state: dict[str, object] | None) -> Path:
+    raw = str((prepared_state or {}).get('droid_sessions_root') or '').strip()
+    if raw:
+        return Path(raw).expanduser()
+    return droid_home / 'sessions'
+
+
+__all__ = ['build_runtime_launcher', 'build_start_cmd', 'prepare_launch_context']

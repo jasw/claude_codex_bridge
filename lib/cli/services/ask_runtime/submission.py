@@ -8,6 +8,52 @@ from mailbox_runtime.targets import NON_AGENT_ACTORS, normalize_actor_name
 
 from .models import AskSummary
 
+_DEFAULT_REPLY_GUIDANCE = """CCB reply guidance:
+- Choose the shortest reply that still preserves the key information needed for this ask.
+- Keep conclusions, blockers, risks, evidence, and next actions when they are relevant.
+- For simple status checks, prefer a short status answer.
+- Avoid full logs, raw output, and broad background unless the ask explicitly requires them."""
+
+_COMPACT_REPLY_GUIDANCE = """CCB reply guidance:
+- Actively distill the reply while preserving the key information needed for this ask.
+- Decide the right compression level from the request context; do not use a fixed length target.
+- Lead with the answer and omit empty or report-style sections.
+- Keep blockers, decisions, risks, evidence, changed files, verification, and next actions only when they matter.
+- Avoid background, raw logs, and repeated context unless they are essential to understand the result."""
+
+_SILENT_REPLY_GUIDANCE = """CCB reply guidance:
+- The caller requested silent-on-success delivery.
+- Prefer the shortest useful success/failure status.
+- Include details only when they are needed to explain a failure, blocker, or required next action."""
+
+_GUIDANCE_MARKER = 'CCB reply guidance:'
+_EXPLICIT_OUTPUT_HINTS = (
+    'output requirements',
+    'reply format',
+    'response format',
+    'format:',
+    'only reply',
+    'reply only',
+    'full report',
+    'detailed report',
+    'verbatim',
+    'do not summarize',
+    'do not abbreviate',
+    '完整输出',
+    '不要总结',
+    '不要压缩',
+    '不要精简',
+    '不要省略',
+    '逐字返回',
+    '逐字',
+    '原样返回',
+    '保留原文',
+    '完整日志',
+    '完整报告',
+    '详细报告',
+    '全文',
+)
+
 
 def submit_ask(
     context,
@@ -31,7 +77,12 @@ def submit_ask(
                 project_id=context.project.project_id,
                 to_agent=normalized_target,
                 from_actor=normalized_sender,
-                body=command.message,
+                body=message_with_reply_guidance(
+                    command.message,
+                    message_type=command.mode or 'ask',
+                    compact=bool(getattr(command, 'compact', False)),
+                    silence_on_success=command.silence,
+                ),
                 task_id=command.task_id,
                 reply_to=command.reply_to,
                 message_type=command.mode or 'ask',
@@ -41,6 +92,34 @@ def submit_ask(
         )
     )
     return _summary_from_payload(context.project.project_id, payload)
+
+
+def message_with_reply_guidance(
+    message: str,
+    *,
+    message_type: str,
+    compact: bool = False,
+    silence_on_success: bool = False,
+) -> str:
+    if str(message_type or '').strip().lower() != 'ask':
+        return message
+    if _has_explicit_output_guidance(message):
+        return message
+    if silence_on_success:
+        guidance = _SILENT_REPLY_GUIDANCE
+    elif compact:
+        guidance = _COMPACT_REPLY_GUIDANCE
+    else:
+        guidance = _DEFAULT_REPLY_GUIDANCE
+    return f'{str(message).rstrip()}\n\n{guidance}'
+
+
+def _has_explicit_output_guidance(message: str) -> bool:
+    text = str(message or '')
+    lowered = text.lower()
+    if _GUIDANCE_MARKER.lower() in lowered:
+        return True
+    return any(hint in lowered for hint in _EXPLICIT_OUTPUT_HINTS)
 
 
 def _normalize_sender(value: str | None) -> str:
@@ -95,4 +174,4 @@ def _summary_from_payload(project_id: str, payload: dict) -> AskSummary:
     return AskSummary(project_id=project_id, submission_id=submission_id, jobs=jobs)
 
 
-__all__ = ['submit_ask']
+__all__ = ['message_with_reply_guidance', 'submit_ask']

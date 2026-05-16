@@ -1013,6 +1013,13 @@ def test_ensure_agent_runtime_launches_named_droid_session(monkeypatch, tmp_path
     assert result.binding.session_ref == str(expected_session)
     payload = json.loads(expected_session.read_text(encoding='utf-8'))
     assert payload['pane_title_marker'].startswith('CCB-mobile-')
+    expected_home = ctx.paths.agent_provider_state_dir('mobile', 'droid') / 'home'
+    assert payload['droid_home'] == str(expected_home)
+    assert payload['factory_home'] == str(expected_home)
+    assert payload['droid_sessions_root'] == str(expected_home / 'sessions')
+    assert (expected_home / 'sessions').is_dir()
+    assert f'FACTORY_HOME={shlex.quote(str(expected_home))}' in payload['start_cmd']
+    assert f'DROID_SESSIONS_ROOT={shlex.quote(str(expected_home / "sessions"))}' in payload['start_cmd']
     _assert_caller_env_exports(
         payload['start_cmd'],
         actor='mobile',

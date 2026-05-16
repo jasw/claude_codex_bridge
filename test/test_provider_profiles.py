@@ -11,6 +11,7 @@ from agents.models import AgentSpec, PermissionMode, ProviderProfileSpec, QueueP
 import provider_backends.claude.launcher_runtime.home as claude_home_runtime
 from provider_backends.claude.launcher_runtime.home import materialize_claude_home_config
 from provider_backends.claude.launcher_runtime.binary_cache import route_claude_binary_cache
+from provider_backends.droid.home import materialize_droid_home_config
 from provider_backends.gemini.launcher_runtime.home import materialize_gemini_home_config
 import provider_core.projected_assets as projected_assets
 import provider_profiles.codex_home_config as codex_home_config
@@ -1520,6 +1521,27 @@ def test_materialize_claude_home_config_respects_inherit_memory_flag(tmp_path: P
     assert not (layout.claude_dir / 'CLAUDE.md').exists()
 
 
+def test_materialize_claude_home_config_projects_inherited_skills_and_commands(tmp_path: Path) -> None:
+    source_home = tmp_path / 'system-home'
+    target_home = tmp_path / 'managed-home'
+    source_claude_dir = source_home / '.claude'
+    (source_claude_dir / 'skills' / 'ask').mkdir(parents=True, exist_ok=True)
+    (source_claude_dir / 'commands').mkdir(parents=True, exist_ok=True)
+    (source_claude_dir / 'skills' / 'ask' / 'SKILL.md').write_text('ask skill\n', encoding='utf-8')
+    (source_claude_dir / 'commands' / 'ask.md').write_text('ask command\n', encoding='utf-8')
+
+    layout = materialize_claude_home_config(
+        target_home,
+        profile=ProviderProfileSpec(inherit_memory=False),
+        source_home=source_home,
+    )
+
+    assert (layout.claude_dir / 'skills' / 'ask' / 'SKILL.md').read_text(encoding='utf-8') == 'ask skill\n'
+    assert (layout.claude_dir / 'commands' / 'ask.md').read_text(encoding='utf-8') == 'ask command\n'
+    assert (layout.claude_dir / 'skills.ccb-projection.json').is_file()
+    assert (layout.claude_dir / 'commands.ccb-projection.json').is_file()
+
+
 def test_materialize_claude_home_config_skips_memory_without_project_context(tmp_path: Path) -> None:
     source_home = tmp_path / 'system-home'
     target_home = tmp_path / 'managed-home'
@@ -1530,6 +1552,19 @@ def test_materialize_claude_home_config_skips_memory_without_project_context(tmp
     layout = materialize_claude_home_config(target_home, source_home=source_home)
 
     assert not (layout.claude_dir / 'CLAUDE.md').exists()
+
+
+def test_materialize_droid_home_config_projects_inherited_skills(tmp_path: Path) -> None:
+    source_home = tmp_path / 'system-factory-home'
+    target_home = tmp_path / 'managed-factory-home'
+    (source_home / 'skills' / 'ask').mkdir(parents=True, exist_ok=True)
+    (source_home / 'skills' / 'ask' / 'SKILL.md').write_text('ask skill\n', encoding='utf-8')
+
+    materialize_droid_home_config(target_home, source_home=source_home)
+
+    assert (target_home / 'sessions').is_dir()
+    assert (target_home / 'skills' / 'ask' / 'SKILL.md').read_text(encoding='utf-8') == 'ask skill\n'
+    assert (target_home / 'skills.ccb-projection.json').is_file()
 
 
 def test_materialize_codex_home_config_writes_project_memory_bundle(tmp_path: Path) -> None:

@@ -9,6 +9,7 @@ from pathlib import Path
 import shutil
 import subprocess
 
+from provider_core.projected_assets import route_projected_tree
 from provider_core.source_home import current_provider_source_home
 from provider_profiles import provider_api_env_keys
 from project_memory import (
@@ -37,6 +38,8 @@ _CLAUDE_JSON_AUTH_COMPANION_KEYS = (
     'subscriptionNoticeCount',
 )
 _MACOS_KEYCHAIN_CLAUDE_SERVICES = ('Claude Code-credentials', 'Claude Code-custom-oauth', 'Claude Code')
+_CLAUDE_SKILLS_PROJECTION_LABEL = 'claude-inherited-skills'
+_CLAUDE_COMMANDS_PROJECTION_LABEL = 'claude-inherited-commands'
 
 
 def resolve_claude_home_layout(runtime_dir: Path, profile) -> ClaudeHomeLayout:
@@ -203,10 +206,18 @@ def _materialize_inherited_assets(
     agent_name: str | None,
     workspace_path: Path | None,
 ) -> dict[str, object]:
-    if _inherits_commands(profile):
-        _sync_tree(source_home / '.claude' / 'commands', target_layout.claude_dir / 'commands')
-    if _inherits_skills(profile):
-        _sync_tree(source_home / '.claude' / 'skills', target_layout.claude_dir / 'skills')
+    _route_inherited_tree(
+        source_home / '.claude' / 'commands',
+        target_layout.claude_dir / 'commands',
+        enabled=_inherits_commands(profile),
+        label=_CLAUDE_COMMANDS_PROJECTION_LABEL,
+    )
+    _route_inherited_tree(
+        source_home / '.claude' / 'skills',
+        target_layout.claude_dir / 'skills',
+        enabled=_inherits_skills(profile),
+        label=_CLAUDE_SKILLS_PROJECTION_LABEL,
+    )
     memory_result = _materialize_claude_memory(
         source_home,
         target_layout,
@@ -796,6 +807,10 @@ def _sync_tree(source: Path, target: Path) -> None:
         shutil.copytree(source, target, dirs_exist_ok=True)
     except Exception:
         pass
+
+
+def _route_inherited_tree(source: Path, target: Path, *, enabled: bool, label: str) -> None:
+    route_projected_tree(source, target, enabled=enabled, label=label, allow_unmarked_replace=True)
 
 
 def _system_home_root() -> Path:

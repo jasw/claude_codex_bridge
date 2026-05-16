@@ -176,16 +176,26 @@ def test_parse_ask_with_silence_flag(parser: CliParser) -> None:
     )
 
 
-def test_parse_ask_wait_submit_with_output_and_timeout(parser: CliParser) -> None:
-    parsed = parser.parse(['ask', '--wait', '--output', '/tmp/reply.txt', '--timeout', '30', 'agent1', 'ship', 'it'])
+def test_parse_ask_with_compact_flag(parser: CliParser) -> None:
+    parsed = parser.parse(['ask', '--compact', 'agent1', 'from', 'agent2', 'review', 'it'])
+    assert parsed == ParsedAskCommand(
+        project=None,
+        target='agent1',
+        sender='agent2',
+        message='review it',
+        compact=True,
+    )
+
+
+def test_parse_ask_ignores_hidden_legacy_wait_flags(parser: CliParser) -> None:
+    parsed = parser.parse(
+        ['ask', '--wait', '--timeout', '30', '--output', '/tmp/reply.txt', 'agent1', 'ship', 'it']
+    )
     assert parsed == ParsedAskCommand(
         project=None,
         target='agent1',
         sender=None,
         message='ship it',
-        wait=True,
-        output_path='/tmp/reply.txt',
-        timeout_s=30.0,
     )
 
 
@@ -194,8 +204,6 @@ def test_parse_ask_wait_submit_with_output_and_timeout(parser: CliParser) -> Non
     [
         (['ask', '--sync', 'agent1', 'ship', 'it'], '--sync is no longer supported'),
         (['ask', '--async', 'agent1', 'ship', 'it'], '--async is no longer supported'),
-        (['ask', '-o', '/tmp/reply.txt', 'agent1', 'ship', 'it'], '-o is no longer supported'),
-        (['ask', '-t', '30', 'agent1', 'ship', 'it'], '-t is no longer supported'),
     ],
 )
 def test_parse_ask_rejects_removed_alias_flags(parser: CliParser, argv: list[str], message: str) -> None:
@@ -215,8 +223,6 @@ def test_parse_ask_wait_get_and_cancel_subcommands(parser: CliParser) -> None:
         ['ask', 'agent1', 'from'],
         ['ask', 'agent1', 'from', 'agent2'],
         ['ask', '--unknown', 'agent1', 'from', 'user', 'x'],
-        ['ask', '--output', '/tmp/reply.txt', 'agent1', 'x'],
-        ['ask', '--wait', 'all', 'x'],
     ],
 )
 def test_parse_ask_invalid(parser: CliParser, argv: list[str]) -> None:

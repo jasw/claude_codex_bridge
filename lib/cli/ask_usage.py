@@ -32,16 +32,16 @@ def write_ask_usage(
         print("", file=out)
     print("Usage:", file=out)
     print(
-        f"  {command_name} [--wait] [--output FILE] [--timeout SECONDS]",
+        f"  {command_name} [--compact] [--silence] <target> [--] <message...>",
         file=out,
     )
-    print(
-        "      [--silence] <target> [--] <message...>",
-        file=out,
-    )
+    print("      --compact request a distilled reply that preserves key information", file=out)
+    print("      --silence request silent-on-success delivery; failures/blockers still surface", file=out)
     print("      sender is inferred from the current workspace agent and falls back to user", file=out)
     print("      message text may be supplied on stdin", file=out)
-    print(f"  {command_name} wait <job_id>", file=out)
+    print("      examples:", file=out)
+    print(f"        {command_name} --compact agent1 review latest diff", file=out)
+    print(f"        {command_name} --silence agent1 run smoke check", file=out)
     print(f"  {command_name} get <job_id>", file=out)
     print(f"  {command_name} cancel <job_id>", file=out)
     if alias_note:

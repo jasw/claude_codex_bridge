@@ -38,7 +38,7 @@ def render_observer_notice(
         )
     else:
         lines.append(
-            'observer_notice: weak observer surface; non-terminal state may change; prefer ccb ask --wait / ccb ask wait <job_id>'
+            'observer_notice: weak observer surface; non-terminal state may change; use ccb trace <id> for lineage when needed'
         )
     return tuple(lines)
 

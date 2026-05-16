@@ -25,7 +25,7 @@ def _load_module():
     return module
 
 
-def test_submit_task_returns_async_wait_hint(monkeypatch) -> None:
+def test_submit_task_returns_async_status(monkeypatch) -> None:
     module = _load_module()
     monkeypatch.setattr(module, "build_context_for", lambda work_dir: object())
     monkeypatch.setattr(
@@ -43,7 +43,8 @@ def test_submit_task_returns_async_wait_hint(monkeypatch) -> None:
 
     assert data["job_id"] == "job-1"
     assert data["terminal"] is False
-    assert data["wait_hint"] == "ccb ask wait job-1"
+    assert data["reply_mode"] == "async"
+    assert not any(str(key).endswith("_hint") for key in data)
 
 
 def test_submit_task_waits_for_terminal_reply(monkeypatch) -> None:

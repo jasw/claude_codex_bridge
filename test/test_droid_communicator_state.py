@@ -64,3 +64,36 @@ def test_ensure_log_reader_primes_once(tmp_path: Path) -> None:
     assert reader_calls[0]['work_dir'] == tmp_path / 'workspace'
     assert reader_calls[1]['preferred'] == tmp_path / 'sessions' / 's1.json'
     assert reader_calls[2]['session_id'] == 'sid-1'
+
+
+def test_ensure_log_reader_uses_session_scoped_droid_sessions_root(tmp_path: Path) -> None:
+    reader_calls: list[dict[str, object]] = []
+
+    class Reader:
+        def __init__(self, *, root, work_dir) -> None:
+            reader_calls.append({'root': root, 'work_dir': work_dir})
+
+        def set_preferred_session(self, path) -> None:
+            del path
+
+        def set_session_id_hint(self, session_id) -> None:
+            del session_id
+
+    comm = SimpleNamespace(
+        session_info={
+            'work_dir': str(tmp_path / 'workspace'),
+            'droid_sessions_root': str(tmp_path / 'factory' / 'sessions'),
+        },
+        _log_reader=None,
+        _log_reader_primed=False,
+        _prime_log_binding=lambda: None,
+    )
+
+    ensure_log_reader(comm, log_reader_cls=Reader)
+
+    assert reader_calls == [
+        {
+            'root': tmp_path / 'factory' / 'sessions',
+            'work_dir': tmp_path / 'workspace',
+        }
+    ]

@@ -241,6 +241,8 @@ def _classify_provider_home(
         return _classify_gemini_home(path, relative_path, remainder, size=size, provider=provider, agent=agent, root_kind=root_kind)
     if provider == 'opencode':
         return _classify_opencode_home(path, relative_path, remainder, size=size, provider=provider, agent=agent, root_kind=root_kind)
+    if provider == 'droid':
+        return _classify_droid_home(path, relative_path, remainder, size=size, provider=provider, agent=agent, root_kind=root_kind)
     return _entry(path, relative_path, StorageClass.UNKNOWN, size, provider=provider, agent=agent, root_kind=root_kind)
 
 
@@ -382,6 +384,23 @@ def _classify_opencode_home(
         return _entry(path, relative_path, StorageClass.PROJECTED_CONFIG, size, provider=provider, agent=agent, root_kind=root_kind)
     if remainder[0] in {'.cache', '.tmp'}:
         return _entry(path, relative_path, StorageClass.REBUILDABLE_CACHE, size, provider=provider, agent=agent, root_kind=root_kind)
+    return _entry(path, relative_path, StorageClass.UNKNOWN, size, provider=provider, agent=agent, root_kind=root_kind)
+
+
+def _classify_droid_home(
+    path: Path,
+    relative_path: str,
+    remainder: tuple[str, ...],
+    *,
+    size: int,
+    provider: str,
+    agent: str,
+    root_kind: str,
+) -> StorageEntry:
+    if remainder[0] == 'sessions':
+        return _entry(path, relative_path, StorageClass.SESSION, size, provider=provider, agent=agent, root_kind=root_kind)
+    if remainder[0] == 'skills':
+        return _entry(path, relative_path, StorageClass.PROJECTED_CONFIG, size, provider=provider, agent=agent, root_kind=root_kind)
     return _entry(path, relative_path, StorageClass.UNKNOWN, size, provider=provider, agent=agent, root_kind=root_kind)
 
 
@@ -546,9 +565,12 @@ def _is_marked_projected_symlink(path: Path) -> bool:
         return False
     if str(payload.get('label') or '') not in {
         'claude-binary-versions',
+        'claude-inherited-skills',
+        'claude-inherited-commands',
         'codex-inherited-skills',
         'codex-inherited-commands',
         'codex-plugin-bundle',
+        'droid-inherited-skills',
     }:
         return False
     source = str(payload.get('source') or '').strip()

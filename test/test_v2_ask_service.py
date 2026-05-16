@@ -11,6 +11,7 @@ from ccbd.socket_client import CcbdClientError
 from cli.context import CliContextBuilder
 from cli.models import ParsedAskCommand
 from cli.services import ask as ask_service
+from cli.services.ask_runtime.submission import message_with_reply_guidance
 from cli.services.daemon import CcbdServiceError
 from project.ids import compute_project_id
 
@@ -98,6 +99,53 @@ def test_submit_ask_maps_broadcast_payload_and_submission(monkeypatch: pytest.Mo
         'delivery_scope': DeliveryScope.BROADCAST,
         'silence_on_success': True,
     }
+
+
+def test_message_with_reply_guidance_appends_compact_default() -> None:
+    body = message_with_reply_guidance('review the diff', message_type='ask')
+
+    assert body.startswith('review the diff\n\nCCB reply guidance:')
+    assert 'shortest reply that still preserves the key information' in body
+    assert 'no more than' not in body
+
+
+def test_message_with_reply_guidance_appends_explicit_compact_guidance() -> None:
+    body = message_with_reply_guidance('review the diff', message_type='ask', compact=True)
+
+    assert body.startswith('review the diff\n\nCCB reply guidance:')
+    assert 'Actively distill the reply' in body
+    assert 'do not use a fixed length target' in body
+    assert 'Lead with the answer' in body
+
+
+def test_message_with_reply_guidance_respects_explicit_output_requirements() -> None:
+    body = message_with_reply_guidance(
+        'review the diff\n\nOutput requirements:\n- Write a full report.',
+        message_type='ask',
+    )
+
+    assert body == 'review the diff\n\nOutput requirements:\n- Write a full report.'
+
+
+def test_message_with_reply_guidance_respects_chinese_explicit_output_requirements() -> None:
+    body = message_with_reply_guidance(
+        '请完整输出测试日志，不要总结。',
+        message_type='ask',
+        compact=True,
+    )
+
+    assert body == '请完整输出测试日志，不要总结。'
+
+
+def test_message_with_reply_guidance_uses_silent_hint_for_silenced_asks() -> None:
+    body = message_with_reply_guidance('run smoke test', message_type='ask', silence_on_success=True)
+
+    assert 'silent-on-success delivery' in body
+    assert 'shortest useful success/failure status' in body
+
+
+def test_message_with_reply_guidance_skips_non_ask_modes() -> None:
+    assert message_with_reply_guidance('ship it', message_type='notify') == 'ship it'
 
 
 def test_submit_ask_rejects_explicit_cmd_sender(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

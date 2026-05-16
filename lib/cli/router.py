@@ -144,7 +144,7 @@ _COMMAND_HELP = {
             ccb pend --queue <agent|all>        Show the same non-authoritative backlog summary exposed by `ccb queue`.
             ccb pend --queue --detail <agent>   Expand queued-event detail through the observer entrypoint.
             ccb pend <target> N                 Show the latest N observer snapshot items.
-          Prefer `ccb ask --wait` / `ccb ask wait <job_id>` for terminal results and `ccb trace <id>` for lineage.
+          Use `ccb trace <id>` for lineage when needed.
     """,
     "watch": """
         usage: ccb watch <agent|job_id>
@@ -154,7 +154,7 @@ _COMMAND_HELP = {
           ccb watch <job_id>  Stream non-authoritative observer events for one job until terminal completion or timeout.
           Prefer `ccb pend --watch <agent|job_id>` as the converged observer entrypoint.
           Do not treat non-terminal watch output as authoritative completion.
-          Prefer `ccb ask --wait` / `ccb ask wait <job_id>` for terminal results and `ccb trace <id>` for lineage.
+          Use `ccb trace <id>` for lineage when needed.
     """,
     "queue": """
         usage: ccb queue [--detail] <agent_name|all>
@@ -164,7 +164,7 @@ _COMMAND_HELP = {
           ccb queue --detail <agent_name>   Expand queued-event details for one agent.
           ccb queue all                     Show non-authoritative observer backlog state across the project.
           `ccb pend --queue [--detail] <agent|all>` remains the equivalent weak-observer form.
-          Prefer `ccb ask --wait` / `ccb ask wait <job_id>` for terminal results and `ccb trace <id>` for lineage.
+          Use `ccb trace <id>` for lineage when needed.
     """,
     "trace": """
         usage: ccb trace <submission_id|message_id|attempt_id|reply_id|job_id>
@@ -179,7 +179,7 @@ _COMMAND_HELP = {
           ccb inbox <agent_name>            Show a non-authoritative observer summary for one agent.
           ccb inbox --detail <agent_name>   Expand inbox-item detail for one agent.
           Prefer `ccb pend --inbox [--detail] <agent>` as the converged observer entrypoint.
-          Prefer `ccb ask --wait` / `ccb ask wait <job_id>` for terminal results and `ccb trace <id>` for lineage.
+          Use `ccb trace <id>` for lineage when needed.
     """,
     "logs": """
         usage: ccb logs <agent>

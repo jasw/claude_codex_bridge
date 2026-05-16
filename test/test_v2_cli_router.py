@@ -186,7 +186,7 @@ def test_run_cli_entrypoint_prints_pend_help_as_supplementary_status() -> None:
     assert "ccb pend --watch <agent|job_id>" in stdout.getvalue()
     assert "ccb pend --queue <agent|all>" in stdout.getvalue()
     assert "ccb pend --queue --detail <agent>" in stdout.getvalue()
-    assert "Prefer `ccb ask --wait` / `ccb ask wait <job_id>`" in stdout.getvalue()
+    assert "Use `ccb trace <id>` for lineage when needed." in stdout.getvalue()
     assert stderr.getvalue() == ""
 
 
@@ -937,7 +937,13 @@ def test_run_cli_entrypoint_prints_ask_help() -> None:
 
     assert result == 0
     assert "Usage:" in stdout.getvalue()
-    assert "ccb ask [--wait] [--output FILE] [--timeout SECONDS]" in stdout.getvalue()
+    assert "ccb ask [--compact] [--silence] <target> [--] <message...>" in stdout.getvalue()
+    assert "--compact request a distilled reply that preserves key information" in stdout.getvalue()
+    assert "--silence request silent-on-success delivery; failures/blockers still surface" in stdout.getvalue()
+    assert "ccb ask --compact agent1 review latest diff" in stdout.getvalue()
+    assert "ccb ask --silence agent1 run smoke check" in stdout.getvalue()
+    assert "--wait" not in stdout.getvalue()
+    assert "--timeout" not in stdout.getvalue()
     assert stderr.getvalue() == ""
 
 

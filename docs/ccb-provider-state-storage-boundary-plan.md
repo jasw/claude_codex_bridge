@@ -189,6 +189,7 @@ Examples:
 - Codex inherited `skills/` and `commands/`
 - Claude `.claude/settings.json`
 - Claude `.claude/skills/`, `.claude/commands/`, `.claude/CLAUDE.md`
+- Droid inherited `skills/`
 - Gemini `.gemini/settings.json`, `.gemini/trustedFolders.json`
 
 Auth, OAuth, token, and credential files are never `PROJECTED_CONFIG` even when

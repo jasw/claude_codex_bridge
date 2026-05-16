@@ -556,7 +556,7 @@ conversation/job/mailbox status view
 
 - `ask` 是用户主入口，默认承担第一手提交反馈
 - `pend` 不是主入口，只作为补充结果/状态查询
-- `watch` 变成 `pend --watch` 或 `ask --wait` 的内部模式
+- `watch` 变成 `pend --watch` 或内部 watcher 模式
 - `inbox` 合并进 `pend --inbox` 或 `queue --agent`
 - `queue` 变成观测入口，只看 backlog，不作为主通讯入口
 
@@ -647,7 +647,7 @@ repair 修复/重试
 |---|---|---|
 | `ask` | 主链路 | 保留为唯一主通讯入口 |
 | `pend` | 次级观察 | 保留，但降级为补充结果/状态查询 |
-| `watch` | 次级观察 | 收敛为 `pend --watch` 或 `ask --wait` 模式 |
+| `watch` | 次级观察 | 收敛为 `pend --watch` 或内部 watcher 模式 |
 | `inbox` | 次级观察 | 收敛为 `pend --inbox` 或 `queue --agent`，保留兼容 alias |
 | `queue` | 观测视图 | 保留 backlog 视图，不再承担结果确认 |
 | `trace` | 高级排障 | 保留为 lineage / ledger 级排障入口 |

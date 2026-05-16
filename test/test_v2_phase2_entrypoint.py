@@ -2075,7 +2075,7 @@ def test_ccb_opencode_real_adapter_blackbox_cancel_stops_legacy_completion(monke
 
         running = _wait_for_phase2_status(project_root, 'demo', 'running', timeout=3.0)
         assert f'job_id: {job_id}' in running
-        assert 'observer_notice: weak observer surface; non-terminal state may change; prefer ccb ask --wait / ccb ask wait <job_id>' in running
+        assert 'observer_notice: weak observer surface; non-terminal state may change; use ccb trace <id> for lineage when needed' in running
 
         code, stdout, stderr = _run_phase2_local(['cancel', job_id], cwd=project_root)
         assert code == 0, stderr
@@ -2369,7 +2369,7 @@ def test_ccb_droid_real_adapter_blackbox_cancel_stops_legacy_completion(monkeypa
 
         running = _wait_for_phase2_status(project_root, 'demo', 'running', timeout=3.0)
         assert f'job_id: {job_id}' in running
-        assert 'observer_notice: weak observer surface; non-terminal state may change; prefer ccb ask --wait / ccb ask wait <job_id>' in running
+        assert 'observer_notice: weak observer surface; non-terminal state may change; use ccb trace <id> for lineage when needed' in running
 
         code, stdout, stderr = _run_phase2_local(['cancel', job_id], cwd=project_root)
         assert code == 0, stderr
