@@ -190,7 +190,7 @@ def test_prepare_provider_workspace_materializes_claude_memory_bundle_before_hoo
     assert text.startswith('# CCB Managed Agent Memory')
     assert 'system claude memory' in text
     assert 'shared ccb memory' in text
-    assert 'project claude memory' in text
+    assert 'project claude memory' not in text
     assert 'agent private memory' in text
 
 

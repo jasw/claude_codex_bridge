@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## v6.2.5 (2026-05-19)
+
+### Claude Managed Memory De-Duplication Hotfix
+
+- **Claude Project Memory De-Duplicated**: managed `.claude/CLAUDE.md` bundles no longer copy the project-level `CLAUDE.md`, allowing Claude to load it natively from the working directory.
+- **Managed Memory Sources Preserved**: provider user memory from real `~/.claude/CLAUDE.md`, `.ccb/ccb_memory.md`, and per-agent `.ccb/agents/<agent>/memory.md` still project into the managed Claude home.
+- **Project Memory Loader Flag Added**: `load_memory_sources(..., include_provider_native_project=False)` can now skip provider-native project memory while the default behavior still includes it for existing callers.
+
 ## v6.2.4 (2026-05-18)
 
 ### Codex Managed Config TOML Hotfix

@@ -1751,8 +1751,8 @@ def test_materialize_claude_home_config_writes_project_memory_bundle(tmp_path: P
     assert 'user claude memory' in text
     assert '## CCB Shared Project Memory' in text
     assert 'shared ask memory' in text
-    assert '## Provider-Native Project Memory' in text
-    assert 'project claude memory' in text
+    assert '## Provider-Native Project Memory' not in text
+    assert 'project claude memory' not in text
     assert '## Agent Private Memory' in text
     assert 'reviewer private memory' in text
 

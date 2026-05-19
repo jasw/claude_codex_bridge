@@ -7,7 +7,7 @@
   <img src="https://img.shields.io/badge/模型皆可控-CF1322?style=for-the-badge" alt="模型皆可控">
 </p>
 
-[![Version](https://img.shields.io/badge/version-6.2.4-orange.svg)]()
+[![Version](https://img.shields.io/badge/version-6.2.5-orange.svg)]()
 [![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-lightgrey.svg)]()
 
 [English](README.md) | **中文**
@@ -74,10 +74,9 @@
 <details>
 <summary><b>最新版本亮点</b></summary>
 
-- **Codex managed config 支持更复杂 TOML**：继承的 `config.toml` 含 inline table array 时会正常渲染，不再因为 parsed dict value 报错。
-- **Fallback config copy 不再重复追加 features 段**：没有 TOML parser 时会原位更新已有 `[features]`，并正确识别 `[table]` 与 `[[array_of_tables]]` 边界。
-- **安装器会按需补 TOML parser**：Linux/macOS 和 Windows 安装器在没有 TOML reader 时自动安装 `tomli>=2.0.0`，也可用 `CCB_INSTALL_TOMLI=0` 跳过。
-- **Managed venv 依赖安装作用域正确**：release 安装会先在 managed venv 内安装 `tomli`，再处理可选 watchdog。
+- **Claude managed memory 不再重复项目规则**：managed `.claude/CLAUDE.md` 不再复制项目级 `CLAUDE.md`；Claude 仍会从工作目录原生读取它。
+- **Managed Claude memory 保留正确继承源**：真实 `~/.claude/CLAUDE.md`、`.ccb/ccb_memory.md` 和每个 agent 的 `.ccb/agents/<agent>/memory.md` 仍会进入 managed bundle。
+- **Memory source 加入可控开关**：`load_memory_sources(..., include_provider_native_project=False)` 可跳过 provider-native project memory，默认行为仍保持包含。
 
 完整历史见 [新版本记录](#新版本记录)。
 
@@ -330,6 +329,15 @@ ccb reinstall
 历史说明：下面较旧的发布记录里仍可能出现 `askd`、旧 flag 或已移除命令。这些内容仅作为 changelog 历史保留，不代表当前 CLI 入口。
 
 <details open>
+<summary><b>v6.2.5</b> - Claude Managed Memory De-Duplication Hotfix</summary>
+
+- 不再把项目级 `CLAUDE.md` 复制进 managed `.claude/CLAUDE.md`，让 Claude 只从工作目录读取一次。
+- managed Claude bundle 仍保留 provider user memory、CCB shared project memory 和 agent private memory。
+- `load_memory_sources` 增加 provider-native project memory 的 opt-out 开关，同时保留其他调用方默认包含的行为。
+
+</details>
+
+<details>
 <summary><b>v6.2.4</b> - Codex Managed Config TOML Hotfix</summary>
 
 - 将 dict value 渲染为 inline TOML table，避免继承含 inline table array 的 Codex config 时 managed-home projection 崩溃。

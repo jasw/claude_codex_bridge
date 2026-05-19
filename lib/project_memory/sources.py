@@ -36,6 +36,7 @@ def load_memory_sources(
     provider: str,
     extra_sources: tuple[ProjectMemorySource, ...] = (),
     include_missing: bool = True,
+    include_provider_native_project: bool = True,
 ) -> tuple[ProjectMemorySource, ...]:
     layout = _layout(project_root_or_layout)
     sources: list[ProjectMemorySource] = []
@@ -49,7 +50,7 @@ def load_memory_sources(
         )
     )
 
-    provider_path = provider_native_memory_path(layout, provider)
+    provider_path = provider_native_memory_path(layout, provider) if include_provider_native_project else None
     if provider_path is not None:
         provider_source = _read_source(
             kind='provider_native_project',

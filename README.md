@@ -7,7 +7,7 @@
   <img src="https://img.shields.io/badge/Every_Model_Controllable-CF1322?style=for-the-badge" alt="Every Model Controllable">
 </p>
 
-[![Version](https://img.shields.io/badge/version-6.2.4-orange.svg)]()
+[![Version](https://img.shields.io/badge/version-6.2.5-orange.svg)]()
 [![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-lightgrey.svg)]()
 
 **English** | [Chinese](README_zh.md)
@@ -74,10 +74,9 @@ Build project-local teams with roles, pane layout, provider state, worktree isol
 <details>
 <summary><b>Latest release highlights</b></summary>
 
-- **Codex managed config handles rich TOML**: inherited `config.toml` with inline table arrays now renders cleanly instead of failing on parsed dict values.
-- **Fallback config copy avoids duplicate features sections**: managed Codex homes update existing `[features]` blocks and stop at `[[array_of_tables]]` boundaries when no TOML parser is available.
-- **Installers provision TOML parsing when needed**: Linux/macOS and Windows installers auto-install `tomli>=2.0.0` when no TOML reader exists, with `CCB_INSTALL_TOMLI=0` available to skip.
-- **Managed venv setup installs dependencies in the right scope**: release installs add `tomli` inside the managed venv before optional watchdog setup.
+- **Claude managed memory avoids duplicate project rules**: managed `.claude/CLAUDE.md` no longer copies project-level `CLAUDE.md`; Claude continues loading that file natively from the working directory.
+- **Managed Claude memory keeps the right inherited sources**: real `~/.claude/CLAUDE.md`, `.ccb/ccb_memory.md`, and per-agent `.ccb/agents/<agent>/memory.md` still project into the managed bundle.
+- **Memory source loading is now controllable**: `load_memory_sources(..., include_provider_native_project=False)` can skip provider-native project memory while existing callers keep the default include behavior.
 
 See [Release Notes](#release-notes) for the full history.
 
@@ -339,6 +338,15 @@ Thanks to the [Linux.do community](https://linux.do) for testing, feedback, and 
 Historical note: older release notes below may mention `askd`, legacy flags, or removed commands. Those references are kept only as changelog history and do not redefine the current CLI surface.
 
 <details open>
+<summary><b>v6.2.5</b> - Claude Managed Memory De-Duplication Hotfix</summary>
+
+- Stops copying project-level `CLAUDE.md` into managed `.claude/CLAUDE.md`, so Claude reads it once from the working directory.
+- Keeps provider user memory, CCB shared project memory, and per-agent private memory in the managed Claude bundle.
+- Adds an opt-out flag for provider-native project memory in `load_memory_sources` while preserving default behavior for other callers.
+
+</details>
+
+<details>
 <summary><b>v6.2.4</b> - Codex Managed Config TOML Hotfix</summary>
 
 - Renders dict values as inline TOML tables so inherited Codex configs with inline table arrays no longer crash during managed-home projection.

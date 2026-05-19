@@ -113,6 +113,31 @@ def test_load_memory_sources_reads_from_project_root_not_workspace(tmp_path: Pat
     assert 'workspace-only memory' not in ''.join(content_by_kind.values())
 
 
+def test_load_memory_sources_can_skip_provider_native_project_memory(tmp_path: Path) -> None:
+    project_root = tmp_path / 'repo'
+    project_root.mkdir()
+    _write_project_memory(project_root, 'shared memory\n')
+    (project_root / 'CLAUDE.md').write_text('project claude memory\n', encoding='utf-8')
+    agent_private_memory_path(project_root, 'Agent1').parent.mkdir(parents=True)
+    agent_private_memory_path(project_root, 'Agent1').write_text('private memory\n', encoding='utf-8')
+
+    default_sources = load_memory_sources(project_root, agent_name='Agent1', provider='claude')
+    skipped_sources = load_memory_sources(
+        project_root,
+        agent_name='Agent1',
+        provider='claude',
+        include_provider_native_project=False,
+    )
+
+    assert [source.kind for source in default_sources] == [
+        'ccb_shared',
+        'provider_native_project',
+        'agent_private',
+    ]
+    assert [source.kind for source in skipped_sources] == ['ccb_shared', 'agent_private']
+    assert 'project claude memory' not in ''.join(source.content for source in skipped_sources)
+
+
 def test_materialize_runtime_memory_bundle_writes_generated_bundle(tmp_path: Path) -> None:
     project_root = tmp_path / 'repo'
     workspace = tmp_path / 'worktree'
