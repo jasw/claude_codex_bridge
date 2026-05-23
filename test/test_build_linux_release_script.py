@@ -313,6 +313,49 @@ def test_build_sidebar_helper_for_release_copies_real_binary(monkeypatch, tmp_pa
     assert not (crate_dir / "target").exists()
 
 
+def test_build_sidebar_helper_for_release_builds_macos_universal_binary(monkeypatch, tmp_path: Path) -> None:
+    module = _load_module()
+    artifact_root = tmp_path / "artifact"
+    crate_dir = artifact_root / "tools" / "ccb-agent-sidebar"
+    output_bin = artifact_root / "bin" / "ccb-agent-sidebar"
+    crate_dir.mkdir(parents=True)
+    (crate_dir / "Cargo.toml").write_text('[package]\nname = "ccb-agent-sidebar"\n', encoding="utf-8")
+    calls: list[list[str]] = []
+
+    def _fake_run(cmd, **kwargs):
+        calls.append(list(cmd))
+        if cmd[:3] == ["cargo", "build", "--release"]:
+            target = cmd[cmd.index("--target") + 1]
+            built = crate_dir / "target" / target / "release" / "ccb-agent-sidebar"
+            built.parent.mkdir(parents=True)
+            built.write_text(f"{target}\n", encoding="utf-8")
+            built.chmod(0o755)
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+        if cmd[:4] == ["lipo", "-create", "-output", str(output_bin)]:
+            output_bin.parent.mkdir(parents=True, exist_ok=True)
+            output_bin.write_text("universal-sidebar\n", encoding="utf-8")
+            output_bin.chmod(0o755)
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+        if cmd[:1] == ["file"]:
+            return SimpleNamespace(
+                returncode=0,
+                stdout=f"{output_bin}: Mach-O universal binary with 2 architectures\n",
+                stderr="",
+            )
+        raise AssertionError(f"unexpected command: {cmd}")
+
+    monkeypatch.setattr(module.subprocess, "run", _fake_run)
+
+    module.build_sidebar_helper_for_release(artifact_root, target_platform="macos")
+
+    assert any("--target" in call and "x86_64-apple-darwin" in call for call in calls)
+    assert any("--target" in call and "aarch64-apple-darwin" in call for call in calls)
+    assert any(call[:4] == ["lipo", "-create", "-output", str(output_bin)] for call in calls)
+    assert output_bin.read_text(encoding="utf-8") == "universal-sidebar\n"
+    assert os.access(output_bin, os.X_OK)
+    assert not (crate_dir / "target").exists()
+
+
 def test_build_sidebar_helper_for_release_fails_when_cargo_fails(monkeypatch, tmp_path: Path) -> None:
     module = _load_module()
     artifact_root = tmp_path / "artifact"

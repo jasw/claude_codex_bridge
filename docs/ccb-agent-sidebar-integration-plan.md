@@ -41,7 +41,7 @@ Confirmed decisions:
 - It is distributed as part of the CCB release, not as a separately installed user tool.
 - Sidebar focus/switch operations go through `ccbd` RPC, not direct Rust-side tmux control.
 - The release bundles the runtime binary at `bin/ccb-agent-sidebar`.
-- Phase 1 release artifacts are Linux x86_64 only. macOS, Windows, and psmux parity remain deferred until there is a concrete supported tmux/runtime target.
+- Phase 1 release artifacts support Linux x86_64 and macOS universal helper binaries. Windows and psmux parity remain deferred until there is a concrete supported tmux/runtime target.
 
 Deferred:
 
@@ -964,7 +964,7 @@ Release packaging:
 
 - the source lives in-repo for development and review
 - the built `ccb-agent-sidebar` binary is shipped in the CCB release at `bin/ccb-agent-sidebar`
-- Phase 1 release automation publishes the Linux x86_64 helper tarball and checksum; other platform artifacts are intentionally not part of the first release gate
+- Phase 1 release automation publishes the Linux x86_64 helper tarball and ships a macOS universal helper inside `ccb-macos-universal.tar.gz`
 - managed sidebar panes should launch the release-bundled binary
 - users should not need a Rust toolchain or upstream plugin install to use Phase 1
 - release/build tests should verify the sidebar binary is included and discoverable by the runtime launcher
@@ -1821,6 +1821,7 @@ Current implementation notes:
 - `build_project_layout_plan` can select agents from explicit later windows by using the normalized window layout set as the pruning source.
 - Focused coverage currently lives in `test/test_ccbd_namespace_topology_plan.py` plus startup-flow regressions in `test/test_v2_ccbd_start_flow.py`.
 - The dedicated release workflow builds the Rust helper with `bin/build-ccb-agent-sidebar`, uploads `ccb-agent-sidebar-linux-x86_64.tar.gz`, and attaches it to GitHub Releases for tag builds.
+- The main release-artifacts workflow builds the macOS helper for `x86_64-apple-darwin` and `aarch64-apple-darwin`, combines them with `lipo`, verifies the result is a universal binary, and ships it inside `ccb-macos-universal.tar.gz`.
 - A PTY-backed `ccb open` smoke against an isolated temporary project attaches to the real tmux namespace with `TERM=xterm-256color`, times out only because the UI remains attached, and confirms sidebar panes keep rendering the window/agent tree after attach.
 - `bin/package-ccb-agent-sidebar-release` stages the Linux x86_64 helper tarball and checksum, and a temporary-repo dry-run test verifies the tarball contains `bin/ccb-agent-sidebar`.
 
@@ -2057,7 +2058,6 @@ Hard sequencing:
 - selected-window sidebar mode
 - cross-project dashboard
 - Windows/psmux parity
-- macOS sidebar release artifact
 - mouse target routing
 
 ## 16. Acceptance Criteria For Phase 1

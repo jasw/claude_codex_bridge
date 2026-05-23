@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## v7.0.3 (2026-05-23)
+
+### macOS Sidebar Universal Binary Hotfix
+
+- **macOS Sidebar Runs Natively**: the macOS release artifact now builds `ccb-agent-sidebar` for both `x86_64-apple-darwin` and `aarch64-apple-darwin`, then combines them with `lipo` into the shipped `bin/ccb-agent-sidebar` universal binary.
+- **macOS Release Gate Added**: release artifact CI now inspects the macOS helper with `file`, requires `universal binary`, and runs the helper `--help` smoke before uploading assets.
+- **macOS Test Smoke Extended**: GitHub Tests now build the macOS release preview with both Apple targets and verify the packaged helper instead of only checking that the tarball exists.
+
 ## v7.0.2 (2026-05-23)
 
 ### Codex Trust And Sidebar Compatibility Hotfix

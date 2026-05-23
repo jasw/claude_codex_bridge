@@ -85,7 +85,7 @@ def main_for_target(target_platform: str) -> int:
         allow_dirty=args.allow_dirty,
         generated_paths=(output_dir, stage_root, artifact_path, sha_path),
     )
-    build_sidebar_helper_for_release(artifact_root)
+    build_sidebar_helper_for_release(artifact_root, target_platform=target_platform)
     patch_ccb_metadata(artifact_root / "ccb", version=version, commit=commit, date=commit_date)
 
     build_info = {
@@ -261,14 +261,42 @@ def export_release_tree(
     copy_repo_tree(repo_root, destination, generated_paths=generated_paths)
 
 
-def build_sidebar_helper_for_release(artifact_root: Path) -> None:
+def build_sidebar_helper_for_release(artifact_root: Path, *, target_platform: str = "linux") -> None:
     crate_dir = artifact_root / "tools" / "ccb-agent-sidebar"
-    source_bin = crate_dir / "target" / "release" / "ccb-agent-sidebar"
     output_bin = artifact_root / "bin" / "ccb-agent-sidebar"
     if not (crate_dir / "Cargo.toml").is_file():
         return
+
+    if target_platform == "macos":
+        build_macos_universal_sidebar_helper(artifact_root=artifact_root, crate_dir=crate_dir, output_bin=output_bin)
+    else:
+        build_native_sidebar_helper(artifact_root=artifact_root, crate_dir=crate_dir, output_bin=output_bin)
+
+    shutil.rmtree(crate_dir / "target", ignore_errors=True)
+
+
+def build_native_sidebar_helper(*, artifact_root: Path, crate_dir: Path, output_bin: Path) -> None:
+    source_bin = crate_dir / "target" / "release" / "ccb-agent-sidebar"
+    run_sidebar_cargo_build(artifact_root=artifact_root, crate_dir=crate_dir, target=None)
+    if not source_bin.is_file():
+        raise RuntimeError(f"sidebar build did not produce expected binary: {source_bin}")
+    output_bin.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(source_bin, output_bin)
+    output_bin.chmod(0o755)
+
+
+def build_macos_universal_sidebar_helper(*, artifact_root: Path, crate_dir: Path, output_bin: Path) -> None:
+    target_bins: list[Path] = []
+    for target in ("x86_64-apple-darwin", "aarch64-apple-darwin"):
+        run_sidebar_cargo_build(artifact_root=artifact_root, crate_dir=crate_dir, target=target)
+        target_bin = crate_dir / "target" / target / "release" / "ccb-agent-sidebar"
+        if not target_bin.is_file():
+            raise RuntimeError(f"sidebar build did not produce expected {target} binary: {target_bin}")
+        target_bins.append(target_bin)
+
+    output_bin.parent.mkdir(parents=True, exist_ok=True)
     result = subprocess.run(
-        ["cargo", "build", "--release", "--manifest-path", str(crate_dir / "Cargo.toml")],
+        ["lipo", "-create", "-output", str(output_bin), *(str(path) for path in target_bins)],
         cwd=artifact_root,
         capture_output=True,
         text=True,
@@ -277,13 +305,43 @@ def build_sidebar_helper_for_release(artifact_root: Path) -> None:
     )
     if result.returncode != 0:
         details = (result.stderr or result.stdout or "").strip()
-        raise RuntimeError(f"failed to build ccb-agent-sidebar for release: {details or result.returncode}")
-    if not source_bin.is_file():
-        raise RuntimeError(f"sidebar build did not produce expected binary: {source_bin}")
-    output_bin.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(source_bin, output_bin)
+        raise RuntimeError(f"failed to create macOS universal ccb-agent-sidebar: {details or result.returncode}")
     output_bin.chmod(0o755)
-    shutil.rmtree(crate_dir / "target", ignore_errors=True)
+    verify_macos_universal_sidebar_binary(output_bin)
+
+
+def run_sidebar_cargo_build(*, artifact_root: Path, crate_dir: Path, target: str | None) -> None:
+    command = ["cargo", "build", "--release", "--manifest-path", str(crate_dir / "Cargo.toml")]
+    if target:
+        command.extend(["--target", target])
+    result = subprocess.run(
+        command,
+        cwd=artifact_root,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+    if result.returncode != 0:
+        details = (result.stderr or result.stdout or "").strip()
+        suffix = f" for target {target}" if target else ""
+        raise RuntimeError(f"failed to build ccb-agent-sidebar{suffix} for release: {details or result.returncode}")
+
+
+def verify_macos_universal_sidebar_binary(output_bin: Path) -> None:
+    result = subprocess.run(
+        ["file", str(output_bin)],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+    if result.returncode != 0:
+        details = (result.stderr or result.stdout or "").strip()
+        raise RuntimeError(f"failed to inspect macOS ccb-agent-sidebar binary: {details or result.returncode}")
+    description = result.stdout.strip()
+    if "universal binary" not in description:
+        raise RuntimeError(f"macOS ccb-agent-sidebar is not a universal binary: {description}")
 
 
 def is_git_checkout(repo_root: Path) -> bool:

@@ -7,7 +7,7 @@
   <img src="https://img.shields.io/badge/模型皆可控-CF1322?style=for-the-badge" alt="模型皆可控">
 </p>
 
-[![Version](https://img.shields.io/badge/version-7.0.2-orange.svg)]()
+[![Version](https://img.shields.io/badge/version-7.0.3-orange.svg)]()
 [![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-lightgrey.svg)]()
 
 [English](README.md) | **中文**
@@ -74,10 +74,10 @@
 <details>
 <summary><b>最新版本亮点</b></summary>
 
-- **Codex trust 提示修复**：managed Codex home 会信任 project root 和当前 workspace path，auto-permission 启动改用 Codex 原生 approval/sandbox 参数。
-- **Sidebar 二进制兼容旧 Linux**：Linux release 和独立 sidebar helper 改用 Ubuntu 22.04 构建，避免 v7.0.1 在部分旧 glibc 主机上无法运行。
-- **Sidebar 安装恢复加固**：安装器会 smoke-test 已有/预置 `ccb-agent-sidebar`，不可运行时本机 cargo rebuild；source wrapper 也会正确解析 symlink。
-- **Sidebar 活动状态细化**：顶部 agent 行能更准确区分 queued/running/stale job、callback 等待和 provider 后台终端活动。
+- **macOS sidebar 正式原生可用**：macOS release artifact 现在内置真正的 universal `ccb-agent-sidebar`，同时支持 Intel 和 Apple Silicon。
+- **Release CI 验证 macOS helper**：发布构建会检查 helper 是 `universal binary`，并在上传前执行 `ccb-agent-sidebar --help` smoke test。
+- **Linux sidebar 兼容性保持**：Linux release 和独立 sidebar helper 继续使用 Ubuntu 22.04 构建，兼容旧 glibc 主机。
+- **Linux/macOS 使用同一套 sidebar 体验**：managed sidebar pane 在两个平台都使用包内 helper，安装时仍保留本机 rebuild fallback。
 
 完整历史见 [新版本记录](#新版本记录)。
 
@@ -330,6 +330,15 @@ ccb reinstall
 历史说明：下面较旧的发布记录里仍可能出现 `askd`、旧 flag 或已移除命令。这些内容仅作为 changelog 历史保留，不代表当前 CLI 入口。
 
 <details open>
+<summary><b>v7.0.3</b> - macOS Sidebar Universal Binary Hotfix</summary>
+
+- `ccb-macos-universal.tar.gz` 现在包含真正 universal 的 `bin/ccb-agent-sidebar`，同时构建 `x86_64-apple-darwin` 和 `aarch64-apple-darwin` 后用 `lipo` 合并。
+- Release CI 会用 `file` 检查 macOS helper，要求输出包含 `universal binary`，并在上传前执行 helper `--help` smoke。
+- macOS GitHub Tests 的 release preview packaging 现在会验证包内 sidebar helper，而不只是检查 tarball 是否存在。
+
+</details>
+
+<details>
 <summary><b>v7.0.2</b> - Codex Trust And Sidebar Compatibility Hotfix</summary>
 
 - 修复 managed Codex home 仍弹 directory trust 的问题：写入 project/workspace trusted 条目，并使用原生 auto-permission 参数。

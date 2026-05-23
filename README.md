@@ -7,7 +7,7 @@
   <img src="https://img.shields.io/badge/Every_Model_Controllable-CF1322?style=for-the-badge" alt="Every Model Controllable">
 </p>
 
-[![Version](https://img.shields.io/badge/version-7.0.2-orange.svg)]()
+[![Version](https://img.shields.io/badge/version-7.0.3-orange.svg)]()
 [![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-lightgrey.svg)]()
 
 **English** | [Chinese](README_zh.md)
@@ -74,10 +74,10 @@ Build project-local teams with roles, pane layout, provider state, worktree isol
 <details>
 <summary><b>Latest release highlights</b></summary>
 
-- **Codex trust prompt fixed**: managed Codex homes now trust the project root and active workspace path, and auto-permission startup uses Codex native approval/sandbox flags.
-- **Sidebar binaries run on older Linux hosts**: Linux release and standalone sidebar assets are built on Ubuntu 22.04, avoiding the newer glibc dependency that broke some v7.0.1 installs.
-- **Sidebar install recovery hardened**: installers verify existing/prebuilt `ccb-agent-sidebar` with a smoke test, rebuild locally when needed, and source wrappers resolve symlinks correctly.
-- **Sidebar activity refined**: top agent rows now better distinguish queued/running/stale jobs, callback waits, and provider background terminal activity.
+- **macOS sidebar is native now**: the macOS release artifact ships a real universal `ccb-agent-sidebar` binary for both Intel and Apple Silicon Macs.
+- **Release CI verifies the macOS helper**: GitHub release builds require the helper to be a `universal binary` and smoke-test `ccb-agent-sidebar --help` before upload.
+- **Linux sidebar compatibility remains**: Linux release and standalone sidebar assets continue to build on Ubuntu 22.04 for older glibc hosts.
+- **Same sidebar experience across Linux and macOS**: managed sidebar panes use the packaged helper on both platforms, with local rebuild fallback still available during install.
 
 See [Release Notes](#release-notes) for the full history.
 
@@ -353,6 +353,15 @@ Thanks to the [Linux.do community](https://linux.do) for testing, feedback, and 
 Historical note: older release notes below may mention `askd`, legacy flags, or removed commands. Those references are kept only as changelog history and do not redefine the current CLI surface.
 
 <details open>
+<summary><b>v7.0.3</b> - macOS Sidebar Universal Binary Hotfix</summary>
+
+- Ships `ccb-macos-universal.tar.gz` with a true universal `bin/ccb-agent-sidebar` built for both `x86_64-apple-darwin` and `aarch64-apple-darwin`.
+- Adds release CI checks that inspect the macOS helper with `file`, require `universal binary`, and run a helper `--help` smoke before upload.
+- Extends macOS GitHub Tests so release preview packaging verifies the packaged sidebar helper, not only the archive presence.
+
+</details>
+
+<details>
 <summary><b>v7.0.2</b> - Codex Trust And Sidebar Compatibility Hotfix</summary>
 
 - Fixes Codex managed home directory-trust prompts by writing trusted project/workspace entries and using native auto-permission flags.

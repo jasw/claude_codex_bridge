@@ -118,6 +118,9 @@ jobs:
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Install macOS Rust targets
+        run: rustup target add x86_64-apple-darwin aarch64-apple-darwin
+
       - name: Install pytest
         run: |
           python -m pip install --upgrade pip
@@ -205,6 +208,12 @@ jobs:
           python scripts/build_macos_release.py --allow-dirty --output-dir dist-macos-smoke
           test -f dist-macos-smoke/ccb-macos-universal.tar.gz
           test -f dist-macos-smoke/SHA256SUMS
+          smoke_extract="$(mktemp -d)"
+          tar -xzf dist-macos-smoke/ccb-macos-universal.tar.gz -C "$smoke_extract"
+          helper="$smoke_extract/ccb-macos-universal/bin/ccb-agent-sidebar"
+          file "$helper" | tee "$smoke_extract/sidebar-file.txt"
+          grep -F 'universal binary' "$smoke_extract/sidebar-file.txt"
+          "$helper" --help >/dev/null 2>&1 || test "$?" -eq 2
 
   test-wsl:
     name: WSL / Ubuntu 22.04
