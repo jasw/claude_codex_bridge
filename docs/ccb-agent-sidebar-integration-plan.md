@@ -52,6 +52,10 @@ Deferred:
 - Windows/psmux parity
 - scrolling inside sidebar panels
 
+Provider-native activity enrichment is tracked in the plan tree:
+
+- [Sidebar Provider Activity Plan](plantree/plans/sidebar-provider-activity/README.md)
+
 ## 3. Upstream Baseline
 
 Upstream `tmux-agent-sidebar` is an MIT-licensed Rust/tmux plugin with:
@@ -1978,6 +1982,8 @@ Do not include:
 
 - release packaging changes unless needed for local binary path smoke
 - mutating ask/cancel/restart controls
+- provider hook enrichment, now tracked in
+  [docs/plantree/plans/sidebar-provider-activity/README.md](plantree/plans/sidebar-provider-activity/README.md)
 
 ### 14.5 WP5 Launch And Release Packaging
 
@@ -2064,10 +2070,15 @@ Hard sequencing:
 - A dedicated release workflow now publishes a Linux x86_64 `ccb-agent-sidebar` tarball and checksum, and attaches them to GitHub Releases on tag builds.
 - A scripted release dry-run now packages the Linux x86_64 sidebar tarball in a temporary repo and verifies the archive contains `bin/ccb-agent-sidebar`.
 - Final Phase 1 acceptance audit completed against the criteria below. Evidence includes full Python regression, Rust sidebar unit tests, isolated live tmux namespace/start/open smokes, release dry-run packaging, and source/docs consistency checks.
+- The follow-up sidebar presentation slice now renders a three-panel sidebar with compact 5-row Comms, a bottom tmux Tips panel, and UI-only `[ui.sidebar.view]` settings delivered through `project_view`; detailed planning lives in [docs/plantree/plans/sidebar-tips-layout/README.md](plantree/plans/sidebar-tips-layout/README.md).
 
 ### Next
 
-1. Dogfood the integrated sidebar in normal CCB project usage and decide which deferred item, if any, should be promoted into the next slice.
+1. Integrate provider-native manual-work signals for sidebar status using the
+   plan-tree root in
+   [docs/plantree/plans/sidebar-provider-activity/README.md](plantree/plans/sidebar-provider-activity/README.md).
+2. Dogfood the integrated sidebar in normal CCB project usage and decide which
+   additional deferred item, if any, should be promoted into the next slice.
 
 ### Deferred
 
@@ -2075,7 +2086,6 @@ Hard sequencing:
 - namespace reflow controls from sidebar
 - worktree controls
 - desktop notifications
-- provider hook enrichment
 - selected-window sidebar mode
 - cross-project dashboard
 - Windows/psmux parity

@@ -46,8 +46,8 @@ Observed on 2026-05-26 using the CCB-managed tmux socket for
 - tmux prefix: `Ctrl-b`
 - `mouse on`
 - `set-clipboard on`
-- `mode-keys emacs`
-- prefix bindings include pane focus with arrow keys, next/previous window,
+- `mode-keys vi`
+- prefix bindings include pane focus with Vim keys or arrow keys, next/previous window,
   numbered window selection, `Ctrl-b [` copy mode, and `Ctrl-b d` detach.
 
 README wording should still lead with CCB actions and mouse behavior. Raw tmux

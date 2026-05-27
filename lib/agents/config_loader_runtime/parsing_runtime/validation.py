@@ -8,7 +8,7 @@ from agents.models import AgentValidationError, ProjectConfig, normalize_agent_n
 from ..common import ALLOWED_TOP_LEVEL_KEYS, ConfigValidationError
 from .agent_specs import parse_agents
 from .expectations import expect_bool, expect_string, expect_string_list
-from .topology import agents_from_topology_windows, parse_sidebar, parse_topology_windows
+from .topology import agents_from_topology_windows, parse_sidebar, parse_sidebar_view, parse_topology_windows
 
 
 def validate_project_config(document: dict[str, Any], *, source_path: Path | None = None) -> ProjectConfig:
@@ -23,6 +23,7 @@ def validate_project_config(document: dict[str, Any], *, source_path: Path | Non
     cmd_enabled = _parse_cmd_enabled(document)
     layout_spec = _parse_layout_spec(document)
     sidebar = parse_sidebar(document.get('ui'))
+    sidebar_view = parse_sidebar_view(document.get('ui'))
     entry_window = _parse_entry_window(document)
     _validate_legacy_and_windows_fields(document, windows=windows)
     return _build_project_config(
@@ -33,6 +34,7 @@ def validate_project_config(document: dict[str, Any], *, source_path: Path | Non
         windows=windows,
         entry_window=entry_window,
         sidebar=sidebar,
+        sidebar_view=sidebar_view,
         source_path=source_path,
     )
 
@@ -111,6 +113,7 @@ def _build_project_config(
     windows,
     entry_window: str | None,
     sidebar,
+    sidebar_view,
     source_path: Path | None,
 ) -> ProjectConfig:
     try:
@@ -123,6 +126,7 @@ def _build_project_config(
             windows=windows,
             entry_window=entry_window,
             sidebar=sidebar,
+            sidebar_view=sidebar_view,
             source_path=str(source_path) if source_path else None,
             windows_explicit=windows is not None,
         )

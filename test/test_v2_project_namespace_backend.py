@@ -108,6 +108,11 @@ def test_prepare_server_then_create_session_and_server_policy_retry_transient_tm
     assert backend.calls.count(('set-option', '-g', 'destroy-unattached', 'off')) == 2
     assert backend.calls.count(('set-option', '-g', 'mouse', 'on')) == 1
     assert backend.calls.count(('set-option', '-g', 'set-clipboard', 'on')) == 1
+    assert backend.calls.count(('set-window-option', '-g', 'mode-keys', 'vi')) == 1
+    assert backend.calls.count(('bind-key', '-T', 'copy-mode-vi', 'v', 'send-keys', '-X', 'begin-selection')) == 1
+    assert backend.calls.count(('bind-key', '-T', 'copy-mode-vi', 'y', 'send-keys', '-X', 'copy-selection-and-cancel')) == 1
+    assert backend.calls.count(('bind-key', 'h', 'select-pane', '-L')) == 1
+    assert backend.calls.count(('bind-key', '-r', 'L', 'resize-pane', '-R', '5')) == 1
     assert backend.calls.count(
         (
             'new-session',
@@ -151,11 +156,24 @@ def test_prepare_server_does_not_require_server_policy_before_session_exists(mon
     assert ('set-option', '-g', 'destroy-unattached', 'off') not in backend.calls[:2]
     assert ('set-option', '-g', 'mouse', 'on') not in backend.calls[:2]
     assert ('set-option', '-g', 'set-clipboard', 'on') not in backend.calls[:2]
-    assert backend.calls[-3:] == [
+    expected_policy_calls = [
         ('set-option', '-g', 'destroy-unattached', 'off'),
         ('set-option', '-g', 'mouse', 'on'),
         ('set-option', '-g', 'set-clipboard', 'on'),
+        ('set-window-option', '-g', 'mode-keys', 'vi'),
+        ('bind-key', '-T', 'copy-mode-vi', 'v', 'send-keys', '-X', 'begin-selection'),
+        ('bind-key', '-T', 'copy-mode-vi', 'C-v', 'send-keys', '-X', 'rectangle-toggle'),
+        ('bind-key', '-T', 'copy-mode-vi', 'y', 'send-keys', '-X', 'copy-selection-and-cancel'),
+        ('bind-key', 'h', 'select-pane', '-L'),
+        ('bind-key', 'j', 'select-pane', '-D'),
+        ('bind-key', 'k', 'select-pane', '-U'),
+        ('bind-key', 'l', 'select-pane', '-R'),
+        ('bind-key', '-r', 'H', 'resize-pane', '-L', '5'),
+        ('bind-key', '-r', 'J', 'resize-pane', '-D', '5'),
+        ('bind-key', '-r', 'K', 'resize-pane', '-U', '5'),
+        ('bind-key', '-r', 'L', 'resize-pane', '-R', '5'),
     ]
+    assert backend.calls[-len(expected_policy_calls):] == expected_policy_calls
 
 
 def test_list_windows_retries_transient_tmux_failures(monkeypatch) -> None:
@@ -316,6 +334,18 @@ def test_ensure_server_policy_accepts_fast_probe_timeout(monkeypatch) -> None:
         ('set-option', '-g', 'destroy-unattached', 'off'),
         ('set-option', '-g', 'mouse', 'on'),
         ('set-option', '-g', 'set-clipboard', 'on'),
+        ('set-window-option', '-g', 'mode-keys', 'vi'),
+        ('bind-key', '-T', 'copy-mode-vi', 'v', 'send-keys', '-X', 'begin-selection'),
+        ('bind-key', '-T', 'copy-mode-vi', 'C-v', 'send-keys', '-X', 'rectangle-toggle'),
+        ('bind-key', '-T', 'copy-mode-vi', 'y', 'send-keys', '-X', 'copy-selection-and-cancel'),
+        ('bind-key', 'h', 'select-pane', '-L'),
+        ('bind-key', 'j', 'select-pane', '-D'),
+        ('bind-key', 'k', 'select-pane', '-U'),
+        ('bind-key', 'l', 'select-pane', '-R'),
+        ('bind-key', '-r', 'H', 'resize-pane', '-L', '5'),
+        ('bind-key', '-r', 'J', 'resize-pane', '-D', '5'),
+        ('bind-key', '-r', 'K', 'resize-pane', '-U', '5'),
+        ('bind-key', '-r', 'L', 'resize-pane', '-R', '5'),
     ]
 
 

@@ -104,6 +104,14 @@ def prepare_detached_tmux_server(backend) -> None:
     best_effort_tmux_run(backend, ['set-option', '-g', 'destroy-unattached', 'off'])
     best_effort_tmux_run(backend, ['set-option', '-g', 'mouse', 'on'])
     best_effort_tmux_run(backend, ['set-option', '-g', 'set-clipboard', 'on'])
+    best_effort_tmux_run(backend, ['set-window-option', '-g', 'mode-keys', 'vi'])
+    best_effort_tmux_run(backend, ['bind-key', '-T', 'copy-mode-vi', 'v', 'send-keys', '-X', 'begin-selection'])
+    best_effort_tmux_run(backend, ['bind-key', '-T', 'copy-mode-vi', 'C-v', 'send-keys', '-X', 'rectangle-toggle'])
+    best_effort_tmux_run(backend, ['bind-key', '-T', 'copy-mode-vi', 'y', 'send-keys', '-X', 'copy-selection-and-cancel'])
+    for key, direction in (('h', '-L'), ('j', '-D'), ('k', '-U'), ('l', '-R')):
+        best_effort_tmux_run(backend, ['bind-key', key, 'select-pane', direction])
+    for key, direction in (('H', '-L'), ('J', '-D'), ('K', '-U'), ('L', '-R')):
+        best_effort_tmux_run(backend, ['bind-key', '-r', key, 'resize-pane', direction, '5'])
 
 
 def best_effort_tmux_run(backend, argv: list[str]) -> None:

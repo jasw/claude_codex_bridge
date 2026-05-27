@@ -14,6 +14,25 @@ from ..names import AgentValidationError, normalize_agent_name
 _WINDOW_NAME_RE = re.compile(r'^[A-Za-z][A-Za-z0-9_-]*$')
 SIDEBAR_MODE_EVERY_WINDOW = 'every_window'
 SIDEBAR_MODE_OFF = 'off'
+DEFAULT_SIDEBAR_VIEW_TIPS = (
+    'C-b d  detach',
+    'C-b h/j/k/l pane',
+    'C-b H/J/K/L resize',
+    'C-b o  next pane',
+    'C-b z  zoom',
+    'C-b w  tree',
+    'C-b n/p next/prev',
+    'C-b 0-9 jump win',
+    'C-b [  copy mode',
+    'copy: PgUp/PgDn',
+    'copy: v select',
+    'copy: y yank',
+    'copy: q exit',
+    'C-b ]  paste',
+    'C-b c  new win',
+    'C-b ,  rename',
+    'C-b ?  keys',
+)
 
 
 @dataclass(frozen=True)
@@ -41,6 +60,42 @@ class SidebarSpec:
             'mode': self.mode,
             'width': self.width,
             'bottom_height': self.bottom_height,
+        }
+
+
+@dataclass(frozen=True)
+class SidebarViewSpec:
+    agents_height: str | int = '33%'
+    comms_limit: int = 5
+    comms_compact: bool = True
+    tips_enabled: bool = True
+    tips: tuple[str, ...] = DEFAULT_SIDEBAR_VIEW_TIPS
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, 'agents_height', normalize_sidebar_view_height(self.agents_height))
+        try:
+            comms_limit = int(self.comms_limit)
+        except Exception as exc:
+            raise AgentValidationError('ui.sidebar.view.comms_limit must be a positive integer') from exc
+        if comms_limit <= 0:
+            raise AgentValidationError('ui.sidebar.view.comms_limit must be a positive integer')
+        object.__setattr__(self, 'comms_limit', comms_limit)
+        if not isinstance(self.comms_compact, bool):
+            raise AgentValidationError('ui.sidebar.view.comms_compact must be a boolean')
+        if not isinstance(self.tips_enabled, bool):
+            raise AgentValidationError('ui.sidebar.view.tips_enabled must be a boolean')
+        object.__setattr__(self, 'comms_compact', self.comms_compact)
+        object.__setattr__(self, 'tips_enabled', self.tips_enabled)
+        tips = tuple(_normalize_tip(item) for item in self.tips)
+        object.__setattr__(self, 'tips', tips or DEFAULT_SIDEBAR_VIEW_TIPS)
+
+    def to_record(self) -> dict[str, object]:
+        return {
+            'agents_height': self.agents_height,
+            'comms_limit': self.comms_limit,
+            'comms_compact': self.comms_compact,
+            'tips_enabled': self.tips_enabled,
+            'tips': list(self.tips),
         }
 
 
@@ -83,6 +138,10 @@ def default_sidebar_spec() -> SidebarSpec:
     return SidebarSpec()
 
 
+def default_sidebar_view_spec() -> SidebarViewSpec:
+    return SidebarViewSpec()
+
+
 def validate_window_name(value: str) -> str:
     name = str(value or '').strip()
     if not _WINDOW_NAME_RE.fullmatch(name):
@@ -108,6 +167,31 @@ def normalize_sidebar_width(value: str | int) -> str | int:
     if text.isdigit() and int(text) > 0:
         return int(text)
     raise AgentValidationError('ui.sidebar.width must be a positive integer or percentage string')
+
+
+def normalize_sidebar_view_height(value: str | int) -> str | int:
+    if isinstance(value, bool):
+        raise AgentValidationError('ui.sidebar.view.agents_height must be a positive integer or percentage string')
+    if isinstance(value, int):
+        if value <= 0:
+            raise AgentValidationError('ui.sidebar.view.agents_height must be positive')
+        return value
+    text = str(value or '').strip()
+    if text.endswith('%'):
+        number = text[:-1].strip()
+        if not number.isdigit() or int(number) <= 0 or int(number) >= 100:
+            raise AgentValidationError('ui.sidebar.view.agents_height percentage must be between 1% and 99%')
+        return f'{int(number)}%'
+    if text.isdigit() and int(text) > 0:
+        return int(text)
+    raise AgentValidationError('ui.sidebar.view.agents_height must be a positive integer or percentage string')
+
+
+def _normalize_tip(value: object) -> str:
+    text = str(value or '').strip()
+    if not text:
+        raise AgentValidationError('ui.sidebar.view.tips cannot contain empty strings')
+    return text
 
 
 def normalize_windows(
@@ -215,13 +299,17 @@ def topology_signature(payload: dict[str, Any]) -> str:
 
 
 __all__ = [
+    'DEFAULT_SIDEBAR_VIEW_TIPS',
     'SIDEBAR_MODE_EVERY_WINDOW',
     'SIDEBAR_MODE_OFF',
     'SidebarSpec',
+    'SidebarViewSpec',
     'WindowSpec',
     'default_sidebar_spec',
+    'default_sidebar_view_spec',
     'legacy_main_window',
     'normalize_sidebar_width',
+    'normalize_sidebar_view_height',
     'normalize_windows',
     'topology_signature',
     'topology_signature_payload',

@@ -6,8 +6,10 @@ from typing import Any
 from ..names import SCHEMA_VERSION, AgentValidationError
 from .topology import (
     SidebarSpec,
+    SidebarViewSpec,
     WindowSpec,
     default_sidebar_spec,
+    default_sidebar_view_spec,
     normalize_windows,
     topology_signature,
     topology_signature_payload,
@@ -27,6 +29,7 @@ class ProjectConfig:
     windows: tuple[WindowSpec, ...] | None = None
     entry_window: str | None = None
     sidebar: SidebarSpec | None = None
+    sidebar_view: SidebarViewSpec | None = None
     source_path: str | None = None
     windows_explicit: bool | None = None
 
@@ -49,6 +52,7 @@ class ProjectConfig:
                 layout_spec=self.layout_spec,
             )
         sidebar = self.sidebar if self.sidebar is not None else default_sidebar_spec()
+        sidebar_view = self.sidebar_view if self.sidebar_view is not None else default_sidebar_view_spec()
         windows = normalize_windows(
             self.windows,
             layout_spec=rendered_layout,
@@ -67,6 +71,7 @@ class ProjectConfig:
         object.__setattr__(self, 'windows', windows)
         object.__setattr__(self, 'entry_window', entry_window)
         object.__setattr__(self, 'sidebar', sidebar)
+        object.__setattr__(self, 'sidebar_view', sidebar_view)
         object.__setattr__(self, 'windows_explicit', explicit_windows)
         object.__setattr__(self, 'topology_signature_payload', signature_payload)
         object.__setattr__(self, 'topology_signature', topology_signature(signature_payload))
@@ -83,6 +88,7 @@ class ProjectConfig:
             'windows': [window.to_record() for window in self.windows],
             'entry_window': self.entry_window,
             'sidebar': self.sidebar.to_record(),
+            'sidebar_view': self.sidebar_view.to_record(),
             'windows_explicit': self.windows_explicit,
             'topology_signature_payload': self.topology_signature_payload,
             'topology_signature': self.topology_signature,

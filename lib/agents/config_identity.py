@@ -11,6 +11,7 @@ def project_config_identity_payload(config: ProjectConfig) -> dict[str, object]:
     canonical.pop('schema_version', None)
     canonical.pop('record_type', None)
     canonical.pop('source_path', None)
+    canonical.pop('sidebar_view', None)
 
     agents = canonical.get('agents')
     if isinstance(agents, dict):

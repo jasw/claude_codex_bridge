@@ -5,7 +5,9 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{Duration, Instant};
 
-use crossterm::event::{self, Event, KeyCode};
+use crossterm::event::{
+    self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, MouseButton, MouseEventKind,
+};
 use crossterm::execute;
 use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
@@ -20,19 +22,23 @@ use ratatui::widgets::{Block, Borders, Clear, List, ListItem, Paragraph};
 use crate::args::Args;
 use crate::client::CcbdClient;
 use crate::model::{
-    AgentView, CommsItem, ProjectView, ProjectViewResponse, RowTarget, WindowView, row_targets,
+    AgentView, CommsItem, ProjectView, ProjectViewResponse, RowTarget, SidebarViewInfo, WindowView,
+    row_targets,
 };
 use crate::status::{activity_color, activity_symbol};
 
 const PROJECT_VIEW_REFRESH_MIN_MS: u64 = 100;
 const PROJECT_VIEW_REFRESH_MAX_MS: u64 = 5000;
 const PROJECT_VIEW_REFRESH_DEFAULT_MS: u64 = 1000;
+const DEFAULT_TREE_HEIGHT_PERCENT: u16 = 33;
+const SIDEBAR_RATIO_DENOMINATOR: u16 = 12;
+const SIDEBAR_COMMS_RATIO_NUMERATOR: u16 = 3;
+const TREE_CONTROL_CONTENT_WIDTH: u16 = 3;
+const TREE_REFRESH_SYMBOL: &str = "↻";
+const TREE_KILL_SYMBOL: &str = "×";
 const COMMS_ACTION_RETRY_COLS: std::ops::RangeInclusive<u16> = 0..=1;
 const COMMS_ACTION_CANCEL_COLS: std::ops::RangeInclusive<u16> = 3..=4;
 const COMMS_ACTION_CLEAR_COLS: std::ops::RangeInclusive<u16> = 6..=7;
-const TREE_CONTROL_CONTENT_WIDTH: u16 = 3;
-const TREE_RESTART_SYMBOL: &str = "↻";
-const TREE_KILL_SYMBOL: &str = "×";
 
 pub fn run(args: Args) -> io::Result<()> {
     let action = run_tui(&args)?;
@@ -46,7 +52,7 @@ pub fn run(args: Args) -> io::Result<()> {
 fn run_tui(args: &Args) -> io::Result<ExitAction> {
     let mut stdout = io::stdout();
     enable_raw_mode()?;
-    if let Err(err) = execute!(stdout, EnterAlternateScreen) {
+    if let Err(err) = execute!(stdout, EnterAlternateScreen, EnableMouseCapture) {
         let _ = disable_raw_mode();
         return Err(err);
     }
@@ -74,11 +80,22 @@ fn run_tui(args: &Args) -> io::Result<ExitAction> {
                     KeyCode::Char('j') | KeyCode::Down => app.move_selection(1),
                     KeyCode::Char('k') | KeyCode::Up => app.move_selection(-1),
                     KeyCode::Char('r') => app.force_refresh(),
-                    KeyCode::Char('R') => app.restart_project_panes(&client),
+                    KeyCode::Char('R') => app.recover_first_visible_comms(&client),
                     KeyCode::Enter => app.focus_selected_target(&client),
                     KeyCode::Tab => app.focus_pane_window(&client),
                     _ => {}
                 },
+                Event::Mouse(mouse) => {
+                    if matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left)) {
+                        let size = terminal.size()?;
+                        let area = Rect::new(0, 0, size.width, size.height);
+                        if let Some(action) =
+                            app.handle_mouse_down(mouse.column, mouse.row, area, &client)
+                        {
+                            return Ok(action);
+                        }
+                    }
+                }
                 _ => {}
             }
         }
@@ -89,13 +106,6 @@ fn run_tui(args: &Args) -> io::Result<ExitAction> {
 enum ExitAction {
     SidebarOnly,
     KillProject,
-}
-
-#[cfg(test)]
-fn run_ccbd_restart_panes(socket_path: &Path) -> io::Result<()> {
-    CcbdClient::new(socket_path.to_path_buf())
-        .restart_panes()
-        .map_err(io::Error::other)
 }
 
 fn run_ccb_kill(project_root: &Path) -> io::Result<()> {
@@ -137,7 +147,7 @@ impl Drop for TuiSession {
     fn drop(&mut self) {
         let _ = disable_raw_mode();
         let mut stdout = io::stdout();
-        let _ = execute!(stdout, LeaveAlternateScreen);
+        let _ = execute!(stdout, DisableMouseCapture, LeaveAlternateScreen);
     }
 }
 
@@ -235,29 +245,37 @@ impl SidebarApp {
         self.focus_selected_target(client);
     }
 
-    pub fn handle_mouse_down(&mut self, column: u16, row: u16, area: Rect, client: &CcbdClient) {
+    fn handle_mouse_down(
+        &mut self,
+        column: u16,
+        row: u16,
+        area: Rect,
+        client: &CcbdClient,
+    ) -> Option<ExitAction> {
+        match header_action_at(column, row, sidebar_areas(area, self.sidebar_view()).tree) {
+            Some(HeaderMouseAction::Refresh) => {
+                self.force_refresh();
+                return None;
+            }
+            Some(HeaderMouseAction::KillProject) => return Some(ExitAction::KillProject),
+            None => {}
+        }
         if self.handle_comms_mouse_down(column, row, area, client) {
-            return;
+            return None;
         }
         self.focus_target_at(column, row, area, client);
+        None
     }
 
     pub fn recover_first_visible_comms(&mut self, client: &CcbdClient) {
         let Some(item) = self
-            .view()
-            .and_then(|view| view.comms.iter().find(|item| item.recoverable))
-            .cloned()
+            .visible_comms_limited()
+            .into_iter()
+            .find(|item| item.recoverable)
         else {
             return;
         };
         self.recover_comms_item(client, &item);
-    }
-
-    pub fn restart_project_panes(&mut self, client: &CcbdClient) {
-        match client.restart_panes() {
-            Ok(()) => self.force_refresh(),
-            Err(err) => self.set_error(err),
-        }
     }
 
     pub fn recover_comms_at(
@@ -280,7 +298,7 @@ impl SidebarApp {
         let Some((index, action)) = self.comms_action_at(column, row, area) else {
             return false;
         };
-        let Some(item) = self.visible_comms().get(index).cloned() else {
+        let Some(item) = self.visible_comms_limited().get(index).cloned() else {
             return false;
         };
         self.selected_comms = Some(index);
@@ -296,8 +314,8 @@ impl SidebarApp {
     }
 
     fn target_index_at(&self, column: u16, row: u16, area: Rect) -> Option<usize> {
-        let (tree_area, _) = sidebar_areas(area);
-        target_index_at_tree_area(self.targets().len(), tree_area, column, row)
+        let areas = sidebar_areas(area, self.sidebar_view());
+        target_index_at_tree_area(self.targets().len(), areas.tree, column, row)
     }
 
     #[cfg(test)]
@@ -312,14 +330,16 @@ impl SidebarApp {
         row: u16,
         area: Rect,
     ) -> Option<(usize, CommsMouseAction)> {
-        let (_, comms_area) = sidebar_areas(area);
-        let prefix_lines = if self.last_error.is_some() { 1 } else { 0 };
+        let areas = sidebar_areas(area, self.sidebar_view());
+        let prefix_lines = u16::from(self.last_error.is_some())
+            .saturating_add(u16::from(self.sidebar_config_error().is_some()));
         comms_action_at_area(
-            &self.visible_comms(),
-            comms_area,
+            &self.visible_comms_limited(),
+            areas.comms,
             column,
             row,
-            usize::from(comms_area.width.saturating_sub(2)),
+            usize::from(areas.comms.width.saturating_sub(2)),
+            self.sidebar_view().comms_compact,
             prefix_lines,
         )
     }
@@ -334,6 +354,36 @@ impl SidebarApp {
                     .collect()
             })
             .unwrap_or_default()
+    }
+
+    fn visible_comms_limited(&self) -> Vec<CommsItem> {
+        let limit = self.sidebar_view().comms_limit.max(1);
+        self.visible_comms().into_iter().take(limit).collect()
+    }
+
+    fn sidebar_view(&self) -> &SidebarViewInfo {
+        if let Some(view) = self.view() {
+            &view.namespace.sidebar.view
+        } else {
+            default_sidebar_view()
+        }
+    }
+
+    fn sidebar_config_error(&self) -> Option<&str> {
+        self.view()
+            .and_then(|view| view.namespace.sidebar.view_error.as_deref())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+    }
+
+    fn tree_degraded_label(&self) -> Option<&'static str> {
+        if self.last_error.is_some() {
+            Some("ccbd ✕")
+        } else if self.sidebar_config_error().is_some() {
+            Some("config ✕")
+        } else {
+            None
+        }
     }
 
     fn view(&self) -> Option<&ProjectView> {
@@ -490,17 +540,112 @@ fn refresh_backoff_for_failures(failure_count: u32) -> Duration {
 pub fn draw(frame: &mut Frame<'_>, app: &SidebarApp) {
     let area = frame.area();
     frame.render_widget(Clear, area);
-    let (tree_area, comms_area) = sidebar_areas(area);
-    draw_tree(frame, tree_area, app);
-    draw_comms(frame, comms_area, app);
+    let areas = sidebar_areas(area, app.sidebar_view());
+    draw_tree(frame, areas.tree, app);
+    draw_comms(frame, areas.comms, app);
+    if let Some(tips_area) = areas.tips {
+        draw_tips(frame, tips_area, app);
+    }
 }
 
-fn sidebar_areas(area: Rect) -> (Rect, Rect) {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct SidebarAreas {
+    tree: Rect,
+    comms: Rect,
+    tips: Option<Rect>,
+}
+
+fn sidebar_areas(area: Rect, view: &SidebarViewInfo) -> SidebarAreas {
+    if area.height == 0 {
+        return SidebarAreas {
+            tree: area,
+            comms: Rect::new(area.x, area.y, area.width, 0),
+            tips: None,
+        };
+    }
+    if !view.tips_enabled {
+        let tree_height = tree_height_for(area.height, view).min(area.height);
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Length(tree_height), Constraint::Min(0)])
+            .split(area);
+        return SidebarAreas {
+            tree: chunks[0],
+            comms: chunks[1],
+            tips: None,
+        };
+    }
+    let tree_height = tree_height_for(area.height, view).min(area.height);
+    let remaining_after_tree = area.height.saturating_sub(tree_height);
+    let desired_comms_height = ratio_height(
+        area.height,
+        SIDEBAR_COMMS_RATIO_NUMERATOR,
+        SIDEBAR_RATIO_DENOMINATOR,
+    );
+    let comms_height = desired_comms_height.min(remaining_after_tree);
+    let tips_height = remaining_after_tree.saturating_sub(comms_height);
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+        .constraints([
+            Constraint::Length(tree_height),
+            Constraint::Length(comms_height),
+            Constraint::Length(tips_height),
+        ])
         .split(area);
-    (chunks[0], chunks[1])
+    SidebarAreas {
+        tree: chunks[0],
+        comms: chunks[1],
+        tips: (tips_height > 0).then_some(chunks[2]),
+    }
+}
+
+fn tree_height_for(total_height: u16, view: &SidebarViewInfo) -> u16 {
+    match &view.agents_height {
+        serde_json::Value::Number(number) => number
+            .as_u64()
+            .and_then(|value| u16::try_from(value).ok())
+            .unwrap_or_else(|| percent_height(total_height, DEFAULT_TREE_HEIGHT_PERCENT)),
+        serde_json::Value::String(text) => parse_height_value(total_height, text)
+            .unwrap_or_else(|| percent_height(total_height, DEFAULT_TREE_HEIGHT_PERCENT)),
+        _ => percent_height(total_height, DEFAULT_TREE_HEIGHT_PERCENT),
+    }
+    .clamp(3.min(total_height), total_height)
+}
+
+fn parse_height_value(total_height: u16, value: &str) -> Option<u16> {
+    let text = value.trim();
+    if let Some(percent_text) = text.strip_suffix('%') {
+        let percent = percent_text.trim().parse::<u16>().ok()?;
+        if percent == 0 || percent >= 100 {
+            return None;
+        }
+        return Some(percent_height(total_height, percent));
+    }
+    let fixed = text.parse::<u16>().ok()?;
+    (fixed > 0).then_some(fixed)
+}
+
+fn percent_height(total_height: u16, percent: u16) -> u16 {
+    let numerator = u32::from(total_height) * u32::from(percent);
+    let value = numerator.saturating_add(99) / 100;
+    u16::try_from(value).unwrap_or(total_height).max(1)
+}
+
+fn ratio_height(total_height: u16, numerator: u16, denominator: u16) -> u16 {
+    let denominator = u32::from(denominator).max(1);
+    let numerator = u32::from(numerator);
+    let value = u32::from(total_height)
+        .saturating_mul(numerator)
+        .saturating_add(denominator.saturating_sub(1))
+        / denominator;
+    u16::try_from(value)
+        .unwrap_or(total_height)
+        .min(total_height)
+}
+
+fn default_sidebar_view() -> &'static SidebarViewInfo {
+    static DEFAULT: std::sync::OnceLock<SidebarViewInfo> = std::sync::OnceLock::new();
+    DEFAULT.get_or_init(SidebarViewInfo::default)
 }
 
 fn target_index_at_tree_area(
@@ -538,12 +683,37 @@ enum CommsMouseAction {
     Clear,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HeaderMouseAction {
+    Refresh,
+    KillProject,
+}
+
+fn header_action_at(column: u16, row: u16, area: Rect) -> Option<HeaderMouseAction> {
+    let controls = tree_controls_area(area);
+    if controls.width == 0 || row != controls.y {
+        return None;
+    }
+    if column < controls.x || column >= controls.x.saturating_add(controls.width) {
+        return None;
+    }
+    let relative_column = column.saturating_sub(controls.x);
+    if relative_column == 0 {
+        Some(HeaderMouseAction::Refresh)
+    } else if relative_column == 2 {
+        Some(HeaderMouseAction::KillProject)
+    } else {
+        None
+    }
+}
+
 fn comms_action_at_area(
     items: &[CommsItem],
     area: Rect,
     column: u16,
     row: u16,
     width: usize,
+    compact: bool,
     prefix_lines: u16,
 ) -> Option<(usize, CommsMouseAction)> {
     if items.is_empty() || area.width < 3 || area.height < 3 {
@@ -561,7 +731,7 @@ fn comms_action_at_area(
     }
     let mut current = top.saturating_add(prefix_lines);
     for (index, item) in items.iter().enumerate() {
-        let height = comms_lines(item, width).len().max(1) as u16;
+        let height = comms_lines(item, width, compact).len().max(1) as u16;
         if row >= current && row < current.saturating_add(height) {
             let relative_column = column.saturating_sub(left);
             return Some((index, comms_mouse_action_for_column(relative_column)));
@@ -594,7 +764,7 @@ fn draw_tree(frame: &mut Frame<'_>, area: Rect, app: &SidebarApp) {
             tree_title_from_parts(
                 &app.pane_window,
                 None,
-                app.last_error.is_some(),
+                app.tree_degraded_label(),
                 tree_title_width(area.width),
             )
         });
@@ -637,12 +807,9 @@ fn draw_tree(frame: &mut Frame<'_>, area: Rect, app: &SidebarApp) {
             .borders(Borders::ALL)
             .border_style(focus_style),
     );
-    if area.height > 0 {
-        frame.render_widget(list, area);
-    }
+    frame.render_widget(list, area);
 }
 
-#[cfg(test)]
 fn tree_controls_area(area: Rect) -> Rect {
     if area.width < TREE_CONTROL_CONTENT_WIDTH + 2 || area.height == 0 {
         return Rect::new(area.x, area.y, 0, 0);
@@ -662,7 +829,7 @@ fn tree_title_width(width: u16) -> u16 {
 fn tree_controls_line() -> Line<'static> {
     Line::from(vec![
         Span::styled(
-            TREE_RESTART_SYMBOL,
+            TREE_REFRESH_SYMBOL,
             Style::default()
                 .fg(Color::Green)
                 .add_modifier(Modifier::BOLD),
@@ -679,7 +846,7 @@ fn tree_title(view: &ProjectView, app: &SidebarApp, width: u16) -> String {
     tree_title_from_parts(
         &app.pane_window,
         view.namespace.active_window.as_deref(),
-        app.last_error.is_some(),
+        app.tree_degraded_label(),
         width,
     )
 }
@@ -687,7 +854,7 @@ fn tree_title(view: &ProjectView, app: &SidebarApp, width: u16) -> String {
 fn tree_title_from_parts(
     pane_window: &str,
     active_window: Option<&str>,
-    degraded: bool,
+    degraded_label: Option<&str>,
     width: u16,
 ) -> String {
     let active = active_window
@@ -695,24 +862,24 @@ fn tree_title_from_parts(
         .filter(|value| !value.is_empty())
         .unwrap_or(pane_window);
     let cross_window_focus = active != pane_window;
-    let title = if cross_window_focus && degraded {
-        format!("focus:{active} · ccbd ✕")
-    } else if cross_window_focus {
-        format!("focus:{active}")
-    } else if degraded {
-        "ccbd ✕".to_string()
+    let title = if cross_window_focus {
+        degraded_label
+            .map(|label| format!("focus:{active} · {label}"))
+            .unwrap_or_else(|| format!("focus:{active}"))
+    } else if let Some(label) = degraded_label {
+        label.to_string()
     } else {
-        "Sidebar".to_string()
+        String::new()
     };
     let available = usize::from(width.saturating_sub(2));
     if title.chars().count() <= available {
         title
-    } else if cross_window_focus && degraded {
-        "focus ccbd!".to_string()
+    } else if cross_window_focus && degraded_label.is_some() {
+        "focus warn".to_string()
     } else if cross_window_focus {
         "focus".to_string()
-    } else if degraded {
-        "ccbd!".to_string()
+    } else if degraded_label.is_some() {
+        "warn".to_string()
     } else {
         String::new()
     }
@@ -768,14 +935,24 @@ fn draw_comms(frame: &mut Frame<'_>, area: Rect, app: &SidebarApp) {
             Style::default().fg(Color::Yellow),
         )));
     }
+    if let Some(error) = app.sidebar_config_error() {
+        lines.push(Line::from(Span::styled(
+            truncate_comms_preview(
+                &format!("config error: {error}"),
+                usize::from(area.width.saturating_sub(2)),
+            ),
+            Style::default().fg(Color::Yellow),
+        )));
+    }
     if app.view().is_some() {
         let comms_capacity = usize::from(area.height.saturating_sub(2))
             .saturating_sub(lines.len())
             .max(1);
         let content_width = usize::from(area.width.saturating_sub(2));
-        let visible_comms = app.visible_comms();
+        let visible_comms = app.visible_comms_limited();
+        let compact = app.sidebar_view().comms_compact;
         for item in visible_comms.iter() {
-            let item_lines = comms_lines(item, content_width);
+            let item_lines = comms_lines(item, content_width, compact);
             if lines.len() + item_lines.len() > comms_capacity {
                 break;
             }
@@ -790,13 +967,34 @@ fn draw_comms(frame: &mut Frame<'_>, area: Rect, app: &SidebarApp) {
     frame.render_widget(paragraph, area);
 }
 
+fn draw_tips(frame: &mut Frame<'_>, area: Rect, app: &SidebarApp) {
+    if area.height == 0 {
+        return;
+    }
+    let content_height = usize::from(area.height.saturating_sub(2));
+    let content_width = usize::from(area.width.saturating_sub(2));
+    let mut lines = app
+        .sidebar_view()
+        .tips
+        .iter()
+        .take(content_height)
+        .map(|tip| Line::from(truncate_comms_preview(tip, content_width)))
+        .collect::<Vec<_>>();
+    if lines.is_empty() {
+        lines.push(Line::from("no tips"));
+    }
+    let paragraph =
+        Paragraph::new(lines).block(Block::default().title("Tips").borders(Borders::ALL));
+    frame.render_widget(paragraph, area);
+}
+
 fn empty_dash(value: &str) -> &str {
     if value.trim().is_empty() { "-" } else { value }
 }
 
 #[cfg(test)]
 fn comms_line_text(item: &CommsItem) -> String {
-    comms_lines(item, 80)
+    comms_lines(item, 80, true)
         .into_iter()
         .map(|line| {
             line.spans
@@ -808,7 +1006,10 @@ fn comms_line_text(item: &CommsItem) -> String {
         .join("\n")
 }
 
-fn comms_lines(item: &CommsItem, width: usize) -> Vec<Line<'static>> {
+fn comms_lines(item: &CommsItem, width: usize, compact: bool) -> Vec<Line<'static>> {
+    if compact {
+        return vec![compact_comms_line(item, width)];
+    }
     let status = if item.status_label.trim().is_empty() {
         empty_dash(&item.status)
     } else {
@@ -836,6 +1037,47 @@ fn comms_lines(item: &CommsItem, width: usize) -> Vec<Line<'static>> {
         lines.push(Line::from(truncate_comms_preview(reason.trim(), width)));
     }
     lines
+}
+
+fn compact_comms_line(item: &CommsItem, width: usize) -> Line<'static> {
+    let status = if item.status_label.trim().is_empty() {
+        empty_dash(&item.status)
+    } else {
+        item.status_label.trim()
+    };
+    let route = format!("{}>{} ", empty_dash(&item.sender), empty_dash(&item.target));
+    let compact_status = compact_comms_status(status).to_string();
+    let mut spans = comms_action_spans(item);
+    spans.push(Span::raw(route.clone()));
+    spans.push(Span::styled(
+        compact_status.clone(),
+        Style::default().fg(comms_status_color(item)),
+    ));
+    let used = spans_text_width(&spans);
+    if width > used.saturating_add(1) {
+        let detail = compact_comms_detail(item);
+        if !detail.is_empty() {
+            let available = width.saturating_sub(used).saturating_sub(1);
+            spans.push(Span::raw(" "));
+            spans.push(Span::raw(truncate_comms_preview(&detail, available)));
+        }
+    }
+    Line::from(spans)
+}
+
+fn compact_comms_detail(item: &CommsItem) -> String {
+    let preview = item.body_preview.trim();
+    let reason = comms_reason(item).unwrap_or("").trim();
+    match (preview.is_empty(), reason.is_empty()) {
+        (true, true) => String::new(),
+        (false, true) => preview.to_string(),
+        (true, false) => reason.to_string(),
+        (false, false) => format!("{preview} {reason}"),
+    }
+}
+
+fn spans_text_width(spans: &[Span<'_>]) -> usize {
+    spans.iter().map(|span| span.content.chars().count()).sum()
 }
 
 fn comms_action_spans(_item: &CommsItem) -> Vec<Span<'static>> {
@@ -1123,7 +1365,7 @@ mod tests {
         assert_eq!(app.target_index_at(1, 2, area), Some(1));
         assert_eq!(app.target_index_at(0, 1, area), None);
         assert_eq!(app.target_index_at(1, 0, area), None);
-        assert_eq!(app.target_index_at(1, 10, area), None);
+        assert_eq!(app.target_index_at(1, 8, area), None);
     }
 
     #[test]
@@ -1139,19 +1381,21 @@ mod tests {
         let rendered = terminal.backend().to_string();
         assert!(!rendered.contains("repo · main"));
         assert!(rendered.contains("> main"));
+        assert!(rendered.contains("↻ ×"));
         assert!(!rendered.contains("@1"));
         assert!(rendered.contains("◐* agent1 [codex]"));
         assert!(!rendered.contains("#job1"));
         assert!(rendered.contains("Comms"));
         assert!(rendered.contains("↻  X  ⌫  agent2>agent1 run"));
-        assert!(rendered.contains("↻ ×"));
-        assert!(!rendered.contains("⏻"));
-        assert!(!rendered.contains("✚"));
-        assert!(!rendered.contains("⟲"));
-        assert!(!rendered.contains("Q kill"));
 
         let buffer = terminal.backend().buffer();
         assert_eq!(buffer[(0, 0)].fg, Color::DarkGray);
+        let controls = tree_controls_area(Rect::new(0, 0, 80, 14));
+        assert_eq!(controls, Rect::new(76, 0, 3, 1));
+        assert_eq!(buffer[(controls.x, 0)].symbol(), "↻");
+        assert_eq!(buffer[(controls.x, 0)].fg, Color::Green);
+        assert_eq!(buffer[(controls.x + 2, 0)].symbol(), "×");
+        assert_eq!(buffer[(controls.x + 2, 0)].fg, Color::Red);
         let symbol_cell = buffer
             .content
             .iter()
@@ -1161,7 +1405,7 @@ mod tests {
         let status_cell = buffer
             .content
             .iter()
-            .find(|cell| cell.symbol() == "r" && cell.fg == Color::Green)
+            .find(|cell| cell.symbol() == "r")
             .expect("comms status should render");
         assert_eq!(status_cell.fg, Color::Green);
         let retry_cell = buffer
@@ -1182,22 +1426,10 @@ mod tests {
             .find(|cell| cell.symbol() == "⌫")
             .expect("clear action should render");
         assert_eq!(clear_cell.fg, Color::Cyan);
-        let restart_cell = buffer
-            .content
-            .iter()
-            .find(|cell| cell.symbol() == TREE_RESTART_SYMBOL && cell.fg == Color::Green)
-            .expect("project restart control should render");
-        assert_eq!(restart_cell.fg, Color::Green);
-        let kill_cell = buffer
-            .content
-            .iter()
-            .find(|cell| cell.symbol() == TREE_KILL_SYMBOL)
-            .expect("project kill control should render");
-        assert_eq!(kill_cell.fg, Color::Red);
     }
 
     #[test]
-    fn tree_controls_render_as_inline_symbol_pair() {
+    fn tree_controls_render_as_right_aligned_symbol_pair() {
         let line = tree_controls_line();
         let text = line
             .spans
@@ -1206,29 +1438,10 @@ mod tests {
             .collect::<String>();
 
         assert_eq!(text, "↻ ×");
-    }
-
-    #[test]
-    fn tree_controls_area_sits_on_title_bar_right() {
-        let area = Rect::new(0, 0, 23, 24);
-
-        assert_eq!(tree_controls_area(area), Rect::new(19, 0, 3, 1));
-    }
-
-    #[test]
-    fn renders_tree_and_comms_as_half_height_panels() {
-        let mut app = SidebarApp::new("main".into());
-        app.apply_response(sample_response_with_comms(6));
-
-        let backend = TestBackend::new(80, 20);
-        let mut terminal = Terminal::new(backend).unwrap();
-        terminal.draw(|frame| draw(frame, &app)).unwrap();
-
-        let rendered = terminal.backend().to_string();
-        assert!(rendered.contains("↻  X  ⌫  agent4>agent1 ok"));
-        let buffer = terminal.backend().buffer();
-        assert_eq!(buffer[(0, 10)].symbol(), "┌");
-        assert_eq!(buffer[(1, 10)].symbol(), "C");
+        assert_eq!(
+            tree_controls_area(Rect::new(0, 0, 23, 24)),
+            Rect::new(19, 0, 3, 1)
+        );
     }
 
     #[test]
@@ -1253,31 +1466,7 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn restart_panes_calls_ccbd_project_restart_without_exiting_tui() {
-        let (socket_path, handle) = spawn_project_restart_server();
-        let client = CcbdClient::new(socket_path);
-        let mut app = SidebarApp::new("main".into());
-        app.apply_response(sample_response());
-
-        app.restart_project_panes(&client);
-        handle.join().unwrap();
-
-        assert!(app.last_error.is_none());
-        assert!(app.needs_refresh());
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn restart_panes_action_helper_calls_ccbd_project_restart() {
-        let (socket_path, handle) = spawn_project_restart_server();
-
-        run_ccbd_restart_panes(&socket_path).unwrap();
-        handle.join().unwrap();
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn q_kill_runs_ccb_kill_from_project_root() {
+    fn project_kill_runs_ccb_kill_from_project_root() {
         use std::os::unix::fs::PermissionsExt;
 
         let dir = std::env::temp_dir().join(format!(
@@ -1316,6 +1505,55 @@ mod tests {
     }
 
     #[test]
+    fn renders_sidebar_config_error_without_dropping_comms_actions() {
+        let mut app = SidebarApp::new("main".into());
+        let mut response = sample_response();
+        response.view.namespace.sidebar.view_error =
+            Some("invalid TOML config: Unclosed array".into());
+        app.apply_response(response);
+
+        let rendered = render_to_string(&app, 80, 36);
+
+        assert!(rendered.contains("config ✕"));
+        assert!(rendered.contains("config error: invalid TOML config"));
+        assert!(rendered.contains("↻  X  ⌫  agent2>agent1 run"));
+    }
+
+    #[test]
+    fn renders_three_panel_sidebar_with_five_compact_comms_rows() {
+        let mut app = SidebarApp::new("main".into());
+        app.apply_response(sample_response_with_comms(6));
+
+        let backend = TestBackend::new(80, 36);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|frame| draw(frame, &app)).unwrap();
+
+        let rendered = terminal.backend().to_string();
+        assert!(rendered.contains("↻  X  ⌫  agent4>agent1 ok"));
+        assert!(rendered.contains("↻  X  ⌫  agent5>agent1 ok"));
+        assert!(!rendered.contains("agent6>agent1"));
+        assert!(rendered.contains("Tips"));
+        let buffer = terminal.backend().buffer();
+        assert_eq!(buffer[(0, 12)].symbol(), "┌");
+        assert_eq!(buffer[(1, 12)].symbol(), "C");
+        assert_eq!(buffer[(0, 21)].symbol(), "┌");
+        assert_eq!(buffer[(1, 21)].symbol(), "T");
+    }
+
+    #[test]
+    fn tall_sidebar_uses_one_third_one_quarter_and_five_twelfths_split() {
+        let mut app = SidebarApp::new("main".into());
+        app.apply_response(sample_response_with_comms(6));
+        let area = Rect::new(0, 0, 24, 47);
+
+        let areas = sidebar_areas(area, app.sidebar_view());
+
+        assert_eq!(areas.tree.height, 16);
+        assert_eq!(areas.comms.height, 12);
+        assert_eq!(areas.tips.map(|area| area.height), Some(19));
+    }
+
+    #[test]
     fn tree_header_marks_focus_in_another_window() {
         let mut app = SidebarApp::new("review".into());
         app.apply_response(sample_response());
@@ -1347,7 +1585,7 @@ mod tests {
         app.apply_response(sample_response());
         app.set_error("connect /tmp/ccbd.sock: refused".into());
 
-        let rendered = render_to_string(&app, 80, 14);
+        let rendered = render_to_string(&app, 80, 36);
 
         assert!(rendered.contains("ccbd ✕"));
         assert!(!rendered.contains("repo · main"));
@@ -1405,7 +1643,7 @@ mod tests {
 
         assert_eq!(
             comms_line_text(&item),
-            "↻  X  ⌫  agent2>agent1 err\ncheck agent status\ntimeout"
+            "↻  X  ⌫  agent2>agent1 err check agent status timeout"
         );
         assert_eq!(comms_status_color(&item), Color::Red);
     }
@@ -1429,7 +1667,7 @@ mod tests {
 
         assert_eq!(
             comms_line_text(&item),
-            "↻  X  ⌫  agent2>agent1 run\ncheck agent status\npane_dead"
+            "↻  X  ⌫  agent2>agent1 run check agent status pane_dead"
         );
         assert_eq!(recover_job_id(&item), Some("job1"));
         assert_eq!(recover_reply_delivery_job_id(&item), Some("job2"));
@@ -1449,7 +1687,7 @@ mod tests {
             ..Default::default()
         };
 
-        assert_eq!(comms_line_text(&item), "↻  X  ⌫  agent2>agent1 ok\nall set");
+        assert_eq!(comms_line_text(&item), "↻  X  ⌫  agent2>agent1 ok all set");
         assert_eq!(comms_status_color(&item), Color::Blue);
     }
 
@@ -1462,7 +1700,7 @@ mod tests {
             body_preview: "COMMS_BUSINESS_VIEW_OK".into(),
             ..Default::default()
         };
-        let rendered = comms_lines(&item, 12)
+        let rendered = comms_lines(&item, 12, false)
             .into_iter()
             .map(|line| {
                 line.spans
@@ -1479,6 +1717,28 @@ mod tests {
     }
 
     #[test]
+    fn compact_comms_preview_truncates_to_available_width() {
+        let item = crate::model::CommsItem {
+            sender: "agent2".into(),
+            target: "agent1".into(),
+            status_label: "done".into(),
+            body_preview: "COMMS_BUSINESS_VIEW_OK".into(),
+            ..Default::default()
+        };
+        let rendered = comms_lines(&item, 35, true)
+            .into_iter()
+            .map(|line| {
+                line.spans
+                    .iter()
+                    .map(|span| span.content.as_ref())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(rendered.as_slice(), ["↻  X  ⌫  agent2>agent1 ok COMMS_..."]);
+    }
+
+    #[test]
     fn mouse_coordinates_map_to_comms_rows() {
         let mut app = SidebarApp::new("main".into());
         let mut response = sample_response_with_comms(3);
@@ -1486,11 +1746,36 @@ mod tests {
         response.view.comms[1].body_preview = "line two".into();
         app.apply_response(response);
         let area = Rect::new(0, 0, 24, 20);
+        let row0 = comms_row_y(&app, area, 0);
+        let row1 = comms_row_y(&app, area, 1);
+        let before_comms = sidebar_areas(area, app.sidebar_view())
+            .comms
+            .y
+            .saturating_sub(1);
 
-        assert_eq!(app.comms_index_at(1, 11, area), Some(0));
-        assert_eq!(app.comms_index_at(1, 13, area), Some(1));
-        assert_eq!(app.comms_index_at(0, 11, area), None);
-        assert_eq!(app.comms_index_at(1, 9, area), None);
+        assert_eq!(app.comms_index_at(1, row0, area), Some(0));
+        assert_eq!(app.comms_index_at(1, row1, area), Some(1));
+        assert_eq!(app.comms_index_at(0, row0, area), None);
+        assert_eq!(app.comms_index_at(1, before_comms, area), None);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn header_buttons_are_right_aligned_and_kill_project() {
+        let client = CcbdClient::new("/tmp/not-used.sock");
+        let mut app = SidebarApp::new("main".into());
+        app.apply_response(sample_response());
+        let area = Rect::new(0, 0, 24, 20);
+        let controls = tree_controls_area(sidebar_areas(area, app.sidebar_view()).tree);
+
+        assert_eq!(controls, Rect::new(20, 0, 3, 1));
+        assert_eq!(app.handle_mouse_down(1, 0, area, &client), None);
+        assert_eq!(app.handle_mouse_down(controls.x, 0, area, &client), None);
+        assert!(app.needs_refresh());
+        assert_eq!(
+            app.handle_mouse_down(controls.x + 2, 0, area, &client),
+            Some(ExitAction::KillProject)
+        );
     }
 
     #[test]
@@ -1506,23 +1791,23 @@ mod tests {
         let area = Rect::new(0, 10, 24, 10);
 
         assert_eq!(
-            comms_action_at_area(&[item], area, 1, 11, 22, 0),
+            comms_action_at_area(&[item], area, 1, 11, 22, true, 0),
             Some((0, CommsMouseAction::Retry))
         );
         assert_eq!(
-            comms_action_at_area(&[sample_comms_item("msg1")], area, 3, 11, 22, 0),
+            comms_action_at_area(&[sample_comms_item("msg1")], area, 3, 11, 22, true, 0),
             Some((0, CommsMouseAction::Select))
         );
         assert_eq!(
-            comms_action_at_area(&[sample_comms_item("msg1")], area, 4, 11, 22, 0),
+            comms_action_at_area(&[sample_comms_item("msg1")], area, 4, 11, 22, true, 0),
             Some((0, CommsMouseAction::Cancel))
         );
         assert_eq!(
-            comms_action_at_area(&[sample_comms_item("msg1")], area, 7, 11, 22, 0),
+            comms_action_at_area(&[sample_comms_item("msg1")], area, 7, 11, 22, true, 0),
             Some((0, CommsMouseAction::Clear))
         );
         assert_eq!(
-            comms_action_at_area(&[sample_comms_item("msg1")], area, 10, 11, 22, 0),
+            comms_action_at_area(&[sample_comms_item("msg1")], area, 10, 11, 22, true, 0),
             Some((0, CommsMouseAction::Select))
         );
     }
@@ -1537,8 +1822,9 @@ mod tests {
         response.view.comms[0].target = "agent1".into();
         app.apply_response(response);
         let area = Rect::new(0, 0, 24, 20);
+        let row0 = comms_row_y(&app, area, 0);
 
-        assert!(app.handle_comms_mouse_down(10, 11, area, &client));
+        assert!(app.handle_comms_mouse_down(10, row0, area, &client));
 
         assert!(app.last_error.is_none());
         assert!(!app.needs_refresh());
@@ -1559,8 +1845,9 @@ mod tests {
         response.view.comms[0].block_reason = Some("provider_prompt_idle".into());
         app.apply_response(response);
         let area = Rect::new(0, 0, 24, 20);
+        let row0 = comms_row_y(&app, area, 0);
 
-        assert!(app.handle_comms_mouse_down(1, 11, area, &client));
+        assert!(app.handle_comms_mouse_down(1, row0, area, &client));
         handle.join().unwrap();
 
         assert!(app.last_error.is_none());
@@ -1581,8 +1868,9 @@ mod tests {
         let mut app = SidebarApp::new("main".into());
         app.apply_response(sample_response());
         let area = Rect::new(0, 0, 24, 20);
+        let row0 = comms_row_y(&app, area, 0);
 
-        assert!(app.handle_comms_mouse_down(4, 11, area, &client));
+        assert!(app.handle_comms_mouse_down(4, row0, area, &client));
         handle.join().unwrap();
 
         assert!(app.last_error.is_none());
@@ -1599,8 +1887,9 @@ mod tests {
         let mut app = SidebarApp::new("main".into());
         app.apply_response(sample_response());
         let area = Rect::new(0, 0, 24, 20);
+        let row0 = comms_row_y(&app, area, 0);
 
-        assert!(app.handle_comms_mouse_down(4, 11, area, &client));
+        assert!(app.handle_comms_mouse_down(4, row0, area, &client));
         handle.join().unwrap();
 
         assert!(app.last_error.is_none());
@@ -1617,8 +1906,9 @@ mod tests {
         let mut app = SidebarApp::new("main".into());
         app.apply_response(sample_response());
         let area = Rect::new(0, 0, 24, 20);
+        let row0 = comms_row_y(&app, area, 0);
 
-        assert!(app.handle_comms_mouse_down(7, 11, area, &client));
+        assert!(app.handle_comms_mouse_down(7, row0, area, &client));
         handle.join().unwrap();
 
         assert!(app.last_error.is_none());
@@ -1749,6 +2039,7 @@ mod tests {
                     epoch: Some(1),
                     active_window: Some("main".into()),
                     entry_window: "main".into(),
+                    ..NamespaceInfo::default()
                 },
                 windows: vec![WindowView {
                     name: "main".into(),
@@ -1829,6 +2120,14 @@ mod tests {
         let mut terminal = Terminal::new(backend).unwrap();
         terminal.draw(|frame| draw(frame, app)).unwrap();
         terminal.backend().to_string()
+    }
+
+    fn comms_row_y(app: &SidebarApp, area: Rect, offset: u16) -> u16 {
+        sidebar_areas(area, app.sidebar_view())
+            .comms
+            .y
+            .saturating_add(1)
+            .saturating_add(offset)
     }
 
     #[cfg(unix)]
@@ -2012,45 +2311,6 @@ mod tests {
                     format!(
                         "{}\n",
                         json!({"api_version": 2, "ok": true, "status": "recovered"})
-                    )
-                    .as_bytes(),
-                )
-                .unwrap();
-            let _ = std::fs::remove_file(path_for_thread);
-            let _ = std::fs::remove_dir(dir);
-        });
-        (socket_path, handle)
-    }
-
-    #[cfg(unix)]
-    fn spawn_project_restart_server() -> (std::path::PathBuf, thread::JoinHandle<()>) {
-        let dir = std::env::temp_dir().join(format!(
-            "ccb-agent-sidebar-restart-test-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        std::fs::create_dir_all(&dir).unwrap();
-        let socket_path = dir.join("ccbd.sock");
-        let listener = UnixListener::bind(&socket_path).unwrap();
-        let path_for_thread = socket_path.clone();
-        let handle = thread::spawn(move || {
-            let (mut stream, _) = listener.accept().unwrap();
-            let mut line = String::new();
-            {
-                let mut reader = BufReader::new(&stream);
-                reader.read_line(&mut line).unwrap();
-            }
-            let request: serde_json::Value = serde_json::from_str(line.trim()).unwrap();
-            assert_eq!(request["op"], "project_restart_panes");
-            assert_eq!(request["request"], json!({}));
-            stream
-                .write_all(
-                    format!(
-                        "{}\n",
-                        json!({"api_version": 2, "ok": true, "status": "scheduled"})
                     )
                     .as_bytes(),
                 )

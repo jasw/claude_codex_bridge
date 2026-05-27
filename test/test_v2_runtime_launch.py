@@ -1062,6 +1062,12 @@ def test_ensure_agent_runtime_falls_back_to_detached_tmux_session(monkeypatch, t
             if args[:2] == ['set-option', '-g']:
                 calls.append(('set-option', tuple(args)))
                 return subprocess.CompletedProcess(args=args, returncode=0, stdout='', stderr='')
+            if args[:2] == ['set-window-option', '-g']:
+                calls.append(('set-window-option', tuple(args)))
+                return subprocess.CompletedProcess(args=args, returncode=0, stdout='', stderr='')
+            if args[:1] == ['bind-key']:
+                calls.append(('bind-key', tuple(args)))
+                return subprocess.CompletedProcess(args=args, returncode=0, stdout='', stderr='')
             if args[:2] == ['new-session', '-d']:
                 calls.append(('new-session', tuple(args)))
                 return subprocess.CompletedProcess(args=args, returncode=0, stdout='', stderr='')
@@ -1089,6 +1095,9 @@ def test_ensure_agent_runtime_falls_back_to_detached_tmux_session(monkeypatch, t
     assert any(name == 'set-option' for name, _ in calls)
     assert ('set-option', ('set-option', '-g', 'mouse', 'on')) in calls
     assert ('set-option', ('set-option', '-g', 'set-clipboard', 'on')) in calls
+    assert ('set-window-option', ('set-window-option', '-g', 'mode-keys', 'vi')) in calls
+    assert ('bind-key', ('bind-key', '-T', 'copy-mode-vi', 'v', 'send-keys', '-X', 'begin-selection')) in calls
+    assert ('bind-key', ('bind-key', 'h', 'select-pane', '-L')) in calls
     assert any(name == 'new-session' for name, _ in calls)
     assert any(name == 'respawn' for name, _ in calls)
 
@@ -1216,6 +1225,12 @@ def test_ensure_agent_runtime_outside_tmux_relaunches_stale_binding_via_detached
             if args[:2] == ['set-option', '-g']:
                 calls.append(('set-option', tuple(args)))
                 return subprocess.CompletedProcess(args=args, returncode=0, stdout='', stderr='')
+            if args[:2] == ['set-window-option', '-g']:
+                calls.append(('set-window-option', tuple(args)))
+                return subprocess.CompletedProcess(args=args, returncode=0, stdout='', stderr='')
+            if args[:1] == ['bind-key']:
+                calls.append(('bind-key', tuple(args)))
+                return subprocess.CompletedProcess(args=args, returncode=0, stdout='', stderr='')
             if args[:2] == ['new-session', '-d']:
                 calls.append(('new-session', tuple(args)))
                 return subprocess.CompletedProcess(args=args, returncode=0, stdout='', stderr='')
@@ -1256,6 +1271,9 @@ def test_ensure_agent_runtime_outside_tmux_relaunches_stale_binding_via_detached
     assert any(name == 'start-server' for name, _ in calls)
     assert ('set-option', ('set-option', '-g', 'mouse', 'on')) in calls
     assert ('set-option', ('set-option', '-g', 'set-clipboard', 'on')) in calls
+    assert ('set-window-option', ('set-window-option', '-g', 'mode-keys', 'vi')) in calls
+    assert ('bind-key', ('bind-key', '-T', 'copy-mode-vi', 'y', 'send-keys', '-X', 'copy-selection-and-cancel')) in calls
+    assert ('bind-key', ('bind-key', '-r', 'L', 'resize-pane', '-R', '5')) in calls
     assert any(name == 'new-session' for name, _ in calls)
     assert any(name == 'respawn' for name, _ in calls)
 
@@ -1436,6 +1454,12 @@ def test_ensure_agent_runtime_falls_back_when_created_pane_is_too_small(monkeypa
             if args[:2] == ['set-option', '-g']:
                 calls.append(('set-option', tuple(args)))
                 return subprocess.CompletedProcess(args=args, returncode=0, stdout='', stderr='')
+            if args[:2] == ['set-window-option', '-g']:
+                calls.append(('set-window-option', tuple(args)))
+                return subprocess.CompletedProcess(args=args, returncode=0, stdout='', stderr='')
+            if args[:1] == ['bind-key']:
+                calls.append(('bind-key', tuple(args)))
+                return subprocess.CompletedProcess(args=args, returncode=0, stdout='', stderr='')
             if args[:4] == ['new-session', '-d', '-x', '160']:
                 calls.append(('new-session', tuple(args)))
                 return subprocess.CompletedProcess(args=args, returncode=0, stdout='', stderr='')
@@ -1464,6 +1488,8 @@ def test_ensure_agent_runtime_falls_back_when_created_pane_is_too_small(monkeypa
     assert any(name == 'set-option' for name, _ in calls)
     assert ('set-option', ('set-option', '-g', 'mouse', 'on')) in calls
     assert ('set-option', ('set-option', '-g', 'set-clipboard', 'on')) in calls
+    assert ('set-window-option', ('set-window-option', '-g', 'mode-keys', 'vi')) in calls
+    assert ('bind-key', ('bind-key', 'l', 'select-pane', '-R')) in calls
     assert any(name == 'new-session' for name, _ in calls)
     assert any(name == 'respawn' for name, _ in calls)
 

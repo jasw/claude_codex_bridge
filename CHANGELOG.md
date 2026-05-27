@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+## v7.0.10 (2026-05-27)
+
+### Sidebar Tips And Tmux Controls Release
+
+- **Sidebar Three-Panel Layout Added**: the native sidebar now keeps the agent tree, compact Comms, and Tips panels in a stable `1/3`, `1/4`, `5/12` vertical split.
+- **Default Tips Expanded**: projects without custom sidebar tips now show a fuller tmux help list covering pane movement and resize, window switching, copy mode, paste, and help.
+- **Sidebar Controls Preserved**: the top-right sidebar controls remain `↻` and `×`; `×` performs project-level `ccb kill`, while `q` and `Esc` exit only the sidebar pane.
+- **Tmux Vim Controls Documented And Applied**: CCB-managed tmux keeps `mode-keys vi`, copy-mode `v`/`C-v`/`y`, `prefix+h/j/k/l` pane focus, and `prefix+H/J/K/L` pane resizing.
+- **Sidebar View Config Added**: optional `[ui.sidebar.view]` config can tune tree height, compact Comms, and Tips text without changing managed topology or forcing namespace recreation.
+
 ## v7.0.9 (2026-05-26)
 
 ### README v7 Redesign Release

@@ -10,7 +10,7 @@
 
 [![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20WSL-lightgrey.svg)]()
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue.svg)]()
-[![Version](https://img.shields.io/badge/version-7.0.9-orange.svg)]()
+[![Version](https://img.shields.io/badge/version-7.0.10-orange.svg)]()
 [![Release](https://img.shields.io/badge/install-release--first-orange.svg)]()
 
 **English** | [中文](README_zh.md)
@@ -189,7 +189,8 @@ In this section, `<prefix>` means `Ctrl-b`: **press `Ctrl-b`, release it, then p
 
 | Goal | Function key | Notes |
 | :--- | :--- | :--- |
-| Move to an adjacent pane | `Arrow keys` | Select the pane above, below, left, or right. |
+| Move to an adjacent pane | `h` / `j` / `k` / `l` or Arrow keys | CCB-managed tmux sessions enable Vim-style pane focus keys. |
+| Resize current pane | `H` / `J` / `K` / `L` | Repeatable resize keys in Vim directions. |
 | Move to the next pane | `o` | Fast rotation when direction does not matter. |
 | Zoom / unzoom current pane | `z` | Useful for long output, diffs, and logs. |
 | Open window / pane list | `w` | Pick a target in larger layouts. |
@@ -214,6 +215,8 @@ Copy and paste tips:
 | Goal | Function key | Notes |
 | :--- | :--- | :--- |
 | Scroll in copy / scroll mode | `PageUp` / `PageDown` / `Arrow keys` | Terminal support can vary. |
+| Start selection in copy / scroll mode | `v` | CCB uses tmux vi copy mode. |
+| Copy selection in copy / scroll mode | `y` | Copies to the tmux buffer and exits copy mode. |
 | Search in copy / scroll mode | `Ctrl-s` / `Ctrl-r` | Commonly forward / backward search. |
 | Create a window | `c` | Use only when you intentionally need another shell. |
 | Rename a window | `,` | Helps identify multi-window workflows. |
@@ -442,6 +445,16 @@ v7 highlights:
 - Hardened tmux, Ghostty, release helper, Codex trust, and provider session restore paths.
 
 <details open>
+<summary><b>v7.0.10</b> - Sidebar Tips And Tmux Controls Release</summary>
+
+- Keeps the native sidebar as a stable three-panel view: Tree `1/3`, compact Comms `1/4`, and Tips `5/12`.
+- Expands default Tips for projects without custom tips, covering pane movement and resize, window switching, copy mode, paste, and help.
+- Preserves the top-right `↻` and `×` controls: `×` runs project-level `ccb kill`, while `q` and `Esc` exit only the sidebar.
+- Documents and keeps CCB-managed tmux Vim controls: `mode-keys vi`, copy-mode `v` / `C-v` / `y`, `prefix+h/j/k/l`, and `prefix+H/J/K/L`.
+
+</details>
+
+<details>
 <summary><b>v7.0.9</b> - README v7 Redesign Release</summary>
 
 - Rebuilds `README.md` around the v7 visible multi-agent workspace, task-first onboarding, multi-agent approach comparison, v7 UI tour, Quick Start, tmux basics, config examples, and install/update flow.

@@ -49,7 +49,7 @@ follow the v7 task-first structure, use real dark terminal screenshots from
   regions: sidebar, Comms, `agent1` Codex, active `agent2` Codex, and `agent3`
   Claude.
 - Verified CCB-managed tmux defaults in `ccb_test2`: `Ctrl-b` prefix,
-  `mouse on`, `set-clipboard on`, `mode-keys emacs`, and fallback bindings for
+  `mouse on`, `set-clipboard on`, vi copy-mode, and fallback bindings for
   pane focus, window switching, copy mode, and detach.
 - Surveyed README structures from OpenHands, AutoGen, CrewAI, OpenHive, and
   Claude Squad and documented the patterns to borrow.

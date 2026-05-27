@@ -28,6 +28,8 @@ to resume across agents and sessions.
 | Plan | Status | Scope |
 | :--- | :--- | :--- |
 | [readme-v7-redesign](plans/readme-v7-redesign/README.md) | In progress | Redesign public README content, screenshots, demo videos, and tmux onboarding for the v7 release line. |
+| [sidebar-tips-layout](plans/sidebar-tips-layout/README.md) | In progress | Add a three-panel sidebar layout with compact Comms and configurable tmux Tips. |
+| [sidebar-provider-activity](plans/sidebar-provider-activity/README.md) | Planning | Add provider-native activity evidence for accurate sidebar status, including Codex/Claude manual-pane state and API fault validation. |
 
 ## Legacy Planning Sources
 
@@ -43,4 +45,3 @@ These roots predate `docs/plantree/` and are intentionally left in place:
 
 Start with the baseline, then the specific plan root. Use the plan
 `implementation-status.md` only when resuming active work.
-

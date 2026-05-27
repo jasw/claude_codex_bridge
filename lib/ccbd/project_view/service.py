@@ -5,6 +5,7 @@ from pathlib import Path
 from time import monotonic
 from typing import Any
 
+from agents.config_loader import load_project_config
 from agents.models import AgentState
 from ccbd.api_models import JobStatus, TargetKind
 from ccbd.models import MountState
@@ -261,7 +262,12 @@ def build_project_view(deps: ProjectViewDependencies, *, generated_at: str) -> d
             'display_name': deps.project_root.name,
         },
         'ccbd': _ccbd_view(lease),
-        'namespace': _namespace_view(config=deps.config, namespace=namespace, focus=focus),
+        'namespace': _namespace_view(
+            config=deps.config,
+            sidebar_view_result=_current_sidebar_view(deps),
+            namespace=namespace,
+            focus=focus,
+        ),
         'windows': _window_views(config=deps.config, focus=focus, tmux_snapshot=tmux_snapshot),
         'agents': agents,
         'comms': _comms_view(
@@ -385,7 +391,12 @@ def _ccbd_view(lease) -> dict[str, object]:
     }
 
 
-def _namespace_view(*, config, namespace, focus: dict[str, object]) -> dict[str, object]:
+def _namespace_view(*, config, sidebar_view_result, namespace, focus: dict[str, object]) -> dict[str, object]:
+    sidebar = config.sidebar.to_record()
+    sidebar_view, sidebar_view_error = sidebar_view_result
+    sidebar['view'] = sidebar_view.to_record()
+    if sidebar_view_error is not None:
+        sidebar['view_error'] = sidebar_view_error
     return {
         'epoch': namespace.namespace_epoch if namespace is not None else None,
         'socket_path': namespace.tmux_socket_path if namespace is not None else None,
@@ -393,8 +404,15 @@ def _namespace_view(*, config, namespace, focus: dict[str, object]) -> dict[str,
         'active_window': focus.get('active_window') or config.entry_window,
         'active_pane_id': focus.get('active_pane_id'),
         'entry_window': config.entry_window,
-        'sidebar': config.sidebar.to_record(),
+        'sidebar': sidebar,
     }
+
+
+def _current_sidebar_view(deps: ProjectViewDependencies):
+    try:
+        return load_project_config(deps.project_root).config.sidebar_view, None
+    except Exception as exc:
+        return deps.config.sidebar_view, str(exc)
 
 
 def _window_views(*, config, focus: dict[str, object], tmux_snapshot: dict[str, dict[str, object]]) -> list[dict[str, object]]:

@@ -8,6 +8,7 @@ except ModuleNotFoundError:  # pragma: no cover - Python < 3.11
 
 import pytest
 
+from agents.config_identity import project_config_identity_payload
 import agents.config_loader_runtime.io_runtime.documents as config_documents
 from agents.config_loader import (
     CONFIG_SOURCE_BUILTIN_DEFAULT,
@@ -917,6 +918,63 @@ bottom_height = 20
     assert result.config.sidebar.mode == 'every_window'
     assert result.config.sidebar.width == '15%'
     assert result.config.sidebar.bottom_height == 20
+    assert result.config.sidebar_view.comms_limit == 5
+    assert result.config.sidebar_view.tips[0] == 'C-b d  detach'
+    assert 'C-b h/j/k/l pane' in result.config.sidebar_view.tips
+    assert 'copy: y yank' in result.config.sidebar_view.tips
+
+
+def test_load_project_config_supports_sidebar_view_options_without_topology_signature_drift(tmp_path: Path) -> None:
+    project_root = tmp_path / 'repo-sidebar-view'
+    config_path = project_root / '.ccb' / 'ccb.config'
+    base = """version = 2
+entry_window = "main"
+
+[windows]
+main = "agent1:codex"
+
+[ui.sidebar]
+mode = "every_window"
+width = "15%"
+bottom_height = 20
+"""
+    _write(
+        config_path,
+        base
+        + """
+[ui.sidebar.view]
+agents_height = "40%"
+comms_limit = 4
+comms_compact = true
+tips_enabled = true
+tips = ["C-b d detach", "C-b z zoom"]
+""",
+    )
+
+    configured = load_project_config(project_root).config
+
+    assert configured.sidebar_view.agents_height == '40%'
+    assert configured.sidebar_view.comms_limit == 4
+    assert configured.sidebar_view.comms_compact is True
+    assert configured.sidebar_view.tips_enabled is True
+    assert configured.sidebar_view.tips == ('C-b d detach', 'C-b z zoom')
+
+    configured_signature = configured.topology_signature
+    configured_identity = project_config_identity_payload(configured)['config_signature']
+    _write(
+        config_path,
+        base
+        + """
+[ui.sidebar.view]
+agents_height = "35%"
+comms_limit = 5
+tips = ["C-b c new win"]
+""",
+    )
+    changed_view = load_project_config(project_root).config
+
+    assert changed_view.topology_signature == configured_signature
+    assert project_config_identity_payload(changed_view)['config_signature'] == configured_identity
 
 
 def test_load_project_config_supports_windows_topology_agent_overrides(tmp_path: Path) -> None:

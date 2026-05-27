@@ -41,6 +41,11 @@ from storage.paths import PathLayout
 NOW = '2026-05-20T12:00:00Z'
 
 
+def _write(path: Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding='utf-8')
+
+
 def _spec(name: str, provider: str) -> AgentSpec:
     return AgentSpec(
         name=name,
@@ -318,6 +323,10 @@ def test_project_view_returns_minimal_windows_agents_and_comms(tmp_path: Path) -
     assert response['cache']['sequence'] == 1
     assert view['project']['display_name'] == 'repo'
     assert view['ccbd']['state'] == MountState.MOUNTED.value
+    assert view['namespace']['sidebar']['view']['comms_limit'] == 5
+    assert view['namespace']['sidebar']['view']['tips'][0] == 'C-b d  detach'
+    assert 'C-b h/j/k/l pane' in view['namespace']['sidebar']['view']['tips']
+    assert 'copy: y yank' in view['namespace']['sidebar']['view']['tips']
     assert [window['name'] for window in view['windows']] == ['main', 'ops']
     assert view['windows'][0]['agents'] == ['agent1', 'agent2']
     assert [agent['name'] for agent in view['agents']] == ['agent1', 'agent2', 'agent3']
@@ -334,6 +343,125 @@ def test_project_view_returns_minimal_windows_agents_and_comms(tmp_path: Path) -
     assert [item['id'] for item in view['comms']] == ['job_running_1234', 'job_queued_5678']
     assert view['comms'][0]['sender'] == 'agent2'
     assert view['comms'][0]['target'] == 'agent1'
+
+
+def test_project_view_hot_reloads_sidebar_view_config(tmp_path: Path) -> None:
+    project_root = tmp_path / 'repo-sidebar-view'
+    project_root.mkdir()
+    config_path = project_root / '.ccb' / 'ccb.config'
+    _write(
+        config_path,
+        """version = 2
+entry_window = "main"
+
+[windows]
+main = "agent1:codex, agent2:claude"
+ops = "agent3:codex"
+
+[ui.sidebar.view]
+comms_limit = 4
+tips = ["C-b d detach"]
+""",
+    )
+    layout = PathLayout(project_root)
+    project_id = compute_project_id(project_root)
+    config = _config()
+    registry = AgentRegistry(layout, config)
+    mount_manager = MountManager(layout, clock=lambda: NOW)
+    dispatcher = JobDispatcher(layout, config, registry, clock=lambda: NOW)
+    service = ProjectViewService(
+        ProjectViewDependencies(
+            project_root=project_root,
+            project_id=project_id,
+            config=config,
+            registry=registry,
+            mount_manager=mount_manager,
+            namespace_state_store=ProjectNamespaceStateStore(layout),
+            dispatcher=dispatcher,
+            clock=lambda: NOW,
+            cache_ttl_ms=0,
+        )
+    )
+
+    first = service.build_response()['view']['namespace']['sidebar']['view']
+    _write(
+        config_path,
+        """version = 2
+entry_window = "main"
+
+[windows]
+main = "agent1:codex, agent2:claude"
+ops = "agent3:codex"
+
+[ui.sidebar.view]
+comms_limit = 2
+tips = ["C-b z zoom", "C-b c new win"]
+""",
+    )
+    second = service.build_response()['view']['namespace']['sidebar']['view']
+
+    assert first['comms_limit'] == 4
+    assert first['tips'] == ['C-b d detach']
+    assert second['comms_limit'] == 2
+    assert second['tips'] == ['C-b z zoom', 'C-b c new win']
+
+
+def test_project_view_reports_sidebar_view_config_error_without_losing_last_good_view(tmp_path: Path) -> None:
+    project_root = tmp_path / 'repo-sidebar-view-error'
+    project_root.mkdir()
+    config_path = project_root / '.ccb' / 'ccb.config'
+    _write(
+        config_path,
+        """version = 2
+entry_window = "main"
+
+[windows]
+main = "agent1:codex, agent2:claude"
+ops = "agent3:codex"
+
+[ui.sidebar.view]
+comms_limit = 2
+tips = ["C-b z zoom"]
+""",
+    )
+    layout = PathLayout(project_root)
+    project_id = compute_project_id(project_root)
+    config = _config()
+    registry = AgentRegistry(layout, config)
+    mount_manager = MountManager(layout, clock=lambda: NOW)
+    dispatcher = JobDispatcher(layout, config, registry, clock=lambda: NOW)
+    service = ProjectViewService(
+        ProjectViewDependencies(
+            project_root=project_root,
+            project_id=project_id,
+            config=config,
+            registry=registry,
+            mount_manager=mount_manager,
+            namespace_state_store=ProjectNamespaceStateStore(layout),
+            dispatcher=dispatcher,
+            clock=lambda: NOW,
+            cache_ttl_ms=0,
+        )
+    )
+
+    _write(
+        config_path,
+        """version = 2
+entry_window = "main"
+
+[windows]
+main = "agent1:codex, agent2:claude"
+ops = "agent3:codex"
+
+[ui.sidebar.view]
+tips = ["missing comma" "next"]
+""",
+    )
+    sidebar = service.build_response()['view']['namespace']['sidebar']
+
+    assert sidebar['view']['comms_limit'] == config.sidebar_view.comms_limit
+    assert sidebar['view']['tips'][0] == 'C-b d  detach'
+    assert 'invalid TOML config' in sidebar['view_error']
 
 
 def test_project_view_comms_includes_recent_terminal_jobs(tmp_path: Path) -> None:

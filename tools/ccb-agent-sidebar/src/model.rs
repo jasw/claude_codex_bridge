@@ -46,6 +46,42 @@ pub struct NamespaceInfo {
     pub active_window: Option<String>,
     #[serde(default)]
     pub entry_window: String,
+    #[serde(default)]
+    pub sidebar: SidebarInfo,
+}
+
+#[derive(Debug, Clone, Deserialize, Default, PartialEq)]
+pub struct SidebarInfo {
+    #[serde(default)]
+    pub view: SidebarViewInfo,
+    #[serde(default)]
+    pub view_error: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+pub struct SidebarViewInfo {
+    #[serde(default = "default_agents_height")]
+    pub agents_height: serde_json::Value,
+    #[serde(default = "default_comms_limit")]
+    pub comms_limit: usize,
+    #[serde(default = "default_comms_compact")]
+    pub comms_compact: bool,
+    #[serde(default = "default_tips_enabled")]
+    pub tips_enabled: bool,
+    #[serde(default = "default_tips")]
+    pub tips: Vec<String>,
+}
+
+impl Default for SidebarViewInfo {
+    fn default() -> Self {
+        Self {
+            agents_height: default_agents_height(),
+            comms_limit: default_comms_limit(),
+            comms_compact: default_comms_compact(),
+            tips_enabled: default_tips_enabled(),
+            tips: default_tips(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Default, PartialEq)]
@@ -146,16 +182,82 @@ pub fn row_targets(view: &ProjectView) -> Vec<RowTarget> {
     targets
 }
 
+fn default_agents_height() -> serde_json::Value {
+    serde_json::Value::String("33%".into())
+}
+
+fn default_comms_limit() -> usize {
+    5
+}
+
+fn default_comms_compact() -> bool {
+    true
+}
+
+fn default_tips_enabled() -> bool {
+    true
+}
+
+fn default_tips() -> Vec<String> {
+    [
+        "C-b d  detach",
+        "C-b h/j/k/l pane",
+        "C-b H/J/K/L resize",
+        "C-b o  next pane",
+        "C-b z  zoom",
+        "C-b w  tree",
+        "C-b n/p next/prev",
+        "C-b 0-9 jump win",
+        "C-b [  copy mode",
+        "copy: PgUp/PgDn",
+        "copy: v select",
+        "copy: y yank",
+        "copy: q exit",
+        "C-b ]  paste",
+        "C-b c  new win",
+        "C-b ,  rename",
+        "C-b ?  keys",
+    ]
+    .into_iter()
+    .map(str::to_string)
+    .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn default_tips_cover_common_tmux_operations() {
+        let tips = default_tips();
+
+        assert_eq!(tips[0], "C-b d  detach");
+        assert!(tips.contains(&"C-b h/j/k/l pane".to_string()));
+        assert!(tips.contains(&"C-b H/J/K/L resize".to_string()));
+        assert!(tips.contains(&"C-b [  copy mode".to_string()));
+        assert!(tips.contains(&"copy: y yank".to_string()));
+        assert!(tips.contains(&"C-b ?  keys".to_string()));
+    }
 
     #[test]
     fn parses_project_view_response() {
         let payload = r#"{
           "view": {
             "project": {"display_name": "repo"},
-            "namespace": {"epoch": 3, "active_window": "main"},
+            "namespace": {
+              "epoch": 3,
+              "active_window": "main",
+              "sidebar": {
+                "view_error": "invalid TOML config",
+                "view": {
+                  "agents_height": "40%",
+                  "comms_limit": 4,
+                  "comms_compact": true,
+                  "tips_enabled": true,
+                  "tips": ["C-b d detach"]
+                }
+              }
+            },
             "windows": [{"name": "main", "active": true, "agents": ["agent1"]}],
             "agents": [{"name": "agent1", "provider": "codex", "window": "main", "activity_state": "idle"}],
             "comms": [{
@@ -178,6 +280,15 @@ mod tests {
 
         assert_eq!(response.cache.sequence, 7);
         assert_eq!(response.view.project.display_name, "repo");
+        assert_eq!(
+            response.view.namespace.sidebar.view_error.as_deref(),
+            Some("invalid TOML config")
+        );
+        assert_eq!(response.view.namespace.sidebar.view.comms_limit, 4);
+        assert_eq!(
+            response.view.namespace.sidebar.view.tips,
+            vec!["C-b d detach"]
+        );
         assert_eq!(response.view.comms[0].status_label, "work");
         assert_eq!(response.view.comms[0].body_preview, "work");
         assert!(response.view.comms[0].recoverable);

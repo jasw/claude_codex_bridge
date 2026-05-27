@@ -145,6 +145,31 @@ work = "worker1:codex(worktree), worker2:claude(worktree)"
 mode = "every_window"
 width = "15%"
 bottom_height = 20
+
+[ui.sidebar.view]
+agents_height = "33%"
+comms_limit = 5
+comms_compact = true
+tips_enabled = true
+tips = [
+  "C-b d  detach",
+  "C-b h/j/k/l pane",
+  "C-b H/J/K/L resize",
+  "C-b o  next pane",
+  "C-b z  zoom",
+  "C-b w  tree",
+  "C-b n/p next/prev",
+  "C-b 0-9 jump win",
+  "C-b [  copy mode",
+  "copy: PgUp/PgDn",
+  "copy: v select",
+  "copy: y yank",
+  "copy: q exit",
+  "C-b ]  paste",
+  "C-b c  new win",
+  "C-b ,  rename",
+  "C-b ?  keys",
+]
 ```
 
 Contract:
@@ -160,6 +185,9 @@ Contract:
 - `entry_window` is optional and defaults to the first declared window.
 - `[ui.sidebar]` is valid only with windows topology. Defaults are `mode = "every_window"`, `width = "15%"`, and `bottom_height = 20`; `width` accepts either a positive integer column count or a percentage string.
 - In `mode = "every_window"`, CCB treats `width` as a project-wide sidebar width. Topology refreshes must resize every managed sidebar pane to the same configured share of its tmux window so page/window switches do not leave sidebars at different widths. If the user drags a sidebar border, CCB stores that runtime column width in the project tmux session and applies it to every managed sidebar window until the session is recreated. If tmux later resizes a window because a terminal client attaches or changes size, CCB reapplies the stored runtime width instead of treating the auto-resized pane width as a new user preference.
+- `[ui.sidebar.view]` is optional and controls only the sidebar pane's internal presentation. It must not redefine managed windows, agents, pane ownership, provider runtime, or message/job authority.
+- `[ui.sidebar.view]` changes are UI-only: `agents_height`, `comms_limit`, `comms_compact`, `tips_enabled`, and `tips` are delivered through `project_view` and must not force namespace topology recreation.
+- If a hot-loaded `[ui.sidebar.view]` parse fails, `project_view.namespace.sidebar.view_error` reports the config error and the sidebar displays a `config ✕` warning while retaining the daemon's last valid view config.
 - Agent leaves in `[windows]` provide default `provider` and default `workspace_mode` (`agent:provider` means `inplace`; `agent:provider(worktree)` means `git-worktree`).
 - `[agents.<name>]` tables are overlays for names referenced by `[windows]`. They may provide any agent-local override, including `workspace_mode`; if they repeat `provider`, it must match the provider declared in `[windows]`.
 - `[agents.<name>]` tables for names no longer referenced by `[windows]` are ignored as stale overlay residue and must not become configured agents or block startup.
@@ -299,6 +327,7 @@ General rule:
 - The project-owned tmux socket/session is responsible for its own theme and pane header rendering.
 - Project UI correctness must not depend on whether the invoking shell is already inside some outer tmux server.
 - Namespace creation or reuse must reapply session-scoped CCB tmux options on the project-owned socket.
+- CCB-managed tmux sessions use vi copy/scroll mode by default (`mode-keys vi`), including `v` to begin selection, `y` to copy and leave copy mode, and Vim-style pane navigation (`prefix+h/j/k/l`) plus pane resizing (`prefix+H/J/K/L`).
 - When a project-owned pane dies and the daemon chooses namespace-level recovery, it must recreate and re-project the configured layout so each logical pane returns to its canonical position.
 - Namespace `layout_version` is the compatibility key for visible pane topology and tmux UI presentation:
   - when the stored namespace layout version differs from the current code contract, the project namespace must be recreated

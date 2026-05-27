@@ -50,14 +50,71 @@ def ensure_server_policy(backend, *, timeout_s: float | None = None) -> None:
     )
     _apply_optional_server_policy(backend, option='mouse', value='on', timeout_s=timeout_s)
     _apply_optional_server_policy(backend, option='set-clipboard', value='on', timeout_s=timeout_s)
+    _apply_optional_window_policy(backend, option='mode-keys', value='vi', timeout_s=timeout_s)
+    _apply_optional_tmux_policy(
+        backend,
+        ['bind-key', '-T', 'copy-mode-vi', 'v', 'send-keys', '-X', 'begin-selection'],
+        description='tmux copy-mode-vi begin-selection binding',
+        timeout_s=timeout_s,
+    )
+    _apply_optional_tmux_policy(
+        backend,
+        ['bind-key', '-T', 'copy-mode-vi', 'C-v', 'send-keys', '-X', 'rectangle-toggle'],
+        description='tmux copy-mode-vi rectangle-toggle binding',
+        timeout_s=timeout_s,
+    )
+    _apply_optional_tmux_policy(
+        backend,
+        ['bind-key', '-T', 'copy-mode-vi', 'y', 'send-keys', '-X', 'copy-selection-and-cancel'],
+        description='tmux copy-mode-vi yank binding',
+        timeout_s=timeout_s,
+    )
+    for key, direction in (('h', '-L'), ('j', '-D'), ('k', '-U'), ('l', '-R')):
+        _apply_optional_tmux_policy(
+            backend,
+            ['bind-key', key, 'select-pane', direction],
+            description=f'tmux vi pane focus binding {key}',
+            timeout_s=timeout_s,
+        )
+    for key, direction in (('H', '-L'), ('J', '-D'), ('K', '-U'), ('L', '-R')):
+        _apply_optional_tmux_policy(
+            backend,
+            ['bind-key', '-r', key, 'resize-pane', direction, '5'],
+            description=f'tmux vi pane resize binding {key}',
+            timeout_s=timeout_s,
+        )
 
 
 def _apply_optional_server_policy(backend, *, option: str, value: str, timeout_s: float | None = None) -> None:
+    _apply_optional_tmux_policy(
+        backend,
+        ['set-option', '-g', option, value],
+        description=f'tmux {option} policy',
+        timeout_s=timeout_s,
+    )
+
+
+def _apply_optional_window_policy(backend, *, option: str, value: str, timeout_s: float | None = None) -> None:
+    _apply_optional_tmux_policy(
+        backend,
+        ['set-window-option', '-g', option, value],
+        description=f'tmux {option} window policy',
+        timeout_s=timeout_s,
+    )
+
+
+def _apply_optional_tmux_policy(
+    backend,
+    args: list[str],
+    *,
+    description: str,
+    timeout_s: float | None = None,
+) -> None:
     try:
         _tmux_run_ready(
             backend,
-            ['set-option', '-g', option, value],
-            failure_message=f'failed to persist tmux {option} policy',
+            args,
+            failure_message=f'failed to persist {description}',
             timeout_s=timeout_s,
         )
     except Exception:

@@ -3,8 +3,8 @@ from __future__ import annotations
 from typing import Any
 
 from agents.config_loader_runtime.parsing_runtime.agent_specs import build_agent_spec
-from agents.config_loader_runtime.parsing_runtime.expectations import expect_mapping, expect_string
-from agents.models import AgentValidationError, SidebarSpec, WindowSpec, normalize_agent_name, parse_layout_spec
+from agents.config_loader_runtime.parsing_runtime.expectations import expect_bool, expect_mapping, expect_string, expect_string_list
+from agents.models import AgentValidationError, SidebarSpec, SidebarViewSpec, WindowSpec, normalize_agent_name, parse_layout_spec
 
 from ..common import ConfigValidationError
 
@@ -19,7 +19,7 @@ def parse_sidebar(raw_ui: Any) -> SidebarSpec | None:
     if ui.get('sidebar') is None:
         return None
     sidebar = expect_mapping(ui['sidebar'], field_name='ui.sidebar')
-    unknown_sidebar = sorted(set(sidebar) - {'mode', 'width', 'bottom_height'})
+    unknown_sidebar = sorted(set(sidebar) - {'mode', 'width', 'bottom_height', 'view'})
     if unknown_sidebar:
         raise ConfigValidationError(
             f'ui.sidebar contains unknown fields: {", ".join(unknown_sidebar)}'
@@ -29,6 +29,33 @@ def parse_sidebar(raw_ui: Any) -> SidebarSpec | None:
             mode=sidebar.get('mode', 'every_window'),
             width=sidebar.get('width', '15%'),
             bottom_height=sidebar.get('bottom_height', 20),
+        )
+    except AgentValidationError as exc:
+        raise ConfigValidationError(str(exc)) from exc
+
+
+def parse_sidebar_view(raw_ui: Any) -> SidebarViewSpec | None:
+    if raw_ui is None:
+        return None
+    ui = expect_mapping(raw_ui, field_name='ui')
+    if ui.get('sidebar') is None:
+        return None
+    sidebar = expect_mapping(ui['sidebar'], field_name='ui.sidebar')
+    if sidebar.get('view') is None:
+        return None
+    view = expect_mapping(sidebar['view'], field_name='ui.sidebar.view')
+    unknown_view = sorted(set(view) - {'agents_height', 'comms_limit', 'comms_compact', 'tips_enabled', 'tips'})
+    if unknown_view:
+        raise ConfigValidationError(
+            f'ui.sidebar.view contains unknown fields: {", ".join(unknown_view)}'
+        )
+    try:
+        return SidebarViewSpec(
+            agents_height=view.get('agents_height', '33%'),
+            comms_limit=view.get('comms_limit', 5),
+            comms_compact=expect_bool(view.get('comms_compact', True), field_name='ui.sidebar.view.comms_compact'),
+            tips_enabled=expect_bool(view.get('tips_enabled', True), field_name='ui.sidebar.view.tips_enabled'),
+            tips=expect_string_list(view.get('tips', list(SidebarViewSpec().tips)), field_name='ui.sidebar.view.tips'),
         )
     except AgentValidationError as exc:
         raise ConfigValidationError(str(exc)) from exc
@@ -168,4 +195,4 @@ def _validate_topology_overlay_provider(
         )
 
 
-__all__ = ['agents_from_topology_windows', 'parse_sidebar', 'parse_topology_windows']
+__all__ = ['agents_from_topology_windows', 'parse_sidebar', 'parse_sidebar_view', 'parse_topology_windows']

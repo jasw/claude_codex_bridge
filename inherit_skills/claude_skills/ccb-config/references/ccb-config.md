@@ -121,6 +121,31 @@ review = "reviewer:claude, discuss:codex"
 mode = "every_window"
 width = "15%"
 bottom_height = 20
+
+[ui.sidebar.view]
+agents_height = "33%"
+comms_limit = 5
+comms_compact = true
+tips_enabled = true
+tips = [
+  "C-b d  detach",
+  "C-b h/j/k/l pane",
+  "C-b H/J/K/L resize",
+  "C-b o  next pane",
+  "C-b z  zoom",
+  "C-b w  tree",
+  "C-b n/p next/prev",
+  "C-b 0-9 jump win",
+  "C-b [  copy mode",
+  "copy: PgUp/PgDn",
+  "copy: v select",
+  "copy: y yank",
+  "copy: q exit",
+  "C-b ]  paste",
+  "C-b c  new win",
+  "C-b ,  rename",
+  "C-b ?  keys",
+]
 ```
 
 Rules:
@@ -135,6 +160,7 @@ Rules:
 - `[ui.sidebar]` is optional. Defaults are `mode = "every_window"`, `width = "15%"`, and `bottom_height = 20`.
 - Agent leaves provide default provider and workspace mode. Same-name `[agents.<name>]` tables are overlays; they may override fields such as `workspace_mode`, and the provider there must match the provider in `[windows]` if it is repeated.
 - `[agents.<name>]` tables for names no longer present in `[windows]` are ignored as stale overlay residue.
+- `[ui.sidebar.view]` is optional and UI-only. It can tune sidebar tree height, Comms visible row count/compactness, and short Tips text without changing the managed window topology.
 
 ## Migrating Old Configs To Windows
 
