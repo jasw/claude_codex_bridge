@@ -288,6 +288,7 @@ Runtime start policy rules:
 - `auto_permission` is inherited project runtime policy, not a one-shot pane-local flag
 - recovery restore is not inherited from the original CLI invocation; daemon-owned recovery must always use restore semantics
 - plain foreground `ccb` without explicit flags is defined as `restore=true` and `auto_permission=true`
+- for managed Codex, `auto_permission=true` must also bypass Codex hook-trust prompts for the managed invocation; `ccb -s` keeps provider-native hook trust prompts enabled
 - therefore:
   - explicit foreground `ccb` start uses the CLI-provided `restore` flag and `auto_permission` flag
   - daemon-owned recovery mount, pane recovery, namespace reflow, and post-crash remount must always use `restore=true`

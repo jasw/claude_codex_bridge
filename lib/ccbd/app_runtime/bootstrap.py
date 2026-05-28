@@ -155,6 +155,7 @@ def initialize_app(app, project_root: str | Path, *, clock, pid: int | None) -> 
             dispatcher=app.dispatcher,
             namespace_controller=app.project_namespace,
             state_store=app.project_view_state_store,
+            paths=app.paths,
             clock=app.clock,
         )
     )
@@ -163,6 +164,7 @@ def initialize_app(app, project_root: str | Path, *, clock, pid: int | None) -> 
             project_id=app.project_id,
             config=app.config,
             namespace_controller=app.project_namespace,
+            project_view_service=app.project_view_service,
         )
     )
     app.heartbeat_state_store = HeartbeatStateStore(app.paths)

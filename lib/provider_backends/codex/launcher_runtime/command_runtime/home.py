@@ -16,7 +16,7 @@ from provider_backends.codex.session_authority import (
 )
 from provider_backends.codex.start_cmd import strip_resume_start_cmd
 from provider_sessions.files import safe_write_session
-from provider_profiles.codex_home_config import materialize_codex_home_config
+from provider_profiles.codex_home_config import materialize_codex_home_config, repair_codex_activity_hooks
 
 from ..session_paths import read_session_payload, session_file_for_runtime_dir, state_dir_for_runtime_dir
 
@@ -72,6 +72,7 @@ def prepare_codex_home_overrides(
             _system_codex_home(),
             layout.codex_home,
             profile=profile,
+            runtime_dir=runtime_dir,
             project_root=project_root,
             agent_name=agent_name,
             workspace_path=workspace_path,
@@ -81,6 +82,14 @@ def prepare_codex_home_overrides(
         _ensure_session_namespace_authority(runtime_dir, layout.codex_home, layout.session_root, profile=profile)
     elif not marker_ready and not any(layout.session_root.iterdir()):
         _write_session_namespace_marker(layout.codex_home / _SESSION_NAMESPACE_MARKER, current_provider_authority_fingerprint(profile))
+    if not refresh_home:
+        repair_codex_activity_hooks(
+            layout.codex_home,
+            project_root=project_root,
+            agent_name=agent_name,
+            runtime_dir=runtime_dir,
+            workspace_path=workspace_path,
+        )
 
     return {
         'CODEX_HOME': str(layout.codex_home),
@@ -234,6 +243,7 @@ def _prepare_managed_home(
     target_home: Path,
     *,
     profile,
+    runtime_dir: Path,
     project_root: Path | None,
     agent_name: str | None,
     workspace_path: Path | None,
@@ -246,6 +256,7 @@ def _prepare_managed_home(
         source_home=source_home,
         project_root=project_root,
         agent_name=agent_name,
+        runtime_dir=runtime_dir,
         workspace_path=workspace_path,
         memory_projection_event_path=memory_projection_event_path,
         memory_projection_marker_path=memory_projection_marker_path,

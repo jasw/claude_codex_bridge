@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import shlex
-from pathlib import Path
 
 from terminal_runtime.tmux_theme import render_tmux_session_theme
 
@@ -17,7 +16,6 @@ def apply_project_tmux_ui(
     backend=None,
 ) -> None:
     socket_path = str(tmux_socket_path or '').strip()
-    ccbd_socket = str(ccbd_socket_path or _ccbd_socket_path_from_tmux_socket(socket_path)).strip()
     session_name = str(tmux_session_name or '').strip()
     if not socket_path or not session_name:
         return
@@ -39,7 +37,6 @@ def apply_project_tmux_ui(
     _apply_sidebar_mouse_controls(
         resolved_backend,
         tmux_socket_path=socket_path,
-        ccbd_socket_path=ccbd_socket,
         session_name=session_name,
     )
     _apply_pane_theme(
@@ -60,19 +57,12 @@ def _apply_sidebar_mouse_controls(
     backend,
     *,
     tmux_socket_path: str,
-    ccbd_socket_path: str,
     session_name: str,
 ) -> None:
     tmux_socket = str(tmux_socket_path or '').strip()
-    ccbd_socket = str(ccbd_socket_path or '').strip()
-    if not tmux_socket or not ccbd_socket:
+    if not tmux_socket:
         return
     default_action = 'select-pane -t = ; send-keys -M'
-    sidebar_match = (
-        '#{&&:#{==:#{session_name},'
-        + session_name
-        + '},#{==:#{@ccb_role},sidebar}}'
-    )
     tmux_run(
         backend,
         [
@@ -80,16 +70,6 @@ def _apply_sidebar_mouse_controls(
             '-T',
             'root',
             'MouseDown1Pane',
-            'if-shell',
-            '-F',
-            '-t',
-            '=',
-            sidebar_match,
-            _sidebar_mouse_controls_shell(
-                tmux_socket,
-                ccbd_socket_path=ccbd_socket,
-                ccb_program=script_path('ccb') or 'ccb',
-            ),
             default_action,
         ],
     )
@@ -139,33 +119,6 @@ def _apply_sidebar_mouse_controls(
     )
 
 
-def _sidebar_mouse_controls_shell(
-    tmux_socket_path: str,
-    *,
-    ccbd_socket_path: str,
-    ccb_program: str = 'ccb',
-) -> str:
-    quoted_socket = shlex.quote(tmux_socket_path)
-    quoted_ccbd_socket = shlex.quote(ccbd_socket_path)
-    quoted_ccb = shlex.quote(str(ccb_program or 'ccb'))
-    return (
-        "run-shell -b "
-        + shlex.quote(
-            "x='#{mouse_x}'; y='#{mouse_y}'; left='#{pane_left}'; top='#{pane_top}'; "
-            "width='#{pane_width}'; height='#{pane_height}'; pane='#{pane_id}'; "
-            "case \"$x:$y:$left:$top:$width:$height\" in ''|*[!0-9:]* ) exit 0 ;; esac; "
-            "[ \"$width\" -lt 5 ] && exit 0; "
-            "rel_x=$x; [ \"$x\" -ge \"$width\" ] && [ \"$x\" -ge \"$left\" ] && rel_x=$((x - left)); "
-            "rel_y=$y; [ \"$y\" -ge \"$height\" ] && [ \"$y\" -ge \"$top\" ] && rel_y=$((y - top)); "
-            "start=$((width - 4)); stop=$((start + 2)); "
-            f"if [ \"$rel_y\" -eq 0 ] && [ \"$rel_x\" -eq \"$start\" ]; then exec tmux -S {quoted_socket} send-keys -t \"$pane\" -l R; fi; "
-            f"if [ \"$rel_y\" -eq 0 ] && [ \"$rel_x\" -eq \"$stop\" ]; then exec tmux -S {quoted_socket} send-keys -t \"$pane\" -l Q; fi; "
-            f"if [ \"$rel_y\" -gt 0 ]; then exec {quoted_ccb} __sidebar-click --socket {quoted_ccbd_socket} "
-            "--mouse-y \"$y\" --pane-top \"$top\" --pane-height \"$height\"; fi"
-        )
-    )
-
-
 def _sidebar_resize_sync_shell(
     tmux_socket_path: str,
     *,
@@ -209,13 +162,6 @@ def _sidebar_window_resize_sync_shell(
         '--project-id "#{@ccb_project_id}" '
         '--from-stored-width'
     )
-
-
-def _ccbd_socket_path_from_tmux_socket(tmux_socket_path: str) -> str:
-    path = Path(str(tmux_socket_path or '').strip())
-    if path.name == 'tmux.sock':
-        return str(path.with_name('ccbd.sock'))
-    return ''
 
 
 def _apply_pane_theme(backend, *, session_name: str, border_script: str | None, rendered_theme) -> None:

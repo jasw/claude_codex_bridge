@@ -10,7 +10,7 @@
 
 [![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20WSL-lightgrey.svg)]()
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue.svg)]()
-[![Version](https://img.shields.io/badge/version-7.0.10-orange.svg)]()
+[![Version](https://img.shields.io/badge/version-7.0.11-orange.svg)]()
 [![Release](https://img.shields.io/badge/install-release--first-orange.svg)]()
 
 **中文** | [English](README.md)
@@ -442,6 +442,16 @@ v7 线重点：
 - 加固 tmux、Ghostty、release helper、Codex trust 和 provider 会话恢复路径。
 
 <details open>
+<summary><b>v7.0.11</b> - Provider Activity And Sidebar Focus Release</summary>
+
+- 通过 provider-native hook artifact 记录活动证据，让 sidebar 更准确地区分 active、pending、idle 和 failed provider 工作状态。
+- project focus 成功后会失效 project view cache，并立即刷新同一 project session 内的 sidebar panes，减少鼠标/聚焦操作后的状态滞后。
+- 普通 tmux pane 点击恢复为直接 `select-pane -t = ; send-keys -M`，避免走隐藏子进程路径造成点击响应变慢。
+- 同步加固 namespace config、provider hook 安装设置、clipboard/runtime launch 路径和 Codex managed trust 处理，并补充聚焦回归测试。
+
+</details>
+
+<details>
 <summary><b>v7.0.10</b> - Sidebar Tips And Tmux Controls Release</summary>
 
 - 保持原生 sidebar 三栏比例稳定：Tree `1/3`、紧凑 Comms `1/4`、Tips `5/12`。

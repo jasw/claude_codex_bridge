@@ -4,6 +4,11 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 
+try:  # pragma: no cover - version shim
+    import tomllib
+except ModuleNotFoundError:  # pragma: no cover - Python < 3.11
+    import tomli as tomllib
+
 from agents.models import AgentSpec, PermissionMode, ProviderProfileSpec, QueuePolicy, RestoreMode, RuntimeMode, WorkspaceMode
 from cli.services.provider_hooks import prepare_provider_workspace
 import provider_core.source_home as source_home_module
@@ -159,6 +164,61 @@ def test_prepare_provider_workspace_materializes_claude_settings_before_hooks(tm
     assert not (workspace / '.claude').exists()
 
 
+def test_prepare_provider_workspace_materializes_claude_activity_hooks(tmp_path: Path, monkeypatch) -> None:
+    project_root = tmp_path / 'repo'
+    workspace = project_root / 'workspace'
+    system_home = tmp_path / 'system-home'
+    system_settings = system_home / '.claude' / 'settings.json'
+    system_settings.parent.mkdir(parents=True, exist_ok=True)
+    system_settings.write_text(json.dumps({'theme': 'light'}, ensure_ascii=False, indent=2), encoding='utf-8')
+    monkeypatch.setenv('HOME', str(system_home))
+    layout = PathLayout(project_root)
+    runtime_dir = layout.agent_provider_runtime_dir('agent1', 'claude')
+
+    for refresh_profile in (True, False):
+        prepare_provider_workspace(
+            layout=layout,
+            spec=_spec('agent1'),
+            workspace_path=workspace,
+            completion_dir=runtime_dir / 'completion',
+            agent_name='agent1',
+            refresh_profile=refresh_profile,
+        )
+
+    settings_path = project_root / '.ccb' / 'agents' / 'agent1' / 'provider-state' / 'claude' / 'home' / '.claude' / 'settings.json'
+    payload = json.loads(settings_path.read_text(encoding='utf-8'))
+    for event_name in (
+        'SessionStart',
+        'UserPromptSubmit',
+        'PreToolUse',
+        'PermissionRequest',
+        'Notification',
+        'PostToolUse',
+        'Stop',
+    ):
+        commands = [
+            hook['command']
+            for group in payload['hooks'][event_name]
+            for hook in group.get('hooks', [])
+            if isinstance(hook, dict)
+        ]
+        activity_commands = [command for command in commands if 'ccb-provider-activity-hook' in command]
+        assert len(activity_commands) == 1
+        assert '--provider claude' in activity_commands[0]
+        assert '--agent-name agent1' in activity_commands[0]
+        assert f'--runtime-dir {runtime_dir}' in activity_commands[0]
+        assert f'--workspace {workspace}' in activity_commands[0]
+        assert layout.project_id in activity_commands[0]
+    stop_commands = [
+        hook['command']
+        for group in payload['hooks']['Stop']
+        for hook in group.get('hooks', [])
+        if isinstance(hook, dict)
+    ]
+    assert any('ccb-provider-finish-hook' in command for command in stop_commands)
+    assert not (workspace / '.claude').exists()
+
+
 def test_prepare_provider_workspace_materializes_claude_memory_bundle_before_hooks(
     tmp_path: Path,
     monkeypatch,
@@ -281,6 +341,75 @@ def test_prepare_provider_workspace_records_codex_memory_projection_event_once(
     marker_path = layout.agent_provider_runtime_dir('agent1', 'codex') / 'codex-memory-projection.json'
     marker = json.loads(marker_path.read_text(encoding='utf-8'))
     assert marker['status'] == 'ok'
+
+
+def test_prepare_provider_workspace_materializes_codex_activity_hooks_and_trust_state(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    project_root = tmp_path / 'repo'
+    workspace = project_root / 'workspace'
+    system_home = tmp_path / 'system-home'
+    system_codex = system_home / '.codex'
+    system_codex.mkdir(parents=True, exist_ok=True)
+    (system_codex / 'AGENTS.md').write_text('system codex memory\n', encoding='utf-8')
+    (system_codex / 'config.toml').write_text(
+        '''
+model = "gpt-test"
+
+[hooks]
+[[hooks.UserPromptSubmit]]
+[[hooks.UserPromptSubmit.hooks]]
+type = "command"
+command = "echo external-hook"
+''',
+        encoding='utf-8',
+    )
+    project_root.mkdir(parents=True, exist_ok=True)
+    _write_project_memory(project_root, 'shared ccb memory\n')
+    monkeypatch.setenv('CODEX_HOME', str(system_codex))
+    layout = PathLayout(project_root)
+    runtime_dir = layout.agent_provider_runtime_dir('agent1', 'codex')
+
+    prepare_provider_workspace(
+        layout=layout,
+        spec=_spec('agent1', provider='codex'),
+        workspace_path=workspace,
+        completion_dir=runtime_dir / 'completion',
+        agent_name='agent1',
+        refresh_profile=True,
+    )
+
+    codex_home = project_root / '.ccb' / 'agents' / 'agent1' / 'provider-state' / 'codex' / 'home'
+    hooks_path = codex_home / 'hooks.json'
+    hooks_payload = json.loads(hooks_path.read_text(encoding='utf-8'))
+    event_names = set(hooks_payload['hooks'])
+    assert {
+        'SessionStart',
+        'UserPromptSubmit',
+        'PreToolUse',
+        'PermissionRequest',
+        'PostToolUse',
+        'Stop',
+    } <= event_names
+    command = hooks_payload['hooks']['UserPromptSubmit'][0]['hooks'][0]['command']
+    assert 'ccb-provider-activity-hook' in command
+    assert '--provider codex' in command
+    assert '--agent-name agent1' in command
+    assert f'--runtime-dir {runtime_dir}' in command
+    assert f'--workspace {workspace}' in command
+    assert layout.project_id in command
+
+    config_path = codex_home / 'config.toml'
+    config_text = config_path.read_text(encoding='utf-8')
+    assert 'external-hook' not in config_text
+    config = tomllib.loads(config_text)
+    state = config['hooks']['state']
+    assert len(state) == 6
+    user_prompt_key = f'{hooks_path}:user_prompt_submit:0:0'
+    assert state[user_prompt_key]['enabled'] is True
+    assert str(state[user_prompt_key]['trusted_hash']).startswith('sha256:')
+    assert not (workspace / '.codex').exists()
 
 
 def test_prepare_provider_workspace_respects_codex_explicit_runtime_home(

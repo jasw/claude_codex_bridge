@@ -17,6 +17,37 @@ from storage.paths import PathLayout
 from agents.config_loader import load_project_config
 
 
+def _clipboard_bind_call(key: str) -> tuple[list[str], bool]:
+    return (
+        [
+            'bind-key',
+            '-T',
+            'copy-mode-vi',
+            key,
+            'send-keys',
+            '-X',
+            'copy-pipe-and-cancel',
+            _clipboard_pipe_command_for_test(),
+        ],
+        True,
+    )
+
+
+def _clipboard_pipe_command_for_test() -> str:
+    return (
+        "sh -lc '"
+        "tmp=$(mktemp \"${TMPDIR:-/tmp}/ccb-clipboard.XXXXXX\") || exit 0; "
+        "cat >\"$tmp\"; "
+        "if command -v wl-copy >/dev/null 2>&1 && [ -n \"${WAYLAND_DISPLAY:-}\" ]; then (wl-copy <\"$tmp\"; rm -f \"$tmp\") >/dev/null 2>&1 & "
+        "elif command -v xclip >/dev/null 2>&1 && [ -n \"${DISPLAY:-}\" ]; then (xclip -selection clipboard <\"$tmp\"; rm -f \"$tmp\") >/dev/null 2>&1 & "
+        "elif command -v xsel >/dev/null 2>&1 && [ -n \"${DISPLAY:-}\" ]; then (xsel --clipboard --input <\"$tmp\"; rm -f \"$tmp\") >/dev/null 2>&1 & "
+        "elif command -v pbcopy >/dev/null 2>&1; then pbcopy <\"$tmp\"; rm -f \"$tmp\"; "
+        "elif command -v powershell.exe >/dev/null 2>&1; then powershell.exe -NoProfile -Command \"[Console]::InputEncoding=[System.Text.UTF8Encoding]::new(); Set-Clipboard -Value ([Console]::In.ReadToEnd())\" <\"$tmp\"; rm -f \"$tmp\"; "
+        "elif command -v pwsh >/dev/null 2>&1; then pwsh -NoLogo -NoProfile -Command \"[Console]::InputEncoding=[System.Text.UTF8Encoding]::new(); Set-Clipboard -Value ([Console]::In.ReadToEnd())\" <\"$tmp\"; rm -f \"$tmp\"; "
+        "else rm -f \"$tmp\"; fi'"
+    )
+
+
 def test_project_namespace_state_store_round_trip(tmp_path: Path) -> None:
     layout = PathLayout(tmp_path / 'repo')
     state = ProjectNamespaceState(
@@ -755,6 +786,9 @@ def test_project_namespace_controller_applies_server_policy_when_reusing_session
     assert (['set-option', '-g', 'set-clipboard', 'on'], True) in backend.tmux_calls
     assert (['set-window-option', '-g', 'mode-keys', 'vi'], True) in backend.tmux_calls
     assert (['bind-key', '-T', 'copy-mode-vi', 'v', 'send-keys', '-X', 'begin-selection'], True) in backend.tmux_calls
+    assert (['bind-key', '-T', 'copy-mode-vi', 'y', 'send-keys', '-X', 'copy-selection-and-cancel'], True) not in backend.tmux_calls
+    assert _clipboard_bind_call('y') in backend.tmux_calls
+    assert _clipboard_bind_call('MouseDragEnd1Pane') in backend.tmux_calls
     assert (['bind-key', 'h', 'select-pane', '-L'], True) in backend.tmux_calls
 
 
@@ -1119,6 +1153,8 @@ def test_project_namespace_controller_uses_silent_server_commands(tmp_path: Path
     assert (['set-option', '-g', 'mouse', 'on'], True) in backend.tmux_calls
     assert (['set-option', '-g', 'set-clipboard', 'on'], True) in backend.tmux_calls
     assert (['set-window-option', '-g', 'mode-keys', 'vi'], True) in backend.tmux_calls
-    assert (['bind-key', '-T', 'copy-mode-vi', 'y', 'send-keys', '-X', 'copy-selection-and-cancel'], True) in backend.tmux_calls
+    assert (['bind-key', '-T', 'copy-mode-vi', 'y', 'send-keys', '-X', 'copy-selection-and-cancel'], True) not in backend.tmux_calls
+    assert _clipboard_bind_call('y') in backend.tmux_calls
+    assert _clipboard_bind_call('Enter') in backend.tmux_calls
     assert (['bind-key', '-r', 'L', 'resize-pane', '-R', '5'], True) in backend.tmux_calls
     assert (['kill-server'], True) in backend.tmux_calls

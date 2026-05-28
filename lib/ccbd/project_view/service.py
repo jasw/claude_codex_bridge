@@ -16,12 +16,14 @@ from message_bureau import CallbackEdgeState
 
 from .activity import (
     AgentActivityFacts,
+    PROVIDER_ACTIVITY_PANE_ERROR_PROBE_AFTER_S,
     PROVIDER_INPUT_STUCK_AFTER_S,
     provider_prompt_idle,
     provider_prompt_idle_after_request,
     provider_prompt_input_stuck,
     resolve_agent_activity,
 )
+from .provider_activity import provider_activity_evidence, record_provider_activity_failure
 from .sequence import ProjectViewSequenceCache
 
 PROJECT_VIEW_SCHEMA_VERSION = 1
@@ -55,6 +57,7 @@ class ProjectViewDependencies:
     dispatcher: object
     namespace_controller: object | None = None
     state_store: object | None = None
+    paths: object | None = None
     clock: object = utc_now
     sequence_cache: ProjectViewSequenceCache | None = None
     cache_ttl_ms: int | None = None
@@ -67,6 +70,7 @@ class _ProjectViewBuildContext:
     backend_loaded: bool = False
     backend: object | None = None
     pane_text_by_id: dict[str, str | None] = field(default_factory=dict)
+    provider_activity_by_agent: dict[str, object | None] = field(default_factory=dict)
 
     def namespace_backend(self):
         if self.namespace is None or self.deps.namespace_controller is None:
@@ -107,6 +111,29 @@ class _ProjectViewBuildContext:
         text = str(getattr(cp, 'stdout', '') or '')
         self.pane_text_by_id[pane] = text or None
         return self.pane_text_by_id[pane]
+
+    def provider_activity_hint(
+        self,
+        *,
+        agent_name: str,
+        provider: str,
+        runtime: object | None,
+        generated_at: str,
+    ):
+        key = str(agent_name or '').strip()
+        if not key:
+            return None
+        if key not in self.provider_activity_by_agent:
+            self.provider_activity_by_agent[key] = provider_activity_evidence(
+                project_root=self.deps.project_root,
+                project_id=self.deps.project_id,
+                paths=self.deps.paths,
+                agent_name=key,
+                provider=provider,
+                runtime=runtime,
+                now=generated_at,
+            )
+        return self.provider_activity_by_agent[key]
 
 
 @dataclass
@@ -195,6 +222,9 @@ class ProjectViewService:
         self._deps = deps
         self._sequence_cache = deps.sequence_cache or ProjectViewSequenceCache()
         self._cached_response: _CachedProjectViewResponse | None = None
+
+    def invalidate_cache(self) -> None:
+        self._cached_response = None
 
     def build_response(self, *, schema_version: int = PROJECT_VIEW_SCHEMA_VERSION) -> dict[str, object]:
         if int(schema_version) != PROJECT_VIEW_SCHEMA_VERSION:
@@ -301,9 +331,18 @@ def _agent_view(
 ) -> dict[str, object]:
     spec = deps.config.agents[agent_name]
     runtime = deps.registry.get(agent_name)
+    provider_activity = context.provider_activity_hint(
+        agent_name=agent_name,
+        provider=spec.provider,
+        runtime=runtime,
+        generated_at=generated_at,
+    )
     job = _top_activity_job(active_job=active_job, queued_jobs=queued_jobs)
     queue_depth = len(queued_jobs) + (1 if _is_top_activity_job(active_job) else 0)
     callback_child_agent = _callback_child_agent(callback_wait)
+    pane_text = None
+    if provider_activity is None or _provider_activity_needs_pane_error_probe(provider_activity, generated_at):
+        pane_text = context.pane_text_hint(getattr(runtime, 'pane_id', None) if runtime is not None else None)
     activity = resolve_agent_activity(
         AgentActivityFacts(
             namespace_mounted=namespace_mounted,
@@ -313,7 +352,7 @@ def _agent_view(
             desired_state=getattr(runtime, 'desired_state', None) if runtime is not None else None,
             pane_id=getattr(runtime, 'pane_id', None) if runtime is not None else None,
             pane_state=getattr(runtime, 'pane_state', None) if runtime is not None else None,
-            pane_text=context.pane_text_hint(getattr(runtime, 'pane_id', None) if runtime is not None else None),
+            pane_text=pane_text,
             current_job_status=job.status.value if job is not None else None,
             current_job_id=job.job_id if job is not None else None,
             current_job_updated_at=job.updated_at if job is not None else None,
@@ -322,8 +361,21 @@ def _agent_view(
             callback_child_job_id=callback_wait.child_job_id if callback_wait is not None else None,
             callback_child_agent=callback_child_agent,
             callback_updated_at=callback_wait.updated_at if callback_wait is not None else None,
+            provider_activity_state=getattr(provider_activity, 'state', None),
+            provider_activity_source=getattr(provider_activity, 'source', None),
+            provider_activity_reason=getattr(provider_activity, 'reason', None),
+            provider_activity_updated_at=getattr(provider_activity, 'updated_at', None),
         ),
         now=generated_at,
+    )
+    _record_inferred_provider_failure(
+        deps=deps,
+        agent_name=agent_name,
+        provider=spec.provider,
+        runtime=runtime,
+        provider_activity=provider_activity,
+        activity=activity,
+        generated_at=generated_at,
     )
     record = {
         'name': agent_name,
@@ -343,6 +395,46 @@ def _agent_view(
         'workspace_path': getattr(runtime, 'workspace_path', None) if runtime is not None else None,
     }
     return record
+
+
+def _provider_activity_needs_pane_error_probe(provider_activity: object | None, generated_at: str) -> bool:
+    state = str(getattr(provider_activity, 'state', '') or '').strip().lower()
+    if state not in {'active', 'pending'}:
+        return False
+    age_s = _job_age_seconds(generated_at, getattr(provider_activity, 'updated_at', None))
+    return age_s is not None and age_s >= PROVIDER_ACTIVITY_PANE_ERROR_PROBE_AFTER_S
+
+
+def _record_inferred_provider_failure(
+    *,
+    deps: ProjectViewDependencies,
+    agent_name: str,
+    provider: str,
+    runtime: object | None,
+    provider_activity: object | None,
+    activity,
+    generated_at: str,
+) -> None:
+    provider_state = str(getattr(provider_activity, 'state', '') or '').strip().lower()
+    if provider_state not in {'active', 'pending'}:
+        return
+    if getattr(activity, 'state', None) != 'failed':
+        return
+    if getattr(activity, 'source', None) != 'provider_pane':
+        return
+    reason = str(getattr(activity, 'reason', '') or '').strip()
+    if reason != 'provider_terminal_error':
+        return
+    record_provider_activity_failure(
+        project_root=deps.project_root,
+        project_id=deps.project_id,
+        paths=deps.paths,
+        agent_name=agent_name,
+        provider=provider,
+        runtime=runtime,
+        reason=reason,
+        updated_at=generated_at,
+    )
 
 
 def _top_activity_job(*, active_job, queued_jobs: tuple):

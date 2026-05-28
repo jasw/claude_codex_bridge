@@ -92,6 +92,7 @@ def _codex_args(command, spec, runtime_dir: Path, *, profile, provider_start_par
                 'never',
                 '--sandbox',
                 'danger-full-access',
+                '--dangerously-bypass-hook-trust',
             ]
         )
     codex_args.extend(spec.startup_args)

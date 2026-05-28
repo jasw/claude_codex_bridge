@@ -33,10 +33,33 @@ _PROVIDER_ACTIVE_MARKERS = (
 _PROVIDER_BACKGROUND_ACTIVE_MARKERS = (
     'background terminal running',
     'background terminals running',
+    'messages to be submitted after next tool call',
+    'press esc to interrupt and send immediately',
+)
+_PROVIDER_TERMINAL_ERROR_MARKERS = (
+    'stream disconnected before completion',
+    'error sending request for url',
+    'connection refused',
+    'connection reset',
+    'connection closed',
+    'connection timed out',
+    'request timed out',
+    'model unavailable',
+    'model_not_found',
+    'rate limit',
+    'rate_limit',
+    'too many requests',
+    'exceeded retry limit',
+    'last status: 4',
+    'last status: 5',
+    'overloaded',
+    'api error',
+    'internal server error',
 )
 _PROVIDER_IDLE_PROMPTS = ('❯', '›')
 _PROVIDER_WORKING_TAIL_LINES = 12
 PROVIDER_INPUT_STUCK_AFTER_S = 30.0
+PROVIDER_ACTIVITY_PANE_ERROR_PROBE_AFTER_S = 5.0
 JOB_RUNNING_STALE_AFTER_S = 120.0
 _PENDING_JOB_STATUSES = frozenset({'accepted', 'queued'})
 _WAITING_CALLBACK_STATES = frozenset({'pending', 'child_completed'})
@@ -60,6 +83,10 @@ class AgentActivityFacts:
     callback_child_job_id: str | None = None
     callback_child_agent: str | None = None
     callback_updated_at: str | None = None
+    provider_activity_state: str | None = None
+    provider_activity_source: str | None = None
+    provider_activity_reason: str | None = None
+    provider_activity_updated_at: str | None = None
 
 
 @dataclass(frozen=True)
@@ -105,6 +132,7 @@ def resolve_agent_activity(
     desired_state = _clean(facts.desired_state)
     job_status = _clean(facts.current_job_status)
     callback_state = _clean(facts.callback_waiting_state)
+    provider_activity_state = _clean(facts.provider_activity_state)
 
     if not facts.namespace_mounted:
         return AgentActivity(ACTIVITY_OFFLINE, 'namespace', 'namespace_unmounted')
@@ -121,6 +149,39 @@ def resolve_agent_activity(
     if runtime_state == 'starting' or reconcile_state in _RECOVERY_STATES:
         reason = 'pane_missing_recovering' if _pane_missing(facts) else 'reconcile_active'
         return AgentActivity(ACTIVITY_PENDING, 'reconcile', reason)
+
+    provider_activity_source = _clean(facts.provider_activity_source)
+    if provider_activity_state in {ACTIVITY_ACTIVE, ACTIVITY_PENDING} and _provider_terminal_error(facts.pane_text):
+        return AgentActivity(
+            ACTIVITY_FAILED,
+            'provider_pane',
+            'provider_terminal_error',
+            last_progress_at=facts.provider_activity_updated_at,
+            current_job_id=facts.current_job_id,
+        )
+    if (
+        provider_activity_state == ACTIVITY_ACTIVE
+        and provider_activity_source == 'codex_hook'
+        and facts.pane_text
+        and not _provider_working(facts.pane_text)
+        and _provider_tail_idle_prompt(facts.pane_text)
+    ):
+        return AgentActivity(
+            ACTIVITY_IDLE,
+            'provider_pane',
+            'provider_prompt_idle',
+            last_progress_at=facts.provider_activity_updated_at,
+            current_job_id=facts.current_job_id,
+        )
+
+    if provider_activity_state in {ACTIVITY_ACTIVE, ACTIVITY_PENDING, ACTIVITY_IDLE, ACTIVITY_FAILED}:
+        return AgentActivity(
+            provider_activity_state,
+            provider_activity_source or 'provider_activity',
+            _clean(facts.provider_activity_reason) or f'provider_activity_{provider_activity_state}',
+            last_progress_at=facts.provider_activity_updated_at,
+            current_job_id=facts.current_job_id,
+        )
 
     if job_status in _PENDING_JOB_STATUSES:
         return AgentActivity(
@@ -242,8 +303,6 @@ def _provider_waiting_for_user(pane_text: str | None) -> bool:
 
 
 def _provider_working(pane_text: str | None) -> bool:
-    if _codex_ready_after_active_marker(pane_text):
-        return False
     normalized = _provider_recent_text(pane_text)
     if not normalized:
         return False
@@ -253,7 +312,16 @@ def _provider_working(pane_text: str | None) -> bool:
         return True
     if 'esc to interrupt' in normalized:
         return not _provider_tail_idle_prompt(pane_text)
+    if _codex_ready_after_active_marker(pane_text):
+        return False
     return any(word in normalized for word in _PROVIDER_ACTIVE_WORDS) and 'interrupt' in normalized
+
+
+def _provider_terminal_error(pane_text: str | None) -> bool:
+    normalized = _provider_recent_text(pane_text)
+    if not normalized:
+        return False
+    return any(marker in normalized for marker in _PROVIDER_TERMINAL_ERROR_MARKERS)
 
 
 def _provider_recent_text(pane_text: str | None) -> str:
@@ -374,6 +442,7 @@ __all__ = [
     'AgentActivity',
     'AgentActivityFacts',
     'JOB_RUNNING_STALE_AFTER_S',
+    'PROVIDER_ACTIVITY_PANE_ERROR_PROBE_AFTER_S',
     'PROVIDER_INPUT_STUCK_AFTER_S',
     'provider_prompt_idle',
     'provider_prompt_idle_after_request',

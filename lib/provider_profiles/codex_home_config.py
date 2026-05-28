@@ -8,7 +8,9 @@ from dataclasses import dataclass
 from datetime import date, datetime, time
 from pathlib import Path
 import re
+import shlex
 import shutil
+import sys
 
 from provider_core.memory_projection import (
     materialize_provider_memory_file,
@@ -42,6 +44,15 @@ _CODEX_PLUGIN_REQUIRED_RELATIVE_PATHS = (
     Path('plugins'),
 )
 _MANAGED_CODEX_DISABLED_FEATURES = ('external_migration',)
+_CODEX_ACTIVITY_HOOK_EVENTS = (
+    'SessionStart',
+    'UserPromptSubmit',
+    'PreToolUse',
+    'PermissionRequest',
+    'PostToolUse',
+    'Stop',
+)
+_CODEX_ACTIVITY_HOOK_TIMEOUT_S = 5
 _TOML_TABLE_HEADER_RE = re.compile(r'^\s*\[{1,2}[^\]]+\]{1,2}\s*(?:#.*)?$')
 
 
@@ -60,6 +71,7 @@ def materialize_codex_home_config(
     source_home: Path | None = None,
     project_root: Path | None = None,
     agent_name: str | None = None,
+    runtime_dir: Path | None = None,
     workspace_path: Path | None = None,
     shared_cache_root: Path | None = None,
     memory_projection_event_path: Path | None = None,
@@ -133,6 +145,14 @@ def materialize_codex_home_config(
         agent_name=agent_name,
         workspace_path=workspace_path,
     )
+    _install_codex_activity_hooks(
+        target_home,
+        target_config,
+        project_root=project_root,
+        agent_name=agent_name,
+        runtime_dir=runtime_dir,
+        workspace_path=workspace_path,
+    )
     record_memory_projection_event(
         memory_result,
         provider='codex',
@@ -141,6 +161,25 @@ def materialize_codex_home_config(
         agent_name=agent_name,
     )
     return target_config
+
+
+def repair_codex_activity_hooks(
+    target_home: Path,
+    *,
+    project_root: Path | None,
+    agent_name: str | None,
+    runtime_dir: Path | None,
+    workspace_path: Path | None,
+) -> None:
+    target_home = Path(target_home).expanduser()
+    _install_codex_activity_hooks(
+        target_home,
+        target_home / 'config.toml',
+        project_root=project_root,
+        agent_name=agent_name,
+        runtime_dir=runtime_dir,
+        workspace_path=workspace_path,
+    )
 
 
 def codex_api_authority(profile) -> CodexApiAuthority | None:
@@ -239,6 +278,7 @@ def _write_managed_codex_config(
 ) -> None:
     target.parent.mkdir(parents=True, exist_ok=True)
     sanitized = _disable_interactive_migration_features(payload)
+    _strip_unmanaged_hook_config(sanitized)
     _trust_managed_codex_project_paths(sanitized, project_root=project_root, workspace_path=workspace_path)
     target.write_text(_render_toml_document(sanitized), encoding='utf-8')
 
@@ -414,6 +454,12 @@ def _disable_interactive_migration_features(payload: dict[str, object]) -> dict[
         features[feature_name] = False
     sanitized['features'] = features
     return sanitized
+
+
+def _strip_unmanaged_hook_config(payload: dict[str, object]) -> None:
+    # CCB installs its own per-agent managed hook declarations below. Inherited
+    # user hooks would couple agent runtime behavior to the outer Codex home.
+    payload.pop('hooks', None)
 
 
 def _import_optional_toml_reader():
@@ -666,6 +712,182 @@ def _sync_codex_plugin_projection(
     else:
         target_sha.parent.mkdir(parents=True, exist_ok=True)
         target_sha.write_text(f'{bundle_sha}\n', encoding='utf-8')
+
+
+def _install_codex_activity_hooks(
+    target_home: Path,
+    target_config: Path,
+    *,
+    project_root: Path | None,
+    agent_name: str | None,
+    runtime_dir: Path | None,
+    workspace_path: Path | None,
+) -> None:
+    if project_root is None or agent_name is None or runtime_dir is None or workspace_path is None:
+        return
+    project_id = _project_id_for_path(project_root)
+    if not project_id:
+        return
+    hooks_path = Path(target_home).expanduser() / 'hooks.json'
+    command = _codex_activity_hook_command(
+        project_id=project_id,
+        agent_name=str(agent_name),
+        runtime_dir=Path(runtime_dir).expanduser(),
+        workspace_path=Path(workspace_path).expanduser(),
+    )
+    event_groups = _codex_activity_hook_events(command)
+    hooks_payload = {'hooks': event_groups}
+    hooks_path.parent.mkdir(parents=True, exist_ok=True)
+    atomic_write_text(
+        hooks_path,
+        json.dumps(hooks_payload, ensure_ascii=False, indent=2) + '\n',
+    )
+    _merge_codex_activity_hook_state(
+        target_config,
+        hooks_path=hooks_path,
+        event_groups=event_groups,
+    )
+
+
+def _project_id_for_path(project_root: Path) -> str:
+    try:
+        return PathLayout(Path(project_root).expanduser()).project_id
+    except Exception:
+        return ''
+
+
+def _codex_activity_hook_command(
+    *,
+    project_id: str,
+    agent_name: str,
+    runtime_dir: Path,
+    workspace_path: Path,
+) -> str:
+    script_path = Path(__file__).resolve().parents[2] / 'bin' / 'ccb-provider-activity-hook'
+    parts = [
+        sys.executable,
+        str(script_path),
+        '--provider',
+        'codex',
+        '--project-id',
+        project_id,
+        '--agent-name',
+        agent_name,
+        '--runtime-dir',
+        str(runtime_dir),
+        '--workspace',
+        str(workspace_path),
+    ]
+    return ' '.join(shlex.quote(str(part)) for part in parts)
+
+
+def _codex_activity_hook_events(command: str) -> dict[str, list[dict[str, object]]]:
+    return {
+        event_name: [
+            {
+                'hooks': [
+                    {
+                        'type': 'command',
+                        'command': command,
+                        'timeout': _CODEX_ACTIVITY_HOOK_TIMEOUT_S,
+                    }
+                ]
+            }
+        ]
+        for event_name in _CODEX_ACTIVITY_HOOK_EVENTS
+    }
+
+
+def _merge_codex_activity_hook_state(
+    target_config: Path,
+    *,
+    hooks_path: Path,
+    event_groups: dict[str, list[dict[str, object]]],
+) -> None:
+    state_table: dict[str, object] = {}
+    source_path = str(Path(hooks_path).expanduser())
+    for event_name, groups in event_groups.items():
+        event_label = _codex_hook_event_label(event_name)
+        for group_index, group in enumerate(groups):
+            handlers = group.get('hooks') if isinstance(group, dict) else None
+            if not isinstance(handlers, list):
+                continue
+            for handler_index, handler in enumerate(handlers):
+                if not isinstance(handler, dict):
+                    continue
+                key = f'{source_path}:{event_label}:{group_index}:{handler_index}'
+                state_table[key] = {
+                    'enabled': True,
+                    'trusted_hash': _codex_command_hook_hash(event_label, group, handler),
+                }
+    target_config.parent.mkdir(parents=True, exist_ok=True)
+    existing_text = _safe_read_text(target_config)
+    payload = _read_source_config_payload(target_config)
+    if not payload and existing_text.strip():
+        target_config.write_text(
+            _replace_managed_codex_activity_state_block(existing_text, state_table),
+            encoding='utf-8',
+        )
+        return
+    hooks_payload = payload.get('hooks')
+    hooks_table = hooks_payload if isinstance(hooks_payload, dict) else {}
+    if hooks_table is not hooks_payload:
+        payload['hooks'] = hooks_table
+    hooks_table['state'] = state_table
+    target_config.write_text(_render_toml_document(payload), encoding='utf-8')
+
+
+def _replace_managed_codex_activity_state_block(text: str, state_table: dict[str, object]) -> str:
+    begin = '# ccb managed codex activity hook state: begin'
+    end = '# ccb managed codex activity hook state: end'
+    lines = text.splitlines()
+    cleaned: list[str] = []
+    index = 0
+    while index < len(lines):
+        if lines[index].strip() == begin:
+            index += 1
+            while index < len(lines) and lines[index].strip() != end:
+                index += 1
+            if index < len(lines):
+                index += 1
+            continue
+        cleaned.append(lines[index])
+        index += 1
+    block = _render_toml_document({'hooks': {'state': state_table}}).rstrip()
+    return '\n'.join([*cleaned, '', begin, block, end]).strip() + '\n'
+
+
+def _codex_hook_event_label(event_name: str) -> str:
+    return ''.join(
+        f'_{char.lower()}' if char.isupper() and index else char.lower()
+        for index, char in enumerate(str(event_name or '').strip())
+    )
+
+
+def _codex_command_hook_hash(event_label: str, group: dict[str, object], handler: dict[str, object]) -> str:
+    normalized_handler = {
+        'type': 'command',
+        'command': str(handler.get('command') or ''),
+        'timeout': int(handler.get('timeout') or _CODEX_ACTIVITY_HOOK_TIMEOUT_S),
+        'async': bool(handler.get('async', False)),
+    }
+    if handler.get('statusMessage') is not None:
+        normalized_handler['statusMessage'] = str(handler.get('statusMessage') or '')
+    normalized_group: dict[str, object] = {}
+    if group.get('matcher') is not None:
+        normalized_group['matcher'] = str(group.get('matcher') or '')
+    normalized_group['hooks'] = [normalized_handler]
+    identity = {'event_name': event_label, **normalized_group}
+    encoded = json.dumps(_canonical_json(identity), ensure_ascii=False, separators=(',', ':')).encode('utf-8')
+    return f"sha256:{hashlib.sha256(encoded).hexdigest()}"
+
+
+def _canonical_json(value: object) -> object:
+    if isinstance(value, dict):
+        return {key: _canonical_json(value[key]) for key in sorted(value)}
+    if isinstance(value, list):
+        return [_canonical_json(item) for item in value]
+    return value
 
 
 def _codex_plugin_bundle_sha(source_tree: Path, source_sha: Path) -> str:
@@ -923,4 +1145,5 @@ __all__ = [
     'codex_api_authority',
     'codex_provider_authority_fingerprint',
     'materialize_codex_home_config',
+    'repair_codex_activity_hooks',
 ]

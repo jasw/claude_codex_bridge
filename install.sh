@@ -155,6 +155,7 @@ SCRIPTS_TO_LINK=(
   bin/autonew
   bin/build-ccb-agent-sidebar
   bin/ccb-agent-sidebar
+  bin/ccb-provider-activity-hook
   bin/ctx-transfer
   ccb
 )

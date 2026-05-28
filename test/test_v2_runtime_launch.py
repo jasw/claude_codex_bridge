@@ -5,6 +5,10 @@ from pathlib import Path
 import shlex
 import subprocess
 import pytest
+try:  # pragma: no cover - version shim
+    import tomllib
+except ModuleNotFoundError:  # pragma: no cover - Python < 3.11
+    import tomli as tomllib
 
 from agents.models import (
     AgentSpec,
@@ -80,6 +84,37 @@ def _write_project_memory(project_root: Path, text: str) -> None:
     path = _project_memory_path(project_root)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding='utf-8')
+
+
+def _clipboard_bind_call(key: str) -> tuple[str, tuple[str, ...]]:
+    return (
+        'bind-key',
+        (
+            'bind-key',
+            '-T',
+            'copy-mode-vi',
+            key,
+            'send-keys',
+            '-X',
+            'copy-pipe-and-cancel',
+            _clipboard_pipe_command_for_test(),
+        ),
+    )
+
+
+def _clipboard_pipe_command_for_test() -> str:
+    return (
+        "sh -lc '"
+        "tmp=$(mktemp \"${TMPDIR:-/tmp}/ccb-clipboard.XXXXXX\") || exit 0; "
+        "cat >\"$tmp\"; "
+        "if command -v wl-copy >/dev/null 2>&1 && [ -n \"${WAYLAND_DISPLAY:-}\" ]; then (wl-copy <\"$tmp\"; rm -f \"$tmp\") >/dev/null 2>&1 & "
+        "elif command -v xclip >/dev/null 2>&1 && [ -n \"${DISPLAY:-}\" ]; then (xclip -selection clipboard <\"$tmp\"; rm -f \"$tmp\") >/dev/null 2>&1 & "
+        "elif command -v xsel >/dev/null 2>&1 && [ -n \"${DISPLAY:-}\" ]; then (xsel --clipboard --input <\"$tmp\"; rm -f \"$tmp\") >/dev/null 2>&1 & "
+        "elif command -v pbcopy >/dev/null 2>&1; then pbcopy <\"$tmp\"; rm -f \"$tmp\"; "
+        "elif command -v powershell.exe >/dev/null 2>&1; then powershell.exe -NoProfile -Command \"[Console]::InputEncoding=[System.Text.UTF8Encoding]::new(); Set-Clipboard -Value ([Console]::In.ReadToEnd())\" <\"$tmp\"; rm -f \"$tmp\"; "
+        "elif command -v pwsh >/dev/null 2>&1; then pwsh -NoLogo -NoProfile -Command \"[Console]::InputEncoding=[System.Text.UTF8Encoding]::new(); Set-Clipboard -Value ([Console]::In.ReadToEnd())\" <\"$tmp\"; rm -f \"$tmp\"; "
+        "else rm -f \"$tmp\"; fi'"
+    )
 
 
 def _claude_prepared_state(runtime_dir: Path) -> dict[str, object]:
@@ -1097,6 +1132,8 @@ def test_ensure_agent_runtime_falls_back_to_detached_tmux_session(monkeypatch, t
     assert ('set-option', ('set-option', '-g', 'set-clipboard', 'on')) in calls
     assert ('set-window-option', ('set-window-option', '-g', 'mode-keys', 'vi')) in calls
     assert ('bind-key', ('bind-key', '-T', 'copy-mode-vi', 'v', 'send-keys', '-X', 'begin-selection')) in calls
+    assert _clipboard_bind_call('y') in calls
+    assert _clipboard_bind_call('MouseDragEnd1Pane') in calls
     assert ('bind-key', ('bind-key', 'h', 'select-pane', '-L')) in calls
     assert any(name == 'new-session' for name, _ in calls)
     assert any(name == 'respawn' for name, _ in calls)
@@ -1272,7 +1309,9 @@ def test_ensure_agent_runtime_outside_tmux_relaunches_stale_binding_via_detached
     assert ('set-option', ('set-option', '-g', 'mouse', 'on')) in calls
     assert ('set-option', ('set-option', '-g', 'set-clipboard', 'on')) in calls
     assert ('set-window-option', ('set-window-option', '-g', 'mode-keys', 'vi')) in calls
-    assert ('bind-key', ('bind-key', '-T', 'copy-mode-vi', 'y', 'send-keys', '-X', 'copy-selection-and-cancel')) in calls
+    assert ('bind-key', ('bind-key', '-T', 'copy-mode-vi', 'y', 'send-keys', '-X', 'copy-selection-and-cancel')) not in calls
+    assert _clipboard_bind_call('y') in calls
+    assert _clipboard_bind_call('Enter') in calls
     assert ('bind-key', ('bind-key', '-r', 'L', 'resize-pane', '-R', '5')) in calls
     assert any(name == 'new-session' for name, _ in calls)
     assert any(name == 'respawn' for name, _ in calls)
@@ -1489,6 +1528,7 @@ def test_ensure_agent_runtime_falls_back_when_created_pane_is_too_small(monkeypa
     assert ('set-option', ('set-option', '-g', 'mouse', 'on')) in calls
     assert ('set-option', ('set-option', '-g', 'set-clipboard', 'on')) in calls
     assert ('set-window-option', ('set-window-option', '-g', 'mode-keys', 'vi')) in calls
+    assert _clipboard_bind_call('MouseDragEnd1Pane') in calls
     assert ('bind-key', ('bind-key', 'l', 'select-pane', '-R')) in calls
     assert any(name == 'new-session' for name, _ in calls)
     assert any(name == 'respawn' for name, _ in calls)
@@ -1600,9 +1640,65 @@ def test_codex_launcher_build_start_cmd_uses_native_auto_permission_flags(monkey
 
     assert '--ask-for-approval never' in cmd
     assert '--sandbox danger-full-access' in cmd
+    assert '--dangerously-bypass-hook-trust' in cmd
     assert 'trust_level=' not in cmd
     assert 'approval_policy=' not in cmd
     assert 'sandbox_mode=' not in cmd
+
+
+def test_codex_launcher_build_start_cmd_skips_hook_trust_bypass_in_safe_mode(monkeypatch, tmp_path: Path) -> None:
+    runtime_dir = tmp_path / 'runtime-codex-safe-permission'
+    runtime_dir.mkdir(parents=True, exist_ok=True)
+    monkeypatch.delenv('CODEX_HOME', raising=False)
+
+    spec = _spec('agent1')
+    command = ParsedStartCommand(project=None, agent_names=('agent1',), restore=False, auto_permission=False)
+
+    cmd = _codex_start_cmd(command, spec, runtime_dir, 'sess-safe-permission')
+
+    assert '--ask-for-approval never' not in cmd
+    assert '--sandbox danger-full-access' not in cmd
+    assert '--dangerously-bypass-hook-trust' not in cmd
+
+
+def test_codex_launcher_repairs_activity_hook_trust_for_existing_home(monkeypatch, tmp_path: Path) -> None:
+    project_root = tmp_path / 'repo-codex-existing-hooks'
+    runtime_dir = project_root / '.ccb' / 'agents' / 'agent1' / 'provider-runtime' / 'codex'
+    runtime_dir.mkdir(parents=True, exist_ok=True)
+    codex_home = project_root / '.ccb' / 'agents' / 'agent1' / 'provider-state' / 'codex' / 'home'
+    (codex_home / 'sessions').mkdir(parents=True, exist_ok=True)
+    (codex_home / 'config.toml').write_text('model = "gpt-test"\n', encoding='utf-8')
+    (project_root / '.ccb' / '.codex-agent1-session').write_text(
+        json.dumps(
+            {
+                'codex_home': str(codex_home),
+                'codex_session_root': str(codex_home / 'sessions'),
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding='utf-8',
+    )
+    monkeypatch.delenv('CODEX_HOME', raising=False)
+
+    spec = _spec('agent1')
+    command = ParsedStartCommand(project=None, agent_names=('agent1',), restore=False, auto_permission=True)
+
+    cmd = codex_launcher.build_start_cmd(
+        command,
+        spec,
+        runtime_dir,
+        'sess-existing-hooks',
+        prepared_state=_codex_prepared_state(runtime_dir),
+    )
+
+    assert f'CODEX_HOME={shlex.quote(str(codex_home))}' in cmd
+    config = tomllib.loads((codex_home / 'config.toml').read_text(encoding='utf-8'))
+    state = config['hooks']['state']
+    assert len(state) == 6
+    user_prompt_key = f'{codex_home / "hooks.json"}:user_prompt_submit:0:0'
+    assert state[user_prompt_key]['enabled'] is True
+    assert str(state[user_prompt_key]['trusted_hash']).startswith('sha256:')
 
 
 def test_codex_launcher_build_start_cmd_uses_agent_scoped_resume_session(monkeypatch, tmp_path: Path) -> None:

@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+## v7.0.11 (2026-05-28)
+
+### Provider Activity And Sidebar Focus Release
+
+- **Provider Activity Hooks Added**: CCB now records provider-native activity evidence from hook artifacts so the sidebar can distinguish active, pending, idle, and failed provider work more accurately than pane text alone.
+- **Sidebar Activity Refresh Improved**: focus changes invalidate the cached project view and immediately refresh sidebar panes in the same project session, reducing visible stale status after mouse or focus actions.
+- **Sidebar Click Latency Reduced**: tmux pane clicks return to the direct `select-pane -t = ; send-keys -M` binding instead of spawning the hidden sidebar click subprocess path for ordinary pane focus.
+- **Namespace And Hook Runtime Hardened**: project namespace config, provider hook install settings, clipboard/runtime launch paths, and Codex managed trust handling were tightened together with focused regression tests.
+
 ## v7.0.10 (2026-05-27)
 
 ### Sidebar Tips And Tmux Controls Release

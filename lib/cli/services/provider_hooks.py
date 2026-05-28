@@ -13,7 +13,12 @@ from provider_backends.codex.launcher_runtime import resolve_codex_home_layout
 from provider_backends.droid.home import materialize_droid_home_config
 from provider_backends.gemini.launcher_runtime.home import materialize_gemini_home_config
 from provider_backends.opencode.launcher import materialize_opencode_memory_config
-from provider_hooks.settings import build_hook_command, install_workspace_completion_hooks
+from provider_hooks.settings import (
+    build_activity_hook_command,
+    build_hook_command,
+    install_workspace_activity_hooks,
+    install_workspace_completion_hooks,
+)
 from provider_profiles.codex_home_config import materialize_codex_home_config
 from provider_profiles import (
     ResolvedProviderProfile,
@@ -29,6 +34,8 @@ def prepare_workspace_provider_hooks(
     completion_dir: Path,
     agent_name: str,
     home_root: Path | None,
+    project_id: str | None = None,
+    runtime_dir: Path | None = None,
     resolved_profile: ResolvedProviderProfile | None = None,
 ) -> Path | None:
     normalized = str(provider or '').strip().lower()
@@ -42,13 +49,30 @@ def prepare_workspace_provider_hooks(
         agent_name=agent_name,
         workspace_path=workspace_path,
     )
-    return install_workspace_completion_hooks(
+    settings_path = install_workspace_completion_hooks(
         provider=normalized,
         workspace_path=workspace_path,
         home_root=home_root,
         command=command,
         resolved_profile=resolved_profile,
     )
+    if normalized == 'claude' and project_id and runtime_dir is not None:
+        activity_command = build_activity_hook_command(
+            provider=normalized,
+            script_path=Path(__file__).resolve().parents[3] / 'bin' / 'ccb-provider-activity-hook',
+            python_executable=sys.executable,
+            project_id=project_id,
+            agent_name=agent_name,
+            runtime_dir=runtime_dir,
+            workspace_path=workspace_path,
+        )
+        return install_workspace_activity_hooks(
+            provider=normalized,
+            workspace_path=workspace_path,
+            home_root=home_root,
+            command=activity_command,
+        ) or settings_path
+    return settings_path
 
 
 def prepare_provider_workspace(
@@ -94,6 +118,8 @@ def prepare_provider_workspace(
             runtime_dir=runtime_dir,
             resolved_profile=resolved_profile,
         ),
+        project_id=getattr(layout, 'project_id', None),
+        runtime_dir=runtime_dir,
         resolved_profile=resolved_profile,
     )
     return resolved_profile
@@ -162,6 +188,7 @@ def _materialize_provider_home(
             profile=resolved_profile,
             project_root=layout.project_root,
             agent_name=spec.name,
+            runtime_dir=runtime_dir,
             workspace_path=workspace_path,
             memory_projection_event_path=layout.agent_events_path(spec.name),
             memory_projection_marker_path=Path(runtime_dir) / 'codex-memory-projection.json',

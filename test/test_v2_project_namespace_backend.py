@@ -19,6 +19,21 @@ from ccbd.services.project_namespace_runtime.backend import (
 from terminal_runtime.tmux_readiness import TmuxTransientServerUnavailable
 
 
+def _clipboard_pipe_command_for_test() -> str:
+    return (
+        "sh -lc '"
+        "tmp=$(mktemp \"${TMPDIR:-/tmp}/ccb-clipboard.XXXXXX\") || exit 0; "
+        "cat >\"$tmp\"; "
+        "if command -v wl-copy >/dev/null 2>&1 && [ -n \"${WAYLAND_DISPLAY:-}\" ]; then (wl-copy <\"$tmp\"; rm -f \"$tmp\") >/dev/null 2>&1 & "
+        "elif command -v xclip >/dev/null 2>&1 && [ -n \"${DISPLAY:-}\" ]; then (xclip -selection clipboard <\"$tmp\"; rm -f \"$tmp\") >/dev/null 2>&1 & "
+        "elif command -v xsel >/dev/null 2>&1 && [ -n \"${DISPLAY:-}\" ]; then (xsel --clipboard --input <\"$tmp\"; rm -f \"$tmp\") >/dev/null 2>&1 & "
+        "elif command -v pbcopy >/dev/null 2>&1; then pbcopy <\"$tmp\"; rm -f \"$tmp\"; "
+        "elif command -v powershell.exe >/dev/null 2>&1; then powershell.exe -NoProfile -Command \"[Console]::InputEncoding=[System.Text.UTF8Encoding]::new(); Set-Clipboard -Value ([Console]::In.ReadToEnd())\" <\"$tmp\"; rm -f \"$tmp\"; "
+        "elif command -v pwsh >/dev/null 2>&1; then pwsh -NoLogo -NoProfile -Command \"[Console]::InputEncoding=[System.Text.UTF8Encoding]::new(); Set-Clipboard -Value ([Console]::In.ReadToEnd())\" <\"$tmp\"; rm -f \"$tmp\"; "
+        "else rm -f \"$tmp\"; fi'"
+    )
+
+
 class _FlakyBackend:
     def __init__(self) -> None:
         self.calls: list[tuple[str, ...]] = []
@@ -79,6 +94,7 @@ class _FlakyBackend:
 
 def test_prepare_server_then_create_session_and_server_policy_retry_transient_tmux_failures(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setenv('CCB_TMUX_OBJECT_READY_POLL_INTERVAL_S', '0')
+    monkeypatch.setenv('DISPLAY', ':99')
     backend = _FlakyBackend()
     backend.fail_once('start-server')
     backend.fail_once('set-option', '-g', 'destroy-unattached', 'off')
@@ -110,7 +126,14 @@ def test_prepare_server_then_create_session_and_server_policy_retry_transient_tm
     assert backend.calls.count(('set-option', '-g', 'set-clipboard', 'on')) == 1
     assert backend.calls.count(('set-window-option', '-g', 'mode-keys', 'vi')) == 1
     assert backend.calls.count(('bind-key', '-T', 'copy-mode-vi', 'v', 'send-keys', '-X', 'begin-selection')) == 1
-    assert backend.calls.count(('bind-key', '-T', 'copy-mode-vi', 'y', 'send-keys', '-X', 'copy-selection-and-cancel')) == 1
+    assert ('bind-key', '-T', 'copy-mode-vi', 'y', 'send-keys', '-X', 'copy-selection-and-cancel') not in backend.calls
+    assert any(
+        call[:7] == ('bind-key', '-T', 'copy-mode-vi', 'y', 'send-keys', '-X', 'copy-pipe-and-cancel')
+        and 'xclip -selection clipboard <"$tmp"' in call[7]
+        and 'exec xclip' not in call[7]
+        for call in backend.calls
+    )
+    assert ('set-environment', '-g', 'DISPLAY', ':99') in backend.calls
     assert backend.calls.count(('bind-key', 'h', 'select-pane', '-L')) == 1
     assert backend.calls.count(('bind-key', '-r', 'L', 'resize-pane', '-R', '5')) == 1
     assert backend.calls.count(
@@ -145,6 +168,13 @@ def test_prepare_server_accepts_fast_probe_timeout(monkeypatch) -> None:
 
 def test_prepare_server_does_not_require_server_policy_before_session_exists(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setenv('CCB_TMUX_OBJECT_READY_POLL_INTERVAL_S', '0')
+    monkeypatch.delenv('DISPLAY', raising=False)
+    monkeypatch.delenv('WAYLAND_DISPLAY', raising=False)
+    monkeypatch.delenv('XDG_RUNTIME_DIR', raising=False)
+    monkeypatch.delenv('WSL_DISTRO_NAME', raising=False)
+    monkeypatch.delenv('WSL_INTEROP', raising=False)
+    monkeypatch.delenv('SSH_AUTH_SOCK', raising=False)
+    monkeypatch.delenv('SSH_CONNECTION', raising=False)
     backend = _FlakyBackend()
     backend.require_session_for_server_policy = True
 
@@ -160,10 +190,40 @@ def test_prepare_server_does_not_require_server_policy_before_session_exists(mon
         ('set-option', '-g', 'destroy-unattached', 'off'),
         ('set-option', '-g', 'mouse', 'on'),
         ('set-option', '-g', 'set-clipboard', 'on'),
+        ('set-option', '-g', 'update-environment', 'DISPLAY WAYLAND_DISPLAY XDG_RUNTIME_DIR WSL_DISTRO_NAME WSL_INTEROP SSH_AUTH_SOCK SSH_CONNECTION'),
         ('set-window-option', '-g', 'mode-keys', 'vi'),
         ('bind-key', '-T', 'copy-mode-vi', 'v', 'send-keys', '-X', 'begin-selection'),
         ('bind-key', '-T', 'copy-mode-vi', 'C-v', 'send-keys', '-X', 'rectangle-toggle'),
-        ('bind-key', '-T', 'copy-mode-vi', 'y', 'send-keys', '-X', 'copy-selection-and-cancel'),
+        (
+            'bind-key',
+            '-T',
+            'copy-mode-vi',
+            'y',
+            'send-keys',
+            '-X',
+            'copy-pipe-and-cancel',
+            _clipboard_pipe_command_for_test(),
+        ),
+        (
+            'bind-key',
+            '-T',
+            'copy-mode-vi',
+            'Enter',
+            'send-keys',
+            '-X',
+            'copy-pipe-and-cancel',
+            _clipboard_pipe_command_for_test(),
+        ),
+        (
+            'bind-key',
+            '-T',
+            'copy-mode-vi',
+            'MouseDragEnd1Pane',
+            'send-keys',
+            '-X',
+            'copy-pipe-and-cancel',
+            _clipboard_pipe_command_for_test(),
+        ),
         ('bind-key', 'h', 'select-pane', '-L'),
         ('bind-key', 'j', 'select-pane', '-D'),
         ('bind-key', 'k', 'select-pane', '-U'),
@@ -330,14 +390,29 @@ def test_ensure_server_policy_accepts_fast_probe_timeout(monkeypatch) -> None:
 
     ensure_server_policy(backend, timeout_s=0.0)
 
-    assert backend.calls == [
+    assert backend.calls[:4] == [
         ('set-option', '-g', 'destroy-unattached', 'off'),
         ('set-option', '-g', 'mouse', 'on'),
         ('set-option', '-g', 'set-clipboard', 'on'),
+        ('set-option', '-g', 'update-environment', 'DISPLAY WAYLAND_DISPLAY XDG_RUNTIME_DIR WSL_DISTRO_NAME WSL_INTEROP SSH_AUTH_SOCK SSH_CONNECTION'),
+    ]
+    assert (
+        'bind-key',
+        '-T',
+        'copy-mode-vi',
+        'MouseDragEnd1Pane',
+        'send-keys',
+        '-X',
+        'copy-pipe-and-cancel',
+        _clipboard_pipe_command_for_test(),
+    ) in backend.calls
+    assert backend.calls[-14:] == [
         ('set-window-option', '-g', 'mode-keys', 'vi'),
         ('bind-key', '-T', 'copy-mode-vi', 'v', 'send-keys', '-X', 'begin-selection'),
         ('bind-key', '-T', 'copy-mode-vi', 'C-v', 'send-keys', '-X', 'rectangle-toggle'),
-        ('bind-key', '-T', 'copy-mode-vi', 'y', 'send-keys', '-X', 'copy-selection-and-cancel'),
+        ('bind-key', '-T', 'copy-mode-vi', 'y', 'send-keys', '-X', 'copy-pipe-and-cancel', _clipboard_pipe_command_for_test()),
+        ('bind-key', '-T', 'copy-mode-vi', 'Enter', 'send-keys', '-X', 'copy-pipe-and-cancel', _clipboard_pipe_command_for_test()),
+        ('bind-key', '-T', 'copy-mode-vi', 'MouseDragEnd1Pane', 'send-keys', '-X', 'copy-pipe-and-cancel', _clipboard_pipe_command_for_test()),
         ('bind-key', 'h', 'select-pane', '-L'),
         ('bind-key', 'j', 'select-pane', '-D'),
         ('bind-key', 'k', 'select-pane', '-U'),

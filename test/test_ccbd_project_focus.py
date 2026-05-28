@@ -59,6 +59,27 @@ class _FakeTmuxBackend:
                 '@ccb_window': 'ops',
                 '@ccb_managed_by': 'ccbd',
             },
+            '%3': {
+                '@ccb_project_id': 'proj-1',
+                '@ccb_role': 'sidebar',
+                '@ccb_window': 'main',
+                '@ccb_managed_by': 'ccbd',
+                'session_name': 'ccb-test',
+            },
+            '%4': {
+                '@ccb_project_id': 'proj-1',
+                '@ccb_role': 'sidebar',
+                '@ccb_window': 'ops',
+                '@ccb_managed_by': 'ccbd',
+                'session_name': 'ccb-test',
+            },
+            '%5': {
+                '@ccb_project_id': 'proj-1',
+                '@ccb_role': 'sidebar',
+                '@ccb_window': 'foreign',
+                '@ccb_managed_by': 'ccbd',
+                'session_name': 'other-session',
+            },
         }
         self.missing_windows: set[str] = set()
         self.missing_panes: set[str] = set()
@@ -80,10 +101,26 @@ class _FakeTmuxBackend:
             return SimpleNamespace(returncode=1 if window in self.missing_windows else 0, stdout='', stderr='')
         if args[:2] == ['select-pane', '-t']:
             return SimpleNamespace(returncode=1 if args[2] in self.missing_panes else 0, stdout='', stderr='')
+        if args[:3] == ['display-message', '-p', '-t']:
+            pane_id = args[3]
+            if args[4] == '#{session_name}':
+                return SimpleNamespace(
+                    returncode=0,
+                    stdout=self.panes.get(pane_id, {}).get('session_name', 'ccb-test') + '\n',
+                    stderr='',
+                )
+        if args[:2] == ['send-keys', '-t']:
+            return SimpleNamespace(returncode=0, stdout='', stderr='')
         raise AssertionError(f'unexpected tmux args: {args}, capture={capture}')
 
 
-def _service(tmp_path: Path, backend: _FakeTmuxBackend, *, epoch: int = 4) -> ProjectFocusService:
+def _service(
+    tmp_path: Path,
+    backend: _FakeTmuxBackend,
+    *,
+    epoch: int = 4,
+    project_view_service: object | None = None,
+) -> ProjectFocusService:
     project_root = tmp_path / 'repo'
     project_root.mkdir()
     layout = PathLayout(project_root)
@@ -106,6 +143,7 @@ def _service(tmp_path: Path, backend: _FakeTmuxBackend, *, epoch: int = 4) -> Pr
             project_id='proj-1',
             config=_config(),
             namespace_controller=controller,
+            project_view_service=project_view_service,
         )
     )
 
@@ -126,6 +164,11 @@ def test_project_focus_agent_selects_configured_window_and_pane(tmp_path: Path) 
     assert backend.calls == [
         ['select-window', '-t', 'ccb-test:ops'],
         ['select-pane', '-t', '%2'],
+        ['display-message', '-p', '-t', '%3', '#{session_name}'],
+        ['display-message', '-p', '-t', '%4', '#{session_name}'],
+        ['display-message', '-p', '-t', '%5', '#{session_name}'],
+        ['send-keys', '-t', '%3', '-l', 'r'],
+        ['send-keys', '-t', '%4', '-l', 'r'],
     ]
 
 
@@ -141,7 +184,28 @@ def test_project_focus_window_focuses_first_configured_agent_when_available(tmp_
     assert backend.calls == [
         ['select-window', '-t', 'ccb-test:main'],
         ['select-pane', '-t', '%1'],
+        ['display-message', '-p', '-t', '%3', '#{session_name}'],
+        ['display-message', '-p', '-t', '%4', '#{session_name}'],
+        ['display-message', '-p', '-t', '%5', '#{session_name}'],
+        ['send-keys', '-t', '%3', '-l', 'r'],
+        ['send-keys', '-t', '%4', '-l', 'r'],
     ]
+
+
+def test_project_focus_success_invalidates_project_view_cache(tmp_path: Path) -> None:
+    class _ProjectView:
+        invalidated = 0
+
+        def invalidate_cache(self) -> None:
+            self.invalidated += 1
+
+    backend = _FakeTmuxBackend()
+    project_view = _ProjectView()
+    service = _service(tmp_path, backend, project_view_service=project_view)
+
+    service.focus_agent(agent='agent2', namespace_epoch=4)
+
+    assert project_view.invalidated == 1
 
 
 def test_project_focus_rejects_stale_namespace_epoch(tmp_path: Path) -> None:

@@ -6,6 +6,16 @@ from provider_backends.claude.home_layout import ClaudeHomeLayout, claude_layout
 
 from .common import load_json, save_json, workspace_key
 
+_CLAUDE_ACTIVITY_EVENTS = (
+    'SessionStart',
+    'UserPromptSubmit',
+    'PreToolUse',
+    'PermissionRequest',
+    'Notification',
+    'PostToolUse',
+    'Stop',
+)
+
 
 def install_claude_hooks(*, home_root: Path, command: str) -> Path:
     settings_path = claude_layout_for_home(Path(home_root).expanduser()).settings_path
@@ -15,6 +25,18 @@ def install_claude_hooks(*, home_root: Path, command: str) -> Path:
     if not claude_event_has_command(groups, command):
         groups.append(_command_hook_group(command))
     hooks['Stop'] = groups
+    return save_json(settings_path, data)
+
+
+def install_claude_activity_hooks(*, home_root: Path, command: str) -> Path:
+    settings_path = claude_layout_for_home(Path(home_root).expanduser()).settings_path
+    data = _load_settings(settings_path)
+    hooks = _hooks_payload(data)
+    for event_name in _CLAUDE_ACTIVITY_EVENTS:
+        groups = _event_groups(hooks, event_name=event_name)
+        if not claude_event_has_command(groups, command):
+            groups.append(_command_hook_group(command))
+        hooks[event_name] = groups
     return save_json(settings_path, data)
 
 
@@ -96,6 +118,7 @@ def _command_hook_group(command: str) -> dict[str, list[dict[str, str]]]:
 __all__ = [
     'claude_event_has_command',
     'claude_hook_home_layout',
+    'install_claude_activity_hooks',
     'install_claude_hooks',
     'trust_claude_workspace',
 ]

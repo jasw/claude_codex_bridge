@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import os
 import time
 from typing import Callable
 
@@ -16,6 +17,28 @@ from terminal_runtime.tmux_readiness import (
     tmux_failure_detail,
 )
 from terminal_runtime.placeholders import pane_placeholder_argv, pane_placeholder_cmd
+
+_TMUX_ENVIRONMENT_KEYS = (
+    'DISPLAY',
+    'WAYLAND_DISPLAY',
+    'XDG_RUNTIME_DIR',
+    'WSL_DISTRO_NAME',
+    'WSL_INTEROP',
+    'SSH_AUTH_SOCK',
+    'SSH_CONNECTION',
+)
+_CLIPBOARD_PIPE_COMMAND = (
+    "sh -lc '"
+    "tmp=$(mktemp \"${TMPDIR:-/tmp}/ccb-clipboard.XXXXXX\") || exit 0; "
+    "cat >\"$tmp\"; "
+    "if command -v wl-copy >/dev/null 2>&1 && [ -n \"${WAYLAND_DISPLAY:-}\" ]; then (wl-copy <\"$tmp\"; rm -f \"$tmp\") >/dev/null 2>&1 & "
+    "elif command -v xclip >/dev/null 2>&1 && [ -n \"${DISPLAY:-}\" ]; then (xclip -selection clipboard <\"$tmp\"; rm -f \"$tmp\") >/dev/null 2>&1 & "
+    "elif command -v xsel >/dev/null 2>&1 && [ -n \"${DISPLAY:-}\" ]; then (xsel --clipboard --input <\"$tmp\"; rm -f \"$tmp\") >/dev/null 2>&1 & "
+    "elif command -v pbcopy >/dev/null 2>&1; then pbcopy <\"$tmp\"; rm -f \"$tmp\"; "
+    "elif command -v powershell.exe >/dev/null 2>&1; then powershell.exe -NoProfile -Command \"[Console]::InputEncoding=[System.Text.UTF8Encoding]::new(); Set-Clipboard -Value ([Console]::In.ReadToEnd())\" <\"$tmp\"; rm -f \"$tmp\"; "
+    "elif command -v pwsh >/dev/null 2>&1; then pwsh -NoLogo -NoProfile -Command \"[Console]::InputEncoding=[System.Text.UTF8Encoding]::new(); Set-Clipboard -Value ([Console]::In.ReadToEnd())\" <\"$tmp\"; rm -f \"$tmp\"; "
+    "else rm -f \"$tmp\"; fi'"
+)
 
 
 @dataclass(frozen=True)
@@ -50,6 +73,7 @@ def ensure_server_policy(backend, *, timeout_s: float | None = None) -> None:
     )
     _apply_optional_server_policy(backend, option='mouse', value='on', timeout_s=timeout_s)
     _apply_optional_server_policy(backend, option='set-clipboard', value='on', timeout_s=timeout_s)
+    _apply_tmux_environment_policy(backend, timeout_s=timeout_s)
     _apply_optional_window_policy(backend, option='mode-keys', value='vi', timeout_s=timeout_s)
     _apply_optional_tmux_policy(
         backend,
@@ -63,12 +87,13 @@ def ensure_server_policy(backend, *, timeout_s: float | None = None) -> None:
         description='tmux copy-mode-vi rectangle-toggle binding',
         timeout_s=timeout_s,
     )
-    _apply_optional_tmux_policy(
-        backend,
-        ['bind-key', '-T', 'copy-mode-vi', 'y', 'send-keys', '-X', 'copy-selection-and-cancel'],
-        description='tmux copy-mode-vi yank binding',
-        timeout_s=timeout_s,
-    )
+    for key in ('y', 'Enter', 'MouseDragEnd1Pane'):
+        _apply_optional_tmux_policy(
+            backend,
+            ['bind-key', '-T', 'copy-mode-vi', key, 'send-keys', '-X', 'copy-pipe-and-cancel', _CLIPBOARD_PIPE_COMMAND],
+            description=f'tmux copy-mode-vi clipboard binding {key}',
+            timeout_s=timeout_s,
+        )
     for key, direction in (('h', '-L'), ('j', '-D'), ('k', '-U'), ('l', '-R')):
         _apply_optional_tmux_policy(
             backend,
@@ -83,6 +108,25 @@ def ensure_server_policy(backend, *, timeout_s: float | None = None) -> None:
             description=f'tmux vi pane resize binding {key}',
             timeout_s=timeout_s,
         )
+
+
+def _apply_tmux_environment_policy(backend, *, timeout_s: float | None = None) -> None:
+    update_environment = ' '.join(_TMUX_ENVIRONMENT_KEYS)
+    _apply_optional_tmux_policy(
+        backend,
+        ['set-option', '-g', 'update-environment', update_environment],
+        description='tmux update-environment policy',
+        timeout_s=timeout_s,
+    )
+    for key in _TMUX_ENVIRONMENT_KEYS:
+        value = os.environ.get(key)
+        if value:
+            _apply_optional_tmux_policy(
+                backend,
+                ['set-environment', '-g', key, value],
+                description=f'tmux environment {key}',
+                timeout_s=timeout_s,
+            )
 
 
 def _apply_optional_server_policy(backend, *, option: str, value: str, timeout_s: float | None = None) -> None:

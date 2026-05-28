@@ -10,7 +10,7 @@
 
 [![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20WSL-lightgrey.svg)]()
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue.svg)]()
-[![Version](https://img.shields.io/badge/version-7.0.10-orange.svg)]()
+[![Version](https://img.shields.io/badge/version-7.0.11-orange.svg)]()
 [![Release](https://img.shields.io/badge/install-release--first-orange.svg)]()
 
 **English** | [中文](README_zh.md)
@@ -445,6 +445,16 @@ v7 highlights:
 - Hardened tmux, Ghostty, release helper, Codex trust, and provider session restore paths.
 
 <details open>
+<summary><b>v7.0.11</b> - Provider Activity And Sidebar Focus Release</summary>
+
+- Records provider-native activity evidence from hook artifacts so sidebar status can reflect active, pending, idle, and failed provider work more accurately.
+- Refreshes sidebar panes immediately after project focus changes by invalidating the cached project view and sending an in-session refresh.
+- Restores fast tmux pane click focus with direct `select-pane -t = ; send-keys -M`, avoiding the slower hidden subprocess path for ordinary pane clicks.
+- Hardens namespace config, provider hook install settings, clipboard/runtime launch paths, and Codex managed trust handling with focused regression coverage.
+
+</details>
+
+<details>
 <summary><b>v7.0.10</b> - Sidebar Tips And Tmux Controls Release</summary>
 
 - Keeps the native sidebar as a stable three-panel view: Tree `1/3`, compact Comms `1/4`, and Tips `5/12`.

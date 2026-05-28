@@ -126,16 +126,14 @@ def test_apply_project_tmux_ui_sets_session_theme_and_hook_from_current_install_
     ]
     assert len(sidebar_mouse_bindings) == 1
     sidebar_mouse_binding = sidebar_mouse_bindings[0]
-    assert '#{@ccb_role},sidebar' in sidebar_mouse_binding[8]
-    assert '#{mouse_y}' in sidebar_mouse_binding[9]
-    assert 'start=$((width - 4))' in sidebar_mouse_binding[9]
-    assert 'send-keys -t "$pane" -l R' in sidebar_mouse_binding[9]
-    assert 'send-keys -t "$pane" -l Q' in sidebar_mouse_binding[9]
-    assert '__sidebar-click' in sidebar_mouse_binding[9]
-    assert '--socket /tmp/ccbd.sock' in sidebar_mouse_binding[9]
-    assert '--mouse-y "$y" --pane-top "$top" --pane-height "$height"' in sidebar_mouse_binding[9]
-    assert 'send-keys -M' not in sidebar_mouse_binding[9]
-    assert sidebar_mouse_binding[10] == 'select-pane -t = ; send-keys -M'
+    assert sidebar_mouse_binding == [
+        'bind-key',
+        '-T',
+        'root',
+        'MouseDown1Pane',
+        'select-pane -t = ; send-keys -M',
+    ]
+    assert '__sidebar-click' not in '\n'.join(' '.join(call) for call in calls)
     sidebar_resize_bindings = [
         call for call in calls if call[:4] == ['bind-key', '-T', 'root', 'MouseDrag1Border']
     ]

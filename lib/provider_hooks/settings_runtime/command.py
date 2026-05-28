@@ -28,4 +28,31 @@ def build_hook_command(
     return ' '.join(shlex.quote(str(part)) for part in parts)
 
 
-__all__ = ['build_hook_command']
+def build_activity_hook_command(
+    *,
+    provider: str,
+    script_path: Path,
+    python_executable: str,
+    project_id: str,
+    agent_name: str,
+    runtime_dir: Path,
+    workspace_path: Path,
+) -> str:
+    parts = [
+        python_executable,
+        str(Path(script_path).expanduser()),
+        '--provider',
+        str(provider),
+        '--project-id',
+        str(project_id),
+        '--agent-name',
+        str(agent_name),
+        '--runtime-dir',
+        str(Path(runtime_dir).expanduser()),
+        '--workspace',
+        str(Path(workspace_path).expanduser()),
+    ]
+    return ' '.join(shlex.quote(str(part)) for part in parts)
+
+
+__all__ = ['build_activity_hook_command', 'build_hook_command']

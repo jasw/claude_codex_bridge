@@ -7,7 +7,7 @@ from agents.models_runtime.config_runtime.topology import validate_window_name
 from ccbd.services.project_namespace_runtime.controller import ProjectNamespaceController
 
 from .models import FocusErrorCode, ProjectFocusError, focus_success
-from .tmux import backend_for_namespace, find_agent_pane, select_pane, select_window
+from .tmux import backend_for_namespace, find_agent_pane, refresh_sidebar_panes, select_pane, select_window
 
 
 @dataclass(frozen=True)
@@ -15,6 +15,7 @@ class ProjectFocusDependencies:
     project_id: str
     config: object
     namespace_controller: ProjectNamespaceController
+    project_view_service: object | None = None
 
 
 class ProjectFocusService:
@@ -36,6 +37,7 @@ class ProjectFocusService:
         )
         if pane_id is not None:
             select_pane(backend, pane_id=pane_id)
+        _invalidate_and_refresh_project_view(self._deps, backend, namespace)
         return focus_success(
             kind='window',
             window=window_name,
@@ -59,6 +61,7 @@ class ProjectFocusService:
         if pane_id is None:
             raise ProjectFocusError(FocusErrorCode.TARGET_MISSING, f'agent pane {agent_name} is not available')
         select_pane(backend, pane_id=pane_id)
+        _invalidate_and_refresh_project_view(self._deps, backend, namespace)
         return focus_success(
             kind='agent',
             window=window.name,
@@ -79,6 +82,24 @@ def _validate_epoch(requested: int | None, actual: int) -> None:
         return
     if int(requested) != int(actual):
         raise ProjectFocusError(FocusErrorCode.STALE_VIEW, 'ProjectView namespace epoch is stale')
+
+
+def _invalidate_project_view_cache(project_view_service: object | None) -> None:
+    invalidator = getattr(project_view_service, 'invalidate_cache', None)
+    if callable(invalidator):
+        invalidator()
+
+
+def _invalidate_and_refresh_project_view(deps: ProjectFocusDependencies, backend, namespace) -> None:
+    _invalidate_project_view_cache(deps.project_view_service)
+    try:
+        refresh_sidebar_panes(
+            backend,
+            project_id=deps.project_id,
+            session_name=namespace.tmux_session_name,
+        )
+    except Exception:
+        return
 
 
 def _valid_window_name(value: str) -> str:

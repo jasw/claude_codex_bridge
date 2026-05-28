@@ -35,6 +35,7 @@ from completion.models import CompletionConfidence, CompletionDecision, Completi
 from message_bureau import CallbackEdgeStore, CallbackEdgeState
 from message_bureau.models import AttemptRecord, AttemptState, ReplyRecord, ReplyTerminalStatus
 from project.ids import compute_project_id
+from provider_hooks.activity import load_activity, write_activity
 from storage.paths import PathLayout
 
 
@@ -276,6 +277,509 @@ def _decision(*, reply: str = 'done', status: CompletionStatus = CompletionStatu
         finished_at=NOW,
         diagnostics={},
     )
+
+
+def _project_view_service(
+    *,
+    project_root: Path,
+    project_id: str,
+    layout: PathLayout,
+    config: ProjectConfig,
+    registry: AgentRegistry,
+    dispatcher: JobDispatcher,
+) -> ProjectViewService:
+    mount_manager = MountManager(layout, clock=lambda: NOW)
+    mount_manager.mark_mounted(
+        project_id=project_id,
+        pid=123,
+        socket_path=layout.ccbd_socket_path,
+        generation=7,
+        started_at=NOW,
+    )
+    return ProjectViewService(
+        ProjectViewDependencies(
+            project_root=project_root,
+            project_id=project_id,
+            config=config,
+            registry=registry,
+            mount_manager=mount_manager,
+            namespace_state_store=ProjectNamespaceStateStore(layout),
+            dispatcher=dispatcher,
+            paths=layout,
+            clock=lambda: NOW,
+        )
+    )
+
+
+def test_project_view_uses_provider_activity_without_ccb_job(tmp_path: Path) -> None:
+    project_root = tmp_path / 'repo-provider-activity'
+    project_root.mkdir()
+    layout = PathLayout(project_root)
+    project_id = compute_project_id(project_root)
+    config = _config()
+    registry = AgentRegistry(layout, config)
+    runtime = _runtime('agent1', project_id=project_id)
+    runtime.session_id = 'codex-session-1'
+    registry.upsert(runtime)
+    dispatcher = JobDispatcher(layout, config, registry, clock=lambda: NOW)
+    write_activity(
+        provider='codex',
+        project_id=project_id,
+        agent_name='agent1',
+        runtime_dir=layout.agent_provider_runtime_dir('agent1', 'codex'),
+        state='active',
+        source='codex_hook',
+        event_name='UserPromptSubmit',
+        ccb_session_id='ccb-agent1-launch',
+        provider_session_id='codex-session-1',
+        pane_id='%1',
+        workspace_path='/tmp/workspace',
+        updated_at=NOW,
+    )
+
+    response = _project_view_service(
+        project_root=project_root,
+        project_id=project_id,
+        layout=layout,
+        config=config,
+        registry=registry,
+        dispatcher=dispatcher,
+    ).build_response()
+
+    agent = response['view']['agents'][0]
+    assert agent['activity_state'] == 'active'
+    assert agent['activity_source'] == 'codex_hook'
+    assert agent['activity_reason'] == 'provider_userpromptsubmit'
+    assert agent['last_progress_at'] == NOW
+
+
+def test_project_view_provider_failed_overrides_running_job_metadata(tmp_path: Path) -> None:
+    project_root = tmp_path / 'repo-provider-failed'
+    project_root.mkdir()
+    layout = PathLayout(project_root)
+    project_id = compute_project_id(project_root)
+    config = _config()
+    registry = AgentRegistry(layout, config)
+    runtime = _runtime('agent1', project_id=project_id)
+    runtime.session_id = 'ccb-agent1-session'
+    registry.upsert(runtime)
+    dispatcher = JobDispatcher(layout, config, registry, clock=lambda: NOW)
+    running = _job(project_id, job_id='job_running_1234', sender='user', target='agent1', status=JobStatus.RUNNING)
+    dispatcher._append_job(running)
+    dispatcher._state.mark_active_for(TargetKind.AGENT, 'agent1', running.job_id)
+    write_activity(
+        provider='codex',
+        project_id=project_id,
+        agent_name='agent1',
+        runtime_dir=layout.agent_provider_runtime_dir('agent1', 'codex'),
+        state='failed',
+        source='codex_hook',
+        event_name='Stop',
+        ccb_session_id='ccb-agent1-session',
+        pane_id='%1',
+        workspace_path='/tmp/workspace',
+        diagnostics={'reason': 'api_error'},
+        updated_at=NOW,
+    )
+
+    response = _project_view_service(
+        project_root=project_root,
+        project_id=project_id,
+        layout=layout,
+        config=config,
+        registry=registry,
+        dispatcher=dispatcher,
+    ).build_response()
+
+    agent = response['view']['agents'][0]
+    assert agent['activity_state'] == 'failed'
+    assert agent['activity_source'] == 'codex_hook'
+    assert agent['activity_reason'] == 'api_error'
+    assert agent['current_job_id'] == 'job_running_1234'
+
+
+def test_project_view_ignores_provider_activity_for_wrong_pane(tmp_path: Path) -> None:
+    project_root = tmp_path / 'repo-provider-wrong-pane'
+    project_root.mkdir()
+    layout = PathLayout(project_root)
+    project_id = compute_project_id(project_root)
+    config = _config()
+    registry = AgentRegistry(layout, config)
+    runtime = _runtime('agent1', project_id=project_id)
+    runtime.session_id = 'ccb-agent1-session'
+    registry.upsert(runtime)
+    dispatcher = JobDispatcher(layout, config, registry, clock=lambda: NOW)
+    write_activity(
+        provider='codex',
+        project_id=project_id,
+        agent_name='agent1',
+        runtime_dir=layout.agent_provider_runtime_dir('agent1', 'codex'),
+        state='active',
+        source='codex_hook',
+        ccb_session_id='ccb-agent1-session',
+        pane_id='%99',
+        workspace_path='/tmp/workspace',
+        updated_at=NOW,
+    )
+
+    response = _project_view_service(
+        project_root=project_root,
+        project_id=project_id,
+        layout=layout,
+        config=config,
+        registry=registry,
+        dispatcher=dispatcher,
+    ).build_response()
+
+    agent = response['view']['agents'][0]
+    assert agent['activity_state'] == 'idle'
+    assert agent['activity_source'] == 'pane_liveness'
+
+
+def test_project_view_skips_capture_pane_when_provider_activity_is_fresh(tmp_path: Path) -> None:
+    project_root = tmp_path / 'repo-provider-no-capture'
+    project_root.mkdir()
+    layout = PathLayout(project_root)
+    project_id = compute_project_id(project_root)
+    config = _config()
+    registry = AgentRegistry(layout, config)
+    runtime = _runtime('agent1', project_id=project_id)
+    runtime.session_id = 'ccb-agent1-session'
+    registry.upsert(runtime)
+    mount_manager = MountManager(layout, clock=lambda: NOW)
+    mount_manager.mark_mounted(project_id=project_id, pid=123, socket_path=layout.ccbd_socket_path, generation=1, started_at=NOW)
+    ProjectNamespaceStateStore(layout).save(
+        ProjectNamespaceState(
+            project_id=project_id,
+            namespace_epoch=3,
+            tmux_socket_path=str(layout.ccbd_tmux_socket_path),
+            tmux_session_name='ccb-provider-no-capture',
+            layout_version=2,
+        )
+    )
+    dispatcher = JobDispatcher(layout, config, registry, clock=lambda: NOW)
+    write_activity(
+        provider='codex',
+        project_id=project_id,
+        agent_name='agent1',
+        runtime_dir=layout.agent_provider_runtime_dir('agent1', 'codex'),
+        state='active',
+        source='codex_hook',
+        ccb_session_id='ccb-agent1-session',
+        pane_id='%1',
+        workspace_path='/tmp/workspace',
+        updated_at=NOW,
+    )
+    backend = _SnapshotBackend()
+    controller = ProjectNamespaceController(
+        layout,
+        project_id,
+        backend_factory=lambda socket_path=None: backend,
+    )
+
+    response = ProjectViewService(
+        ProjectViewDependencies(
+            project_root=project_root,
+            project_id=project_id,
+            config=config,
+            registry=registry,
+            mount_manager=mount_manager,
+            namespace_state_store=ProjectNamespaceStateStore(layout),
+            dispatcher=dispatcher,
+            namespace_controller=controller,
+            paths=layout,
+            clock=lambda: NOW,
+        )
+    ).build_response()
+
+    assert response['view']['agents'][0]['activity_source'] == 'codex_hook'
+    assert [args for args in backend.calls if args[:3] == ['capture-pane', '-p', '-t']] == []
+
+
+def test_project_view_marks_stale_provider_activity_failed_from_pane_error(tmp_path: Path) -> None:
+    project_root = tmp_path / 'repo-provider-pane-error'
+    project_root.mkdir()
+    layout = PathLayout(project_root)
+    project_id = compute_project_id(project_root)
+    config = _config()
+    registry = AgentRegistry(layout, config)
+    runtime = _runtime('agent1', project_id=project_id)
+    runtime.session_id = 'ccb-agent1-session'
+    registry.upsert(runtime)
+    mount_manager = MountManager(layout, clock=lambda: NOW)
+    mount_manager.mark_mounted(project_id=project_id, pid=123, socket_path=layout.ccbd_socket_path, generation=1, started_at=NOW)
+    ProjectNamespaceStateStore(layout).save(
+        ProjectNamespaceState(
+            project_id=project_id,
+            namespace_epoch=3,
+            tmux_socket_path=str(layout.ccbd_tmux_socket_path),
+            tmux_session_name='ccb-provider-pane-error',
+            layout_version=2,
+        )
+    )
+    dispatcher = JobDispatcher(layout, config, registry, clock=lambda: NOW)
+    write_activity(
+        provider='codex',
+        project_id=project_id,
+        agent_name='agent1',
+        runtime_dir=layout.agent_provider_runtime_dir('agent1', 'codex'),
+        state='active',
+        source='codex_hook',
+        ccb_session_id='ccb-agent1-session',
+        pane_id='%1',
+        workspace_path='/tmp/workspace',
+        updated_at='2026-05-20T11:59:50Z',
+    )
+
+    class ErrorPaneBackend(_SnapshotBackend):
+        def _tmux_run(self, args: list[str], *, capture=False, check=False, timeout=None):
+            self.calls.append(list(args))
+            if args[:3] == ['capture-pane', '-p', '-t']:
+                return type(
+                    'CP',
+                    (),
+                    {
+                        'returncode': 0,
+                        'stdout': (
+                            'ERROR: Reconnecting... 5/5\n'
+                            'ERROR: stream disconnected before completion: error sending request for url '
+                            '(http://127.0.0.1:9/responses)\n'
+                        ),
+                        'stderr': '',
+                    },
+                )()
+            return self._snapshot_run(args, capture=capture, check=check, timeout=timeout)
+
+    backend = ErrorPaneBackend()
+    controller = ProjectNamespaceController(
+        layout,
+        project_id,
+        backend_factory=lambda socket_path=None: backend,
+    )
+
+    response = ProjectViewService(
+        ProjectViewDependencies(
+            project_root=project_root,
+            project_id=project_id,
+            config=config,
+            registry=registry,
+            mount_manager=mount_manager,
+            namespace_state_store=ProjectNamespaceStateStore(layout),
+            dispatcher=dispatcher,
+            namespace_controller=controller,
+            paths=layout,
+            clock=lambda: NOW,
+        )
+    ).build_response()
+
+    agent = response['view']['agents'][0]
+    assert agent['activity_state'] == 'failed'
+    assert agent['activity_source'] == 'provider_pane'
+    assert agent['activity_reason'] == 'provider_terminal_error'
+    assert [args for args in backend.calls if args[:3] == ['capture-pane', '-p', '-t']] == [
+        ['capture-pane', '-p', '-t', '%1', '-S', '-30']
+    ]
+
+
+def test_project_view_marks_stale_provider_activity_failed_from_http_status_error(tmp_path: Path) -> None:
+    project_root = tmp_path / 'repo-provider-http-error'
+    project_root.mkdir()
+    layout = PathLayout(project_root)
+    project_id = compute_project_id(project_root)
+    config = _config()
+    registry = AgentRegistry(layout, config)
+    runtime = _runtime('agent1', project_id=project_id)
+    runtime.session_id = 'codex-session-1'
+    registry.upsert(runtime)
+    mount_manager = MountManager(layout, clock=lambda: NOW)
+    mount_manager.mark_mounted(project_id=project_id, pid=123, socket_path=layout.ccbd_socket_path, generation=1, started_at=NOW)
+    ProjectNamespaceStateStore(layout).save(
+        ProjectNamespaceState(
+            project_id=project_id,
+            namespace_epoch=3,
+            tmux_socket_path=str(layout.ccbd_tmux_socket_path),
+            tmux_session_name='ccb-provider-http-error',
+            layout_version=2,
+        )
+    )
+    dispatcher = JobDispatcher(layout, config, registry, clock=lambda: NOW)
+    write_activity(
+        provider='codex',
+        project_id=project_id,
+        agent_name='agent1',
+        runtime_dir=layout.agent_provider_runtime_dir('agent1', 'codex'),
+        state='active',
+        source='codex_hook',
+        ccb_session_id='ccb-agent1-launch',
+        provider_session_id='codex-session-1',
+        pane_id='%1',
+        workspace_path='/tmp/workspace',
+        updated_at='2026-05-20T11:59:50Z',
+    )
+
+    class HttpErrorPaneBackend(_SnapshotBackend):
+        def _tmux_run(self, args: list[str], *, capture=False, check=False, timeout=None):
+            self.calls.append(list(args))
+            if args[:3] == ['capture-pane', '-p', '-t']:
+                return type(
+                    'CP',
+                    (),
+                    {
+                        'returncode': 0,
+                        'stdout': (
+                            '› trigger CCB_HTTP_429_SMOKE and stop\n'
+                            '■ exceeded retry limit, last status: 429 Too Many Requests\n'
+                            '› Find and fix a bug in @filename\n'
+                        ),
+                        'stderr': '',
+                    },
+                )()
+            return self._snapshot_run(args, capture=capture, check=check, timeout=timeout)
+
+    backend = HttpErrorPaneBackend()
+    controller = ProjectNamespaceController(
+        layout,
+        project_id,
+        backend_factory=lambda socket_path=None: backend,
+    )
+
+    response = ProjectViewService(
+        ProjectViewDependencies(
+            project_root=project_root,
+            project_id=project_id,
+            config=config,
+            registry=registry,
+            mount_manager=mount_manager,
+            namespace_state_store=ProjectNamespaceStateStore(layout),
+            dispatcher=dispatcher,
+            namespace_controller=controller,
+            paths=layout,
+            clock=lambda: NOW,
+        )
+    ).build_response()
+
+    agent = response['view']['agents'][0]
+    assert agent['activity_state'] == 'failed'
+    assert agent['activity_source'] == 'provider_pane'
+    assert agent['activity_reason'] == 'provider_terminal_error'
+
+    activity_payload = load_activity(layout.agent_provider_runtime_dir('agent1', 'codex'))
+    assert activity_payload is not None
+    assert activity_payload['state'] == 'failed'
+    assert activity_payload['source'] == 'provider_pane'
+    assert activity_payload['diagnostics']['reason'] == 'provider_terminal_error'
+
+    clean_backend = _SnapshotBackend()
+    clean_controller = ProjectNamespaceController(
+        layout,
+        project_id,
+        backend_factory=lambda socket_path=None: clean_backend,
+    )
+    second_response = ProjectViewService(
+        ProjectViewDependencies(
+            project_root=project_root,
+            project_id=project_id,
+            config=config,
+            registry=registry,
+            mount_manager=mount_manager,
+            namespace_state_store=ProjectNamespaceStateStore(layout),
+            dispatcher=dispatcher,
+            namespace_controller=clean_controller,
+            paths=layout,
+            clock=lambda: NOW,
+            cache_ttl_ms=0,
+        )
+    ).build_response()
+
+    second_agent = second_response['view']['agents'][0]
+    assert second_agent['activity_state'] == 'failed'
+    assert second_agent['activity_source'] == 'provider_pane'
+    assert second_agent['activity_reason'] == 'provider_terminal_error'
+    assert [args for args in clean_backend.calls if args[:3] == ['capture-pane', '-p', '-t']] == []
+
+
+def test_project_view_marks_stale_codex_activity_idle_from_prompt(tmp_path: Path) -> None:
+    project_root = tmp_path / 'repo-provider-pane-idle'
+    project_root.mkdir()
+    layout = PathLayout(project_root)
+    project_id = compute_project_id(project_root)
+    config = _config()
+    registry = AgentRegistry(layout, config)
+    runtime = _runtime('agent1', project_id=project_id)
+    runtime.session_id = 'codex-session-1'
+    registry.upsert(runtime)
+    mount_manager = MountManager(layout, clock=lambda: NOW)
+    mount_manager.mark_mounted(project_id=project_id, pid=123, socket_path=layout.ccbd_socket_path, generation=1, started_at=NOW)
+    ProjectNamespaceStateStore(layout).save(
+        ProjectNamespaceState(
+            project_id=project_id,
+            namespace_epoch=3,
+            tmux_socket_path=str(layout.ccbd_tmux_socket_path),
+            tmux_session_name='ccb-provider-pane-idle',
+            layout_version=2,
+        )
+    )
+    dispatcher = JobDispatcher(layout, config, registry, clock=lambda: NOW)
+    write_activity(
+        provider='codex',
+        project_id=project_id,
+        agent_name='agent1',
+        runtime_dir=layout.agent_provider_runtime_dir('agent1', 'codex'),
+        state='active',
+        source='codex_hook',
+        ccb_session_id='ccb-agent1-launch',
+        provider_session_id='codex-session-1',
+        pane_id='%1',
+        workspace_path='/tmp/workspace',
+        updated_at='2026-05-20T11:59:50Z',
+    )
+
+    class IdlePromptBackend(_SnapshotBackend):
+        def _tmux_run(self, args: list[str], *, capture=False, check=False, timeout=None):
+            self.calls.append(list(args))
+            if args[:3] == ['capture-pane', '-p', '-t']:
+                return type(
+                    'CP',
+                    (),
+                    {
+                        'returncode': 0,
+                        'stdout': (
+                            '› print exactly CCB_OK and stop\n\n'
+                            '• CCB_OK\n\n'
+                            '› Use /skills to list available skills\n'
+                            '  gpt-5.5 xhigh · ~/repo\n'
+                        ),
+                        'stderr': '',
+                    },
+                )()
+            return self._snapshot_run(args, capture=capture, check=check, timeout=timeout)
+
+    backend = IdlePromptBackend()
+    controller = ProjectNamespaceController(
+        layout,
+        project_id,
+        backend_factory=lambda socket_path=None: backend,
+    )
+
+    response = ProjectViewService(
+        ProjectViewDependencies(
+            project_root=project_root,
+            project_id=project_id,
+            config=config,
+            registry=registry,
+            mount_manager=mount_manager,
+            namespace_state_store=ProjectNamespaceStateStore(layout),
+            dispatcher=dispatcher,
+            namespace_controller=controller,
+            paths=layout,
+            clock=lambda: NOW,
+        )
+    ).build_response()
+
+    agent = response['view']['agents'][0]
+    assert agent['activity_state'] == 'idle'
+    assert agent['activity_source'] == 'provider_pane'
+    assert agent['activity_reason'] == 'provider_prompt_idle'
 
 
 def test_project_view_returns_minimal_windows_agents_and_comms(tmp_path: Path) -> None:
@@ -2206,6 +2710,46 @@ def test_activity_resolver_provider_background_terminal_running_after_prompt() -
     assert activity.state == 'active'
     assert activity.source == 'provider_pane'
     assert activity.reason == 'provider_working'
+
+
+def test_activity_resolver_keeps_codex_queued_message_active() -> None:
+    pane_text = '\n'.join(
+        [
+            '╭───────────────────────────────────────────────╮',
+            '│ >_ OpenAI Codex (v0.134.0)                    │',
+            '│ model:       gpt-5.5 xhigh   /model to change │',
+            '╰───────────────────────────────────────────────╯',
+            '',
+            '› trigger CCB_REFUSED_SMOKE and stop',
+            '',
+            '• Working (18s • esc to interrupt)',
+            '• Messages to be submitted after next tool call (press esc to interrupt and send immediately)',
+            '  ↳ trigger CCB_NEXT_AFTER_FAIL and stop',
+            '',
+            '› Use /skills to list available skills',
+            '',
+            '  gpt-5.5 xhigh · ~/yunwei/test_ccb2',
+        ]
+    )
+
+    activity = resolve_agent_activity(
+        AgentActivityFacts(
+            namespace_mounted=True,
+            runtime_state='idle',
+            pane_id='%3',
+            pane_state='alive',
+            pane_text=pane_text,
+            provider_activity_state='active',
+            provider_activity_source='codex_hook',
+            provider_activity_reason='provider_userpromptsubmit',
+            provider_activity_updated_at=NOW,
+        ),
+        now=NOW,
+    )
+
+    assert activity.state == 'active'
+    assert activity.source == 'codex_hook'
+    assert activity.reason == 'provider_userpromptsubmit'
 
 
 def test_activity_resolver_ignores_stale_provider_working_history() -> None:
