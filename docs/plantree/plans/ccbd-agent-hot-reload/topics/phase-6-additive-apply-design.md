@@ -351,3 +351,37 @@ Current status:
 Remaining Phase 6b work is wiring these internal helpers into a single explicit
 non-dry-run additive apply path while preserving the existing rejection gate
 until the end-to-end apply sequence is reviewed.
+
+## Phase 6b Apply Orchestrator
+
+`run_additive_reload_apply(...)` now exists as an internal orchestration helper.
+It is deliberately not called by `project_reload_config` yet.
+
+Current status:
+
+- It runs under the existing app maintenance lock, then reads the current
+  service graph and current namespace once.
+- It builds the same dry-run plan used by `ccb reload --dry-run` and rejects
+  every class except `view_only_change`, append-only `add_agent`, and
+  `add_window`.
+- It builds the target service graph with the same config-bound builder used by
+  startup and does not publish that graph until the transaction stage.
+- `view_only_change` synthesizes an applied no-op namespace patch and proceeds
+  to runtime noop plus signature/publish transaction.
+- Additive namespace changes call `ProjectNamespaceController.apply_additive_patch(...)`.
+  The helper does not call full namespace ensure/recreate/reflow/kill paths.
+- Runtime handoff calls `run_additive_agent_mounts(...)`, so only new
+  namespace-patch-created agent panes are mounted through the existing
+  start-flow/runtime authority path.
+- Final publish calls `publish_additive_reload_transaction(...)`, preserving the
+  signature handoff and rollback behavior added earlier in Phase 6b.
+- Failure at plan, namespace patch, runtime mount, or publish transaction stops
+  before later stages and returns structured diagnostics. Namespace diagnostics
+  include created window/pane residue; runtime diagnostics include new-agent
+  authority residue. The current app graph/config stay unchanged unless the
+  publish transaction returns `published`.
+
+The remaining step before exposing non-dry-run reload is a review/gating patch
+that wires the existing handler to this helper only for the accepted classes and
+adds the final user-path manual test matrix. Until that patch, plain
+`ccb reload` and `project_reload_config(dry_run=false)` must keep rejecting.

@@ -96,6 +96,20 @@ Date: 2026-05-29
   - graph publish failure after signature writes rolls signatures back and keeps
     graph old;
   - non-dry-run reload remains rejected.
+- Phase 6b additive apply orchestrator:
+  - view-only apply publishes the target graph without real namespace mutation
+    or new runtime authority writes;
+  - append-only `add_agent` and `add_window` success paths run namespace patch,
+    mount only new agents, then publish the target graph;
+  - plan-blocked, namespace-patch-failed, runtime-mount-failed, and
+    publish-transaction-failed paths stop at the failing stage and keep the old
+    graph/config visible;
+  - failed namespace patch diagnostics report created window/pane residue;
+  - failed runtime mount diagnostics report new-agent runtime authority residue;
+  - successful publish leaves app graph/config, lease signature, and lifecycle
+    signature consistent;
+  - `project_reload_config(dry_run=false)` remains rejected and does not invoke
+    the internal orchestrator.
 - Bounded drain/retire state:
   - idle intent transitions immediately to `idle_ready` / `retiring`;
   - busy intent remains `waiting` / `draining` until timeout;

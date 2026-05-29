@@ -277,6 +277,19 @@ Phase 6b first-step status:
   signature handoff, or graph publish fails, the current app graph/config remain
   unchanged; signature writes are rolled back to the old config signature on
   post-write failures when the current holder/generation still match.
+- Added `run_additive_reload_apply(...)` as the internal end-to-end
+  orchestrator. It reads the current graph, builds the dry-run plan, accepts only
+  `view_only_change`, append-only `add_agent`, and `add_window`, builds the
+  target service graph without publishing it, then runs namespace patch, runtime
+  mount, and signature/publish transaction in that order.
+- The orchestrator runs under the existing app maintenance lock so heartbeat
+  reconciliation does not race the staged apply. Ordinary handler graph reads
+  still use the already-published graph and are not put behind a request-path
+  mutex.
+- Stage failures at plan, namespace patch, runtime mount, or publish transaction
+  stop the sequence before later stages. Failure diagnostics include created
+  pane/window residue and new-agent runtime authority residue when present; the
+  old graph/config remain visible unless the final publish succeeds.
 - Non-dry-run `project_reload_config` and `ccb reload` remain rejected.
 
 Deliverables:
