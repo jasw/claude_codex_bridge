@@ -46,11 +46,18 @@ case "${1:-}" in
 esac
 
 resolve_path() {
-  python3 - "$1" <<'PY'
-from pathlib import Path
-import sys
-print(Path(sys.argv[1]).expanduser().resolve())
-PY
+  local path="$1"
+  local dir target
+  while [ -L "$path" ]; do
+    dir=$(cd -P "$(dirname "$path")" >/dev/null 2>&1 && pwd -P)
+    target=$(readlink "$path")
+    case "$target" in
+      /*) path="$target" ;;
+      *)  path="$dir/$target" ;;
+    esac
+  done
+  dir=$(cd -P "$(dirname "$path")" >/dev/null 2>&1 && pwd -P)
+  printf '%s/%s\n' "$dir" "$(basename "$path")"
 }
 
 # Resolve through symlinks so a source/dev install can verify all wrapper
