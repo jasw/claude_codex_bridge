@@ -206,17 +206,17 @@ _CLAUDE_RESUME_ID_RE = re.compile(
 
 
 def upgraded_claude_resume_cmd(session, crash_log: Path | None, start_cmd: str) -> str:
-    invocation = claude_resume_invocation_from_log(crash_log)
-    if not invocation:
+    resume_id = claude_resume_id_from_log(crash_log)
+    if not resume_id:
         return start_cmd
-    upgraded = replace_provider_invocation(start_cmd, invocation)
+    upgraded = replace_provider_restore_args(start_cmd, resume_id)
     if upgraded == start_cmd:
         return start_cmd
-    persist_upgraded_claude_resume_cmd(session, upgraded, invocation)
+    persist_upgraded_claude_resume_cmd(session, upgraded, resume_id)
     return upgraded
 
 
-def claude_resume_invocation_from_log(crash_log: Path | None) -> str | None:
+def claude_resume_id_from_log(crash_log: Path | None) -> str | None:
     if crash_log is None:
         return None
     try:
@@ -235,7 +235,7 @@ def claude_resume_invocation_from_log(crash_log: Path | None) -> str | None:
             continue
         if not valid_resume_invocation(parts):
             continue
-        return shlex.join(parts)
+        return resume_id_from_parts(parts)
     return None
 
 
@@ -247,15 +247,19 @@ def previous_non_empty_line(lines: list[str], index: int) -> str:
     return ''
 
 
-def replace_provider_invocation(start_cmd: str, invocation: str) -> str:
+def replace_provider_restore_args(start_cmd: str, resume_id: str) -> str:
     raw = str(start_cmd or '').strip()
     if not raw:
-        return invocation
+        return shlex.join(['claude', '--resume', resume_id])
     prefix, sep, tail = raw.rpartition(';')
-    if sep and safe_split(tail.strip())[:1] == ['claude']:
-        return f'{prefix}; {invocation}'
-    if safe_split(raw)[:1] == ['claude']:
-        return invocation
+    if sep:
+        tail_parts = safe_split(tail.strip())
+        if tail_parts[:1] == ['claude']:
+            return f'{prefix}; {shlex.join(replace_claude_restore_args(tail_parts, resume_id))}'
+        return raw
+    parts = safe_split(raw)
+    if parts[:1] == ['claude']:
+        return shlex.join(replace_claude_restore_args(parts, resume_id))
     return raw
 
 
@@ -269,15 +273,38 @@ def valid_resume_invocation(parts: list[str]) -> bool:
     return bool(_CLAUDE_RESUME_ID_RE.match(parts[index + 1]))
 
 
-def persist_upgraded_claude_resume_cmd(session, start_cmd: str, invocation: str) -> None:
+def replace_claude_restore_args(parts: list[str], resume_id: str) -> list[str]:
+    out: list[str] = []
+    index = 0
+    replaced = False
+    while index < len(parts):
+        part = parts[index]
+        if part == '--continue':
+            if not replaced:
+                out.extend(['--resume', resume_id])
+                replaced = True
+            index += 1
+            continue
+        if part == '--resume':
+            if not replaced:
+                out.extend(['--resume', resume_id])
+                replaced = True
+            index += 2 if index + 1 < len(parts) else 1
+            continue
+        out.append(part)
+        index += 1
+    if not replaced:
+        out.extend(['--resume', resume_id])
+    return out
+
+
+def persist_upgraded_claude_resume_cmd(session, start_cmd: str, resume_id: str) -> None:
     data = getattr(session, 'data', None)
     if not isinstance(data, dict):
         return
     data['start_cmd'] = start_cmd
     data['claude_start_cmd'] = start_cmd
-    session_id = resume_id_from_invocation(invocation)
-    if session_id:
-        data['claude_session_id'] = session_id
+    data['claude_session_id'] = resume_id
     writer = getattr(session, '_write_back', None)
     if callable(writer):
         try:
@@ -286,8 +313,7 @@ def persist_upgraded_claude_resume_cmd(session, start_cmd: str, invocation: str)
             pass
 
 
-def resume_id_from_invocation(invocation: str) -> str | None:
-    parts = safe_split(invocation)
+def resume_id_from_parts(parts: list[str]) -> str | None:
     try:
         index = parts.index('--resume')
     except ValueError:
