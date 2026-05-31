@@ -102,6 +102,11 @@ def test_source_dev_install_links_live_bin_and_ask_skill_asset(tmp_path: Path) -
     assert _python310_executable() in ask_wrapper
     assert str(REPO_ROOT / "bin" / "ask") in ask_wrapper
 
+    ccbm_path = bin_dir / "ccbm"
+    assert ccbm_path.exists()
+    assert ccbm_path.is_symlink()
+    assert ccbm_path.resolve() == REPO_ROOT / "bin" / "ccbm"
+
     ask_skill_md = tmp_path / "codex-home" / "skills" / "ask" / "SKILL.md"
     assert ask_skill_md.is_file()
     assert not ask_skill_md.is_symlink()
