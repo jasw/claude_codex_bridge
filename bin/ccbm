@@ -45,6 +45,77 @@ case "${1:-}" in
     ;;
 esac
 
+resolve_path() {
+  python3 - "$1" <<'PY'
+from pathlib import Path
+import sys
+print(Path(sys.argv[1]).expanduser().resolve())
+PY
+}
+
+# Resolve through symlinks so a source/dev install can verify all wrapper
+# commands point at the same checkout. Split-brain wrappers are dangerous:
+# an old `ask` can decide the mounted ccbd is incompatible and stop all panes.
+SCRIPT_PATH=$(resolve_path "${BASH_SOURCE[0]}")
+SCRIPT_DIR=$(cd "$(dirname "$SCRIPT_PATH")" && pwd -P)
+CCBM_SOURCE_ROOT=$(cd "$SCRIPT_DIR/.." && pwd -P)
+EXPECTED_CCB="$CCBM_SOURCE_ROOT/ccb"
+EXPECTED_ASK="$CCBM_SOURCE_ROOT/bin/ask"
+EXPECTED_CCBM="$CCBM_SOURCE_ROOT/bin/ccbm"
+
+resolve_command_path() {
+  local name="$1"
+  local path
+  path=$(command -v "$name" 2>/dev/null || true)
+  [ -n "$path" ] || return 1
+  resolve_path "$path"
+}
+
+toolchain_status_line() {
+  local name="$1" expected="$2" actual status
+  actual=$(resolve_command_path "$name" || true)
+  if [ -z "$actual" ]; then
+    status="missing"
+  elif [ "$actual" = "$expected" ]; then
+    status="ok"
+  else
+    status="skew"
+  fi
+  echo "toolchain: $name status=$status path=${actual:-missing} expected=$expected"
+}
+
+show_toolchain_status() {
+  echo "--- ccb toolchain ---"
+  toolchain_status_line ccb "$EXPECTED_CCB"
+  toolchain_status_line ask "$EXPECTED_ASK"
+  toolchain_status_line ccbm "$EXPECTED_CCBM"
+}
+
+require_safe_toolchain() {
+  local failed=0 name expected actual
+  for name in ccb ask; do
+    case "$name" in
+      ccb) expected="$EXPECTED_CCB" ;;
+      ask) expected="$EXPECTED_ASK" ;;
+    esac
+    actual=$(resolve_command_path "$name" || true)
+    if [ -z "$actual" ]; then
+      echo "ccbm: WARN: $name not found on PATH; continuing because mount does not invoke it directly" >&2
+      continue
+    fi
+    if [ "$actual" != "$expected" ]; then
+      echo "ccbm: ERROR: $name resolves to a different CCB checkout" >&2
+      echo "  actual:   $actual" >&2
+      echo "  expected: $expected" >&2
+      failed=1
+    fi
+  done
+  if (( failed != 0 )); then
+    echo "ccbm: refusing to mount with split-brain CCB tooling; fix PATH/symlinks first" >&2
+    exit 2
+  fi
+}
+
 # Walk up from cwd to find the nearest .ccb/ directory.
 find_project_root() {
   local d="$PWD"
@@ -78,6 +149,7 @@ show_status() {
   echo "ccb_config: $(tr '\n' ' ' < "$PROJECT_ROOT/.ccb/ccb.config" | sed 's/[[:space:]]*$//')"
   echo "tmux_socket: $SOCK_PATH"
   echo "tmux_socket_exists: $([ -S "$SOCK_PATH" ] && echo yes || echo no)"
+  show_toolchain_status
   echo "--- ccb ps ---"
   ccb ps 2>&1 || true
   echo "--- tmux panes ---"
@@ -92,6 +164,8 @@ if [ "$MODE" = "status" ]; then
   show_status
   exit 0
 fi
+
+require_safe_toolchain
 
 force_reset() {
   local kind="${1:-soft}"

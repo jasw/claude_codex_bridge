@@ -321,6 +321,7 @@ SCRIPTS_TO_LINK=(
   bin/ccb-runtime-accelerator
   bin/ccb-rs-helper
   bin/ccb-provider-activity-hook
+  bin/ccbm
   bin/ctx-transfer
   ccb
 )
