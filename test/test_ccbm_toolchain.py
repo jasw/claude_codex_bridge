@@ -77,6 +77,34 @@ def test_ccbm_status_reports_consistent_toolchain(tmp_path: Path) -> None:
     assert f"toolchain: ccbm status=ok path={source / 'bin' / 'ccbm'} expected={source / 'bin' / 'ccbm'}" in result.stdout
 
 
+def test_ccbm_status_does_not_depend_on_python3(tmp_path: Path) -> None:
+    source, install_bin, project = _make_layout(tmp_path)
+    poison_bin = tmp_path / "poison-bin"
+    _write_executable(
+        poison_bin / "python3",
+        "#!/usr/bin/env bash\necho python3 must not be invoked >&2\nexit 99\n",
+    )
+
+    env_path = (
+        f"{poison_bin}{os.pathsep}{install_bin}"
+        f"{os.pathsep}{os.environ.get('PATH', '')}"
+    )
+    result = subprocess.run(
+        [str(install_bin / "ccbm"), "status"],
+        cwd=project,
+        env={**os.environ, "PATH": env_path},
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0
+    assert "python3 must not be invoked" not in result.stderr
+    assert f"toolchain: ccb status=ok path={source / 'ccb'} expected={source / 'ccb'}" in result.stdout
+    assert f"toolchain: ask status=ok path={source / 'bin' / 'ask'} expected={source / 'bin' / 'ask'}" in result.stdout
+    assert f"toolchain: ccbm status=ok path={source / 'bin' / 'ccbm'} expected={source / 'bin' / 'ccbm'}" in result.stdout
+
+
 def test_ccbm_status_exposes_stale_ask_split_brain(tmp_path: Path) -> None:
     source, install_bin, project = _make_layout(tmp_path, skew_ask=True)
 
