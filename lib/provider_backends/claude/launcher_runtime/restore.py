@@ -41,14 +41,18 @@ def resolve_claude_restore_target(
 
     managed_workspace = is_ccb_managed_workspace(context.workspace_path)
     project_root = context.workspace_path if managed_workspace else (context.project_root or context.workspace_path)
-    _session_id, has_history, best_cwd = claude_history_state_fn(
+    session_id, has_history, best_cwd = claude_history_state_fn(
         invocation_dir=context.workspace_path,
         project_root=project_root,
         include_env_pwd=not managed_workspace,
         home_dir=home_layout.home_root,
     )
     if has_history:
-        return ProviderRestoreTarget(run_cwd=existing_dir(best_cwd) or context.workspace_path, has_history=True)
+        return ProviderRestoreTarget(
+            run_cwd=existing_dir(best_cwd) or context.workspace_path,
+            has_history=True,
+            resume_args=_claude_resume_args(session_id),
+        )
     return default_target
 
 
@@ -69,7 +73,7 @@ def project_session_restore_target(
     session_home = getattr(session, 'claude_home_path', None)
     if session_home is None or not _is_within_root(session_home, managed_home):
         return None
-    _session_id, has_history, best_cwd = claude_history_state_fn(
+    session_id, has_history, best_cwd = claude_history_state_fn(
         invocation_dir=session_cwd,
         project_root=session_cwd,
         include_env_pwd=False,
@@ -77,7 +81,11 @@ def project_session_restore_target(
     )
     if not has_history:
         return None
-    return ProviderRestoreTarget(run_cwd=existing_dir(best_cwd) or session_cwd, has_history=True)
+    return ProviderRestoreTarget(
+        run_cwd=existing_dir(best_cwd) or session_cwd,
+        has_history=True,
+        resume_args=_claude_resume_args(session_id),
+    )
 
 
 def claude_history_state(
@@ -135,6 +143,13 @@ def _normalize_path(value: object) -> Path | None:
             return Path(value).expanduser()
         except Exception:
             return None
+
+
+def _claude_resume_args(session_id: str | None) -> tuple[str, ...]:
+    sid = str(session_id or '').strip()
+    if not sid:
+        return ()
+    return ('--resume', sid)
 
 
 __all__ = [

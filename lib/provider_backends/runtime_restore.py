@@ -5,10 +5,12 @@ from pathlib import Path
 
 from storage.path_helpers import runtime_project_anchor_from_path
 
+
 @dataclass(frozen=True)
 class ProviderRestoreTarget:
     run_cwd: Path
     has_history: bool
+    resume_args: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
