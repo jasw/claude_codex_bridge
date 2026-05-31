@@ -112,15 +112,19 @@ def test_claude_ensure_pane_upgrades_continue_from_crash_log_resume_hint(
 
     assert ok is True
     assert pane == '%1'
+    expected_cmd = (
+        f'export HOME=/tmp/claude-home; '
+        f'claude --setting-sources user,project,local --permission-mode bypassPermissions --resume {session_id}'
+    )
     assert backend.respawned == [
         (
             '%1',
-            f'export HOME=/tmp/claude-home; claude --worktree projx-engine --resume {session_id}',
+            expected_cmd,
             str(tmp_path),
         )
     ]
     persisted = json.loads(session_path.read_text(encoding='utf-8'))
-    assert persisted['start_cmd'].endswith(f'claude --worktree projx-engine --resume {session_id}')
+    assert persisted['start_cmd'] == expected_cmd
     assert persisted['claude_start_cmd'] == persisted['start_cmd']
     assert persisted['claude_session_id'] == session_id
 
