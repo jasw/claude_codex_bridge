@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 import time
-from typing import Callable
+from typing import Callable, NamedTuple
 
 from provider_core.tmux_ownership import (
     apply_session_tmux_identity,
@@ -30,6 +31,15 @@ _CRASH_REASON_DETAIL = {
         'repair agent-local auth, then remount.'
     ),
 }
+
+
+class CrashLogCapture(NamedTuple):
+    """Result of capturing a pane crash log: the saved log ``crash_log`` (used to
+    parse a provider's own resume hint) and the classified ``reason`` code (used
+    to gate unrecoverable auth-revoked crashes). Either field may be ``None``."""
+
+    crash_log: Path | None
+    reason: str | None
 
 
 def classify_crash_reason(text: str) -> str | None:
@@ -80,19 +90,19 @@ def activate_rebound_pane(
     attach_pane_log_fn(session, backend, pane_id)
 
 
-def persist_crash_log(session, backend: object, pane_id: str) -> str | None:
+def persist_crash_log(session, backend: object, pane_id: str) -> CrashLogCapture:
     saver = getattr(backend, 'save_crash_log', None)
     if not callable(saver):
-        return None
+        return CrashLogCapture(None, None)
     try:
         runtime = session.runtime_dir
         runtime.mkdir(parents=True, exist_ok=True)
         ts = int(time.time())
         crash_log = runtime / f'pane-crash-{ts}.log'
         saver(pane_id, str(crash_log), lines=1000)
-        return _persist_crash_reason(runtime, crash_log, ts)
+        return CrashLogCapture(crash_log, _persist_crash_reason(runtime, crash_log, ts))
     except Exception:
-        return None
+        return CrashLogCapture(None, None)
 
 
 def _persist_crash_reason(runtime, crash_log, ts: int) -> str | None:

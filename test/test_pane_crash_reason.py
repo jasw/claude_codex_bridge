@@ -46,9 +46,10 @@ def _fake_backend(captured_text: str) -> object:
 def test_persist_crash_log_writes_reason_sidecar_for_revoked_auth(tmp_path) -> None:
     session = SimpleNamespace(runtime_dir=tmp_path)
 
-    reason = persist_crash_log(session, _fake_backend(_REVOKED_CRASH), '%4')
+    capture = persist_crash_log(session, _fake_backend(_REVOKED_CRASH), '%4')
 
-    assert reason == 'provider_auth_revoked'
+    assert capture.reason == 'provider_auth_revoked'
+    assert capture.crash_log is not None and capture.crash_log.name.endswith('.log')
     sidecars = list(tmp_path.glob('pane-crash-*.reason.json'))
     assert len(sidecars) == 1
     payload = json.loads(sidecars[0].read_text(encoding='utf-8'))
@@ -61,14 +62,16 @@ def test_persist_crash_log_writes_reason_sidecar_for_revoked_auth(tmp_path) -> N
 def test_persist_crash_log_writes_no_sidecar_for_ordinary_crash(tmp_path) -> None:
     session = SimpleNamespace(runtime_dir=tmp_path)
 
-    reason = persist_crash_log(session, _fake_backend('Segmentation fault\n'), '%4')
+    capture = persist_crash_log(session, _fake_backend('Segmentation fault\n'), '%4')
 
-    assert reason is None
+    assert capture.reason is None
     assert list(tmp_path.glob('pane-crash-*.reason.json')) == []
     # the raw crash log is still captured
     assert list(tmp_path.glob('pane-crash-*.log'))
+    assert capture.crash_log is not None
 
 
 def test_persist_crash_log_noop_without_saver(tmp_path) -> None:
     session = SimpleNamespace(runtime_dir=tmp_path)
-    assert persist_crash_log(session, SimpleNamespace(), '%4') is None
+    capture = persist_crash_log(session, SimpleNamespace(), '%4')
+    assert capture.crash_log is None and capture.reason is None
