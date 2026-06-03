@@ -119,6 +119,7 @@ jobs:
           print(project)
           PY
           project="${RUNNER_TEMP}/ccb-storage-cleanup-smoke"
+          export CCB_SOURCE_ALLOWED_ROOTS="$project"
           ./ccb --project "$project" doctor storage --json >"$RUNNER_TEMP/storage-before.json"
           ./ccb --project "$project" cleanup >"$RUNNER_TEMP/cleanup.out"
           ./ccb --project "$project" doctor storage --json >"$RUNNER_TEMP/storage-after.json"
@@ -282,6 +283,7 @@ jobs:
               target.parent.mkdir(parents=True, exist_ok=True)
               target.write_text(body, encoding="utf-8")
           PY
+          export CCB_SOURCE_ALLOWED_ROOTS="$smoke_root"
           ./ccb --project "$smoke_root" doctor storage --json >/tmp/ccb-storage-before.json
           ./ccb --project "$smoke_root" cleanup >/tmp/ccb-cleanup.out
           ./ccb --project "$smoke_root" doctor storage --json >/tmp/ccb-storage-after.json

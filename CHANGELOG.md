@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-## v7.2.5 (2026-06-04)
+## v7.2.6 (2026-06-04)
 
 ### Agent Roles Catalog Release
 
@@ -12,6 +12,13 @@
 - **Update Flow Improved**: `install.sh install` and `ccb update` handle catalog role refreshes, report newly available roles, and keep non-interactive follow-up commands explicit.
 - **Compatibility Alias Kept**: legacy `ccb.archi` inputs resolve to `agentroles.archi` while project config and locks use the canonical catalog role id.
 - **Source Runtime Guard Fixed**: source checkout commands that pass `--project` now validate the target project against allowed test roots, restoring CCBD communication smoke checks launched from the source checkout.
+- **Official Smoke Roots Fixed**: real-platform soak, fastpath, and storage cleanup smoke checks now pass their generated test roots through `CCB_SOURCE_ALLOWED_ROOTS`.
+
+## v7.2.5 (2026-06-04)
+
+### Superseded Source Runtime Guard Hotfix
+
+- Superseded by v7.2.6 after the release gate found that official soak, fastpath, and storage cleanup smoke checks needed explicit generated test roots in `CCB_SOURCE_ALLOWED_ROOTS`.
 
 ## v7.2.4 (2026-06-04)
 
