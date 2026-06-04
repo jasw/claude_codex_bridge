@@ -16,6 +16,7 @@ from agents.models import normalize_agent_name
 from role_aliases import role_id_candidates
 from storage.atomic import atomic_write_text
 
+from . import agent_roles_manager
 from .manifest import RoleManifest as RolePack
 from .manifest import RoleManifestError, load_role_manifest, normalize_role_id
 from .runtime_lookup import (
@@ -24,6 +25,7 @@ from .runtime_lookup import (
     project_role_memory_sources,
     project_role_skill_sources,
     role_store_root,
+    role_store_roots,
     tree_digest,
 )
 from .sources import (
@@ -33,6 +35,7 @@ from .sources import (
     find_source_role,
     find_system_source_role,
     installed_role_metadata,
+    migrate_legacy_installed_roles,
     repair_installed_role_store,
 )
 
@@ -67,6 +70,10 @@ def install_role(
     source_path: Path | None = None,
     with_tools: bool = True,
 ) -> dict[str, object]:
+    if agent_roles_manager.manager_enabled():
+        migrate_legacy_installed_roles(role_id)
+        payload = _install_role_via_agent_roles_manager(role_id, source_path=source_path, with_tools=with_tools)
+        return payload
     source, role, source_kind = _resolve_install_source(role_id, source_path=source_path, script_root=script_root)
     payload = _install_role_assets(role, source=source, source_kind=source_kind)
     if with_tools:
@@ -87,6 +94,10 @@ def update_role(
     source_path: Path | None = None,
     with_tools: bool = True,
 ) -> dict[str, object]:
+    if agent_roles_manager.manager_enabled():
+        migrate_legacy_installed_roles(role_id)
+        payload = _update_role_via_agent_roles_manager(role_id, source_path=source_path, with_tools=with_tools)
+        return payload
     source, role, source_kind = _resolve_install_source(role_id, source_path=source_path, script_root=script_root)
     payload = _install_role_assets(role, source=source, source_kind=source_kind)
     payload['role_status'] = 'updated'
@@ -103,6 +114,25 @@ def update_role(
 
 def sync_roles_from_path(source_path: Path, *, with_tools: bool = False) -> dict[str, object]:
     source_root = Path(source_path).expanduser().resolve()
+    if agent_roles_manager.manager_enabled():
+        migrate_legacy_installed_roles()
+        try:
+            payload = agent_roles_manager.sync(source_root)
+        except agent_roles_manager.AgentRolesManagerError as exc:
+            raise RolePackError(str(exc)) from exc
+        normalized = _normalize_agent_roles_sync_payload(payload)
+        if with_tools:
+            rows = []
+            for row in normalized['roles']:
+                copied = dict(row)
+                if str(copied.get('status') or '') == 'synced':
+                    installed = load_role(Path(str(copied.get('path') or '')))
+                    tool_results = run_role_tool_hooks(installed, action='update', fail_required=True)
+                    copied['tools_status'] = _tool_results_status(tool_results)
+                    copied['tools'] = tool_results
+                rows.append(copied)
+            normalized['roles'] = tuple(rows)
+        return normalized
     if not source_root.exists():
         raise RolePackError(f'role sync path does not exist: {source_root}')
     roles = discover_path_roles(source_root)
@@ -158,6 +188,84 @@ def sync_roles_from_path(source_path: Path, *, with_tools: bool = False) -> dict
     }
 
 
+def _install_role_via_agent_roles_manager(
+    role_id: str | None,
+    *,
+    source_path: Path | None,
+    with_tools: bool,
+) -> dict[str, object]:
+    try:
+        payload = agent_roles_manager.install(role_id, source_path=source_path)
+    except agent_roles_manager.AgentRolesManagerError as exc:
+        raise RolePackError(str(exc)) from exc
+    payload = _normalize_agent_roles_payload(payload, default_role_status='installed')
+    if with_tools:
+        installed = load_role(Path(str(payload['path'])))
+        tool_results = run_role_tool_hooks(installed, action='install', fail_required=True)
+        payload['tools_status'] = _tool_results_status(tool_results)
+        payload['tools'] = tool_results
+    else:
+        payload['tools_status'] = 'skipped'
+        payload['tools_reason'] = 'tool dependency install skipped by caller'
+    return payload
+
+
+def _update_role_via_agent_roles_manager(
+    role_id: str | None,
+    *,
+    source_path: Path | None = None,
+    with_tools: bool,
+) -> dict[str, object]:
+    try:
+        if source_path is not None:
+            payload = agent_roles_manager.install(role_id, source_path=source_path)
+        else:
+            payload = agent_roles_manager.update(role_id)
+    except agent_roles_manager.AgentRolesManagerError as exc:
+        raise RolePackError(str(exc)) from exc
+    payload = _normalize_agent_roles_payload(payload, default_role_status='updated')
+    payload['role_status'] = 'updated'
+    if with_tools:
+        installed = load_role(Path(str(payload['path'])))
+        tool_results = run_role_tool_hooks(installed, action='update', fail_required=True)
+        payload['tools_status'] = _tool_results_status(tool_results)
+        payload['tools'] = tool_results
+    else:
+        payload['tools_status'] = 'skipped'
+        payload['tools_reason'] = 'tool dependency update skipped by caller'
+    return payload
+
+
+def _normalize_agent_roles_payload(payload: dict[str, object], *, default_role_status: str) -> dict[str, object]:
+    normalized = dict(payload)
+    normalized.pop('schema', None)
+    normalized.pop('status', None)
+    normalized['role_status'] = str(normalized.get('role_status') or default_role_status)
+    path = str(normalized.get('path') or normalized.get('installed_path') or '').strip()
+    if not path:
+        raise RolePackError('agent-roles did not return an installed path')
+    normalized['path'] = path
+    return normalized
+
+
+def _normalize_agent_roles_sync_payload(payload: dict[str, object]) -> dict[str, object]:
+    rows = payload.get('roles') or ()
+    if isinstance(rows, list):
+        if not all(isinstance(item, dict) for item in rows):
+            raise RolePackError('agent-roles returned invalid sync roles payload')
+        rows = tuple(item for item in rows if isinstance(item, dict))
+    elif isinstance(rows, tuple):
+        if not all(isinstance(item, dict) for item in rows):
+            raise RolePackError('agent-roles returned invalid sync roles payload')
+    else:
+        raise RolePackError('agent-roles returned invalid sync roles payload')
+    return {
+        'sync_status': 'ok' if str(payload.get('status') or '') == 'ok' else str(payload.get('status') or 'unknown'),
+        'path': str(payload.get('path') or ''),
+        'roles': rows,
+    }
+
+
 def _resolve_install_source(
     role_id: str | None,
     *,
@@ -191,20 +299,21 @@ def _resolve_install_source(
 
 
 def _installed_source_path(role_id: str) -> Path | None:
-    for candidate_id in role_id_candidates(role_id):
-        metadata_path = role_store_root() / candidate_id / 'install.json'
-        try:
-            metadata = json.loads(metadata_path.read_text(encoding='utf-8'))
-        except Exception:
-            continue
-        if not isinstance(metadata, dict):
-            continue
-        source_path = str(metadata.get('source_path') or '').strip()
-        if not source_path:
-            continue
-        source = Path(source_path).expanduser()
-        if source.is_dir():
-            return source.resolve()
+    for store_root in role_store_roots():
+        for candidate_id in role_id_candidates(role_id):
+            metadata_path = store_root / candidate_id / 'install.json'
+            try:
+                metadata = json.loads(metadata_path.read_text(encoding='utf-8'))
+            except Exception:
+                continue
+            if not isinstance(metadata, dict):
+                continue
+            source_path = str(metadata.get('source_path') or '').strip()
+            if not source_path:
+                continue
+            source = Path(source_path).expanduser()
+            if source.is_dir():
+                return source.resolve()
     return None
 
 
@@ -265,6 +374,7 @@ def _install_role_assets(role: RolePack, *, source: Path, source_kind: str) -> d
 
 def role_status(role_id: str, *, script_root: Path | None = None, include_tools: bool = False) -> dict[str, object]:
     role_id = normalize_role_id(role_id)
+    migrate_legacy_installed_roles(role_id)
     source_role = find_source_role(role_id)
     repair_installed_role_store(role_id, source_role=source_role)
     installed = load_installed_role(role_id)
@@ -274,7 +384,8 @@ def role_status(role_id: str, *, script_root: Path | None = None, include_tools:
         'source': source_role.source if source_role is not None else '',
         'source_path': str(source_role.path) if source_role is not None else '',
         'installed': installed is not None,
-        'store_root': str(role_store_root()),
+        'store_root': str(role_store_roots()[0]),
+        'store_roots': ','.join(str(root) for root in role_store_roots()),
     }
     if installed is not None:
         payload.update({

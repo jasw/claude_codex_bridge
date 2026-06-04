@@ -40,8 +40,9 @@ The v0.1 contract should avoid assuming a universal hot reload path.
 ### CCB
 
 The adapter contract should describe CCB as one possible consumer, not as the
-source of the core spec. CCB's internal role store, projection, reload, ask,
-sidebar, and provider-state implementation remain CCB-owned.
+source of the core spec. Long term, `.roles` package management belongs to the
+`agent-roles` package-manager layer, while CCB's project locks, projection,
+reload, ask, sidebar, and provider-state implementation remain CCB-owned.
 
 ### Hive
 

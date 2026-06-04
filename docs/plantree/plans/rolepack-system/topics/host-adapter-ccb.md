@@ -8,6 +8,12 @@ Define how CCB consumes host-neutral Role Packs without turning them into CCB
 only assets. CCB should provide config binding, role installation, provider
 home projection, reload integration, and diagnostics.
 
+This topic describes the CCB host adapter and the current CCB-first
+implementation. The long-term package-store boundary is amended by
+[spec-owned-roles-store.md](spec-owned-roles-store.md): CCB keeps project and
+runtime integration, while role payload package management moves to the
+`agent-roles-spec` tool/API.
+
 ## Config Shape
 
 Explicit binding:
@@ -61,11 +67,13 @@ ccb roles add agentroles.archi:codex
 ccb roles doctor agentroles.archi
 ```
 
-`install` resolves role content from `agent-roles-spec` by default, mutates the
-local system role store, and prepares declared dependencies. `update` refreshes
-installed role assets from the catalog and declared dependencies. `add` mutates
-project config and lock. `doctor` reports catalog, installed, lock, projection,
-and tool state. `refresh` is a planned follow-up.
+In the current CCB-first slice, `install` resolves role content from
+`agent-roles-spec` by default, mutates the local system role store, and
+prepares declared dependencies. In the target split, CCB delegates role payload
+install/update/doctor work to the spec-owned package manager, then applies
+CCB-specific policy and diagnostics. `add` mutates project config and lock.
+`doctor` reports catalog, installed, lock, projection, and tool state.
+`refresh` is a planned follow-up.
 
 `ccb update` should refresh the `agent-roles-spec` catalog, update already
 installed roles when newer catalog content exists, and prompt before installing

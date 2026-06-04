@@ -15,6 +15,10 @@ Date: 2026-06-02
   remains host-neutral.
 - Decided the new project should publish the specification first, then build
   role management, CLI, mount/unmount, and host compatibility work later.
+- Accepted the long-term direction that `agent-roles-spec` should own `.roles`
+  package management, while hosts such as CCB own project/runtime integration.
+  See
+  [topics/package-manager-and-roles-store.md](topics/package-manager-and-roles-store.md).
 
 ## In Progress
 
@@ -40,7 +44,9 @@ Date: 2026-06-02
    examples under `reference_roles/`, so CCB can install from the catalog
    without vendoring role content into `ccb_source`.
 7. Add a lightweight validator or validation checklist for the v0.1 preview.
-8. Publish `v0.1.0-spec-preview` only when the first-release checklist passes.
+8. Draft the `agent-roles` package-manager and `.roles` store contract from
+   [topics/package-manager-and-roles-store.md](topics/package-manager-and-roles-store.md).
+9. Publish `v0.1.0-spec-preview` only when the first-release checklist passes.
 
 ## Deferred
 

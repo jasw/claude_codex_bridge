@@ -67,6 +67,13 @@ be proposed to the upstream `agent-roles-spec` repository through a pull
 request. Users who want local experimental roles should register an explicit
 local source instead of editing the managed cache.
 
+The long-term target moves catalog cache and `.roles` package-store ownership
+into `agent-roles-spec` itself. In that model, CCB keeps the same user-facing
+role commands but delegates role package sync/install/update/doctor operations
+to the spec-owned package manager, then applies CCB project locks and provider
+projection. See
+[spec-owned-roles-store.md](spec-owned-roles-store.md).
+
 Catalog status should distinguish:
 
 - missing catalog

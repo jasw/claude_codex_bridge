@@ -8,6 +8,12 @@ Define how CCB consumes updates from `agent-roles-spec` during `ccb update`
 without making CCB source code a role catalog and without silently changing
 project behavior.
 
+This topic records the current CCB-first catalog update flow. The long-term
+target is that catalog cache and `.roles` package-store mutation are owned by
+the `agent-roles-spec` package manager, with CCB delegating payload operations
+and retaining project lock, projection, prompt, and failure-policy ownership.
+See [spec-owned-roles-store.md](spec-owned-roles-store.md).
+
 ## Authority Layers
 
 Catalog authority:

@@ -214,6 +214,15 @@ ccb ask archi "review this change"
 Do not copy Role Pack memory or skills into `.ccb` by hand. CCB projects role
 assets from the installed role store into the bound provider home.
 
+Do not write role store paths such as `~/.roles` or
+`$XDG_DATA_HOME/ccb/roles` into config. `.ccb/ccb.config` records the canonical
+role id; package storage is resolved by CCB and the Agent Roles package
+manager.
+
+Role package install/update uses the Agent Roles `.roles/installed` store by
+default. Existing legacy `$XDG_DATA_HOME/ccb/roles` installs are migration input
+only; do not preserve legacy store paths in config.
+
 ## Migrating Old Configs To Windows
 
 Old compact and hybrid configs are still valid single-window configs. Migrate them only when the user asks for multi-window behavior, named windows, or per-window sidebar layout.

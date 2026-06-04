@@ -31,6 +31,13 @@ Date: 2026-06-01
    project config plus role-lock writes from concurrent or partial failures?
 11. Should GitHub catalog clone/pull failures be represented as explicit
    catalog diagnostics instead of silently returning no default catalog?
+12. What exact store path should the spec-owned package manager use by default:
+    `~/.roles`, an XDG data path, or a configurable path with `~/.roles` as a
+    user-facing alias?
+13. Should CCB call the spec-owned package manager through a subprocess JSON
+    protocol, a Python library, or both?
+14. How should existing `$XDG_DATA_HOME/ccb/roles/` installs migrate to the
+    spec-owned store without invalidating existing project locks?
 
 ## Resolved
 
@@ -44,9 +51,13 @@ Date: 2026-06-01
   rows use that local name. See
   [decisions/004-role-id-shorthand-resolves-to-agent-name.md](decisions/004-role-id-shorthand-resolves-to-agent-name.md).
 - Production role package content should live in `agent-roles-spec`, not in
-  the CCB source tree. CCB consumes the catalog and owns local installation,
-  projection, update prompts, and diagnostics. See
+  the CCB source tree. The first CCB slice consumes the catalog and owns local
+  installation, projection, update prompts, and diagnostics. See
   [decisions/005-agent-roles-spec-is-catalog-authority.md](decisions/005-agent-roles-spec-is-catalog-authority.md).
+- Long term, `agent-roles-spec` should own the `.roles` package store and role
+  payload install/update semantics, while CCB owns project/runtime integration.
+  See
+  [decisions/006-agent-roles-spec-owns-roles-store.md](decisions/006-agent-roles-spec-owns-roles-store.md).
 - CCB may manage a consumption-only GitHub cache of `agent-roles-spec` under
   `$XDG_CACHE_HOME/ccb/role-catalogs/agent-roles-spec` when no local catalog is
   available. User-level system role sources and local env/path catalogs still

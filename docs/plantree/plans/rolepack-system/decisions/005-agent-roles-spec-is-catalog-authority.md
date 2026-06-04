@@ -2,6 +2,13 @@
 
 Date: 2026-06-03
 
+Status: Partially superseded by
+[006-agent-roles-spec-owns-roles-store.md](006-agent-roles-spec-owns-roles-store.md).
+This decision remains authority that production role content and catalog
+governance live in `agent-roles-spec`, not `ccb_source`. Decision 006 changes
+the long-term owner of the local `.roles` package store and role payload
+install/update semantics from CCB to `agent-roles-spec`.
+
 ## Context
 
 The first CCB Role Pack slice placed a role package under the CCB source tree

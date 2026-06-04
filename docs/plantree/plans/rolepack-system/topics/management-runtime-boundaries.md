@@ -41,6 +41,12 @@ remaining cleanup is still needed:
 The architectural issue is not the existence of roles. It is that management
 and runtime paths are currently easy to couple by import accident.
 
+The long-term plan in
+[spec-owned-roles-store.md](spec-owned-roles-store.md) moves role payload
+package management behind an `agent-roles-spec` tool/API. That reduces CCB's
+management surface, but the import boundary still matters: provider startup
+must not import package-manager subprocess/network paths through CCB wrappers.
+
 ## Boundary Model
 
 Use four layers:

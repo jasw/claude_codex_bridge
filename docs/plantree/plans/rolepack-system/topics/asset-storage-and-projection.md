@@ -9,6 +9,13 @@ and auth isolation. Role assets should be installed once, referenced by
 projects, and projected into agent provider homes only as generated or
 rebuildable assets.
 
+Target ownership is amended by
+[decisions/006-agent-roles-spec-owns-roles-store.md](../decisions/006-agent-roles-spec-owns-roles-store.md):
+the package store should become `agent-roles-spec` owned, while CCB continues
+to own project locks and provider projection. The paths below describe the
+current CCB-first implementation shape and the runtime boundaries that must
+survive the migration.
+
 ## Storage Layers
 
 Catalog source:

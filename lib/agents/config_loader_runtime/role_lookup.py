@@ -20,6 +20,32 @@ def role_store_root() -> Path:
     return base / 'ccb' / 'roles'
 
 
+def agent_roles_store_root() -> Path:
+    value = str(os.environ.get('AGENT_ROLES_STORE') or '').strip()
+    if value:
+        return Path(value).expanduser()
+    return Path.home() / '.roles'
+
+
+def agent_roles_installed_root() -> Path:
+    return agent_roles_store_root() / 'installed'
+
+
+def role_store_roots() -> tuple[Path, ...]:
+    roots: list[Path] = []
+    seen: set[Path] = set()
+    for root in (agent_roles_installed_root(), role_store_root()):
+        try:
+            resolved = root.expanduser().resolve()
+        except Exception:
+            resolved = root.expanduser()
+        if resolved in seen:
+            continue
+        roots.append(root)
+        seen.add(resolved)
+    return tuple(roots)
+
+
 def normalize_role_id(value: str) -> str:
     role_id = str(value or '').strip().lower()
     if not role_id or '.' not in role_id:
@@ -42,16 +68,19 @@ def load_installed_role_manifest(role_id: str) -> tuple[Path, dict[str, Any]]:
     role_id = normalize_role_id(role_id)
     role_root = None
     root = None
-    for candidate_id in role_id_candidates(role_id):
-        candidate_root = role_store_root() / candidate_id
-        current = candidate_root / 'current'
-        if current.exists():
-            role_root = current.resolve()
-            root = candidate_root
-            break
-        if (candidate_root / 'role.toml').is_file():
-            role_root = candidate_root
-            root = candidate_root
+    for store_root in role_store_roots():
+        for candidate_id in role_id_candidates(role_id):
+            candidate_root = store_root / candidate_id
+            current = candidate_root / 'current'
+            if current.exists():
+                role_root = current.resolve()
+                root = candidate_root
+                break
+            if (candidate_root / 'role.toml').is_file():
+                role_root = candidate_root
+                root = candidate_root
+                break
+        if role_root is not None:
             break
     if role_root is None or root is None:
         root = role_store_root() / role_id
@@ -197,13 +226,14 @@ def _locked_role_root(role_id: str, *, version: str, digest: str) -> Path | None
     digest_hex = digest_text.removeprefix('sha256:')
     if not digest_hex:
         return None
-    for candidate_id in role_id_candidates(role_id):
-        version_root = role_store_root() / candidate_id / 'versions' / version_text
-        candidate = version_root / digest_hex
-        if (candidate / 'role.toml').is_file():
-            return candidate
-        if (version_root / 'role.toml').is_file() and f'sha256:{_tree_digest(version_root)}' == digest_text:
-            return version_root
+    for store_root in role_store_roots():
+        for candidate_id in role_id_candidates(role_id):
+            version_root = store_root / candidate_id / 'versions' / version_text
+            candidate = version_root / digest_hex
+            if (candidate / 'role.toml').is_file():
+                return candidate
+            if (version_root / 'role.toml').is_file() and f'sha256:{_tree_digest(version_root)}' == digest_text:
+                return version_root
     return None
 
 
@@ -253,10 +283,13 @@ def _load_toml(path: Path) -> dict[str, Any]:
 
 __all__ = [
     'RoleLookupError',
+    'agent_roles_installed_root',
+    'agent_roles_store_root',
     'installed_role_default_agent_name',
     'load_locked_role_manifest',
     'load_installed_role_manifest',
     'looks_like_role_id',
     'normalize_role_id',
     'role_store_root',
+    'role_store_roots',
 ]

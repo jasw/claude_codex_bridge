@@ -13,6 +13,8 @@ across projects without copying every skill or tool into every `.ccb` tree.
 ## File Map
 
 - [roadmap.md](roadmap.md): current planning and implementation sequence.
+- [implementation-status.md](implementation-status.md): current handoff for the
+  spec-owned `.roles` bridge implementation.
 - [open-questions.md](open-questions.md): unresolved product and contract
   questions only.
 - [topics/rolepack-core-spec.md](topics/rolepack-core-spec.md): host-neutral
@@ -33,6 +35,9 @@ across projects without copying every skill or tool into every `.ccb` tree.
   with trust controls.
 - [topics/lifecycle-and-tooling.md](topics/lifecycle-and-tooling.md): install,
   update, doctor, repair, and external tool dependency semantics.
+- [topics/spec-owned-roles-store.md](topics/spec-owned-roles-store.md): target
+  boundary where `agent-roles-spec` owns `.roles` package management while CCB
+  owns project runtime integration.
 - [topics/management-runtime-boundaries.md](topics/management-runtime-boundaries.md):
   import, dependency, and command-boundary rules that keep role management from
   breaking provider startup or hooks.
@@ -44,6 +49,9 @@ across projects without copying every skill or tool into every `.ccb` tree.
   architecture review findings for the current roles management scheme.
 - [history/final-rolepack-validation-2026-06-03.md](history/final-rolepack-validation-2026-06-03.md):
   final PR/review/test checkpoint before handing release to agent4.
+- [history/spec-owned-roles-store-first-slice-2026-06-04.md](history/spec-owned-roles-store-first-slice-2026-06-04.md):
+  first executable `agent-roles` package-manager bridge, later superseded by the
+  direct-switch migration delta.
 - [decisions/001-role-id-separate-from-agent-name.md](decisions/001-role-id-separate-from-agent-name.md):
   fixed role identity must be independent from the project-local agent name.
 - [decisions/002-system-role-store-project-locks.md](decisions/002-system-role-store-project-locks.md):
@@ -55,8 +63,12 @@ across projects without copying every skill or tool into every `.ccb` tree.
   CCB role-id shorthand expands to a project-local agent name, while sidebar
   and ask use that local name.
 - [decisions/005-agent-roles-spec-is-catalog-authority.md](decisions/005-agent-roles-spec-is-catalog-authority.md):
-  `agent-roles-spec` owns role package content; CCB owns consumption,
-  installation, projection, update prompts, and diagnostics.
+  `agent-roles-spec` owns role package content; the first CCB slice owns
+  consumption, installation, projection, update prompts, and diagnostics. This
+  is partially superseded by decision 006 for long-term store ownership.
+- [decisions/006-agent-roles-spec-owns-roles-store.md](decisions/006-agent-roles-spec-owns-roles-store.md):
+  `agent-roles-spec` should own `.roles` package management; CCB should wrap
+  those operations for CCB project/runtime integration.
 
 ## Related Sources
 
@@ -86,6 +98,8 @@ In scope:
   provider startup, and provider hooks independently failure-contained.
 - `agent-roles-spec` catalog consumption, including update-time refresh of
   installed roles and prompts for newly available roles.
+- A migration path from CCB-owned role payload installation to a spec-owned
+  `.roles` package manager that CCB can delegate to.
 - A first CCB-consumable architecture role from `agent-roles-spec`, backed by
   Architec where the role declares those tools.
 

@@ -10,7 +10,7 @@
 
 [![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20WSL-lightgrey.svg)]()
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue.svg)]()
-[![Version](https://img.shields.io/badge/version-7.2.10-orange.svg)]()
+[![Version](https://img.shields.io/badge/version-7.2.12-orange.svg)]()
 [![Release](https://img.shields.io/badge/install-release--first-orange.svg)]()
 
 **中文** | [English](README.md)
@@ -512,6 +512,25 @@ v7 线重点：
 - 加固 tmux、Ghostty、release helper、Codex trust 和 provider 会话恢复路径。
 
 <details open>
+<summary><b>v7.2.12</b> - Agent Roles Store Migration Release</summary>
+
+- 默认使用外部 `agent-roles` package manager 执行 Role Pack install、update 和 sync。
+- Role Pack payload 默认写入 spec-owned `.roles/installed` store，`$XDG_DATA_HOME/ccb/roles` 仅作为 legacy fallback。
+- 自动将已有 legacy installed role snapshot 复制到 `.roles/installed`，不删除旧 store，并保留 project lock digest 解析能力。
+- 保留 `CCB_AGENT_ROLES_MANAGER=0` / `legacy` / `ccb` 作为临时故障回退开关。
+- `ccb roles update --path ...` 也会通过 Agent Roles manager，path update 不再写 legacy CCB store。
+- Supersede v7.2.11；v7.2.11 是未完成的 opt-in preview 发布，不应作为推荐版本使用。
+
+</details>
+
+<details>
+<summary><b>v7.2.11</b> - Superseded Agent Roles Opt-In Preview</summary>
+
+- 已被 v7.2.12 supersede，因为发布方向从 opt-in `CCB_AGENT_ROLES_MANAGER=1` preview 改为 default-on Agent Roles manager migration。
+
+</details>
+
+<details>
 <summary><b>v7.2.10</b> - Role Pack Post-Update Hotfix</summary>
 
 - 修复 managed `ccb update`：可选 Role Pack 和 Neovim provisioning 现在会交给新安装的 `ccb __post-update` entrypoint 执行，不再由旧 updater 进程继续跑。

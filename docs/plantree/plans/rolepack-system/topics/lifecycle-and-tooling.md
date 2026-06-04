@@ -68,6 +68,12 @@ updates already installed same-id roles without changing project locks. Tool
 update hooks run only when requested for sync. `repair` and `refresh` remain
 planned commands.
 
+The target boundary is that role payload lifecycle operations are implemented
+by `agent-roles-spec` package-management tools, with CCB retaining these
+commands as CCB-facing wrappers. `ccb roles add`, project locks, provider
+projection, and CCB post-update failure policy remain CCB-owned. See
+[spec-owned-roles-store.md](spec-owned-roles-store.md).
+
 CCB update should also run a catalog-aware role update pass:
 
 1. refresh or locate the `agent-roles-spec` catalog

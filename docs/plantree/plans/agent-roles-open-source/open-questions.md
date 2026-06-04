@@ -23,7 +23,19 @@ Date: 2026-06-02
    - "descend" can appear in marketing copy, but should not replace `mount` in
      specs or CLI naming.
 
+5. Should the first `agent-roles` package manager expose a subprocess JSON
+   protocol, a Python library, or both?
+
+6. What default local store path should be standardized for `.roles` package
+   management?
+
+7. Should external tool dependency state live under the spec-owned `.roles`
+   store, or remain host-owned because execution policy is host-specific?
+
 ## Resolved
 
 - The first reference role should use `agentroles.archi` as its public role id;
   `ccb.archi` should not be the primary public identity.
+- Long term, `agent-roles-spec` should own `.roles` package management and
+  hosts such as CCB should consume it through a stable contract. See
+  [topics/package-manager-and-roles-store.md](topics/package-manager-and-roles-store.md).

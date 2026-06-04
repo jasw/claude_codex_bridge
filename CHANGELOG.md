@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+## v7.2.12 (2026-06-04)
+
+### Agent Roles Store Migration Release
+
+- **Agent Roles Manager Default Enabled**: Role Pack install, update, and sync now use the external `agent-roles` package manager and write role payloads into the spec-owned `.roles/installed` store by default.
+- **Legacy Store Migration Added**: existing `$XDG_DATA_HOME/ccb/roles` installed snapshots are copied into `.roles/installed` at Role Pack management boundaries without deleting the old store, preserving existing project lock digest resolution.
+- **Compatibility Rollback Kept**: `CCB_AGENT_ROLES_MANAGER=0`, `legacy`, or `ccb` temporarily restores the old CCB-owned writer for troubleshooting.
+- **Path Update Aligned**: `ccb roles update --path ...` now also routes through the Agent Roles manager and writes `.roles/installed` instead of the legacy CCB store.
+- **Sync Validation Hardened**: malformed `agent-roles sync --json` role rows now fail closed, while `ccb roles sync --with-tools` composes manager-owned payload sync with CCB-owned tool hook execution.
+- **Role Config Guidance Updated**: inherited `ccb-config` skill docs now describe `.roles/installed` as the default package store while keeping `.ccb/ccb.config` limited to canonical role ids.
+
+## v7.2.11 (2026-06-04)
+
+### Superseded Agent Roles Opt-In Preview
+
+- Superseded by v7.2.12 after the release direction changed from an opt-in `CCB_AGENT_ROLES_MANAGER=1` preview to a default-on Agent Roles manager migration. Do not use v7.2.11 as the recommended release.
+
 ## v7.2.10 (2026-06-04)
 
 ### Role Pack Post-Update Hotfix

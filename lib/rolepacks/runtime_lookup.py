@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 
 from agents.config_loader import load_project_config
-from agents.config_loader_runtime.role_lookup import role_store_root
+from agents.config_loader_runtime.role_lookup import role_store_root, role_store_roots
 from agents.models import normalize_agent_name
 from project_memory.types import ProjectMemorySource
 from role_aliases import role_id_candidates
@@ -25,19 +25,20 @@ class ProjectRoleResolution:
 
 def load_installed_role(role_id: str) -> RolePack | None:
     role_id = normalize_role_id(role_id)
-    for candidate_id in role_id_candidates(role_id):
-        current = role_store_root() / candidate_id / 'current'
-        if current.exists():
-            try:
-                return load_role_manifest(current.resolve())
-            except Exception:
-                return None
-        direct = role_store_root() / candidate_id
-        if (direct / 'role.toml').is_file():
-            try:
-                return load_role_manifest(direct)
-            except Exception:
-                return None
+    for store_root in role_store_roots():
+        for candidate_id in role_id_candidates(role_id):
+            current = store_root / candidate_id / 'current'
+            if current.exists():
+                try:
+                    return load_role_manifest(current.resolve())
+                except Exception:
+                    return None
+            direct = store_root / candidate_id
+            if (direct / 'role.toml').is_file():
+                try:
+                    return load_role_manifest(direct)
+                except Exception:
+                    return None
     return None
 
 
@@ -229,13 +230,14 @@ def _locked_role_root(role_id: str, *, version: str, digest: str) -> Path | None
     digest_hex = digest_text.removeprefix('sha256:')
     if not digest_hex:
         return None
-    for candidate_id in role_id_candidates(role_id):
-        version_root = role_store_root() / candidate_id / 'versions' / version_text
-        candidate = version_root / digest_hex
-        if (candidate / 'role.toml').is_file():
-            return candidate
-        if (version_root / 'role.toml').is_file() and f'sha256:{tree_digest(version_root)}' == digest_text:
-            return version_root
+    for store_root in role_store_roots():
+        for candidate_id in role_id_candidates(role_id):
+            version_root = store_root / candidate_id / 'versions' / version_text
+            candidate = version_root / digest_hex
+            if (candidate / 'role.toml').is_file():
+                return candidate
+            if (version_root / 'role.toml').is_file() and f'sha256:{tree_digest(version_root)}' == digest_text:
+                return version_root
     return None
 
 
@@ -265,5 +267,6 @@ __all__ = [
     'project_role_skill_sources',
     'resolve_project_agent_role',
     'role_store_root',
+    'role_store_roots',
     'tree_digest',
 ]
