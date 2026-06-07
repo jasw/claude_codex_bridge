@@ -4,9 +4,6 @@ from pathlib import Path
 import os
 import shutil
 
-from cli.management_runtime.versioning_runtime.local import get_version_info
-
-
 _LEGACY_BIN_DIR = Path.home() / '.local' / 'bin'
 
 
@@ -86,6 +83,7 @@ def detect_ccb_version() -> str:
     env_version = str(os.environ.get('CCB_VERSION') or '').strip()
     if env_version:
         return env_version
+    from cli.management_runtime.versioning_runtime.local import get_version_info
 
     for root in _candidate_roots():
         try:
