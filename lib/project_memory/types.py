@@ -22,6 +22,8 @@ class ProjectMemorySource:
     content: str
     exists: bool
     warning: str = ''
+    filtered: bool = False
+    filter_names: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -31,6 +33,8 @@ class ProjectMemorySourceRef:
     exists: bool
     sha256: str
     warning: str = ''
+    filtered: bool = False
+    filter_names: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)

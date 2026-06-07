@@ -98,6 +98,8 @@ def _source_refs(sources: tuple[ProjectMemorySource, ...]) -> tuple[ProjectMemor
                 exists=source.exists,
                 sha256=sha256_text(source.content) if source.exists else '',
                 warning=source.warning,
+                filtered=source.filtered,
+                filter_names=source.filter_names,
             )
         )
     return tuple(refs)

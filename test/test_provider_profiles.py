@@ -1894,7 +1894,13 @@ def test_materialize_claude_home_config_writes_project_memory_bundle(tmp_path: P
     target_home = project_root / '.ccb' / 'agents' / 'reviewer' / 'provider-state' / 'claude' / 'home'
     source_claude_dir = source_home / '.claude'
     source_claude_dir.mkdir(parents=True, exist_ok=True)
-    (source_claude_dir / 'CLAUDE.md').write_text('user claude memory\n', encoding='utf-8')
+    (source_claude_dir / 'CLAUDE.md').write_text(
+        'user claude memory\n'
+        '<!-- CCB_CONFIG_START -->\n'
+        'old installed claude ccb config\n'
+        '<!-- CCB_CONFIG_END -->\n',
+        encoding='utf-8',
+    )
     project_root.mkdir(parents=True, exist_ok=True)
     _write_project_memory(project_root, 'shared ask memory\n')
     (project_root / 'CLAUDE.md').write_text('project claude memory\n', encoding='utf-8')
@@ -1914,6 +1920,7 @@ def test_materialize_claude_home_config_writes_project_memory_bundle(tmp_path: P
     assert '# CCB Managed Agent Memory' in text
     assert '## Provider User Memory' in text
     assert 'user claude memory' in text
+    assert 'old installed claude ccb config' not in text
     assert '## CCB Shared Project Memory' in text
     assert 'shared ask memory' in text
     assert '## Provider-Native Project Memory' not in text
@@ -1992,7 +1999,13 @@ def test_materialize_codex_home_config_writes_project_memory_bundle(tmp_path: Pa
     source_home = tmp_path / 'system-codex-home'
     target_home = project_root / '.ccb' / 'agents' / 'agent1' / 'provider-state' / 'codex' / 'home'
     source_home.mkdir(parents=True, exist_ok=True)
-    (source_home / 'AGENTS.md').write_text('user codex memory\n', encoding='utf-8')
+    (source_home / 'AGENTS.md').write_text(
+        'user codex memory\n'
+        '<!-- CCB_ROLES_START -->\n'
+        'old installed codex ccb roles\n'
+        '<!-- CCB_ROLES_END -->\n',
+        encoding='utf-8',
+    )
     project_root.mkdir(parents=True, exist_ok=True)
     _write_project_memory(project_root, 'shared ask memory\n')
     (project_root / 'AGENTS.md').write_text('project codex memory\n', encoding='utf-8')
@@ -2017,10 +2030,11 @@ def test_materialize_codex_home_config_writes_project_memory_bundle(tmp_path: Pa
     assert text.index('## CCB Runtime Coordination Rules') < text.index('## CCB Shared Project Memory')
     assert '## Provider User Memory' in text
     assert 'user codex memory' in text
+    assert 'old installed codex ccb roles' not in text
     assert '## CCB Shared Project Memory' in text
     assert 'shared ask memory' in text
-    assert '## Provider-Native Project Memory' in text
-    assert 'project codex memory' in text
+    assert '## Provider-Native Project Memory' not in text
+    assert 'project codex memory' not in text
     assert '## Agent Private Memory' in text
     assert 'agent1 private memory' in text
 

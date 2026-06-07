@@ -10,7 +10,7 @@
 
 [![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20WSL-lightgrey.svg)]()
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue.svg)]()
-[![Version](https://img.shields.io/badge/version-7.3.5-orange.svg)]()
+[![Version](https://img.shields.io/badge/version-7.3.6-orange.svg)]()
 [![Release](https://img.shields.io/badge/install-release--first-orange.svg)]()
 
 **中文** | [English](README.md)
@@ -512,6 +512,18 @@ v7 线重点：
 - 加固 tmux、Ghostty、release helper、Codex trust 和 provider 会话恢复路径。
 
 <details open>
+<summary><b>v7.3.6</b> - Provider memory ownership 清理</summary>
+
+- 新增 provider memory ownership policy：Claude、Codex、OpenCode 的托管上下文不再把 provider-native project memory 重复注入 CCB 生成 bundle；Gemini 暂时保留旧行为，等待单独审计。
+- 只在 provider user memory 源层过滤旧 CCB install marker blocks 和 legacy collaboration sections，不改写用户自己的 memory 文件。
+- 默认 `.ccb/ccb_memory.md` template 升级到 v5，移除已由 CCB managed memory 提供的重复 Ask Communication 块。
+- 新增 seed-aware shared memory migration：只升级未编辑过的旧生成模板，保留用户编辑过的项目记忆。
+- Claude route-mode install 不再写 `~/.claude/rules/ccb-config.md`；install/uninstall 只删除带 CCB marker 的旧 external config，保留未标记用户文件。
+- 修复 source runtime startup 的 tmux UI version detection import cycle，保持 `ccb_test` 路径可安全启动。
+
+</details>
+
+<details>
 <summary><b>v7.3.5</b> - Tmux border hook 热修复</summary>
 
 - 修复 tmux `after-select-pane` hook 可能持久保存 `/tmp/ccb-v...-release.../config/ccb-border.sh` 这类临时 release 路径，导致点击 pane 后报 `returned 127` 的问题。

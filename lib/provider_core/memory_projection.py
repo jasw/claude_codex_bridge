@@ -11,6 +11,8 @@ from project_memory import (
     render_memory_bundle,
 )
 from project_memory.hashing import sha256_text
+from project_memory.policy import SOURCE_PROVIDER_USER_MEMORY
+from project_memory.types import ProjectMemorySource
 from storage.atomic import atomic_write_text
 
 
@@ -160,7 +162,7 @@ def _provider_memory_sources(
     provider: str,
     provider_memory_path: Path,
     provider_memory_title: str,
-) -> tuple[list[str], tuple[object, ...]]:
+) -> tuple[list[str], tuple[ProjectMemorySource, ...]]:
     warnings: list[str] = []
     ensure_result = ensure_project_memory(project_root)
     if ensure_result.warning:
@@ -169,7 +171,7 @@ def _provider_memory_sources(
         source
         for source in (
             read_memory_source(
-                kind='provider_user_memory',
+                kind=SOURCE_PROVIDER_USER_MEMORY,
                 title=provider_memory_title,
                 path=provider_memory_path,
                 include_missing=False,

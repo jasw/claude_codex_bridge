@@ -1,5 +1,30 @@
 # Changelog
 
+## v7.3.6 (2026-06-07)
+
+### Provider Memory Ownership Cleanup
+
+- **Provider Memory Ownership Policy Added**: Claude, Codex, and OpenCode
+  managed contexts now exclude provider-native project memory from the CCB
+  generated bundle, preventing duplicate project instructions when those
+  providers already load their own native memory files. Gemini keeps the
+  previous inclusion behavior pending a separate provider audit.
+- **Provider User Memory Filtered**: provider user memory is filtered only at
+  the provider-user-memory source layer, removing legacy CCB install marker
+  blocks and old collaboration sections without rewriting user-owned files.
+- **Shared Memory Template Simplified**: the default `.ccb/ccb_memory.md`
+  template is updated to v5 and no longer repeats the Ask Communication block
+  already supplied through CCB managed agent memory.
+- **Seed-Aware Shared Memory Migration Added**: CCB upgrades only old,
+  unedited generated shared-memory templates; edited project memory is
+  preserved and not overwritten.
+- **Claude Route-Mode Install Hardened**: route-mode installs no longer write
+  `~/.claude/rules/ccb-config.md`. Install/uninstall remove only CCB-marked
+  legacy external config files and preserve unmarked user files.
+- **Source Runtime Tmux UI Import Cycle Fixed**: tmux UI version detection no
+  longer imports management-runtime version helpers, keeping source-checkout
+  startup paths import-safe under `ccb_test`.
+
 ## v7.3.5 (2026-06-07)
 
 ### Tmux Border Hook Hotfix

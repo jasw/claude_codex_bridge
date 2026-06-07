@@ -10,7 +10,7 @@
 
 [![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20WSL-lightgrey.svg)]()
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue.svg)]()
-[![Version](https://img.shields.io/badge/version-7.3.5-orange.svg)]()
+[![Version](https://img.shields.io/badge/version-7.3.6-orange.svg)]()
 [![Release](https://img.shields.io/badge/install-release--first-orange.svg)]()
 
 **English** | [中文](README_zh.md)
@@ -519,6 +519,18 @@ v7 highlights:
 - Hardened tmux, Ghostty, release helper, Codex trust, and provider session restore paths.
 
 <details open>
+<summary><b>v7.3.6</b> - Provider Memory Ownership Cleanup</summary>
+
+- Adds provider memory ownership policy: Claude, Codex, and OpenCode managed contexts no longer duplicate provider-native project memory inside the CCB generated bundle; Gemini keeps the previous behavior pending audit.
+- Filters legacy CCB install marker blocks and old collaboration sections only from provider user memory, without rewriting user-owned memory files.
+- Updates the default `.ccb/ccb_memory.md` template to v5 and removes the duplicate Ask Communication block already supplied by managed CCB memory.
+- Adds seed-aware shared memory migration, upgrading only unedited old generated templates while preserving edited project memory.
+- Stops Claude route-mode installs from writing `~/.claude/rules/ccb-config.md`; install/uninstall now remove only CCB-marked legacy external config and preserve unmarked user files.
+- Keeps source runtime startup import-safe by avoiding the tmux UI version detection cycle under `ccb_test`.
+
+</details>
+
+<details>
 <summary><b>v7.3.5</b> - Tmux Border Hook Hotfix</summary>
 
 - Fixes tmux `after-select-pane` hooks that could persist temporary release paths like `/tmp/ccb-v...-release.../config/ccb-border.sh` and later report `returned 127` when clicking panes.

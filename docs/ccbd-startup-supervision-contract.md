@@ -215,9 +215,10 @@ Managed provider startup mutation rules:
 - startup must not create, import, or otherwise rely on project-root `CCB.md`
 - startup must materialize project memory as an idempotent preparation step
   before launching a managed provider process:
-  - source files are `.ccb/ccb_memory.md`, provider-native project memory such as
-    `CLAUDE.md` / `AGENTS.md` / `GEMINI.md`, and optional
-    `.ccb/agents/<agent>/memory.md`
+  - source files are selected by the provider memory ownership policy; common
+    inputs include `.ccb/ccb_memory.md`, filtered provider user memory,
+    optional `.ccb/agents/<agent>/memory.md`, and provider-native project memory
+    only when that provider does not already load it natively
   - generated seed metadata belongs under
     `<runtime_state_root>/state/memory.seed.json`
   - generated runtime bundles belong under

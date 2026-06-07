@@ -52,8 +52,11 @@ OpenCode does not yet have a separate session-isolation contract.
   generated config and records `opencode_config_merge_failed` in agent events.
 - `inherit_memory = false` removes the generated OpenCode config and omits
   `OPENCODE_CONFIG` from the managed launch environment.
-- Project `AGENTS.md` and `.ccb/agents/<agent>/memory.md` remain input sources;
-  CCB does not edit them during OpenCode startup.
+- Project `AGENTS.md` remains an OpenCode-native project instruction source and
+  is excluded from the CCB-generated runtime memory bundle to avoid duplicate
+  loading through both native discovery and the generated instructions bridge.
+- `.ccb/agents/<agent>/memory.md` remains a CCB bundle input; CCB does not edit
+  project `AGENTS.md` during OpenCode startup.
 
 ### Non-Goals
 

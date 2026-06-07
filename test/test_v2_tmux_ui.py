@@ -3,10 +3,29 @@ from __future__ import annotations
 from pathlib import Path
 import os
 import subprocess
+import sys
 from types import SimpleNamespace
 
 import cli.services.tmux_ui as tmux_ui
 import cli.services.tmux_ui_runtime.helpers as tmux_helpers
+
+
+def test_keeper_import_does_not_cycle_through_tmux_ui() -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    env = dict(os.environ)
+    env['PYTHONPATH'] = str(repo_root / 'lib')
+
+    result = subprocess.run(
+        [sys.executable, '-c', 'import ccbd.keeper_main'],
+        cwd=repo_root,
+        env=env,
+        capture_output=True,
+        text=True,
+        encoding='utf-8',
+        errors='replace',
+    )
+
+    assert result.returncode == 0, result.stderr
 
 
 def test_set_tmux_ui_active_runs_expected_script_from_current_install_root(monkeypatch, tmp_path: Path) -> None:

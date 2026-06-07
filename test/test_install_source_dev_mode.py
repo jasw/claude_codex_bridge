@@ -225,3 +225,69 @@ def test_python_selection_falls_back_to_versioned_python_command(tmp_path: Path)
 
     assert completed.returncode == 0, completed.stderr or completed.stdout
     assert completed.stdout.strip() == str(fake_bin / "python3.12")
+
+
+def test_claude_route_install_preserves_unmarked_external_rules_file(tmp_path: Path) -> None:
+    completed = _run_source_dev_snippet(
+        tmp_path,
+        """
+        mkdir -p "$HOME/.claude/rules"
+        printf 'user custom claude rule\\n' > "$HOME/.claude/rules/ccb-config.md"
+        export CCB_CLAUDE_MD_MODE=route
+        install_claude_md_config
+        """,
+    )
+
+    assert completed.returncode == 0, completed.stderr or completed.stdout
+    external_config = tmp_path / "home" / ".claude" / "rules" / "ccb-config.md"
+    assert external_config.read_text(encoding="utf-8") == "user custom claude rule\n"
+    assert "Preserved non-CCB external CCB config" in completed.stdout
+
+
+def test_claude_route_install_removes_marked_external_rules_file(tmp_path: Path) -> None:
+    completed = _run_source_dev_snippet(
+        tmp_path,
+        """
+        mkdir -p "$HOME/.claude/rules"
+        printf '<!-- CCB_CONFIG_START -->\\nold ccb block\\n<!-- CCB_CONFIG_END -->\\n' > "$HOME/.claude/rules/ccb-config.md"
+        export CCB_CLAUDE_MD_MODE=route
+        install_claude_md_config
+        """,
+    )
+
+    assert completed.returncode == 0, completed.stderr or completed.stdout
+    external_config = tmp_path / "home" / ".claude" / "rules" / "ccb-config.md"
+    assert not external_config.exists()
+    assert "Removed CCB-owned external CCB config" in completed.stdout
+
+
+def test_claude_uninstall_preserves_unmarked_external_rules_file(tmp_path: Path) -> None:
+    completed = _run_source_dev_snippet(
+        tmp_path,
+        """
+        mkdir -p "$HOME/.claude/rules"
+        printf 'user custom claude rule\\n' > "$HOME/.claude/rules/ccb-config.md"
+        uninstall_claude_md_config
+        """,
+    )
+
+    assert completed.returncode == 0, completed.stderr or completed.stdout
+    external_config = tmp_path / "home" / ".claude" / "rules" / "ccb-config.md"
+    assert external_config.read_text(encoding="utf-8") == "user custom claude rule\n"
+    assert "Preserved non-CCB external CCB config" in completed.stdout
+
+
+def test_claude_uninstall_removes_marked_external_rules_file(tmp_path: Path) -> None:
+    completed = _run_source_dev_snippet(
+        tmp_path,
+        """
+        mkdir -p "$HOME/.claude/rules"
+        printf '<!-- CCB_CONFIG_START -->\\nold ccb block\\n<!-- CCB_CONFIG_END -->\\n' > "$HOME/.claude/rules/ccb-config.md"
+        uninstall_claude_md_config
+        """,
+    )
+
+    assert completed.returncode == 0, completed.stderr or completed.stdout
+    external_config = tmp_path / "home" / ".claude" / "rules" / "ccb-config.md"
+    assert not external_config.exists()
+    assert "Removed CCB-owned external CCB config" in completed.stdout

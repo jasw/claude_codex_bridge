@@ -83,8 +83,12 @@ Inside that home, the managed Claude state is:
 - `.ccb/agents/<agent>/provider-state/claude/home/.claude/CLAUDE.md`
   - a CCB-generated memory projection when `inherit_memory = true`
   - not a user-editable source file
-  - generated from inherited provider user memory, project `.ccb/ccb_memory.md`, project
-    `CLAUDE.md`, and optional `.ccb/agents/<agent>/memory.md`
+  - generated from filtered inherited provider user memory, project
+    `.ccb/ccb_memory.md`, and optional `.ccb/agents/<agent>/memory.md`
+  - project `CLAUDE.md` is excluded from the CCB-generated bundle because
+    Claude Code owns native project-memory loading
+  - provider-native rules directories such as `~/.claude/rules/` are not CCB
+    generated-memory inputs
   - removed when `inherit_memory = false`
 - `.ccb/agents/<agent>/provider-state/claude/home/.claude.json`
   - contains managed workspace trust plus selected inherited Claude account

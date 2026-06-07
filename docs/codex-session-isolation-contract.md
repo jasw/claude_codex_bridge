@@ -116,10 +116,12 @@ may project the user's source Codex credentials and config into the private
 managed home so the provider can authenticate, but projected credential files
 remain secret material and must not be exported by diagnostics. The managed
 `CODEX_HOME/AGENTS.md` file is a CCB-generated memory bundle, not user data; it
-combines inheritable source-home `AGENTS.md`, project shared `.ccb/ccb_memory.md`,
-provider-native project `AGENTS.md`, and agent-private
-`.ccb/agents/<agent>/memory.md` when present. `inherit_memory=false` must remove
-that generated `AGENTS.md` without disabling skill or command projection.
+combines filtered inheritable source-home `AGENTS.md`, project shared
+`.ccb/ccb_memory.md`, and agent-private `.ccb/agents/<agent>/memory.md` when
+present. Provider-native project `AGENTS.md` is excluded from the generated
+bundle because Codex owns native project-memory loading. `inherit_memory=false`
+must remove that generated `AGENTS.md` without disabling skill or command
+projection.
 
 Codex plugin-bundle projection is also not conversation identity, but it is
 startup authority. Managed homes that preserve plugin-related source-home config

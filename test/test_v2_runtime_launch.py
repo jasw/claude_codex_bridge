@@ -2224,7 +2224,7 @@ def test_opencode_workspace_preparation_writes_memory_config(tmp_path: Path, mon
     assert config['instructions'] == ['AGENTS.md', '.ccb/runtime/memory/builder.md']
     bundle_text = bundle_path.read_text(encoding='utf-8')
     assert 'shared ask memory' in bundle_text
-    assert 'project opencode memory' in bundle_text
+    assert 'project opencode memory' not in bundle_text
 
 
 def test_opencode_workspace_preparation_records_memory_projection_once(tmp_path: Path, monkeypatch) -> None:

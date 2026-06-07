@@ -294,7 +294,6 @@ def _materialize_claude_memory(
             agent_name=agent_name,
             provider='claude',
             extra_sources=extra_sources,
-            include_provider_native_project=False,
         )
         warnings.extend(source.warning for source in sources if source.warning)
         rendered = render_memory_bundle(

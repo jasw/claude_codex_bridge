@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 import os
 import shutil
@@ -83,16 +84,52 @@ def detect_ccb_version() -> str:
     env_version = str(os.environ.get('CCB_VERSION') or '').strip()
     if env_version:
         return env_version
-    from cli.management_runtime.versioning_runtime.local import get_version_info
 
     for root in _candidate_roots():
-        try:
-            version = str(get_version_info(root).get('version') or '').strip()
-        except Exception:
-            version = ''
+        version = _read_local_version(root)
         if version:
             return version
     return '?'
+
+
+def _read_local_version(root: Path) -> str:
+    build_info_version = _read_build_info_version(root / 'BUILD_INFO.json')
+    if build_info_version:
+        return build_info_version
+    version_file_value = _read_version_file(root / 'VERSION')
+    if version_file_value:
+        return version_file_value
+    return _read_embedded_ccb_version(root / 'ccb')
+
+
+def _read_build_info_version(path: Path) -> str:
+    try:
+        payload = json.loads(path.read_text(encoding='utf-8', errors='replace'))
+    except Exception:
+        return ''
+    if not isinstance(payload, dict):
+        return ''
+    return str(payload.get('version') or '').strip()
+
+
+def _read_version_file(path: Path) -> str:
+    try:
+        return path.read_text(encoding='utf-8', errors='replace').strip()
+    except Exception:
+        return ''
+
+
+def _read_embedded_ccb_version(path: Path) -> str:
+    try:
+        lines = path.read_text(encoding='utf-8', errors='replace').splitlines()[:60]
+    except Exception:
+        return ''
+    for line in lines:
+        text = line.strip()
+        if not text.startswith('VERSION') or '=' not in text:
+            continue
+        return text.split('=', 1)[1].strip().strip('"').strip("'")
+    return ''
 
 
 __all__ = [

@@ -2179,7 +2179,37 @@ install_droid_delegation() {
 
 CCB_START_MARKER="<!-- CCB_CONFIG_START -->"
 CCB_END_MARKER="<!-- CCB_CONFIG_END -->"
+CCB_ROLES_START_MARKER="<!-- CCB_ROLES_START -->"
+CCB_ROLES_END_MARKER="<!-- CCB_ROLES_END -->"
+CCB_RUBRICS_START_MARKER="<!-- REVIEW_RUBRICS_START -->"
+CCB_RUBRICS_END_MARKER="<!-- REVIEW_RUBRICS_END -->"
 LEGACY_RULE_MARKER="## Codex 协作规则"
+
+file_has_ccb_memory_marker() {
+  local file_path="$1"
+
+  grep -q "$CCB_START_MARKER" "$file_path" 2>/dev/null || \
+    grep -q "$CCB_ROLES_START_MARKER" "$file_path" 2>/dev/null || \
+    grep -q "$CCB_RUBRICS_START_MARKER" "$file_path" 2>/dev/null || \
+    grep -q "<!-- CODEX_REVIEW_START -->" "$file_path" 2>/dev/null || \
+    grep -q "<!-- GEMINI_INSPIRATION_START -->" "$file_path" 2>/dev/null
+}
+
+remove_ccb_owned_memory_file() {
+  local file_path="$1"
+  local label="$2"
+
+  if [[ ! -f "$file_path" ]]; then
+    return 0
+  fi
+
+  if file_has_ccb_memory_marker "$file_path"; then
+    rm -f "$file_path"
+    echo "Removed CCB-owned $label: $file_path"
+  else
+    echo "Preserved non-CCB $label: $file_path"
+  fi
+}
 
 remove_codex_mcp() {
   local claude_config="$HOME/.claude.json"
@@ -2286,9 +2316,8 @@ install_claude_md_config() {
 
   # In route mode, write full config to external file
   if [[ "$md_mode" == "route" ]]; then
-    mkdir -p "$HOME/.claude/rules"
-    cp "$full_template" "$external_config"
-    echo "Wrote full CCB config to $external_config"
+    remove_ccb_owned_memory_file "$external_config" "external CCB config" || true
+    echo "Route mode no longer writes $external_config; using compact CLAUDE.md guidance only."
   fi
 
   local ccb_content
@@ -2341,11 +2370,6 @@ with open(sys.argv[1], 'w', encoding='utf-8') as f:
 
   echo "Updated AI collaboration rules in $claude_md (mode: $md_mode)"
 }
-
-CCB_ROLES_START_MARKER="<!-- CCB_ROLES_START -->"
-CCB_ROLES_END_MARKER="<!-- CCB_ROLES_END -->"
-CCB_RUBRICS_START_MARKER="<!-- REVIEW_RUBRICS_START -->"
-CCB_RUBRICS_END_MARKER="<!-- REVIEW_RUBRICS_END -->"
 
 install_agents_md_config() {
   if install_uses_live_source; then
@@ -3006,11 +3030,7 @@ provision_neovim_tool() {
 uninstall_claude_md_config() {
   local claude_md="$HOME/.claude/CLAUDE.md"
 
-  if [[ ! -f "$claude_md" ]]; then
-    return
-  fi
-
-  if grep -q "$CCB_START_MARKER" "$claude_md" 2>/dev/null; then
+  if [[ -f "$claude_md" ]] && grep -q "$CCB_START_MARKER" "$claude_md" 2>/dev/null; then
     echo "Removing CCB config block from CLAUDE.md..."
     if pick_any_python_bin; then
       "$PYTHON_BIN" -c "
@@ -3028,7 +3048,7 @@ with open('$claude_md', 'w', encoding='utf-8') as f:
     else
       echo "WARN: python required to clean CLAUDE.md, please manually remove CCB_CONFIG block"
     fi
-  elif grep -qE "$LEGACY_RULE_MARKER|## Codex Collaboration Rules|## Gemini|## OpenCode" "$claude_md" 2>/dev/null; then
+  elif [[ -f "$claude_md" ]] && grep -qE "$LEGACY_RULE_MARKER|## Codex Collaboration Rules|## Gemini|## OpenCode" "$claude_md" 2>/dev/null; then
     echo "Removing legacy collaboration rules from CLAUDE.md..."
     if pick_any_python_bin; then
       "$PYTHON_BIN" -c "
@@ -3058,10 +3078,7 @@ with open('$claude_md', 'w', encoding='utf-8') as f:
 
   # Clean up external config file if it exists (route mode)
   local external_config="$HOME/.claude/rules/ccb-config.md"
-  if [[ -f "$external_config" ]]; then
-    rm -f "$external_config"
-    echo "Removed external CCB config: $external_config"
-  fi
+  remove_ccb_owned_memory_file "$external_config" "external CCB config" || true
 }
 
 uninstall_settings_permissions() {

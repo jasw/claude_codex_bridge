@@ -475,7 +475,7 @@ def test_prepare_provider_workspace_materializes_opencode_memory_config(
     assert config['autoupdate'] is False
     assert config['instructions'] == ['AGENTS.md', '.ccb/runtime/memory/agent1.md']
     assert 'shared ccb memory' in bundle_path.read_text(encoding='utf-8')
-    assert 'project opencode memory' in bundle_path.read_text(encoding='utf-8')
+    assert 'project opencode memory' not in bundle_path.read_text(encoding='utf-8')
 
 
 def test_prepare_provider_workspace_records_opencode_config_merge_failure(
