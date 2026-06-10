@@ -38,6 +38,7 @@ to resume across agents and sessions.
 | [install-update-stability](plans/install-update-stability/README.md) | Planning | Make fresh install, managed update, dependency provisioning, Role Pack refresh, and bilingual user output stable across supported environments. |
 | [source-runtime-isolation](plans/source-runtime-isolation/README.md) | Planning | Keep source editing, source-under-test validation, and installed-release work environments isolated from each other. |
 | [ccb-self-role](plans/ccb-self-role/README.md) | Planning | Design the `agentroles.ccb_self` maintenance role, its broad skills, CCB/tmux diagnostics tools, and self-contained recovery boundaries. |
+| [ccb-self-maintenance-heartbeat](plans/ccb-self-maintenance-heartbeat/README.md) | Planning | Add a CCB-owned external maintenance heartbeat that can wake `ccb_self` for semantic runtime supervision and reschedule itself without making the role a daemon authority. |
 | [workspace-sharing](plans/workspace-sharing/README.md) | In progress | Add explicit external workspace paths and internal shared worktree groups without changing default per-agent worktree behavior. |
 | [ask-parameter-policy](plans/ask-parameter-policy/README.md) | Planning | Clarify how ask skills choose silence, compact, callback, and artifact flags from result intent, dependency, and content-preservation needs. |
 

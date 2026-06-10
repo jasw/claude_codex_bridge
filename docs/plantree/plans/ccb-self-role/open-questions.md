@@ -30,3 +30,8 @@ Date: 2026-06-09
 5. Should visual analysis rely on provider-native image understanding, or
    should the MCP tool also provide OCR/text extraction for providers without
    image input?
+6. What input/output contract should a `ccb_self` running-supervision skill
+   expose to the CCB-owned
+   [maintenance heartbeat](../ccb-self-maintenance-heartbeat/README.md), while
+   keeping scheduler state, cadence changes, and wakeup authority outside the
+   Role Pack?
