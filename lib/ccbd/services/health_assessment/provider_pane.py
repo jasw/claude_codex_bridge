@@ -6,7 +6,7 @@ from provider_core.session_binding_evidence import session_terminal
 
 from ..provider_runtime_facts import load_provider_session
 from .models import ProviderPaneAssessment
-from .tmux import pane_outside_project_namespace, session_backend, tmux_pane_state
+from .tmux import session_backend, tmux_pane_state
 
 
 def assess_provider_pane(*, runtime, registry, session_bindings, namespace_state_store) -> ProviderPaneAssessment | None:
@@ -76,13 +76,9 @@ def _tmux_pane_state(*, runtime, session, namespace_state_store) -> str:
     pane_state = tmux_pane_state(session, backend, pane_id)
     if pane_state != 'alive':
         return pane_state
-    if pane_outside_project_namespace(
-        runtime=runtime,
-        namespace_state_store=namespace_state_store,
-        backend=backend,
-        pane_id=pane_id,
-    ):
-        return 'foreign'
+    # Alive panes in the project's tmux server are authoritative. tmux user
+    # options and stored window ids can be stale after respawn/reflow, and
+    # treating that as foreign causes respawn loops during mount.
     return pane_state
 
 

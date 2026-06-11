@@ -44,7 +44,7 @@ def test_assess_provider_pane_reports_missing_session(monkeypatch) -> None:
     assert assessment.health == 'session-missing'
 
 
-def test_assess_provider_pane_marks_foreign_tmux_pane(monkeypatch) -> None:
+def test_assess_provider_pane_trusts_alive_tmux_pane(monkeypatch) -> None:
     binding = _binding()
     session = SimpleNamespace(pane_id='%9')
     monkeypatch.setattr(
@@ -63,11 +63,6 @@ def test_assess_provider_pane_marks_foreign_tmux_pane(monkeypatch) -> None:
         'ccbd.services.health_assessment.provider_pane.tmux_pane_state',
         lambda session, backend, pane_id: 'alive',
     )
-    monkeypatch.setattr(
-        'ccbd.services.health_assessment.provider_pane.pane_outside_project_namespace',
-        lambda **kwargs: True,
-    )
-
     assessment = assess_provider_pane(
         runtime=_runtime(),
         registry=_registry(),
@@ -78,5 +73,5 @@ def test_assess_provider_pane_marks_foreign_tmux_pane(monkeypatch) -> None:
     assert assessment is not None
     assert assessment.session is session
     assert assessment.terminal == 'tmux'
-    assert assessment.pane_state == 'foreign'
-    assert assessment.health == 'pane-foreign'
+    assert assessment.pane_state == 'alive'
+    assert assessment.health == 'healthy'

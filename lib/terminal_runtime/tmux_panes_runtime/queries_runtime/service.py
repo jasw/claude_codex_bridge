@@ -1,15 +1,32 @@
 from __future__ import annotations
 
+from terminal_runtime.tmux_readiness import tmux_object_ready_timeout_s
+
 from .options import normalize_expected_user_options, normalize_user_option_names, pane_matches_expected
 
 
 def pane_exists(service, pane_id: str) -> bool:
     if not service.looks_like_pane_id_fn(pane_id):
         return False
-    cp = run_tmux_capture(service, ["display-message", "-p", "-t", pane_id, "#{pane_id}"], timeout=0.5)
-    if cp is None:
+    cp = run_tmux_capture(
+        service,
+        ["display-message", "-p", "-t", pane_id, "#{pane_id}"],
+        timeout=0.5,
+    )
+    if cp is not None and getattr(cp, "returncode", 1) == 0 and service.pane_exists_output_fn(getattr(cp, "stdout", "") or ""):
+        return True
+    return pane_exists_in_list(service, pane_id)
+
+
+def pane_exists_in_list(service, pane_id: str) -> bool:
+    cp = run_tmux_capture(
+        service,
+        ["list-panes", "-a", "-F", "#{pane_id}"],
+        timeout=tmux_object_ready_timeout_s(),
+    )
+    if cp is None or getattr(cp, "returncode", 1) != 0:
         return False
-    return getattr(cp, "returncode", 1) == 0 and service.pane_exists_output_fn(getattr(cp, "stdout", "") or "")
+    return any(line.strip() == pane_id for line in (getattr(cp, "stdout", "") or "").splitlines())
 
 
 def get_current_pane_id(service, *, env_pane: str) -> str:

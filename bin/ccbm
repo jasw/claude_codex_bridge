@@ -225,13 +225,21 @@ force_reset() {
 
 mount_and_wait() {
   local deadline=$1
+  local ps_out total idle
+  ps_out=$(ccb ps 2>&1 || true)
+  total=$(echo "$ps_out" | grep -c "^agent: name=")
+  idle=$( echo "$ps_out" | grep "^agent: " | grep -c "state=idle")
+  if echo "$ps_out" | grep -q "^ccbd_state: mounted$" && (( total > 0 )) && (( idle == total )); then
+    echo "ready in 0s - $total agents idle"
+    return 0
+  fi
+
   # Background ccb but capture its output so we can show it on hard failure.
   local mount_log
   mount_log=$(mktemp -t ccbm-mount.XXXXXX)
   ( ccb >"$mount_log" 2>&1 ) &
   local start=$SECONDS
   while (( SECONDS - start < deadline )); do
-    local ps_out total idle
     ps_out=$(ccb ps 2>&1)
     total=$(echo "$ps_out" | grep -c "^agent: name=")
     idle=$( echo "$ps_out" | grep "^agent: " | grep -c "state=idle")

@@ -6,7 +6,7 @@ from agents.config_loader import load_project_config
 from ccbd.lifecycle_report_store import CcbdStartupReportStore
 
 from .daemon import ensure_daemon_started
-from .daemon_runtime.policy import STARTUP_TRANSACTION_TIMEOUT_S
+from .daemon_runtime.policy import FOREGROUND_START_RPC_TIMEOUT_S
 from .start_runtime import StartSummary, start_agents as _start_agents_impl
 from .tmux_project_cleanup import ProjectTmuxCleanupSummary
 from workspace.reconcile import format_workspace_blockers, reconcile_start_workspaces
@@ -27,7 +27,7 @@ def start_agents(
         cleanup_summary_cls=ProjectTmuxCleanupSummary,
         before_client_start_fn=_reconcile_start_workspaces,
         enrich_summary_fn=_merge_workspace_guard_summary,
-        start_rpc_timeout_s=STARTUP_TRANSACTION_TIMEOUT_S,
+        start_rpc_timeout_s=FOREGROUND_START_RPC_TIMEOUT_S,
     )
 
 

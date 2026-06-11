@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from agents.config_identity import project_config_identity_payload
@@ -9,7 +10,7 @@ from ccbd.reload_handoff import reload_handoff_allows_signature_mismatch
 from ccbd.services.project_namespace_state import ProjectNamespaceStateStore
 from ccbd.services.lifecycle import current_socket_inode, lifecycle_from_inspection
 from ccbd.socket_client import CcbdClient, CcbdClientError
-from ccbd.startup_policy import CONTROL_PLANE_RPC_TIMEOUT_S, STARTUP_TRANSACTION_TIMEOUT_S
+from ccbd.startup_policy import STARTUP_TRANSACTION_TIMEOUT_S
 
 from .records import KeeperState
 from .state import compute_project_id, restart_backoff_active
@@ -178,9 +179,16 @@ def stale_restart_state(app, *, state: KeeperState, inspection, occurred_at: str
     return state.with_restart_attempt(occurred_at=occurred_at)
 
 
+def _keeper_rpc_timeout_s() -> float:
+    try:
+        return max(0.1, float(os.environ.get('CCB_KEEPER_PING_TIMEOUT_S', '30.0')))
+    except Exception:
+        return 30.0
+
+
 def daemon_matches_project_config(app) -> bool:
     expected = project_config_identity_payload(load_project_config(app.project_root).config)
-    payload = CcbdClient(app.paths.ccbd_socket_path, timeout_s=CONTROL_PLANE_RPC_TIMEOUT_S).ping('ccbd')
+    payload = CcbdClient(app.paths.ccbd_socket_path, timeout_s=_keeper_rpc_timeout_s()).ping('ccbd')
     actual_signature = str(payload.get('config_signature') or '').strip()
     if actual_signature:
         expected_signature = str(expected['config_signature'])
@@ -203,7 +211,7 @@ def daemon_matches_project_config(app) -> bool:
 
 
 def request_shutdown(app) -> None:
-    client = CcbdClient(app.paths.ccbd_socket_path, timeout_s=CONTROL_PLANE_RPC_TIMEOUT_S)
+    client = CcbdClient(app.paths.ccbd_socket_path, timeout_s=_keeper_rpc_timeout_s())
     try:
         client.stop_all(force=False)
     except CcbdClientError:
