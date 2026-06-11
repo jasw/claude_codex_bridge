@@ -12,20 +12,28 @@ from agents.models import (
     WorkspaceMode,
 )
 
-from ..common import DEFAULT_DEFAULT_AGENTS
+from ..common import DEFAULT_CCB_SELF_AGENT, DEFAULT_CCB_SELF_ROLE, DEFAULT_DEFAULT_AGENTS
 
 DEFAULT_AGENT_PROVIDERS = (
     ('agent1', 'codex'),
     ('agent2', 'codex'),
     ('agent3', 'claude'),
+    (DEFAULT_CCB_SELF_AGENT, 'codex'),
 )
-DEFAULT_WINDOW_LAYOUT = 'agent1:codex, agent2:codex, agent3:claude'
+DEFAULT_AGENT_ROLES = {
+    DEFAULT_CCB_SELF_AGENT: DEFAULT_CCB_SELF_ROLE,
+}
+DEFAULT_WINDOW_LAYOUT = 'agent1:codex, agent2:codex, agent3:claude, ccb_self:codex'
 DEFAULT_TOOL_WINDOW_COMMAND = 'ccb-nvim'
 
 
 def build_default_project_config() -> ProjectConfig:
     agents = {
-        name: build_default_agent_spec(name=name, provider=provider)
+        name: build_default_agent_spec(
+            name=name,
+            provider=provider,
+            role=DEFAULT_AGENT_ROLES.get(name),
+        )
         for name, provider in DEFAULT_AGENT_PROVIDERS
     }
     return ProjectConfig(
@@ -55,7 +63,7 @@ def build_default_project_config() -> ProjectConfig:
     )
 
 
-def build_default_agent_spec(*, name: str, provider: str) -> AgentSpec:
+def build_default_agent_spec(*, name: str, provider: str, role: str | None = None) -> AgentSpec:
     return AgentSpec(
         name=name,
         provider=provider,
@@ -66,11 +74,13 @@ def build_default_agent_spec(*, name: str, provider: str) -> AgentSpec:
         restore_default=RestoreMode.AUTO,
         permission_default=PermissionMode.MANUAL,
         queue_policy=QueuePolicy.SERIAL_PER_AGENT,
+        role=role,
     )
 
 
 __all__ = [
     'DEFAULT_AGENT_PROVIDERS',
+    'DEFAULT_AGENT_ROLES',
     'DEFAULT_TOOL_WINDOW_COMMAND',
     'DEFAULT_WINDOW_LAYOUT',
     'build_default_agent_spec',

@@ -76,8 +76,13 @@ Date: 2026-06-10
 - Added the CCB-side 7.4.0 provisioning direction: `install.sh install` now
   attempts to install or refresh `agentroles.ccb_self` as a recommended default
   Role Pack, post-update Role Pack provisioning installs missing recommended
-  roles, and docs strongly recommend explicit project binding with
+  roles, the built-in blank-project default binds `ccb_self:codex` to
+  `agentroles.ccb_self`, and existing custom configs can still add it with
   `ccb roles add agentroles.ccb_self:codex`.
+- Recorded future modification guardrails in
+  [decisions/006-future-modification-guardrails.md](decisions/006-future-modification-guardrails.md):
+  new behavior must use canonical `agentroles.ccb_self`, while maintenance
+  heartbeat remains opt-in and disabled by default.
 - Recorded the default install boundary in
   [decisions/004-default-recommended-install.md](decisions/004-default-recommended-install.md):
   role assets are prepared by default, but project topology changes remain
@@ -86,23 +91,28 @@ Date: 2026-06-10
   project-local CCB expert, not only a maintenance operator. Captured the
   expert knowledge model in
   [topics/ccb-expert-knowledge-role.md](topics/ccb-expert-knowledge-role.md).
+- Chose the expert knowledge packaging model: keep role memory compact, add
+  one broad expert lookup skill, and store CCB source, GitHub, command/config,
+  and talk1 manual navigation in role references. See
+  [decisions/005-expert-knowledge-database.md](decisions/005-expert-knowledge-database.md).
+- Materialized the v1 CCB expert upgrade in
+  `/home/bfly/yunwei/agent-roles-spec/roles/ccb-self`: role version `0.2.0`,
+  six built-in skills including `ccb-expert-reference`, eleven role
+  references including GitHub/source/manual/command/runtime/release indexes,
+  compact expert routing memory, and passing `agent-roles-spec` tests.
 
 ## In Progress
 
 - Finish 7.4.0 release validation and push after review.
-- Shape the CCB expert role upgrade: source/command knowledge references,
-  architecture navigation, release/update awareness, and pane-view
-  self-supervision.
+- Validate the updated `agentroles.ccb_self` Role Pack through CCB
+  install/refresh/materialization once the user wants source runtime validation.
 
 ## Next
 
-1. Implement the v1 expert upgrade: role identity wording,
-   `ccb-architecture-navigator`, `ccb-pane-view-diagnose`,
-   `ccb-source-map.md`, and `ccb-command-surface.md`.
-2. Decide whether to add a separate non-self delegation stub; the full inherited
+1. Decide whether to add a separate non-self delegation stub; the full inherited
    `ccb-config` source has been removed.
-3. Add the v1 structured MCP/control-plane diagnostic helper contracts.
-4. Add release/update awareness and knowledge-refresh once the first expert
+2. Add the v1 structured MCP/control-plane diagnostic helper contracts.
+3. Add release/update awareness and knowledge-refresh once the first expert
    references prove useful.
 
 ## Deferred

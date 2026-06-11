@@ -103,7 +103,7 @@ width = "15%"
 bottom_height = 20
 
 [windows]
-main = "agent1:codex, agent2:codex, agent3:claude"
+main = "agent1:codex, agent2:codex, agent3:claude, ccb_self:codex"
 ```
 
 Rules:
@@ -213,13 +213,13 @@ The old `cmd` leaf is ignored for the new window topology because command shells
 
 This migration behavior is the default compatibility path. Users with legacy compact config do not need to manually rewrite `cmd; agent1:codex,...` before the first sidebar-capable version starts.
 
-If `.ccb/ccb.config` is missing, new bootstrap should generate:
+If `.ccb/ccb.config` is missing, bootstrap should use the built-in default:
 
 ```toml
 entry_window = "main"
 
 [windows]
-main = "agent1:codex, agent2:codex, agent3:claude"
+main = "agent1:codex, agent2:codex, agent3:claude, ccb_self:codex"
 ```
 
 The sidebar defaults are implicit and need not be written unless the user overrides them.
@@ -1306,7 +1306,8 @@ Work:
 - extend rich-config allowed top-level keys with `ui`, `windows`, and `entry_window`
 - keep legacy `layout_spec` and `cmd_enabled` compatibility during migration
 - normalize legacy compact config into one `main` window while ignoring legacy `cmd`
-- generate missing config as `main` with `agent1`, `agent2`, `agent3`
+- resolve missing config as built-in `main` with `agent1`, `agent2`, `agent3`,
+  and `ccb_self`
 - reject `cmd` inside new rich `windows`
 - reject duplicate agent leaves across windows
 - validate Phase 1 window names with `^[A-Za-z][A-Za-z0-9_-]*$`
@@ -1783,9 +1784,9 @@ Status: implemented in the first sidebar integration slice.
 Current implementation notes:
 
 - `ProjectConfig` now normalizes `windows`, `entry_window`, `sidebar`, and `topology_signature` for both legacy compact config and new TOML topology config.
-- New missing-config bootstrap writes the Phase 1 topology shape:
+- New missing-config bootstrap uses the built-in topology shape:
   - `entry_window = "main"`
-  - `[windows] main = "agent1:codex, agent2:codex, agent3:claude"`
+  - `[windows] main = "agent1:codex, agent2:codex, agent3:claude, ccb_self:codex"`
 - Existing compact configs remain accepted and are normalized into one logical `main` window with the legacy `cmd` leaf pruned out of `ProjectConfig.windows`.
 - New TOML `windows` topology rejects `cmd`, duplicate agents across windows, missing provider declarations, unknown `entry_window`, mixed `layout`, mixed `cmd_enabled`, and explicit `default_agents`.
 - Explicit `windows` config may still use `[agents.<name>]` for richer agent fields, but the provider declared in that table must not conflict with the provider declared in the window leaf.

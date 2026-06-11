@@ -15,6 +15,10 @@ across the whole team. For a self-maintenance role, a cleaner model is that
 other agents do their business work and route CCB configuration changes to
 `ccb_self`.
 
+Naming update: [006-future-modification-guardrails.md](006-future-modification-guardrails.md)
+supersedes the early `agentroles.ccb_self` spelling. The canonical Role Pack id
+is now `agentroles.ccb_self`.
+
 ## Decision
 
 Make `ccb-config` a built-in skill of `agentroles.ccb_self`.

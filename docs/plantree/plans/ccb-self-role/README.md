@@ -56,8 +56,17 @@ business task executor.
 - [decisions/003-bounded-autonomy.md](decisions/003-bounded-autonomy.md):
   decision to give `ccb_self` stronger bounded autonomy for maintenance tasks.
 - [decisions/004-default-recommended-install.md](decisions/004-default-recommended-install.md):
-  decision to install or refresh `agentroles.ccb_self` by default while keeping
-  project binding explicit.
+  decision to install or refresh `agentroles.ccb_self` by default, include
+  `ccb_self` in the built-in blank-project default, and keep existing project
+  config binding explicit.
+- [decisions/005-expert-knowledge-database.md](decisions/005-expert-knowledge-database.md):
+  decision to make `ccb_self` a CCB expert through compact memory routing,
+  role references, talk1 manuals indexes, and source-backed lookup instead of
+  embedding full manuals or the whole source tree in role memory.
+- [decisions/006-future-modification-guardrails.md](decisions/006-future-modification-guardrails.md):
+  decision that future `ccb_self` changes must preserve the canonical
+  `agentroles.ccb_self` id and keep maintenance heartbeat disabled unless
+  manually enabled.
 - [drafts/agentroles.ccb_self/](drafts/agentroles.ccb_self/): reviewable draft
   Role Pack payload for `agentroles.ccb_self`; production content should move
   to the role catalog or an accepted local role source after review.

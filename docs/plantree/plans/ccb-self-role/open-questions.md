@@ -4,15 +4,16 @@ Date: 2026-06-09
 
 ## Product
 
-1. Should `ccb_self` be included in a default template, or remain an optional
-   role users add to projects that need runtime maintenance?
-2. Should the default provider be Codex only for the first slice, or should the
+Resolved: `ccb_self` is included in the built-in blank-project default and
+existing project/user configs still add it explicitly when needed.
+
+1. Should the default provider be Codex only for the first slice, or should the
    role declare Claude/OpenCode-compatible variants at launch?
-3. Should `ccb ask agentroles.ccb_self ...` resolve as a role alias when the
+2. Should `ccb ask agentroles.ccb_self ...` resolve as a role alias when the
    role is bound once, or should user docs always target `ccb_self` directly?
-4. Should the public display name remain "CCB Self Maintainer", or change to a
+3. Should the public display name remain "CCB Self Maintainer", or change to a
    broader expert name such as "CCB Runtime And Architecture Expert"?
-5. Which CCB expert surfaces should be mandatory in the default Role Pack:
+4. Which CCB expert surfaces should be mandatory in the default Role Pack:
    architecture navigation, command usage, release/update awareness,
    pane-view self-supervision, or all four?
 
@@ -44,8 +45,8 @@ Date: 2026-06-09
    keeping scheduler state, cadence changes, and wakeup authority outside the
    Role Pack?
 8. Should expert knowledge refresh be a manual skill, a helper command, a
-   post-push/release handoff from `push`, or a heartbeat-triggered maintenance
-   task?
+   post-push/release handoff from `push`, or a task triggered only when
+   maintenance heartbeat has been manually enabled?
 9. Where should the canonical expert references live once materialized:
    inside the `agentroles.ccb_self` Role source only, in CCB source docs, or in
    both with one treated as generated/projection?

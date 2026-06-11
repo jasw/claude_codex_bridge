@@ -1,5 +1,28 @@
 # Changelog
 
+## v7.4.1 (2026-06-11)
+
+### Maintenance Heartbeat And ccb_self Defaults
+
+- **Maintenance Heartbeat Runner Hardened**: adds the project-scoped
+  maintenance heartbeat runner, schedule handling, activation suppression, and
+  diagnostics evidence paths while keeping heartbeat disabled unless explicitly
+  enabled.
+- **ccb_self Default Alignment**: blank-project built-in config now includes
+  `ccb_self:codex` bound to canonical `agentroles.ccb_self`, and install/update
+  provisioning refreshes the recommended CCB self role without changing
+  existing custom project configs.
+- **Role Identity Compatibility Fixed**: CCB source now matches the
+  `agent-roles-spec` catalog identity `agentroles.ccb_self` and only treats
+  `agentrole.ccb_self` as legacy input compatibility.
+- **Config Authority And Prompt Delivery Hardened**: generated config guidance
+  keeps one role-binding authority, Role Pack hook paths use the correct CCB
+  binary/project root, and Codex prompt delivery acceptance guards reduce false
+  completion.
+- **ccb_self Expert Knowledge Docs Added**: adds the CCB self expert manual,
+  plan-tree decisions, and test coverage for the role's expert reference and
+  communication recovery guidance.
+
 ## v7.4.0 (2026-06-10)
 
 ### ccb_self Maintenance Role

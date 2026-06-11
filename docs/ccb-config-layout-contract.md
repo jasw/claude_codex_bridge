@@ -24,6 +24,9 @@ It is the authoritative design anchor for:
 - `~/.ccb/ccb.config` is the user-level config file used only when project config is absent.
 - CCB must not auto-create, reconstruct, or rewrite `.ccb/ccb.config`; it is a user-authored project file.
 - When both `.ccb/ccb.config` and `~/.ccb/ccb.config` are absent, config loading must use the built-in default project config from code and report the source kind as `builtin_default`.
+- The built-in default project config must provide a usable maintenance route:
+  `agent1:codex`, `agent2:codex`, `agent3:claude`, and `ccb_self:codex`
+  in the main window, with `ccb_self` bound to `agentroles.ccb_self`.
 - User help text, validation output, diagnostics, and docs must report the active config source kind: `project_config`, `user_config`, or `builtin_default`.
 - `.ccb/config.yaml` is not part of the contract and must not be read or written by current code.
 
@@ -155,6 +158,9 @@ startup_ensure = true
 Contract:
 
 - `[maintenance.heartbeat]` is CCB runtime policy, not agent layout authority.
+- Maintenance heartbeat is opt-in. Startup must not start or ensure a
+  heartbeat runner unless the effective config explicitly sets
+  `maintenance.heartbeat.enabled = true`.
 - The table is optional. Defaults are:
   - `enabled = false`
   - `assessor = "ccb_self"`

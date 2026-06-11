@@ -1,19 +1,21 @@
 # CCB Self Role Implementation Status
 
-Date: 2026-06-10
+Date: 2026-06-11
 
 ## Current Phase
 
 7.4.0 release validation is in progress. The preview Role is mounted in the
 current CCB project as `ccb_self`; public inherited `ccb-config` residue has
-been collected; and the current implementation now prepares
-`agentroles.ccb_self` as a recommended default Role Pack during install/update
-provisioning while keeping project binding explicit.
+been collected; and the current implementation prepares `agentroles.ccb_self`
+as a recommended default Role Pack during install/update provisioning while the
+built-in blank-project config binds `ccb_self` for immediate `ccb-config`
+access.
 
-The next design slice is the CCB expert upgrade: `ccb_self` should carry enough
-skills and compact technical references to answer CCB architecture, usage,
-feature-status, release, and pane-view self-supervision questions from local
-source/docs/tests/runtime evidence.
+The v1 CCB expert upgrade has now been materialized in the local
+`agent-roles-spec` role source. `ccb_self` is no longer only a maintenance
+operator: role version `0.2.0` includes `ccb-expert-reference`, role-level
+GitHub/source/manual/command/runtime/release references, and compact memory
+routing for source-backed CCB answers.
 
 ## Last Landed
 
@@ -53,10 +55,10 @@ source/docs/tests/runtime evidence.
   projection marker.
 - 2026-06-10: Added the 7.4.0 default install direction for
   `agentroles.ccb_self`: install/update Role Pack provisioning installs or
-  refreshes recommended default roles, README/README_zh strongly recommend
-  adding `agentroles.ccb_self:codex`, and
+  refreshes recommended default roles, the built-in blank-project default binds
+  `ccb_self:codex` to `agentroles.ccb_self`, and
   [decisions/004-default-recommended-install.md](decisions/004-default-recommended-install.md)
-  records that project topology changes remain explicit.
+  records that existing project topology changes remain explicit.
 - 2026-06-10: Added the draft `ccb-comm-reply-recover` skill to capture the
   observed "reply not received" communication recovery pattern: trace lineage,
   inspect mailbox head-of-line state, cross-check provider pane evidence, cancel
@@ -71,12 +73,27 @@ source/docs/tests/runtime evidence.
   `tmux capture-pane` bottom/current prompt content and activity sampling as
   the v1 primary evidence path, with screenshot/OCR only as fallback. See
   [topics/pane-view-self-supervision.md](topics/pane-view-self-supervision.md).
+- 2026-06-11: Materialized the v1 expert knowledge database in
+  `/home/bfly/yunwei/agent-roles-spec/roles/ccb-self`: bumped role version to
+  `0.2.0`, added `ccb-expert-reference`, declared eleven role references,
+  added GitHub/source/manual/command/runtime/config/release/refresh indexes,
+  updated role memory/README/adapter notes, and updated role tests.
+- 2026-06-11: Processed coworker design review for the v0.2.0 memory/skill
+  system. No blockers were found. Fixed the high/medium/low follow-ups by
+  adding memory skill routing, documenting `doctor logs`, sharpening
+  fault-clear and reload aftermath rules, reducing chain/comm-reply routing
+  ambiguity, adding non-source-checkout fallback for expert lookup, adding
+  role-version knowledge-refresh trigger, and updating validation notes/tests.
+- 2026-06-11: Recorded future `ccb_self` modification guardrails in
+  [decisions/006-future-modification-guardrails.md](decisions/006-future-modification-guardrails.md):
+  new behavior must use canonical `agentroles.ccb_self`, and maintenance
+  heartbeat remains disabled by default unless manually enabled in config.
 
 ## Active TODO
 
-1. Review and finalize the CCB expert and pane-view supervision v1 slice before
-   implementation.
-2. Add handoff matrix tests for diagnose/recover/chain/config/comm-reply
+1. Validate the updated `agentroles.ccb_self` through CCB install/refresh and
+   provider-home materialization when source runtime validation is requested.
+2. Add handoff matrix tests for diagnose/recover/chain/config/comm-reply/expert
    routing.
 3. Define or implement the first structured MCP/control-plane helper surface.
 4. Decide whether non-self agents need a separate delegation stub; the full
@@ -193,3 +210,37 @@ the current project, and it points to
 `/home/bfly/.roles/installed/agentroles.ccb_self/.../skills/ccb-config` with a
 `codex-role-skill:agentroles.ccb_self:ccb-config` projection marker. `ccb ping
 ccb_self` returned mounted/idle/restored.
+
+2026-06-11 from `/home/bfly/yunwei/agent-roles-spec` after the v1 expert
+upgrade:
+
+```bash
+python -m pytest -q tests/test_ccb_self_role.py
+python -m py_compile agent_roles/manifest.py tests/test_ccb_self_role.py roles/ccb-self/adapters/ccb/tools/doctor.py
+python - <<'PY'
+from pathlib import Path
+from agent_roles.manifest import load_role
+role = load_role(Path('roles/ccb-self'))
+print(role.id, role.version)
+print(len(role.table('contents')['skills']), len(role.table('contents')['references']))
+PY
+python -m pytest -q
+git diff --check
+```
+
+Result: focused role tests passed `5/5`; manifest/doctor/test py_compile
+passed; manifest load reported `agentroles.ccb_self 0.2.0` with `6` skills and
+`11` references; full `agent-roles-spec` suite passed `32/32`; whitespace diff
+check passed. `ccb_source` plan-tree whitespace diff check also passed.
+
+2026-06-11 after coworker review follow-ups:
+
+```bash
+python -m pytest -q tests/test_ccb_self_role.py
+python -m py_compile agent_roles/manifest.py tests/test_ccb_self_role.py roles/ccb-self/adapters/ccb/tools/doctor.py
+git diff --check
+python -m pytest -q
+```
+
+Result: focused role tests passed `6/6`; py_compile passed; whitespace diff
+check passed; full `agent-roles-spec` suite passed `33/33`.

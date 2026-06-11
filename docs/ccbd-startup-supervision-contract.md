@@ -129,6 +129,10 @@ Out of scope:
 - `.ccb/ccb.config` is the highest-priority forward authority for the project's desired agent mount set and foreground layout when it exists.
 - When `.ccb/ccb.config` is absent, `~/.ccb/ccb.config` is the user-level forward authority for the project's desired agent mount set and foreground layout when it exists.
 - When both files are absent, the built-in default config is the forward authority for the desired agent mount set and foreground layout.
+- The built-in default desired set includes `agent1`, `agent2`, `agent3`, and
+  `ccb_self`; `ccb_self` uses provider `codex` and role
+  `agentroles.ccb_self` so a blank project can route CCB config work to the
+  maintenance agent.
 - Effective config logical names are the only forward authority for project-namespace pane display names.
 - Until a future explicit `enabled` or `desired_state` field exists, all configured agents are desired agents.
 - `default_agents` and CLI `requested_agents` do not redefine long-lived backend ownership.
@@ -136,6 +140,8 @@ Out of scope:
 
 Maintenance heartbeat startup boundary:
 
+- Maintenance heartbeat is disabled by default and must be enabled manually in
+  effective config with `[maintenance.heartbeat] enabled = true`.
 - `[maintenance.heartbeat]` in effective config may request maintenance
   heartbeat startup ensure when `enabled = true` and `startup_ensure = true`.
 - v1 startup ensure is optional and non-fatal: ordinary `ccb` startup must not

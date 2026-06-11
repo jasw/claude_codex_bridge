@@ -666,6 +666,26 @@ def test_maintenance_status_rejects_reserved_mutating_actions(tmp_path: Path) ->
     }
 
 
+def test_startup_ensure_skips_builtin_default_heartbeat(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv('HOME', str(tmp_path / 'empty-home'))
+    project_root = tmp_path / 'repo-default-disabled'
+    (project_root / '.ccb').mkdir(parents=True)
+    context = CliContextBuilder().build(
+        ParsedMaintenanceCommand(project=None, action='status'),
+        cwd=project_root,
+        bootstrap_if_missing=False,
+    )
+
+    def _spawn(*_args, **_kwargs):
+        raise AssertionError('disabled maintenance heartbeat must not start a runner')
+
+    monkeypatch.setattr(maintenance_service, '_spawn_maintenance_runner', _spawn)
+
+    payload = maintenance_service.startup_ensure_maintenance_heartbeat(context)
+
+    assert payload is None
+
+
 def test_startup_ensure_starts_schedule_consumer_runner(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(maintenance_service, 'utc_now', lambda: NOW)
     project_root = tmp_path / 'repo-startup-runner'

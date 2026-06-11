@@ -114,7 +114,7 @@ class AgentSpec:
         allowed = set('abcdefghijklmnopqrstuvwxyz0123456789._-')
         if any(ch not in allowed for ch in normalized) or '.' not in normalized:
             raise AgentValidationError('role must use publisher.role form, for example ccb.archi')
-        return normalized
+        return canonical_role_id(normalized)
 
     def _normalize_optional_string(self, value: str | None, *, field_name: str) -> str | None:
         if value is None:

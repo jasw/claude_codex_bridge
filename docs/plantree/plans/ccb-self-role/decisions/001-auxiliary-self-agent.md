@@ -14,6 +14,10 @@ That role must not become another runtime authority. It should be useful in the
 same way a human operator is useful: available for diagnosis and maintenance,
 but not required for every agent to continue working.
 
+Naming update: [006-future-modification-guardrails.md](006-future-modification-guardrails.md)
+supersedes the early `agentroles.ccb_self` spelling. The canonical Role Pack id
+is now `agentroles.ccb_self`.
+
 ## Decision
 
 `ccb_self` is an auxiliary maintenance agent.
