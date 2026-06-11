@@ -1120,7 +1120,7 @@ def test_project_keeper_does_not_rewrite_stable_mounted_lifecycle(tmp_path: Path
     assert lifecycle.phase_started_at == '2026-04-22T00:00:00Z'
 
 
-def test_project_keeper_config_probe_uses_shared_control_plane_timeout(tmp_path: Path, monkeypatch) -> None:
+def test_project_keeper_config_probe_uses_keeper_rpc_timeout(tmp_path: Path, monkeypatch) -> None:
     project_root = tmp_path / 'repo-keeper-probe-timeout'
     ctx = _context(project_root, 'agent1:codex\n')
     expected = project_config_identity_payload(load_project_config(project_root).config)
@@ -1146,9 +1146,15 @@ def test_project_keeper_config_probe_uses_shared_control_plane_timeout(tmp_path:
     keeper_loop.request_shutdown(keeper)
 
     assert captured == [
-        keeper_loop.CONTROL_PLANE_RPC_TIMEOUT_S,
-        keeper_loop.CONTROL_PLANE_RPC_TIMEOUT_S,
+        keeper_loop._keeper_rpc_timeout_s(),
+        keeper_loop._keeper_rpc_timeout_s(),
     ]
+
+
+def test_project_keeper_rpc_timeout_honors_env(monkeypatch) -> None:
+    monkeypatch.setenv('CCB_KEEPER_PING_TIMEOUT_S', '42.5')
+
+    assert keeper_loop._keeper_rpc_timeout_s() == 42.5
 
 
 def test_project_keeper_accepts_bounded_reload_handoff_signature_window(tmp_path: Path, monkeypatch) -> None:
@@ -1185,7 +1191,7 @@ def test_project_keeper_accepts_bounded_reload_handoff_signature_window(tmp_path
     class _FakeClient:
         def __init__(self, socket_path, *, timeout_s=None) -> None:
             assert socket_path == ctx.paths.ccbd_socket_path
-            assert timeout_s == keeper_loop.CONTROL_PLANE_RPC_TIMEOUT_S
+            assert timeout_s == keeper_loop._keeper_rpc_timeout_s()
 
         def ping(self, target: str) -> dict[str, object]:
             assert target == 'ccbd'

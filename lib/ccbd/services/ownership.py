@@ -22,7 +22,7 @@ class OwnershipGuard:
         clock=utc_now,
         pid_exists=process_exists,
         socket_probe=unix_socket_connectable,
-        heartbeat_grace_seconds: float = 15.0,
+        heartbeat_grace_seconds: float = 120.0,
     ) -> None:
         self._layout = layout
         self._mount_manager = mount_manager
@@ -191,7 +191,10 @@ class OwnershipGuard:
     def _mounted_socket_connectable(self, lease: CcbdLease) -> bool:
         if lease.mount_state is not MountState.MOUNTED:
             return False
-        return self._socket_probe(lease.socket_path)
+        try:
+            return self._socket_probe(lease.socket_path, timeout_s=30.0)
+        except TypeError:
+            return self._socket_probe(lease.socket_path)
 
     def _takeover_allowed(
         self,

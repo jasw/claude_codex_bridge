@@ -682,6 +682,36 @@ def test_ownership_guard_allows_takeover_when_socket_and_heartbeat_are_stale(tmp
     assert stale_guard.verify_or_takeover(project_id=ctx.project_id, pid=222, socket_path=layout.ccbd_socket_path) == 8
 
 
+def test_ownership_guard_uses_long_socket_probe_for_mounted_lease(tmp_path: Path) -> None:
+    project_root = tmp_path / 'repo-socket-timeout'
+    project_root.mkdir()
+    ctx = bootstrap_project(project_root)
+    layout = PathLayout(project_root)
+    manager = MountManager(
+        layout,
+        clock=lambda: '2026-03-18T00:00:00Z',
+        uid_getter=lambda: 1000,
+        boot_id_getter=lambda: 'boot-1',
+    )
+    manager.mark_mounted(project_id=ctx.project_id, pid=111, socket_path=layout.ccbd_socket_path, generation=9)
+    captured: list[float | None] = []
+
+    def socket_probe(path, *, timeout_s=None):
+        captured.append(timeout_s)
+        return True
+
+    guard = OwnershipGuard(
+        layout,
+        manager,
+        clock=lambda: '2026-03-18T00:00:05Z',
+        pid_exists=lambda pid: True,
+        socket_probe=socket_probe,
+    )
+
+    assert guard.inspect().health is LeaseHealth.HEALTHY
+    assert captured == [30.0]
+
+
 def test_health_monitor_marks_orphaned_runtime(tmp_path: Path) -> None:
     project_root = tmp_path / 'repo'
     project_root.mkdir()
@@ -878,7 +908,7 @@ def test_health_monitor_preserves_last_binding_when_tmux_pane_missing_and_unreco
     assert degraded.pane_state == 'missing'
 
 
-def test_health_monitor_marks_live_foreign_tmux_pane_degraded(tmp_path: Path) -> None:
+def test_health_monitor_trusts_live_tmux_pane_with_stale_ownership_metadata(tmp_path: Path) -> None:
     project_root = tmp_path / 'repo-foreign-pane'
     project_root.mkdir()
     ctx = bootstrap_project(project_root)
@@ -920,16 +950,16 @@ def test_health_monitor_marks_live_foreign_tmux_pane_degraded(tmp_path: Path) ->
         },
     )
 
-    assert monitor.check_all()['codex'] == 'pane-foreign'
-    degraded = registry.get('codex')
-    assert degraded is not None
-    assert degraded.state is AgentState.DEGRADED
-    assert degraded.health == 'pane-foreign'
-    assert degraded.pane_state == 'foreign'
-    assert degraded.active_pane_id is None
+    assert monitor.check_all()['codex'] == 'healthy'
+    updated = registry.get('codex')
+    assert updated is not None
+    assert updated.state is AgentState.IDLE
+    assert updated.health == 'healthy'
+    assert updated.pane_state == 'alive'
+    assert updated.active_pane_id == '%foreign'
 
 
-def test_health_monitor_marks_same_socket_detached_namespace_pane_foreign(tmp_path: Path) -> None:
+def test_health_monitor_trusts_live_tmux_pane_with_detached_namespace_metadata(tmp_path: Path) -> None:
     project_root = tmp_path / 'repo-namespace-detached-pane'
     project_root.mkdir()
     ctx = bootstrap_project(project_root)
@@ -999,12 +1029,12 @@ def test_health_monitor_marks_same_socket_detached_namespace_pane_foreign(tmp_pa
         namespace_state_store=ProjectNamespaceStateStore(layout),
     )
 
-    assert monitor.check_all()['codex'] == 'pane-foreign'
-    degraded = registry.get('codex')
-    assert degraded is not None
-    assert degraded.health == 'pane-foreign'
-    assert degraded.pane_state == 'foreign'
-    assert degraded.active_pane_id is None
+    assert monitor.check_all()['codex'] == 'healthy'
+    updated = registry.get('codex')
+    assert updated is not None
+    assert updated.health == 'healthy'
+    assert updated.pane_state == 'alive'
+    assert updated.active_pane_id == '%foreign'
 
 
 def test_health_monitor_preserves_session_id_evidence_without_rebinding_runtime(tmp_path: Path) -> None:

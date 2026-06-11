@@ -324,3 +324,16 @@ def test_startup_policy_clamps_foreground_attach_timeout_to_startup_budget(monke
     monkeypatch.delenv('CCB_FOREGROUND_ATTACH_RPC_TIMEOUT_S', raising=False)
     monkeypatch.delenv('CCB_FOREGROUND_ATTACH_TARGET_READY_TIMEOUT_S', raising=False)
     importlib.reload(startup_policy)
+
+
+def test_startup_policy_foreground_start_timeout_covers_startup_budget(monkeypatch) -> None:
+    monkeypatch.setenv('CCB_STARTUP_TRANSACTION_TIMEOUT_S', '240.0')
+    monkeypatch.setenv('CCB_FOREGROUND_START_RPC_TIMEOUT_S', '60.0')
+
+    reloaded = importlib.reload(startup_policy)
+
+    assert reloaded.FOREGROUND_START_RPC_TIMEOUT_S == 240.0
+
+    monkeypatch.delenv('CCB_STARTUP_TRANSACTION_TIMEOUT_S', raising=False)
+    monkeypatch.delenv('CCB_FOREGROUND_START_RPC_TIMEOUT_S', raising=False)
+    importlib.reload(startup_policy)

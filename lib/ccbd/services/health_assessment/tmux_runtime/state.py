@@ -10,10 +10,12 @@ def tmux_pane_state(session, backend, pane_id: str) -> str:
     existence = pane_existence_state(backend, pane_text)
     if existence is not None:
         return existence
+    alive_state = pane_alive_state(backend, pane_text)
+    if alive_state == 'alive':
+        return 'alive'
     ownership = inspect_tmux_pane_ownership(session, backend, pane_text)
     if not ownership.is_owned:
         return 'foreign'
-    alive_state = pane_alive_state(backend, pane_text)
     if alive_state is not None:
         return alive_state
     return 'missing'

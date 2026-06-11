@@ -11,7 +11,7 @@ from ccbd.services.project_namespace_runtime.materialize_topology import refresh
 from terminal_runtime import TmuxBackend
 
 from .daemon import ensure_daemon_started
-from .daemon_runtime.policy import STARTUP_TRANSACTION_TIMEOUT_S
+from .daemon_runtime.policy import FOREGROUND_START_RPC_TIMEOUT_S
 from .layout_status import layout_status
 from .maintenance import startup_ensure_maintenance_heartbeat
 from .start_runtime import StartSummary, start_agents as _start_agents_impl
@@ -43,7 +43,7 @@ def start_agents(
         cleanup_summary_cls=ProjectTmuxCleanupSummary,
         before_client_start_fn=_reconcile_start_workspaces,
         enrich_summary_fn=_merge_workspace_guard_summary,
-        start_rpc_timeout_s=STARTUP_TRANSACTION_TIMEOUT_S,
+        start_rpc_timeout_s=FOREGROUND_START_RPC_TIMEOUT_S,
     )
     post_rpc_started_ns = time.perf_counter_ns()
     stage_started_ns = time.perf_counter_ns()

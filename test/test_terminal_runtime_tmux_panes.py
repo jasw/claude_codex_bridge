@@ -35,6 +35,72 @@ def test_tmux_pane_service_gets_current_pane_and_finds_marker() -> None:
     assert service.find_pane_by_title_marker('CCB') == '%1'
 
 
+def test_tmux_pane_service_retries_transient_missing_parent_before_split(monkeypatch) -> None:
+    exists_attempts = 0
+
+    def tmux_run(args, **kwargs):
+        nonlocal exists_attempts
+        if args == ['display-message', '-p', '-t', '%1', '#{window_zoomed_flag}']:
+            return _cp(stdout='0\n')
+        if args == ['display-message', '-p', '-t', '%1', '#{pane_id}']:
+            exists_attempts += 1
+            if exists_attempts == 1:
+                return _cp(returncode=1)
+            return _cp(stdout='%1\n')
+        if args == ['display-message', '-p', '-t', '%1', '#{pane_width}x#{pane_height}']:
+            return _cp(stdout='160x48\n')
+        if args[:3] == ['split-window', '-h', '-l']:
+            return _cp(stdout='%2\n')
+        return _cp(returncode=1)
+
+    monkeypatch.setattr('terminal_runtime.tmux_panes_runtime.actions.time.sleep', lambda seconds: None)
+    service = TmuxPaneService(
+        tmux_run_fn=tmux_run,
+        looks_like_pane_id_fn=lambda value: value.startswith('%'),
+        normalize_split_direction_fn=lambda direction: ('-h', 'right'),
+        pane_exists_output_fn=lambda output: output.strip().startswith('%'),
+        pane_id_by_title_marker_output_fn=lambda text, marker: None,
+        pane_is_alive_fn=lambda output: output.strip() == '0',
+        normalize_user_option_fn=lambda name: '@' + name.strip('@'),
+        strip_ansi_fn=lambda text: text,
+    )
+
+    pane_id = service.split_pane('%1', direction='right', percent=50, cmd='sleep 3600', cwd='/tmp/demo')
+
+    assert pane_id == '%2'
+    assert exists_attempts == 2
+
+
+def test_tmux_pane_service_uses_readiness_timeout_for_pane_exists(monkeypatch) -> None:
+    observed: list[tuple[list[str], float | None]] = []
+
+    def tmux_run(args, **kwargs):
+        observed.append((args, kwargs.get('timeout')))
+        if args == ['display-message', '-p', '-t', '%1', '#{pane_id}']:
+            return _cp(returncode=1)
+        if args == ['list-panes', '-a', '-F', '#{pane_id}']:
+            return _cp(stdout='%1\n')
+        return _cp(returncode=1)
+
+    monkeypatch.setenv('CCB_TMUX_OBJECT_READY_TIMEOUT_S', '4.25')
+    service = TmuxPaneService(
+        tmux_run_fn=tmux_run,
+        looks_like_pane_id_fn=lambda value: value.startswith('%'),
+        normalize_split_direction_fn=lambda direction: ('-h', 'right'),
+        pane_exists_output_fn=lambda output: output.strip().startswith('%'),
+        pane_id_by_title_marker_output_fn=lambda text, marker: None,
+        pane_is_alive_fn=lambda output: output.strip() == '0',
+        normalize_user_option_fn=lambda name: '@' + name.strip('@'),
+        strip_ansi_fn=lambda text: text,
+    )
+
+    assert service.pane_exists('%1') is True
+    assert observed == [
+        (['display-message', '-p', '-t', '%1', '#{pane_id}'], 0.5),
+        (['list-panes', '-a', '-F', '#{pane_id}'], 4.25),
+    ]
+
+
 def test_tmux_pane_service_sets_user_option_and_reads_content() -> None:
     calls: list[list[str]] = []
 

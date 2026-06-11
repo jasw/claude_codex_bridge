@@ -1,6 +1,12 @@
 from __future__ import annotations
 
 import subprocess
+import time
+
+from terminal_runtime.tmux_readiness import (
+    tmux_object_ready_poll_interval_s,
+    tmux_object_ready_timeout_s,
+)
 
 
 def split_pane(
@@ -15,7 +21,7 @@ def split_pane(
     if not parent_pane_id:
         raise ValueError("parent_pane_id is required")
     _unzoom_parent_if_needed(service, parent_pane_id)
-    if service.looks_like_pane_id_fn(parent_pane_id) and not service.pane_exists(parent_pane_id):
+    if service.looks_like_pane_id_fn(parent_pane_id) and not _wait_for_parent_pane(service, parent_pane_id):
         raise RuntimeError(f"Cannot split: pane {parent_pane_id} does not exist")
 
     pane_size = _read_pane_size(service, parent_pane_id)
@@ -42,6 +48,16 @@ def split_pane(
     if not service.looks_like_pane_id_fn(pane_id):
         raise RuntimeError(f"tmux split-window did not return pane_id: {pane_id!r}")
     return pane_id
+
+
+def _wait_for_parent_pane(service, parent_pane_id: str) -> bool:
+    deadline = time.monotonic() + tmux_object_ready_timeout_s()
+    while True:
+        if service.pane_exists(parent_pane_id):
+            return True
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(tmux_object_ready_poll_interval_s())
 
 
 def set_pane_title(service, pane_id: str, title: str) -> None:

@@ -197,7 +197,7 @@ def test_start_agents_passes_terminal_size_when_provided(tmp_path: Path, monkeyp
     assert seen['terminal_size'] == (233, 61)
 
 
-def test_start_agents_uses_startup_transaction_timeout_for_start_rpc(tmp_path: Path, monkeypatch) -> None:
+def test_start_agents_uses_foreground_start_timeout_for_start_rpc(tmp_path: Path, monkeypatch) -> None:
     project_root = tmp_path / 'repo-start-rpc-timeout'
     (project_root / '.ccb').mkdir(parents=True, exist_ok=True)
     (project_root / '.ccb' / 'ccb.config').write_text('demo:codex\n', encoding='utf-8')
@@ -226,7 +226,7 @@ def test_start_agents_uses_startup_transaction_timeout_for_start_rpc(tmp_path: P
             events.append(('with_timeout', timeout_s))
             return _StartClient(timeout_s)
 
-    monkeypatch.setattr('cli.services.start.STARTUP_TRANSACTION_TIMEOUT_S', 12.5)
+    monkeypatch.setattr('cli.services.start.FOREGROUND_START_RPC_TIMEOUT_S', 12.5)
     monkeypatch.setattr(
         'cli.services.start.ensure_daemon_started',
         lambda context: SimpleNamespace(client=_BaseClient(), started=False),
