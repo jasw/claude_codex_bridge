@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 import shlex
+import sqlite3
 import subprocess
 import pytest
 try:  # pragma: no cover - version shim
@@ -24,6 +26,9 @@ from cli.services.provider_binding import AgentBinding
 import cli.services.runtime_launch as runtime_launch
 from cli.services.runtime_launch import ensure_agent_runtime
 from provider_backends.claude import launcher as claude_launcher
+from provider_backends.claude.launcher_runtime.home import (
+    prepare_claude_home_overrides as prepare_claude_home_overrides_for_test,
+)
 from provider_backends.codex import launcher as codex_launcher
 from provider_backends.droid import launcher as droid_launcher
 from provider_backends.gemini import launcher as gemini_launcher
@@ -234,6 +239,31 @@ def _assert_caller_env_exports(start_cmd: str, *, actor: str, runtime_dir: Path,
 def _claude_settings_arg(start_cmd: str) -> str:
     parts = shlex.split(start_cmd)
     return parts[parts.index('--settings') + 1]
+
+
+def test_claude_home_overrides_wsl_exports_paths_and_api_env_names(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    runtime_dir = tmp_path / 'runtime'
+    monkeypatch.setenv('WSL_DISTRO_NAME', 'Ubuntu')
+    monkeypatch.setenv('WSLENV', 'EXISTING/u')
+
+    overrides = prepare_claude_home_overrides_for_test(runtime_dir, None, refresh_home=False)
+
+    assert overrides['USERPROFILE'] == overrides['HOME']
+    wslenv = overrides['WSLENV'].split(':')
+    assert 'HOME/p' in wslenv
+    assert 'USERPROFILE/p' in wslenv
+    assert 'CLAUDE_PROJECTS_ROOT/p' in wslenv
+    assert 'CLAUDE_PROJECT_ROOT/p' in wslenv
+    assert 'ANTHROPIC_AUTH_TOKEN' in wslenv
+    assert 'ANTHROPIC_API_KEY' in wslenv
+    assert 'ANTHROPIC_BASE_URL' in wslenv
+    assert 'ANTHROPIC_AUTH_TOKEN/p' not in wslenv
+    assert 'ANTHROPIC_API_KEY/p' not in wslenv
+    assert 'ANTHROPIC_BASE_URL/p' not in wslenv
+    assert wslenv[-1] == 'EXISTING/u'
 
 
 def _write_codex_plugin_source(
@@ -1016,6 +1046,70 @@ def test_ensure_agent_runtime_launches_named_agy_session(monkeypatch, tmp_path: 
     )
     assert payload['start_cmd'].endswith('agy --profile demo --dangerously-skip-permissions --continue')
     assert payload['ccb_session_id'] == result.binding.session_ref
+
+
+def test_agy_launcher_finds_conversation_uuid_from_blob_and_text_metadata(tmp_path: Path) -> None:
+    conv_dir = tmp_path / '.gemini' / 'antigravity-cli' / 'conversations'
+    conv_dir.mkdir(parents=True)
+    win_cwd = r'F:\项目资料\AI\ccb-changes'
+    needle = agy_launcher._encode_cwd_for_agy(win_cwd)
+
+    old_db = conv_dir / 'old-uuid.db'
+    conn = sqlite3.connect(old_db)
+    conn.execute('create table trajectory_metadata_blob (data blob)')
+    conn.execute('insert into trajectory_metadata_blob values (?)', (b'file:///' + needle,))
+    conn.commit()
+    conn.close()
+
+    new_db = conv_dir / 'new-uuid.db'
+    conn = sqlite3.connect(new_db)
+    conn.execute('create table trajectory_metadata_blob (data text)')
+    conn.execute('insert into trajectory_metadata_blob values (?)', ('file:///' + needle.decode('ascii'),))
+    conn.commit()
+    conn.close()
+
+    old_time = 1_700_000_000
+    new_time = old_time + 10
+    os.utime(old_db, (old_time, old_time))
+    os.utime(new_db, (new_time, new_time))
+
+    assert agy_launcher._find_latest_conversation_uuid(tmp_path, win_cwd) == 'new-uuid'
+
+
+def test_agy_launcher_normalizes_conversation_metadata_types(tmp_path: Path) -> None:
+    db = tmp_path / 'conv.db'
+
+    assert agy_launcher._conversation_data_bytes(b'abc', db=db) == b'abc'
+    assert agy_launcher._conversation_data_bytes(memoryview(b'abc'), db=db) == b'abc'
+    assert agy_launcher._conversation_data_bytes('abc', db=db) == b'abc'
+    assert agy_launcher._conversation_data_bytes(123, db=db) is None
+
+
+def test_agy_launcher_restore_falls_back_to_continue_when_resume_lookup_fails(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    runtime_dir = tmp_path / 'runtime'
+    runtime_dir.mkdir(parents=True)
+    spec = _spec('antigravity', provider='agy')
+    command = ParsedStartCommand(project=None, agent_names=('antigravity',), restore=True, auto_permission=True)
+    monkeypatch.setenv('AGY_START_CMD', 'agy')
+    monkeypatch.setattr(agy_launcher, '_wslpath_to_windows', lambda path: r'F:\project')
+
+    def fail_lookup(*args, **kwargs):
+        raise RuntimeError('sqlite is busy')
+
+    monkeypatch.setattr(agy_launcher, '_find_latest_conversation_uuid', fail_lookup)
+
+    start_cmd = agy_launcher.build_start_cmd(
+        command,
+        spec,
+        runtime_dir,
+        'agy-sess-fallback',
+        prepared_state={'workspace_path': str(tmp_path / 'workspace')},
+    )
+
+    assert start_cmd.endswith('agy --dangerously-skip-permissions --continue')
 
 
 def test_ensure_agent_runtime_uses_assigned_tmux_pane(monkeypatch, tmp_path: Path) -> None:

@@ -94,10 +94,13 @@ def prepare_claude_home_overrides(
     if "WSL_DISTRO_NAME" in os.environ:
         # We are running inside WSL. The target claude executable might be a Windows binary (via interop).
         # We must set USERPROFILE (which Windows Node.js uses as home) to the same isolated path.
-        # We also instruct WSLENV to automatically translate these paths to Windows format (/p)
+        # WSLENV translates path variables with /p and forwards Claude API env names as raw values
         # when invoking a Windows executable. Linux executables will ignore WSLENV.
         overrides['USERPROFILE'] = str(layout.home_root)
-        wslenv_additions = "HOME/p:USERPROFILE/p:CLAUDE_PROJECTS_ROOT/p:CLAUDE_PROJECT_ROOT/p"
+        wslenv_additions = (
+            "HOME/p:USERPROFILE/p:CLAUDE_PROJECTS_ROOT/p:CLAUDE_PROJECT_ROOT/p:"
+            "ANTHROPIC_AUTH_TOKEN:ANTHROPIC_API_KEY:ANTHROPIC_BASE_URL"
+        )
         existing_wslenv = os.environ.get("WSLENV", "")
         if existing_wslenv:
             overrides['WSLENV'] = f"{wslenv_additions}:{existing_wslenv}"

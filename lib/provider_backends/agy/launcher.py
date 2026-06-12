@@ -258,10 +258,24 @@ def _find_latest_conversation_uuid(credential_home: Path, win_cwd: str) -> str |
             continue
         if not row or not row[0]:
             continue
-        if needle in row[0]:
+        data = _conversation_data_bytes(row[0], db=db)
+        if data is None:
+            continue
+        if needle in data:
             best_mtime = mtime
             best_uuid = db.stem
     return best_uuid
+
+
+def _conversation_data_bytes(value: object, *, db: Path) -> bytes | None:
+    if isinstance(value, bytes):
+        return value
+    if isinstance(value, memoryview):
+        return value.tobytes()
+    if isinstance(value, str):
+        return value.encode('utf-8')
+    _log_warn(f'unsupported agy conversation metadata type in {db}: {type(value).__name__}')
+    return None
 
 
 def _resolve_resume_uuid(
@@ -283,7 +297,11 @@ def _resolve_resume_uuid(
     win_cwd = _wslpath_to_windows(Path(str(workspace_path)))
     if not win_cwd:
         return None
-    return _find_latest_conversation_uuid(credential_home, win_cwd)
+    try:
+        return _find_latest_conversation_uuid(credential_home, win_cwd)
+    except Exception as exc:
+        _log_warn(f'agy conversation resume lookup failed: {exc}')
+        return None
 
 
 def build_runtime_launcher() -> ProviderRuntimeLauncher:
