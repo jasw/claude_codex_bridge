@@ -59,6 +59,12 @@ def test_storage_classification_keeps_provider_authority_and_cache_separate(tmp_
     opencode_state = ccb / 'agents' / 'agent4' / 'provider-state' / 'opencode'
     kimi_state = ccb / 'agents' / 'agent5' / 'provider-state' / 'kimi'
     mimo_state = ccb / 'agents' / 'agent6' / 'provider-state' / 'mimo'
+    qwen_state = ccb / 'agents' / 'agent7' / 'provider-state' / 'qwen'
+    cursor_state = ccb / 'agents' / 'agent8' / 'provider-state' / 'cursor'
+    copilot_state = ccb / 'agents' / 'agent9' / 'provider-state' / 'copilot'
+    crush_state = ccb / 'agents' / 'agent10' / 'provider-state' / 'crush'
+    kiro_state = ccb / 'agents' / 'agent11' / 'provider-state' / 'kiro'
+    pi_state = ccb / 'agents' / 'agent12' / 'provider-state' / 'pi'
 
     _write(ccb / 'ccb.config', 'agent1:codex\n')
     _write(ccb / 'ccb_memory.md', '# shared memory\n')
@@ -115,6 +121,13 @@ def test_storage_classification_keeps_provider_authority_and_cache_separate(tmp_
     _write(mimo_state / 'mimocode.json', '{}\n')
     _write(mimo_state / 'home' / 'data' / 'mimocode.db', 'db\n')
     _write(mimo_state / 'home' / 'cache' / 'bin' / 'mimo', 'bin\n')
+    _write(qwen_state / 'home' / '.cache' / 'compiled-provider-file')
+    _write(cursor_state / 'inherited-skills' / 'ask' / 'SKILL.md', '# ask\n')
+    _write(copilot_state / 'home' / '.config' / 'copilot' / 'session.json', '{}\n')
+    _write(crush_state / 'data' / 'crush.db', 'db\n')
+    _write(kiro_state / 'home' / 'logs' / 'chat.log', 'log\n')
+    _write(pi_state / 'home' / '.pi' / 'agent' / 'settings.json', '{}\n')
+    _write(pi_state / 'sessions' / 'session.jsonl', '{}\n')
 
     payload = summarize_storage(PathLayout(project_root))
     records = _records_by_suffix(payload)
@@ -191,6 +204,15 @@ def test_storage_classification_keeps_provider_authority_and_cache_separate(tmp_
     assert records['agents/agent6/provider-state/mimo/mimocode.json']['storage_class'] == 'projected_config'
     assert records['agents/agent6/provider-state/mimo/home/data/mimocode.db']['storage_class'] == 'session'
     assert records['agents/agent6/provider-state/mimo/home/cache/bin/mimo']['storage_class'] == 'rebuildable_cache'
+    assert records['agents/agent7/provider-state/qwen/home/.cache/compiled-provider-file']['storage_class'] == 'rebuildable_cache'
+    assert records['agents/agent8/provider-state/cursor/inherited-skills/ask/SKILL.md']['storage_class'] == 'projected_config'
+    assert records['agents/agent9/provider-state/copilot/home/.config/copilot/session.json']['storage_class'] == 'session'
+    assert records['agents/agent9/provider-state/copilot/home/.config/copilot/session.json']['reason'] == 'native_cli_provider_state'
+    assert records['agents/agent10/provider-state/crush/data/crush.db']['storage_class'] == 'session'
+    assert records['agents/agent10/provider-state/crush/data/crush.db']['reason'] == 'native_cli_provider_state'
+    assert records['agents/agent11/provider-state/kiro/home/logs/chat.log']['storage_class'] == 'session'
+    assert records['agents/agent12/provider-state/pi/home/.pi/agent/settings.json']['storage_class'] == 'session'
+    assert records['agents/agent12/provider-state/pi/sessions/session.jsonl']['storage_class'] == 'session'
 
 
 def test_storage_classification_surfaces_profile_backed_runtime_home(tmp_path: Path) -> None:

@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 
 from runtime_env.user_session import USER_SESSION_TRANSPORT_ENV_KEYS
+from provider_core.runtime_shared import provider_start_env_vars
 
 
 _CONTROL_PLANE_ALLOWLIST = {
@@ -60,6 +61,7 @@ _CONTROL_PLANE_ALLOWLIST = {
     'XAUTHORITY',
     'WAYLAND_DISPLAY',
 }
+_CONTROL_PLANE_ALLOWLIST.update(provider_start_env_vars())
 
 _CONTROL_PLANE_BLOCKED_PREFIXES = (
     'CODEX_',

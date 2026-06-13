@@ -1,5 +1,24 @@
 # Changelog
 
+## v7.5.2 (2026-06-13)
+
+### Native CLI Provider Wave
+
+- **Provider Strip Expanded**: English and Chinese README provider strips now
+  include Qwen, Cursor, GitHub Copilot, Crush, Kiro, and Pi, and the public
+  provider badge count is updated to 14 CLI families.
+- **Next-Wave Native Providers Added**: CCB registers optional provider ids
+  `qwen`, `cursor`, `copilot`, `crush`, `kiro`, and `pi` with runtime specs,
+  session bindings, simple tmux launchers, command overrides, deterministic
+  stubs, and focused execution coverage.
+- **Native Completion Preserved**: Qwen, Cursor, Copilot, and Pi parse
+  structured JSON/stream-json events, while Crush and Kiro use subprocess exit
+  plus stdout. Pi terminalizes on native `turn_end`; none of these adapters
+  require model-printed `CCB_DONE`.
+- **Release Surface Synchronized**: VERSION, CLI version constants,
+  package.json, release workflow defaults, README release notes, and native
+  provider plan-tree evidence are aligned for the 7.5.2 patch release.
+
 ## v7.5.1 (2026-06-13)
 
 ### MiMo Provider Release Surface

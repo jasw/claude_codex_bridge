@@ -6,12 +6,24 @@ from provider_core.runtime_specs import (
     CLIENT_SPECS_BY_PROVIDER,
     CODEX_CLIENT_SPEC,
     CODEX_RUNTIME_SPEC,
+    COPILOT_CLIENT_SPEC,
+    COPILOT_RUNTIME_SPEC,
+    CRUSH_CLIENT_SPEC,
+    CRUSH_RUNTIME_SPEC,
+    CURSOR_CLIENT_SPEC,
+    CURSOR_RUNTIME_SPEC,
     DEEPSEEK_CLIENT_SPEC,
     DEEPSEEK_RUNTIME_SPEC,
     KIMI_CLIENT_SPEC,
     KIMI_RUNTIME_SPEC,
+    KIRO_CLIENT_SPEC,
+    KIRO_RUNTIME_SPEC,
     MIMO_CLIENT_SPEC,
     MIMO_RUNTIME_SPEC,
+    PI_CLIENT_SPEC,
+    PI_RUNTIME_SPEC,
+    QWEN_CLIENT_SPEC,
+    QWEN_RUNTIME_SPEC,
     RUNTIME_SPECS_BY_PROVIDER,
     provider_env_name,
     provider_marker_prefix,
@@ -52,7 +64,31 @@ def test_runtime_specs_use_provider_native_names() -> None:
     assert MIMO_RUNTIME_SPEC.provider_key == "mimo"
     assert MIMO_RUNTIME_SPEC.idle_timeout_env == "CCB_MIMO_RUNTIME_IDLE_TIMEOUT_S"
     assert MIMO_CLIENT_SPEC.session_filename == ".mimo-session"
+    assert QWEN_RUNTIME_SPEC.provider_key == "qwen"
+    assert QWEN_RUNTIME_SPEC.idle_timeout_env == "CCB_QWEN_RUNTIME_IDLE_TIMEOUT_S"
+    assert QWEN_CLIENT_SPEC.session_filename == ".qwen-session"
+    assert CURSOR_RUNTIME_SPEC.provider_key == "cursor"
+    assert CURSOR_RUNTIME_SPEC.idle_timeout_env == "CCB_CURSOR_RUNTIME_IDLE_TIMEOUT_S"
+    assert CURSOR_CLIENT_SPEC.session_filename == ".cursor-session"
+    assert COPILOT_RUNTIME_SPEC.provider_key == "copilot"
+    assert COPILOT_RUNTIME_SPEC.idle_timeout_env == "CCB_COPILOT_RUNTIME_IDLE_TIMEOUT_S"
+    assert COPILOT_CLIENT_SPEC.session_filename == ".copilot-session"
+    assert CRUSH_RUNTIME_SPEC.provider_key == "crush"
+    assert CRUSH_RUNTIME_SPEC.idle_timeout_env == "CCB_CRUSH_RUNTIME_IDLE_TIMEOUT_S"
+    assert CRUSH_CLIENT_SPEC.session_filename == ".crush-session"
+    assert KIRO_RUNTIME_SPEC.provider_key == "kiro"
+    assert KIRO_RUNTIME_SPEC.idle_timeout_env == "CCB_KIRO_RUNTIME_IDLE_TIMEOUT_S"
+    assert KIRO_CLIENT_SPEC.session_filename == ".kiro-session"
+    assert PI_RUNTIME_SPEC.provider_key == "pi"
+    assert PI_RUNTIME_SPEC.idle_timeout_env == "CCB_PI_RUNTIME_IDLE_TIMEOUT_S"
+    assert PI_CLIENT_SPEC.session_filename == ".pi-session"
     assert RUNTIME_SPECS_BY_PROVIDER["kimi"] is KIMI_RUNTIME_SPEC
     assert CLIENT_SPECS_BY_PROVIDER["deepseek"] is DEEPSEEK_CLIENT_SPEC
     assert RUNTIME_SPECS_BY_PROVIDER["mimo"] is MIMO_RUNTIME_SPEC
     assert CLIENT_SPECS_BY_PROVIDER["mimo"] is MIMO_CLIENT_SPEC
+    assert RUNTIME_SPECS_BY_PROVIDER["qwen"] is QWEN_RUNTIME_SPEC
+    assert CLIENT_SPECS_BY_PROVIDER["cursor"] is CURSOR_CLIENT_SPEC
+    assert RUNTIME_SPECS_BY_PROVIDER["copilot"] is COPILOT_RUNTIME_SPEC
+    assert CLIENT_SPECS_BY_PROVIDER["crush"] is CRUSH_CLIENT_SPEC
+    assert RUNTIME_SPECS_BY_PROVIDER["kiro"] is KIRO_RUNTIME_SPEC
+    assert CLIENT_SPECS_BY_PROVIDER["pi"] is PI_CLIENT_SPEC

@@ -6,9 +6,9 @@
 **可见、可控的多 Agent 合作TUI工作台**
 
 <p>
-  <img src="https://img.shields.io/badge/version-7.5.1-orange.svg" alt="version">
+  <img src="https://img.shields.io/badge/version-7.5.2-orange.svg" alt="version">
   <img src="https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20WSL-lightgrey.svg" alt="platform">
-  <img src="https://img.shields.io/badge/providers-8%20CLI%20families-0B7285.svg" alt="providers">
+  <img src="https://img.shields.io/badge/providers-14%20CLI%20families-0B7285.svg" alt="providers">
 </p>
 
 **中文** | [English](README.md)
@@ -37,12 +37,18 @@
   <img src="https://img.shields.io/badge/Gemini-4285F4?style=flat-square&logo=googlegemini&logoColor=white" alt="Gemini">
   <img src="https://img.shields.io/badge/Kimi-111111?style=flat-square&logo=moonshotai&logoColor=white" alt="Kimi">
   <img src="https://img.shields.io/badge/MiMo-FF6900?style=flat-square&logo=xiaomi&logoColor=white" alt="MiMo">
+  <img src="https://img.shields.io/badge/Qwen-6A5CFF?style=flat-square" alt="Qwen">
+  <img src="https://img.shields.io/badge/Cursor-111111?style=flat-square" alt="Cursor">
+  <img src="https://img.shields.io/badge/Copilot-111111?style=flat-square&logo=githubcopilot&logoColor=white" alt="GitHub Copilot">
+  <img src="https://img.shields.io/badge/Crush-FF5A5F?style=flat-square" alt="Crush">
+  <img src="https://img.shields.io/badge/Kiro-6D5EF6?style=flat-square" alt="Kiro">
+  <img src="https://img.shields.io/badge/Pi-111111?style=flat-square" alt="Pi">
   <img src="https://img.shields.io/badge/OpenCode-111111?style=flat-square" alt="OpenCode">
   <img src="https://img.shields.io/badge/Antigravity-6D5EF6?style=flat-square&logo=google&logoColor=white" alt="Antigravity">
   <img src="https://img.shields.io/badge/Droid-3DDC84?style=flat-square&logo=android&logoColor=white" alt="Droid">
 </p>
 
-可在 `.ccb/ccb.config` 中按 agent 混用不同 CLI。常用 provider id 包括 `codex`、`claude`、`gemini`、`kimi`、`mimo`、`opencode`、`agy`、`droid`；实际可用性取决于本机 CLI 安装和账号权限。
+可在 `.ccb/ccb.config` 中按 agent 混用不同 CLI。常用 provider id 包括 `codex`、`claude`、`gemini`、`kimi`、`mimo`、`qwen`、`cursor`、`copilot`、`crush`、`kiro`、`pi`、`opencode`、`agy`、`droid`；实际可用性取决于本机 CLI 安装和账号权限。
 
 **全新角色规范**：可把 skills、记忆和工具依赖封装进自封闭 Role Pack，快速生成可热加载、可卸载的专业 agent。
 
@@ -167,7 +173,7 @@ CCB 是一个项目级 agent CLI 工作台。它用 tmux 管理多个真实 CLI 
 
 - **真实 CLI，不是模拟面板**：每个 agent pane 都运行对应 provider 的真实 CLI。
 - **可见协作**：sidebar 展示窗口、agent 状态和通信区；用户可以用鼠标直接切 pane。
-- **混合 provider**：一个项目里可以同时跑 Codex、Claude、Gemini、Kimi（`kimi`）、MiMo（`mimo`）、OpenCode、Droid 和 Antigravity（`agy`）。
+- **混合 provider**：一个项目里可以同时跑 Codex、Claude、Gemini、Kimi（`kimi`）、MiMo（`mimo`）、Qwen（`qwen`）、Cursor（`cursor`）、Copilot（`copilot`）、Crush（`crush`）、Kiro（`kiro`）、Pi（`pi`）、OpenCode、Droid 和 Antigravity（`agy`）。
 - **项目级配置**：`.ccb/ccb.config` 决定团队、布局、窗口、worktree、model、key、url。
 - **内置 CCB 专家**：空白项目默认包含 `ccb_self`，它是具备 CCB 自理解能力的自维护 agent，可帮助使用 CCB、设计配置、诊断运行态、恢复工作流。
 - **Roles**：全新的角色封装概念；它让携带“重武器”（独立 skills、记忆和
@@ -205,14 +211,14 @@ CCB 是一个项目级 agent CLI 工作台。它用 tmux 管理多个真实 CLI 
 | :--- | :--- | :--- |
 | [Claude Code 原生 subagents](https://code.claude.com/docs/en/sub-agents) / [agent teams](https://code.claude.com/docs/en/agent-teams) | Claude Code 内部的原生分工。 | 你主要留在 Claude Code，并接受更多协调由 Claude lead 处理。 |
 | [Hive / OpenHive](https://github.com/aden-hive/hive) | 面向生产工作流的多 agent harness。 | 你要状态、恢复、观测、成本控制和图式工作流。 |
-| CCB | 可见、可控、混合 provider 的本地 CLI agent 工作台。 | 你要把 Codex、Claude、Gemini、Kimi、MiMo、OpenCode、Antigravity 等真实 CLI 放到一个项目终端里操作。 |
+| CCB | 可见、可控、混合 provider 的本地 CLI agent 工作台。 | 你要把 Codex、Claude、Gemini、Kimi、MiMo、Qwen、Cursor、Copilot、Crush、Kiro、OpenCode、Antigravity 等真实 CLI 放到一个项目终端里操作。 |
 
 <details>
 <summary><b>展开：模型、可控性、上下文和复杂工作流怎么区别？</b></summary>
 
 | 关键问题 | Claude Code 原生 | Hive / OpenHive | CCB |
 | :--- | :--- | :--- | :--- |
-| 能否使用不同家的模型 | 可给 teammate / subagent 指定 Claude 模型；整体仍在 Claude Code 体系内。 | 通过 LiteLLM 路线支持大量 hosted / local provider。 | 按 agent 选择 Codex、Claude、Gemini、Kimi、MiMo、OpenCode、Droid、Antigravity 等，并可设置独立 model / key / url。 |
+| 能否使用不同家的模型 | 可给 teammate / subagent 指定 Claude 模型；整体仍在 Claude Code 体系内。 | 通过 LiteLLM 路线支持大量 hosted / local provider。 | 按 agent 选择 Codex、Claude、Gemini、Kimi、MiMo、Qwen、Cursor、Copilot、Crush、Kiro、OpenCode、Droid、Antigravity 等，并可设置独立 model / key / url。 |
 | 过程是否可见 | in-process 或 split panes，取决于模式和终端。 | 强调 runtime observability 和控制台视角。 | 默认就是 tmux 可见 pane，用户能直接点击、输入、复制、观察每个 CLI。 |
 | 拓扑是否可控 | 可自然语言指定队友，但运行时协调较多交给 lead。 | 由目标生成图式拓扑，偏 harness。 | 配置文件显式定义 agent、窗口、pane、worktree 和 sidebar。 |
 | 上下文是否可管理 | subagent / teammate 有独立上下文；team 有任务和消息状态。 | 角色记忆、状态持久化、恢复能力是核心卖点。 | 每个 CLI 保留自己的 provider 会话；项目共享记忆和 per-agent 记忆可选。 |
@@ -516,7 +522,7 @@ CCB 不要求你离开编辑器。常见方式是：编辑器负责写代码，C
 - 推荐 npm 安装路径需要 Node.js 和 npm
 - Python 3.10+
 - `tmux`
-- 至少一个你要使用的 agent CLI，例如 Codex、Claude、Gemini、Kimi、MiMo、OpenCode、Droid 或 Antigravity
+- 至少一个你要使用的 agent CLI，例如 Codex、Claude、Gemini、Kimi、MiMo、Qwen、Cursor、Copilot、Crush、Kiro、OpenCode、Droid 或 Antigravity
 - Linux、macOS 或 WSL
 
 当前 v7 / 新版本不声明原生 Windows 支持。原生 Windows 只支持到 v5 线；如果你在 Windows 上使用新版本，推荐使用 WSL，并让 `ccb` 与 agent CLI 都运行在 WSL 内。
@@ -599,6 +605,22 @@ v7 线重点：
 - 加固 tmux、Ghostty、release helper、Codex trust 和 provider 会话恢复路径。
 
 <details open>
+<summary><b>v7.5.2</b> - Native CLI Provider Wave</summary>
+
+- 新增 Qwen Code（`qwen`）、Cursor Agent（`cursor`）、GitHub
+  Copilot CLI（`copilot`）、Crush（`crush`）、Kiro CLI（`kiro`）和 Pi（`pi`）
+  作为内置 optional provider。
+- 使用原生 per-job CLI 执行和 provider 自有完成信号：Qwen、Cursor、
+  Copilot 和 Pi 解析 stream-json / JSON result 事件；Crush 和 Kiro 使用进程退出
+  加 stdout。新增适配器不要求模型打印 `CCB_DONE`；Pi 以原生 `turn_end`
+  作为结束点。
+- 新增 `QWEN_START_CMD`、`CURSOR_START_CMD`、`COPILOT_START_CMD`、
+  `CRUSH_START_CMD`、`KIRO_START_CMD`、`PI_START_CMD` 命令覆盖，以及 provider session
+  binding、runtime launcher、deterministic stub 和 focused execution 测试。
+
+</details>
+
+<details>
 <summary><b>v7.5.1</b> - MiMo Provider 发布面</summary>
 
 - 在 README 公开 provider strip 增加带 Xiaomi 标识的 MiMo 徽标，并把

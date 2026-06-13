@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from provider_core.runtime_shared import provider_start_env_vars
 from runtime_env.control_plane import control_plane_env
 
 
@@ -19,6 +20,22 @@ def test_control_plane_env_keeps_provider_api_env(monkeypatch) -> None:
     assert env['GEMINI_API_KEY'] == 'gemini-key'
     assert env['GEMINI_MODEL'] == 'gemini-3.1-pro-preview'
     assert env['GOOGLE_GEMINI_BASE_URL'] == 'https://chatapi.onechats.ai'
+
+
+def test_control_plane_env_keeps_provider_start_overrides(monkeypatch) -> None:
+    for env_name in provider_start_env_vars():
+        monkeypatch.setenv(env_name, f'/tmp/{env_name.lower()} --stub')
+    monkeypatch.setenv('CODEX_HOME', '/tmp/global-codex-home')
+    monkeypatch.setenv('QWEN_HOME', '/tmp/global-qwen-home')
+    monkeypatch.setenv('CCB_SESSION_ID', 'stale-session')
+
+    env = control_plane_env()
+
+    for env_name in provider_start_env_vars():
+        assert env[env_name] == f'/tmp/{env_name.lower()} --stub'
+    assert 'CODEX_HOME' not in env
+    assert 'QWEN_HOME' not in env
+    assert 'CCB_SESSION_ID' not in env
 
 
 def test_control_plane_env_keeps_claude_keychain_override(monkeypatch) -> None:

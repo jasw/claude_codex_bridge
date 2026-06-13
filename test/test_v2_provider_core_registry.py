@@ -31,25 +31,69 @@ def test_backend_registry_exposes_manifests_execution_and_session_bindings() -> 
 def test_default_session_binding_map_uses_backend_owned_entries() -> None:
     bindings = build_default_session_binding_map(include_optional=True)
 
-    assert set(bindings) == {'codex', 'claude', 'gemini', 'opencode', 'droid', 'agy', 'kimi', 'deepseek', 'mimo'}
+    assert set(bindings) == {
+        'codex',
+        'claude',
+        'gemini',
+        'opencode',
+        'droid',
+        'agy',
+        'kimi',
+        'deepseek',
+        'mimo',
+        'qwen',
+        'cursor',
+        'copilot',
+        'crush',
+        'kiro',
+        'pi',
+    }
     assert bindings['codex'].session_id_attr == 'codex_session_id'
     assert bindings['opencode'].session_path_attr == 'session_file'
     assert bindings['agy'].session_path_attr == 'agy_session_path'
     assert bindings['kimi'].session_path_attr == 'kimi_session_path'
     assert bindings['deepseek'].session_path_attr == 'deepseek_session_path'
     assert bindings['mimo'].session_path_attr == 'mimo_session_path'
+    assert bindings['qwen'].session_path_attr == 'qwen_session_path'
+    assert bindings['cursor'].session_path_attr == 'cursor_session_path'
+    assert bindings['copilot'].session_path_attr == 'copilot_session_path'
+    assert bindings['crush'].session_path_attr == 'crush_session_path'
+    assert bindings['kiro'].session_path_attr == 'kiro_session_path'
+    assert bindings['pi'].session_path_attr == 'pi_session_path'
 
 
 def test_default_runtime_launcher_map_uses_backend_owned_entries() -> None:
     launchers = build_default_runtime_launcher_map(include_optional=True)
 
-    assert set(launchers) == {'codex', 'claude', 'gemini', 'opencode', 'droid', 'agy', 'kimi', 'deepseek', 'mimo'}
+    assert set(launchers) == {
+        'codex',
+        'claude',
+        'gemini',
+        'opencode',
+        'droid',
+        'agy',
+        'kimi',
+        'deepseek',
+        'mimo',
+        'qwen',
+        'cursor',
+        'copilot',
+        'crush',
+        'kiro',
+        'pi',
+    }
     assert launchers['codex'].launch_mode == 'codex_tmux'
     assert launchers['gemini'].launch_mode == 'simple_tmux'
     assert launchers['agy'].launch_mode == 'simple_tmux'
     assert launchers['kimi'].launch_mode == 'simple_tmux'
     assert launchers['deepseek'].launch_mode == 'simple_tmux'
     assert launchers['mimo'].launch_mode == 'simple_tmux'
+    assert launchers['qwen'].launch_mode == 'simple_tmux'
+    assert launchers['cursor'].launch_mode == 'simple_tmux'
+    assert launchers['copilot'].launch_mode == 'simple_tmux'
+    assert launchers['crush'].launch_mode == 'simple_tmux'
+    assert launchers['kiro'].launch_mode == 'simple_tmux'
+    assert launchers['pi'].launch_mode == 'simple_tmux'
 
 
 def test_session_filename_for_agent_follows_agent_first_naming() -> None:
@@ -59,3 +103,9 @@ def test_session_filename_for_agent_follows_agent_first_naming() -> None:
     assert session_filename_for_agent('kimi', 'moon') == '.kimi-moon-session'
     assert session_filename_for_agent('deepseek', 'coder') == '.deepseek-coder-session'
     assert session_filename_for_agent('mimo', 'mimoer') == '.mimo-mimoer-session'
+    assert session_filename_for_agent('qwen', 'qwen1') == '.qwen-qwen1-session'
+    assert session_filename_for_agent('cursor', 'cursor1') == '.cursor-cursor1-session'
+    assert session_filename_for_agent('copilot', 'copilot1') == '.copilot-copilot1-session'
+    assert session_filename_for_agent('crush', 'crush1') == '.crush-crush1-session'
+    assert session_filename_for_agent('kiro', 'kiro1') == '.kiro-kiro1-session'
+    assert session_filename_for_agent('pi', 'pi1') == '.pi-pi1-session'

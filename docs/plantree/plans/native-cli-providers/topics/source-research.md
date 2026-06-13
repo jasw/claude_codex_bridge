@@ -187,6 +187,178 @@ CCB slice:
 - Per-job ask execution runs `mimo run --format json --dir <workdir>` and
   terminalizes on `step_finish` / `part.reason=stop`.
 
+## Qwen Code
+
+Observed upstream/local lab:
+
+- GitHub: `QwenLM/qwen-code`.
+- Package: `@qwen-code/qwen-code@0.18.0`.
+- Binary: `qwen`.
+- Node engine: `>=22.0.0`.
+- Local lab install reports `qwen --version` as `0.18.0`.
+- `qwen --help` says the positional prompt defaults to one-shot mode, while
+  `-i/--prompt-interactive` executes a prompt and stays interactive.
+- Help exposes `--bare`, `--model`, `--approval-mode
+  plan|default|auto-edit|auto|yolo`, `--allowed-tools`, `--mcp-config`,
+  `--openai-api-key`, `--openai-base-url`, `--input-format text|stream-json`,
+  `--output-format text|json|stream-json`, `--json-fd`, `--json-file`,
+  `--json-schema`, `--input-file`, `--continue`, `--resume`, `--session-id`,
+  `--fork-session`, and `--worktree`.
+- Source includes `DualOutputBridge`, which can keep the TUI on stdout while
+  writing structured JSON events to a secondary fd or file.
+- Source tests confirm stream-json envelopes include `system`, `assistant`,
+  and `result` output in noninteractive mode.
+- Source and changelog evidence show `QWEN_HOME` can isolate config/state.
+
+CCB direction:
+
+- Provider key `qwen`; default command `qwen`; override `QWEN_START_CMD`.
+- Prefer per-job structured subprocess execution first:
+  `qwen --bare --output-format stream-json --session-id <job-session>
+  <wrapped prompt>`.
+- Use isolated provider state through `QWEN_HOME`.
+- Consider a visible pane later using `--json-file` dual output, but do not
+  make that the first completion authority.
+
+## GitHub Copilot CLI
+
+Observed upstream/local lab:
+
+- GitHub: `github/copilot-cli`.
+- Package: `@github/copilot@1.0.61`.
+- Binary: `copilot`.
+- Local lab install reports `GitHub Copilot CLI 1.0.61`.
+- Help exposes noninteractive `-p/--prompt`, `-C <directory>`, `--continue`,
+  `--session-id`, `--resume`, `--log-dir`, `--model`, `--mode`,
+  `--autopilot`, `--no-ask-user`, `--output-format`, `--plugin-dir`,
+  `--additional-mcp-config`, `--allow-all-tools`, and `--allow-all-paths`.
+- Changelog confirms `--output-format json` emits JSONL in prompt mode.
+- Changelog confirms `COPILOT_HOME` is honored and `--plugin-dir` supports
+  local plugins, including `.claude-plugin/plugin.json` compatibility.
+- Changelog confirms `COPILOT_PLUGIN_DIR_ONLY` can disable automatic plugin
+  discovery for deterministic plugin sets.
+
+CCB direction:
+
+- Provider key `copilot`; default command `copilot`; override
+  `COPILOT_START_CMD`.
+- Prefer per-job structured subprocess execution:
+  `COPILOT_HOME=<state> copilot -C <workdir> -p <wrapped prompt>
+  --output-format json --session-id <uuid>`.
+- Project inherited ask guidance through `--plugin-dir` before falling back to
+  prompt wrapping.
+
+## Cursor Agent
+
+Observed local lab:
+
+- Official installer: `https://cursor.com/install`.
+- Installed binary: `agent`, with alias/bundle command `cursor-agent`.
+- Local lab install reports version `2026.06.12-19-59-36-f6aba9a`.
+- Help exposes `--api-key` / `CURSOR_API_KEY`, `--print`, `--output-format
+  text|json|stream-json`, `--stream-partial-output`, `--mode plan|ask`,
+  `--resume`, `--continue`, `--model`, `--force`, `--yolo`, `--sandbox`,
+  `--trust`, `--workspace`, and repeatable `--plugin-dir`.
+- The public source was not cloned; the installed bundle is available under
+  the lab home at
+  `home/.local/share/cursor-agent/versions/2026.06.12-19-59-36-f6aba9a`.
+
+CCB direction:
+
+- Provider key `cursor`; default command `agent`; override `CURSOR_START_CMD`.
+- Prefer per-job structured subprocess execution:
+  `agent --print --output-format stream-json --workspace <workdir> --trust
+  <wrapped prompt>`.
+- Use isolated provider home for CCB-managed state. Auth can use inherited user
+  state or `CURSOR_API_KEY`, but CCB must not create credentials.
+
+## Kiro CLI
+
+Observed local lab:
+
+- Official installer: `https://cli.kiro.dev/install`.
+- Installed binary: `kiro-cli`.
+- Local lab install reports `kiro-cli 2.7.0`.
+- GitHub `kirodotdev/Kiro` is useful project/docs evidence, but is not the
+  full CLI source.
+- `kiro-cli chat --help` exposes `--resume`, `--resume-id`, `--agent`,
+  `--model`, `--effort`, `--trust-all-tools`, `--trust-tools`,
+  `--no-interactive`, `--wrap`, `--tui`, `--legacy-ui`,
+  `--agent-engine v2|v1|kas`, and `--mode vibe|spec`.
+- `--format plain|json|json-pretty` is documented for list commands, not for
+  normal chat turns.
+
+CCB direction:
+
+- Provider key `kiro`; default command `kiro-cli`; override `KIRO_START_CMD`.
+- Treat as higher risk until a stable structured chat event stream is found.
+- First adapter should likely use `kiro-cli chat --no-interactive --wrap never
+  <wrapped prompt>` and completion by subprocess exit/stdout, with pane-backed
+  fallback only if needed.
+
+## Charm Crush
+
+Observed upstream/local lab:
+
+- GitHub: `charmbracelet/crush`.
+- Package: `@charmland/crush@0.76.0`.
+- Binary: `crush`.
+- Local lab install reports `crush version v0.76.0`.
+- Help exposes interactive `crush`, noninteractive `crush run`, `--cwd`,
+  `--yolo`, `--data-dir`, `--session`, `--continue`, and commands including
+  `login`, `logs`, `models`, `projects`, `run`, `server`, `session`, `stats`,
+  and `update-providers`.
+- Source `internal/cmd/run.go` mints a per-call `runID`, sends the prompt with
+  that run id, streams assistant text to stdout, and exits only on a matching
+  `RunComplete`. `RunComplete` carries final text and is the authoritative end
+  of run signal.
+- `--data-dir` is the clean state isolation surface.
+
+CCB direction:
+
+- Provider key `crush`; default command `crush`; override `CRUSH_START_CMD`.
+- Prefer per-job subprocess execution:
+  `crush --data-dir <provider-state> --cwd <workdir> run --quiet
+  <wrapped prompt>`.
+- Treat process exit/stdout as the first completion source. If CCB later needs
+  deeper diagnostics, inspect Crush's local data/logs and RunComplete-backed
+  source behavior.
+
+## Pi
+
+Observed official docs:
+
+- Official site/docs: `https://pi.dev/` and `https://pi.dev/docs/latest`.
+- Package: `@earendil-works/pi-coding-agent`.
+- Binary: `pi`.
+- Quick start installs with
+  `npm install -g --ignore-scripts @earendil-works/pi-coding-agent`; the
+  install script is optional for normal npm installs.
+- CLI reference exposes `pi [options] [@files...] [messages...]`.
+- Noninteractive/structured mode uses `pi --mode json "Your prompt"` and
+  outputs JSON objects one per line.
+- JSON event stream docs define turn lifecycle events including `turn_start`
+  and `turn_end`; `turn_end` carries the final assistant `message` and tool
+  results.
+- Session options include `--session-dir <dir>`, `--session`, `--resume`,
+  `--continue`, `--no-session`, and `--name`.
+- Trust options include `--approve` and `--no-approve`; noninteractive modes do
+  not show a trust prompt.
+- Environment variables include `PI_CODING_AGENT_DIR`,
+  `PI_CODING_AGENT_SESSION_DIR`, `PI_SKIP_VERSION_CHECK`, `PI_OFFLINE`, and
+  `PI_TELEMETRY`.
+
+CCB direction:
+
+- Provider key `pi`; default command `pi`; override `PI_START_CMD`.
+- Prefer per-job structured subprocess execution:
+  `PI_CODING_AGENT_DIR=<state>/home PI_CODING_AGENT_SESSION_DIR=<state>/sessions pi --mode json --session-dir <state>/sessions --no-approve --name <job> <wrapped prompt>`.
+- Terminalize on native `turn_end`, extracting final assistant text from the
+  embedded `message.content`.
+- Keep visible pane state isolated with `PI_CODING_AGENT_DIR` and
+  `PI_CODING_AGENT_SESSION_DIR`; skip startup version checks with
+  `PI_SKIP_VERSION_CHECK=1`.
+
 ## Local Probe Evidence
 
 - Local Node: `v22.20.0`.
@@ -211,3 +383,11 @@ CCB slice:
 - `mimo run --format json` real local probe returned exact reply
   `MIMO_CCB_REAL_OK` and showed the nested `part.text` /
   `part.reason=stop` event shape used by CCB.
+- Next-wave lab root:
+  `/home/bfly/yunwei/test_ccb2/cli-integration-lab`.
+- `@qwen-code/qwen-code@0.18.0`, `@github/copilot@1.0.61`, and
+  `@charmland/crush@0.76.0` installed under the lab npm prefix.
+- Cursor Agent and Kiro CLI installed under isolated lab `HOME` from their
+  official installer scripts.
+- Installed version checks returned Qwen `0.18.0`, Copilot `1.0.61`, Cursor
+  Agent `2026.06.12-19-59-36-f6aba9a`, Kiro `2.7.0`, and Crush `v0.76.0`.
