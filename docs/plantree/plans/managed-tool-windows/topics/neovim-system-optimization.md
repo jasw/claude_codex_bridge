@@ -50,6 +50,99 @@ Gaps for this phase:
 - Plugin drift remains possible because the CCB profile follows upstream
   LazyVim/lazy.nvim behavior rather than a CCB-owned lockfile.
 
+## Capability Check: 2026-06-13 Linux/X11/tmux
+
+Environment:
+
+- Source validation wrapper:
+  `/home/bfly/yunwei/ccb_source/ccb_test --diagnose` from
+  `/home/bfly/yunwei/test_ccb2` reports the source wrapper is active and the
+  test project is outside the source checkout.
+- Platform: Linux x86_64, X11, inside CCB-managed tmux with
+  `TERM=tmux-256color` and `COLORTERM=truecolor`.
+- Not WSL in this run: `WSL_DISTRO_NAME` and `WSL_INTEROP` were empty.
+
+Observed source-side doctor with isolated source home:
+
+- `HOME=/home/bfly/yunwei/test_ccb2/source_home`
+  `CCB_SOURCE_HOME=/home/bfly/yunwei/test_ccb2/source_home`
+  `/home/bfly/yunwei/ccb_source/ccb_test tools doctor neovim`
+  reported `neovim_status: missing`.
+- The same doctor found `/usr/bin/nvim`, but no isolated `ccb-nvim` wrapper in
+  that source test home.
+
+Observed installed user profile:
+
+- `ccb tools doctor neovim` reported `neovim_status: ok`,
+  `lazyvim_sync_status: ok`, and `lazyvim_health_status: ok`.
+- The wrapper launches `/usr/bin/nvim`, observed as `NVIM v0.12.0-dev`.
+- The generated managed profile currently contains only:
+  - `init.lua`;
+  - `lazy-lock.json`;
+  - `lazyvim.json`;
+  - `lua/plugins/ccb-terminal-compat.lua`.
+- Installed plugin directories include `LazyVim`, `snacks.nvim`,
+  `nvim-treesitter`, `mini.icons`, and other LazyVim base plugins.
+- Installed plugin directories do not include `render-markdown.nvim`,
+  `markdown-preview.nvim`, `img-clip.nvim`, `image.nvim`, `oil.nvim`, or a
+  CCB-specific open/files/markdown/images/clipboard overlay.
+
+Folder capability:
+
+- `require("snacks")` succeeds.
+- `snacks.explorer`, `snacks.image`, and `snacks.picker` are present.
+- Opening `/home/bfly/yunwei/test_ccb2` with `ccb-nvim --headless <dir>`
+  landed in a `snacks_picker_list` buffer. This confirms the current profile
+  has basic Snacks directory handling, but doctor does not report this surface.
+
+Markdown capability:
+
+- Markdown filetype detection works for `.md`.
+- `render-markdown.nvim` is not installed, so the stronger in-buffer Markdown
+  rendering target is absent.
+- A direct Treesitter parser start for `markdown` and `markdown_inline` failed
+  in this profile. The probe emitted nvim-treesitter parser download messages,
+  which means naive headless checks can mutate or attempt to repair the
+  profile.
+- Future doctor checks for parser capability must be explicitly read-only, or
+  clearly separated from an install/repair command.
+
+Image capability:
+
+- `snacks.image.supports_file()` reports `true` for PNG, JPG, and PDF filename
+  extensions in the installed Snacks config, but terminal support is the
+  limiting factor.
+- `snacks.image.supports_terminal()` returned `false` in this tmux environment.
+- Snacks detected the current image terminal environment as `tmux`; Kitty,
+  Ghostty, and WezTerm candidates were not detected through the current tmux
+  session even though `wezterm` exists on `PATH`.
+- `convert`, `gs`, `pdflatex`, and `wezterm` exist. `magick`, `kitty`,
+  `ghostty`, `tectonic`, and `mmdc` are missing.
+- In this environment, inline images should be marked degraded/unavailable and
+  image paths should fall back to external open or reveal-in-explorer.
+
+External opener and clipboard capability:
+
+- Neovim has `vim.ui.open()` and `vim.system()`.
+- `xdg-open` is available. `wslview` and `explorer.exe` are not available in
+  this non-WSL run.
+- `xclip` is available. `wl-copy`, `wl-paste`, `pbcopy`, `pbpaste`,
+  `clip.exe`, and `win32yank.exe` are not available.
+- Neovim `clipboard` option was empty in the current CCB profile, so the
+  profile does not explicitly wire system clipboard behavior even though a
+  Linux helper exists.
+
+Immediate implications:
+
+- Directory opening is already good enough to keep Snacks as the default
+  baseline, but doctor should expose it.
+- Markdown is not yet good enough for the user's target; add
+  `render-markdown.nvim` plus parser readiness reporting.
+- Inline images must be capability-gated. Current Linux/tmux evidence supports
+  external fallback as the default behavior when terminal detection fails.
+- Capability probes must not accidentally trigger parser/plugin installation
+  during `doctor`; read-only detection needs its own implementation path.
+
 ## Goals
 
 - Preserve the existing isolation contract: no writes to user
