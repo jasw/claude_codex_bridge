@@ -19,6 +19,7 @@ from provider_execution.base import ProviderPollResult, ProviderRuntimeContext, 
 from provider_execution.common import build_item, error_submission, send_prompt_to_runtime_target
 
 from provider_core.protocol import request_anchor_for_job
+from .hindsight import recall_hindsight_memories, retain_hindsight_turn
 from .session import load_project_session
 from .native_log import KimiTurnObservation, observe_kimi_turn
 
@@ -135,7 +136,16 @@ def _start_submission(
         )
 
     req_id = request_anchor_for_job(job.job_id)
-    prompt_body = _with_kimi_context_pointer(job.request.body or "", session)
+    original_prompt_body = job.request.body or ""
+    prompt_body = _with_kimi_context_pointer(original_prompt_body, session)
+    hindsight_recall = recall_hindsight_memories(
+        original_prompt_body,
+        session_id=str(getattr(session, "session_id", "") or req_id),
+        agent_name=job.agent_name,
+        workspace_path=str(work_dir),
+    )
+    if hindsight_recall.context:
+        prompt_body = f"{hindsight_recall.context}\n\n{prompt_body}"
     prompt = wrap_native_prompt(prompt_body, req_id)
     initial_content = _pane_snapshot(backend, pane_id, lines=PANE_LINES_DEFAULT)
     prompt_deferred_until_ready = not _pane_ready_for_input(initial_content)
@@ -157,6 +167,8 @@ def _start_submission(
         diagnostics["send_error"] = send_error
     if prompt_deferred_until_ready:
         diagnostics["prompt_deferred_until_ready"] = True
+    if hindsight_recall.diagnostics:
+        diagnostics["hindsight_recall"] = hindsight_recall.diagnostics
 
     return ProviderSubmission(
         job_id=job.job_id,
@@ -175,6 +187,8 @@ def _start_submission(
             "request_anchor": req_id,
             "req_id": req_id,
             "work_dir": str(work_dir),
+            "hindsight_user_prompt": original_prompt_body,
+            "hindsight_recall": hindsight_recall.diagnostics or {},
             "started_at": now,
             "last_poll_at": now,
             "prompt_sent": prompt_sent,
@@ -353,6 +367,19 @@ def _poll_submission(submission: ProviderSubmission, *, now: str) -> ProviderPol
 
     boundary_ref = str(observation.provider_turn_ref or observation.session_id or session_path or req_id)
     if observation.completed and boundary_ref != _state_str(state, "turn_boundary_ref"):
+        hindsight_prompt = _state_str(state, "hindsight_user_prompt")
+        if reply and hindsight_prompt and not bool(state.get("hindsight_retained")):
+            retain_result = retain_hindsight_turn(
+                prompt=hindsight_prompt,
+                reply=reply,
+                session_id=_state_str(state, "request_anchor") or submission.job_id,
+                job_id=submission.job_id,
+                agent_name=submission.agent_name,
+                workspace_path=work_dir,
+            )
+            state["hindsight_retained"] = bool(retain_result.retained)
+            if retain_result.diagnostics:
+                state["hindsight_retain"] = retain_result.diagnostics
         items.append(
             build_item(
                 submission,
