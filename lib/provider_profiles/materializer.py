@@ -157,6 +157,7 @@ def _materialize_codex_profile(
     profile_root: Path,
     workspace_path: Path,
 ) -> ResolvedProviderProfile:
+    runtime_dir = layout.agent_provider_runtime_dir(spec.name, spec.provider)
     runtime_home = _effective_provider_runtime_home(layout=layout, spec=spec)
     if not _codex_profile_uses_explicit_runtime_home(profile_spec):
         migrated_legacy_home = _migrate_legacy_codex_profile_runtime_home(
@@ -171,8 +172,12 @@ def _materialize_codex_profile(
         runtime_home,
         profile=profile_spec,
         project_root=layout.project_root,
+        agent_name=spec.name,
+        runtime_dir=runtime_dir,
         workspace_path=workspace_path,
         shared_cache_root=layout.shared_cache_dir,
+        memory_projection_event_path=layout.agent_events_path(spec.name),
+        memory_projection_marker_path=runtime_dir / 'codex-memory-projection.json',
     )
 
     return ResolvedProviderProfile(

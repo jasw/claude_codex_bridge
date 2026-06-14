@@ -2037,6 +2037,39 @@ def test_materialize_codex_home_config_writes_project_memory_bundle(tmp_path: Pa
     assert 'agent1 private memory' in text
 
 
+def test_materialize_codex_provider_profile_writes_project_memory_bundle(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    project_root = tmp_path / 'repo'
+    source_home = tmp_path / 'system-codex-home'
+    source_home.mkdir(parents=True, exist_ok=True)
+    (source_home / 'AGENTS.md').write_text('user codex memory\n', encoding='utf-8')
+    monkeypatch.setenv('CODEX_HOME', str(source_home))
+    _write_project_memory(project_root, 'shared profile memory\n')
+
+    layout = PathLayout(project_root)
+    profile = materialize_provider_profile(
+        layout=layout,
+        spec=_spec('agent1'),
+        workspace_path=project_root,
+    )
+
+    target_home = Path(str(profile.runtime_home))
+    text = (target_home / 'AGENTS.md').read_text(encoding='utf-8')
+    assert 'agent: agent1' in text
+    assert 'user codex memory' in text
+    assert 'shared profile memory' in text
+    marker = json.loads(
+        (layout.agent_provider_runtime_dir('agent1', 'codex') / 'codex-memory-projection.json').read_text(
+            encoding='utf-8'
+        )
+    )
+    assert marker['status'] == 'ok'
+    assert marker['reason'] == 'written'
+    assert marker['sha256']
+
+
 def test_materialize_codex_home_config_respects_inherit_memory_flag(tmp_path: Path) -> None:
     project_root = tmp_path / 'repo'
     source_home = tmp_path / 'system-codex-home'
