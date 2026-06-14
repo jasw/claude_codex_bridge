@@ -1,17 +1,36 @@
 from __future__ import annotations
 
 import time
+from pathlib import Path
 
+from provider_core.comm_logging import get_comm_logger, log_comm_event
+from provider_core.fifo_delivery import wait_for_ack
 from ui_text import t
 
 from .common import ensure_session_health, remember_log_hint
+
+_logger = get_comm_logger('codex.comm')
 
 
 def ask_sync(comm, question: str, timeout: int | None = None) -> str | None:
     try:
         ensure_session_health(comm)
         print(f"🔔 {t('sending_to', provider='Codex')}", flush=True)
-        _, state = comm._send_message(question)
+        marker, state = comm._send_message(question)
+        input_fifo = getattr(comm, 'input_fifo', None)
+        if input_fifo:
+            ack_dir = Path(input_fifo).parent / "acks"
+            if wait_for_ack(ack_dir, marker):
+                print("✅ Delivery confirmed by bridge", flush=True)
+            else:
+                log_comm_event(
+                    _logger,
+                    provider='codex',
+                    direction='send',
+                    endpoint=str(input_fifo),
+                    event='ack_timeout_sync',
+                )
+                print("⚠️ Delivery unconfirmed — still waiting for a reply, but the bridge may not have received the question", flush=True)
 
         wait_timeout = comm.timeout if timeout is None else int(timeout)
         if wait_timeout == 0:
@@ -21,6 +40,14 @@ def ask_sync(comm, question: str, timeout: int | None = None) -> str | None:
         print(f"⏳ Waiting for Codex reply (timeout {wait_timeout}s)...")
         return _wait_once(comm, state, float(wait_timeout))
     except Exception as exc:
+        log_comm_event(
+            _logger,
+            provider='codex',
+            direction='send',
+            endpoint=str(getattr(comm, 'input_fifo', '?')),
+            event='ask_sync_failed',
+            error=exc,
+        )
         print(f"❌ Sync ask failed: {exc}")
         return None
 
