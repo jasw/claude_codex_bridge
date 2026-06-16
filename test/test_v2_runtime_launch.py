@@ -2964,6 +2964,7 @@ def test_codex_launcher_build_start_cmd_exports_user_session_transport_without_r
     monkeypatch.setenv('NO_PROXY', 'localhost,127.0.0.1')
     monkeypatch.setenv('CODEX_CA_CERTIFICATE', '/tmp/codex-ca.pem')
     monkeypatch.setenv('WSL_INTEROP', '/run/WSL/1234_interop')
+    monkeypatch.setenv('AGENT_ROLES_STORE', '/home/demo/.roles')
     monkeypatch.setenv('CODEX_RUNTIME_DIR', str(ambient_runtime))
     monkeypatch.setenv('CCB_CALLER_ACTOR', 'stale-agent')
 
@@ -2976,6 +2977,7 @@ def test_codex_launcher_build_start_cmd_exports_user_session_transport_without_r
     assert f'NO_PROXY={shlex.quote("localhost,127.0.0.1")}' in cmd
     assert f'CODEX_CA_CERTIFICATE={shlex.quote("/tmp/codex-ca.pem")}' in cmd
     assert f'WSL_INTEROP={shlex.quote("/run/WSL/1234_interop")}' in cmd
+    assert f'AGENT_ROLES_STORE={shlex.quote("/home/demo/.roles")}' in cmd
     assert f'CODEX_RUNTIME_DIR={shlex.quote(str(runtime_dir))}' in cmd
     assert str(ambient_runtime) not in cmd
     assert 'CCB_CALLER_ACTOR=stale-agent' not in cmd
@@ -3270,6 +3272,7 @@ def test_claude_launcher_build_start_cmd_exports_user_session_transport_without_
     monkeypatch.setenv('HTTPS_PROXY', 'http://127.0.0.1:7890')
     monkeypatch.setenv('NODE_EXTRA_CA_CERTS', '/tmp/node-ca.pem')
     monkeypatch.setenv('WSL_INTEROP', '/run/WSL/1234_interop')
+    monkeypatch.setenv('AGENT_ROLES_STORE', '/home/demo/.roles')
     monkeypatch.setenv('CLAUDE_PROJECTS_ROOT', str(ambient_projects))
     monkeypatch.setenv('CCB_CALLER_ACTOR', 'stale-agent')
     monkeypatch.setattr('provider_backends.claude.launcher.Path.home', lambda: source_home)
@@ -3294,6 +3297,7 @@ def test_claude_launcher_build_start_cmd_exports_user_session_transport_without_
     assert f'HTTPS_PROXY={shlex.quote("http://127.0.0.1:7890")}' in start_cmd
     assert f'NODE_EXTRA_CA_CERTS={shlex.quote("/tmp/node-ca.pem")}' in start_cmd
     assert f'WSL_INTEROP={shlex.quote("/run/WSL/1234_interop")}' in start_cmd
+    assert f'AGENT_ROLES_STORE={shlex.quote("/home/demo/.roles")}' in start_cmd
     assert f'CLAUDE_PROJECTS_ROOT={shlex.quote(str(managed_projects))}' in start_cmd
     assert str(ambient_projects) not in start_cmd
     assert 'CCB_CALLER_ACTOR=stale-agent' not in start_cmd
@@ -3577,6 +3581,7 @@ def test_gemini_launcher_build_start_cmd_exports_user_session_transport_without_
     monkeypatch.setenv('HTTPS_PROXY', 'http://127.0.0.1:7890')
     monkeypatch.setenv('REQUESTS_CA_BUNDLE', '/tmp/requests-ca.pem')
     monkeypatch.setenv('WSL_INTEROP', '/run/WSL/1234_interop')
+    monkeypatch.setenv('AGENT_ROLES_STORE', '/home/demo/.roles')
     monkeypatch.setenv('GEMINI_ROOT', str(ambient_root))
     monkeypatch.setenv('CCB_CALLER_ACTOR', 'stale-agent')
     spec = _spec('reviewer', provider='gemini')
@@ -3595,6 +3600,7 @@ def test_gemini_launcher_build_start_cmd_exports_user_session_transport_without_
     assert f'HTTPS_PROXY={shlex.quote("http://127.0.0.1:7890")}' in start_cmd
     assert f'REQUESTS_CA_BUNDLE={shlex.quote("/tmp/requests-ca.pem")}' in start_cmd
     assert f'WSL_INTEROP={shlex.quote("/run/WSL/1234_interop")}' in start_cmd
+    assert f'AGENT_ROLES_STORE={shlex.quote("/home/demo/.roles")}' in start_cmd
     assert f'GEMINI_ROOT={shlex.quote(str(managed_root))}' in start_cmd
     assert str(ambient_root) not in start_cmd
     assert 'CCB_CALLER_ACTOR=stale-agent' not in start_cmd

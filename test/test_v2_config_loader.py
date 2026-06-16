@@ -21,12 +21,26 @@ from agents.config_loader import (
     load_project_config,
     render_project_config_text,
 )
+import runtime_env.source_home as source_home_module
 from agents.models import AgentApiSpec, PermissionMode, QueuePolicy, RestoreMode, RuntimeMode, WorkspaceMode
 
 
 def _write(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding='utf-8')
+
+
+def _write_installed_role(store_root: Path, role_id: str, *, default_agent_name: str = 'mother') -> None:
+    role_root = store_root / 'installed' / role_id / 'current'
+    _write(
+        role_root / 'role.toml',
+        f'''id = "{role_id}"
+version = "0.1.0"
+
+[identity]
+default_agent_name = "{default_agent_name}"
+''',
+    )
 
 
 def test_load_valid_project_config(tmp_path: Path) -> None:
@@ -50,6 +64,93 @@ def test_load_valid_project_config(tmp_path: Path) -> None:
     assert result.config.windows[0].agent_names == ('agent1',)
     assert result.config.maintenance_heartbeat.enabled is False
     assert result.config.maintenance_heartbeat.assessor == 'ccb_self'
+
+
+def test_load_project_config_resolves_role_store_from_account_home_inside_provider_home(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = tmp_path / 'repo-provider-home-role-store'
+    config_path = project_root / '.ccb' / 'ccb.config'
+    _write(
+        config_path,
+        '''
+version = 2
+entry_window = "main"
+
+[windows]
+main = "agentroles.mother:codex"
+''',
+    )
+    account_home = tmp_path / 'account-home'
+    provider_home = (
+        project_root
+        / '.ccb'
+        / 'agents'
+        / 'agent1'
+        / 'provider-state'
+        / 'codex'
+        / 'home'
+    )
+    _write_installed_role(account_home / '.roles', 'agentroles.mother', default_agent_name='mother')
+    monkeypatch.setenv('HOME', str(provider_home))
+    monkeypatch.delenv('AGENT_ROLES_STORE', raising=False)
+    monkeypatch.delenv('CCB_SOURCE_HOME', raising=False)
+    if source_home_module.pwd is not None:
+        monkeypatch.setattr(
+            source_home_module.pwd,
+            'getpwuid',
+            lambda _uid: type('PwdEntry', (), {'pw_dir': str(account_home)})(),
+        )
+
+    loaded = load_project_config(project_root).config
+
+    assert loaded.agents['mother'].role == 'agentroles.mother'
+    assert loaded.windows[0].layout_spec == 'mother:codex'
+
+
+def test_load_project_config_role_missing_reports_resolved_store(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = tmp_path / 'repo-provider-home-missing-role'
+    config_path = project_root / '.ccb' / 'ccb.config'
+    _write(
+        config_path,
+        '''
+version = 2
+entry_window = "main"
+
+[windows]
+main = "agentroles.mother:codex"
+''',
+    )
+    account_home = tmp_path / 'account-home'
+    provider_home = (
+        project_root
+        / '.ccb'
+        / 'agents'
+        / 'agent1'
+        / 'provider-state'
+        / 'codex'
+        / 'home'
+    )
+    monkeypatch.setenv('HOME', str(provider_home))
+    monkeypatch.delenv('AGENT_ROLES_STORE', raising=False)
+    monkeypatch.delenv('CCB_SOURCE_HOME', raising=False)
+    if source_home_module.pwd is not None:
+        monkeypatch.setattr(
+            source_home_module.pwd,
+            'getpwuid',
+            lambda _uid: type('PwdEntry', (), {'pw_dir': str(account_home)})(),
+        )
+
+    with pytest.raises(ConfigValidationError) as exc_info:
+        load_project_config(project_root)
+
+    message = str(exc_info.value)
+    assert 'role agentroles.mother is not installed in role store' in message
+    assert str(account_home / '.roles' / 'installed') in message
 
 
 def test_load_project_config_accepts_kimi_and_deepseek_providers(tmp_path: Path) -> None:

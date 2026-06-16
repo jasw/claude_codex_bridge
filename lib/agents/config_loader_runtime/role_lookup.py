@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 from typing import Any
 
+from runtime_env.source_home import current_provider_source_home
 from role_aliases import canonical_role_id, role_id_candidates
 
 
@@ -24,7 +25,7 @@ def agent_roles_store_root() -> Path:
     value = str(os.environ.get('AGENT_ROLES_STORE') or '').strip()
     if value:
         return Path(value).expanduser()
-    return Path.home() / '.roles'
+    return current_provider_source_home() / '.roles'
 
 
 def agent_roles_installed_root() -> Path:
@@ -76,7 +77,10 @@ def load_installed_role_manifest(role_id: str) -> tuple[Path, dict[str, Any]]:
         role_root = root
     manifest_path = role_root / 'role.toml'
     if not manifest_path.exists():
-        raise RoleLookupError(f'role {role_id} is not installed; run `ccb roles install {role_id}`')
+        raise RoleLookupError(
+            f'role {role_id} is not installed in role store {agent_roles_installed_root()}; '
+            f'run `ccb roles install {role_id}`'
+        )
     if not manifest_path.is_file():
         raise RoleLookupError(f'role {role_id} has invalid manifest path: {manifest_path}')
     manifest = _load_toml(manifest_path)
