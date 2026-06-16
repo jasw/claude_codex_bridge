@@ -186,7 +186,7 @@ ccb
 运行 `ccb update rich` 安装可选富媒体工作台；它会尽量封装 Yazi 等二进制，并用 WezTerm 承载富媒体终端界面，提供 Markdown 渲染和图片/PDF/视频预览。安装后，普通 `ccb` 在 WezTerm 外会自动打开 rich launcher；`ccb rich` 仍可作为显式启动入口。
 
 <p align="center">
-  <img src="assets/readme_v7/rich-workbench.png" alt="CCB rich 富媒体工作台在 WezTerm 中使用 Yazi 预览 PDF" width="860">
+  <img src="assets/readme_v7/rich-workbench.png" alt="CCB rich 富媒体工作台在 WezTerm 中使用 Yazi 预览 Markdown" width="860">
 </p>
 
 ### 联系方式

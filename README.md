@@ -185,7 +185,7 @@ Agents can also call `/ask` from workflow orchestration to delegate and hand off
 Run `ccb update rich` to install the optional rich workbench; it bundles Yazi where possible, uses WezTerm for the rich terminal surface, and gives Markdown rendering plus image/PDF/video previews. After installation, plain `ccb` automatically opens this rich launcher outside WezTerm; `ccb rich` remains available as an explicit launcher.
 
 <p align="center">
-  <img src="assets/readme_v7/rich-workbench.png" alt="CCB rich workbench with Yazi PDF preview in WezTerm" width="860">
+  <img src="assets/readme_v7/rich-workbench.png" alt="CCB rich workbench with Yazi Markdown preview in WezTerm" width="860">
 </p>
 
 ### Contact
