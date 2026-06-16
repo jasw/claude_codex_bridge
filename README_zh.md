@@ -6,7 +6,7 @@
 **可见、可控的多 Agent 合作TUI工作台**
 
 <p>
-  <img src="https://img.shields.io/badge/version-7.6.4-orange.svg" alt="version">
+  <img src="https://img.shields.io/badge/version-7.6.5-orange.svg" alt="version">
   <img src="https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20WSL-lightgrey.svg" alt="platform">
   <img src="https://img.shields.io/badge/providers-14%20CLI%20families-0B7285.svg" alt="providers">
 </p>
@@ -630,6 +630,18 @@ v7 线重点：
 - 加固 tmux、Ghostty、release helper、Codex trust 和 provider 会话恢复路径。
 
 <details open>
+<summary><b>v7.6.5</b> - Rich WezTerm 输入法</summary>
+
+- 生成的 rich WezTerm 配置现在会启用 IME，并把 `XMODIFIERS=@im=...`
+  映射为 WezTerm 的 XIM 名称，修复 X11 下 fcitx/ibus 中文输入连接问题。
+- 生成的 `ccb-workbench` wrapper 会在启动 WezTerm 前探测运行中或已安装的
+  `fcitx5`、`fcitx`、`ibus-daemon`，只在用户未设置时补齐输入法环境变量。
+- 保留 v7.6.4 已绿发布面，以及 v7.6.2 的 rich/tmux 修复，供 npm latest
+  安装实测。
+
+</details>
+
+<details>
 <summary><b>v7.6.4</b> - macOS Release Install Smoke</summary>
 
 - 保留 7.6.3 的 macOS temporary-root 加固，同时让 CI release install smoke

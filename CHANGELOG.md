@@ -1,5 +1,20 @@
 # Changelog
 
+## v7.6.5 (2026-06-16)
+
+### Rich WezTerm IME
+
+- **Rich WezTerm IME Fixed**: generated rich WezTerm profiles now enable IME
+  support and derive `xim_im_name` from `XMODIFIERS`, allowing X11 fcitx/ibus
+  input methods to connect when users type Chinese or other IME-backed text.
+- **Workbench IME Environment Normalized**: generated `ccb-workbench` wrappers
+  preserve user-provided input-method variables, and otherwise detect
+  `fcitx5`, `fcitx`, or `ibus-daemon` before launching WezTerm, filling
+  `XMODIFIERS`, `GTK_IM_MODULE`, and `QT_IM_MODULE` only when unset.
+- **Release Surface Synchronized**: VERSION, CLI version constants,
+  package.json, release workflow defaults, README release notes, and npm
+  packaging metadata are aligned for 7.6.5.
+
 ## v7.6.4 (2026-06-16)
 
 ### macOS Release Install Smoke

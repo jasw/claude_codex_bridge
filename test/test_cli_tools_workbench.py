@@ -109,6 +109,8 @@ def test_workbench_install_writes_independent_bundle_profiles(tmp_path: Path, mo
     assert 'Unifont CSUR' in wezterm_config
     assert 'Segoe UI Emoji' in wezterm_config
     assert 'weight = "Regular"' not in wezterm_config
+    assert 'config.use_ime = true' in wezterm_config
+    assert 'config.xim_im_name = xim_im_name' in wezterm_config
     assert 'config.harfbuzz_features = { "calt=0", "clig=0", "liga=0" }' in wezterm_config
     assert 'config.font_size = 10.5' in wezterm_config
     assert 'config.line_height = 1.05' in wezterm_config
@@ -132,6 +134,10 @@ def test_workbench_install_writes_independent_bundle_profiles(tmp_path: Path, mo
     assert 'WEZTERM_PANE' in workbench
     assert '"$wezterm_bin" cli spawn --cwd "$PWD" -- env' in workbench
     assert '"$wezterm_bin" --config-file' in workbench
+    assert "XMODIFIERS='@im=fcitx'" in workbench
+    assert 'GTK_IM_MODULE=fcitx' in workbench
+    assert 'QT_IM_MODULE=fcitx' in workbench
+    assert "XMODIFIERS='@im=ibus'" in workbench
     assert 'find_windows_wezterm()' in workbench
     assert 'wsl.exe -d "$WSL_DISTRO_NAME" --cd "$PWD"' in workbench
     assert '--config-file' in workbench
@@ -423,6 +429,61 @@ def test_workbench_terminal_reuses_current_wezterm_window(tmp_path: Path, monkey
     assert '-u' in argv
     assert 'TMUX' in argv
     assert 'CCB_WORKBENCH_FORCE_RICH=1' in argv
+    assert argv[-3:] == ['/bin/sh', '-lc', 'echo rich']
+
+
+def test_workbench_terminal_sets_input_method_env_for_fcitx(tmp_path: Path, monkeypatch) -> None:
+    fake_bin = _prepare_env(tmp_path, monkeypatch)
+    _stub_neovim(monkeypatch, tmp_path)
+    workbench_tools.provision_workbench(profile='rich')
+    project_root = tmp_path / 'project'
+    project_root.mkdir()
+    wezterm_log = tmp_path / 'wezterm-argv.txt'
+    wezterm_env_log = tmp_path / 'wezterm-env.txt'
+    (fake_bin / 'wezterm').write_text(
+        '#!/usr/bin/env sh\n'
+        'printf "%s\\n" "$@" > "$WEZTERM_ARGV_LOG"\n'
+        'env > "$WEZTERM_ENV_LOG"\n',
+        encoding='utf-8',
+    )
+    (fake_bin / 'wezterm').chmod(0o755)
+    (fake_bin / 'pgrep').write_text(
+        '#!/usr/bin/env sh\n'
+        '[ "$1" = "-x" ] && [ "$2" = "fcitx5" ]\n',
+        encoding='utf-8',
+    )
+    (fake_bin / 'pgrep').chmod(0o755)
+    monkeypatch.delenv('XMODIFIERS', raising=False)
+    monkeypatch.delenv('GTK_IM_MODULE', raising=False)
+    monkeypatch.delenv('QT_IM_MODULE', raising=False)
+    monkeypatch.setenv('WEZTERM_PANE', '7')
+    monkeypatch.setenv('WEZTERM_ARGV_LOG', str(wezterm_log))
+    monkeypatch.setenv('WEZTERM_ENV_LOG', str(wezterm_env_log))
+
+    env = workbench_tools._detached_terminal_env()
+    env['PATH'] = f'{fake_bin}:/usr/bin:/bin'
+    result = workbench_tools.subprocess.run(
+        [
+            str(tmp_path / 'xdg-data' / 'ccb' / 'tools' / 'workbench' / 'bin' / 'ccb-workbench'),
+            'terminal',
+            '/bin/sh',
+            '-lc',
+            'echo rich',
+        ],
+        cwd=project_root,
+        env=env,
+        text=True,
+        stdout=workbench_tools.subprocess.PIPE,
+        stderr=workbench_tools.subprocess.PIPE,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    argv = wezterm_log.read_text(encoding='utf-8').splitlines()
+    wezterm_env = wezterm_env_log.read_text(encoding='utf-8').splitlines()
+    assert 'XMODIFIERS=@im=fcitx' in wezterm_env
+    assert 'GTK_IM_MODULE=fcitx' in wezterm_env
+    assert 'QT_IM_MODULE=fcitx' in wezterm_env
     assert argv[-3:] == ['/bin/sh', '-lc', 'echo rich']
 
 

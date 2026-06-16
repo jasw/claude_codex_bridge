@@ -6,7 +6,7 @@
 **Visible, controllable multi-agent cooperative TUI workspace**
 
 <p>
-  <img src="https://img.shields.io/badge/version-7.6.4-orange.svg" alt="version">
+  <img src="https://img.shields.io/badge/version-7.6.5-orange.svg" alt="version">
   <img src="https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20WSL-lightgrey.svg" alt="platform">
   <img src="https://img.shields.io/badge/providers-14%20CLI%20families-0B7285.svg" alt="providers">
 </p>
@@ -641,6 +641,20 @@ v7 highlights:
 - Hardened tmux, Ghostty, release helper, Codex trust, and provider session restore paths.
 
 <details open>
+<summary><b>v7.6.5</b> - Rich WezTerm IME</summary>
+
+- Enables IME support in the generated rich WezTerm config and maps
+  `XMODIFIERS=@im=...` into WezTerm's XIM name so X11 fcitx/ibus input works
+  for Chinese and other IME-backed text.
+- Generated `ccb-workbench` wrappers now detect running or installed
+  `fcitx5`, `fcitx`, or `ibus-daemon` before launching WezTerm, while
+  preserving any user-provided input-method environment.
+- Keeps the v7.6.4 green release surface and all v7.6.2 rich/tmux fixes intact
+  for npm latest install testing.
+
+</details>
+
+<details>
 <summary><b>v7.6.4</b> - macOS Release Install Smoke</summary>
 
 - Keeps the 7.6.3 macOS temporary-root hardening and updates the CI release

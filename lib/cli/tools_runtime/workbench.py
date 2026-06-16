@@ -1340,6 +1340,12 @@ config.automatically_reload_config = false
 config.check_for_updates = false
 config.window_close_confirmation = "NeverPrompt"
 config.warn_about_missing_glyphs = false
+config.use_ime = true
+local xmodifiers = os.getenv("XMODIFIERS") or ""
+local xim_im_name = xmodifiers:match("@im=([^%s]+)")
+if xim_im_name and xim_im_name ~= "" then
+  config.xim_im_name = xim_im_name
+end
 config.font = wezterm.font_with_fallback({{
   "JetBrains Mono",
   "Fira Code",
@@ -1476,6 +1482,31 @@ set -eu
 export CCB_WORKBENCH_ROOT={_shell_quote(str(paths['root']))}
 export PATH={path_prefix}${{PATH:+":$PATH"}}
 cmd="${{1:-files}}"
+configure_input_method_env() {{
+  if [ -z "${{XMODIFIERS:-}}" ]; then
+    if command -v pgrep >/dev/null 2>&1 && pgrep -x fcitx5 >/dev/null 2>&1; then
+      export XMODIFIERS='@im=fcitx'
+    elif command -v pgrep >/dev/null 2>&1 && pgrep -x fcitx >/dev/null 2>&1; then
+      export XMODIFIERS='@im=fcitx'
+    elif command -v pgrep >/dev/null 2>&1 && pgrep -x ibus-daemon >/dev/null 2>&1; then
+      export XMODIFIERS='@im=ibus'
+    elif command -v fcitx5 >/dev/null 2>&1 || command -v fcitx >/dev/null 2>&1; then
+      export XMODIFIERS='@im=fcitx'
+    elif command -v ibus-daemon >/dev/null 2>&1; then
+      export XMODIFIERS='@im=ibus'
+    fi
+  fi
+  case "${{XMODIFIERS:-}}" in
+    *@im=fcitx*)
+      [ -n "${{GTK_IM_MODULE:-}}" ] || export GTK_IM_MODULE=fcitx
+      [ -n "${{QT_IM_MODULE:-}}" ] || export QT_IM_MODULE=fcitx
+      ;;
+    *@im=ibus*)
+      [ -n "${{GTK_IM_MODULE:-}}" ] || export GTK_IM_MODULE=ibus
+      [ -n "${{QT_IM_MODULE:-}}" ] || export QT_IM_MODULE=ibus
+      ;;
+  esac
+}}
 case "$cmd" in
   files|yazi)
     shift || true
@@ -1537,6 +1568,7 @@ case "$cmd" in
       printf '%s\\n' 'ccb-workbench terminal requires WezTerm or Windows wezterm.exe under WSL' >&2
       exit 127
     fi
+    configure_input_method_env
     if [ "$#" -eq 0 ]; then
       set -- "${{SHELL:-/bin/sh}}" -lc 'ccb-yazi-rich "$PWD"'
     fi
