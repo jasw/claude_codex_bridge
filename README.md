@@ -6,7 +6,7 @@
 **Visible, controllable multi-agent cooperative TUI workspace**
 
 <p>
-  <img src="https://img.shields.io/badge/version-7.6.7-orange.svg" alt="version">
+  <img src="https://img.shields.io/badge/version-7.6.8-orange.svg" alt="version">
   <img src="https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20WSL-lightgrey.svg" alt="platform">
   <img src="https://img.shields.io/badge/providers-14%20CLI%20families-0B7285.svg" alt="providers">
 </p>
@@ -641,6 +641,23 @@ v7 highlights:
 - Hardened tmux, Ghostty, release helper, Codex trust, and provider session restore paths.
 
 <details open>
+<summary><b>v7.6.8</b> - Role Pack Current Store</summary>
+
+- Role Pack runtime lookup now follows the installed current package under
+  `.roles/installed/<role-id>/current`; legacy multi-version stores remain
+  compatibility input only.
+- Project `.ccb/role-lock.json` files are now legacy diagnostics: CCB no
+  longer writes them, adopts from them, or suppresses role memory and skills
+  because of stale lock residue.
+- Provider launch sessions record role id, version, and digest; restart now
+  fails explicitly when the launch digest differs from installed current instead
+  of silently resuming an old provider conversation.
+- Release artifact metadata patching now targets `ccb.py` after the bash
+  launcher split, keeping built tarballs on the intended version.
+
+</details>
+
+<details>
 <summary><b>v7.6.7</b> - Rich Workbench Closure</summary>
 
 - Plain `ccb` and `ccb rich` now launch the CCB-managed rich WezTerm unless

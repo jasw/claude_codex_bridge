@@ -6,7 +6,7 @@
 **可见、可控的多 Agent 合作TUI工作台**
 
 <p>
-  <img src="https://img.shields.io/badge/version-7.6.7-orange.svg" alt="version">
+  <img src="https://img.shields.io/badge/version-7.6.8-orange.svg" alt="version">
   <img src="https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20WSL-lightgrey.svg" alt="platform">
   <img src="https://img.shields.io/badge/providers-14%20CLI%20families-0B7285.svg" alt="providers">
 </p>
@@ -630,6 +630,21 @@ v7 线重点：
 - 加固 tmux、Ghostty、release helper、Codex trust 和 provider 会话恢复路径。
 
 <details open>
+<summary><b>v7.6.8</b> - Role Pack Current Store</summary>
+
+- Role Pack 运行时现在跟随 `.roles/installed/<role-id>/current` 下的当前安装包；
+  旧的多版本 store 只作为兼容输入，不再是运行时主权。
+- 项目 `.ccb/role-lock.json` 现在是 legacy diagnostic：CCB 不再写入、不再从
+  lock adopt，也不会因为旧 lock 残留而 suppress role memory/skills。
+- provider 启动 session 会记录 role id、version 和 digest；当启动 digest 与
+  installed current 不一致时，restart 会明确失败，而不是静默恢复旧 provider
+  会话并假装采用了新 role。
+- release artifact 元数据 patch 现在指向 bash launcher 拆分后的 `ccb.py`，
+  确保构建出的 tarball 携带正确版本。
+
+</details>
+
+<details>
 <summary><b>v7.6.7</b> - Rich Workbench 闭环</summary>
 
 - 普通 `ccb` 和 `ccb rich` 现在会启动 CCB 托管的 rich WezTerm；只有已经在该

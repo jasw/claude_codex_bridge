@@ -1,5 +1,26 @@
 # Changelog
 
+## v7.6.8 (2026-06-17)
+
+### Role Pack Current Store
+
+- **Single Current Role Store**: Role Pack runtime lookup now follows the
+  installed current role package under `.roles/installed/<role-id>/current`;
+  legacy `versions/<version>/<digest>` stores remain compatibility input, not
+  runtime authority.
+- **Project Role Locks Demoted**: `.ccb/role-lock.json` is no longer written or
+  used to pin role resolution. Existing lock files are treated as legacy
+  diagnostics and no longer suppress role memory or skills.
+- **Role-Aware Restart Guard**: provider launch session files now record role
+  id, version, and digest. `ccb restart <agent>` fails explicitly when the
+  launched digest differs from installed current, avoiding a misleading resume
+  of an old provider conversation.
+- **Release Metadata Patch Fixed**: release artifact builds now patch version,
+  commit, and date metadata in `ccb.py` after the bash launcher split.
+- **Release Surface Synchronized**: VERSION, CLI version constants,
+  package.json, release workflow defaults, README release notes, and npm
+  packaging metadata are aligned for 7.6.8.
+
 ## v7.6.7 (2026-06-17)
 
 ### Rich Workbench Closure
