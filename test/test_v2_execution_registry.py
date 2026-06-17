@@ -23,6 +23,7 @@ def test_execution_registry_can_build_core_only_registry() -> None:
         'crush',
         'kiro',
         'pi',
+        'zai',
     }
     assert registry.get('codex') is not None
     assert registry.get('claude') is not None
@@ -39,4 +40,5 @@ def test_execution_registry_can_build_core_only_registry() -> None:
     assert registry.get('crush') is None
     assert registry.get('kiro') is None
     assert registry.get('pi') is None
+    assert registry.get('zai') is None
     assert registry.get('fake') is None
