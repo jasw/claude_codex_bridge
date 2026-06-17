@@ -226,6 +226,55 @@ def test_materialize_codex_profile_preserves_inline_table_arrays(
     assert 'external_migration = false' in config_text
 
 
+def test_materialize_codex_profile_merges_agent_mcp_server_overrides(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    project_root = tmp_path / 'repo'
+    source_home = tmp_path / 'system-codex-home'
+    source_home.mkdir(parents=True, exist_ok=True)
+    (source_home / 'config.toml').write_text(
+        '\n'.join(
+            [
+                'model = "gpt-5.5"',
+                '',
+                '[mcp_servers.shared]',
+                'command = "old-shared"',
+                '',
+                '[mcp_servers.keep]',
+                'command = "keep-cmd"',
+                '',
+            ]
+        ),
+        encoding='utf-8',
+    )
+    monkeypatch.setenv('CODEX_HOME', str(source_home))
+
+    profile = materialize_provider_profile(
+        layout=PathLayout(project_root),
+        spec=_spec(
+            'agent1',
+            provider_profile=ProviderProfileSpec(
+                mode='isolated',
+                mcp_servers={
+                    'codegraph': {'command': '/usr/local/bin/codegraph', 'args': ['serve', '--mcp']},
+                    'shared': {'command': 'new-shared', 'env': {'MODE': 'agent'}},
+                },
+            ),
+        ),
+        workspace_path=project_root,
+    )
+
+    config = tomllib.loads((Path(profile.runtime_home or '') / 'config.toml').read_text(encoding='utf-8'))
+
+    assert config['mcp_servers']['keep']['command'] == 'keep-cmd'
+    assert config['mcp_servers']['shared']['command'] == 'new-shared'
+    assert config['mcp_servers']['shared']['env'] == {'MODE': 'agent'}
+    assert config['mcp_servers']['codegraph']['command'] == '/usr/local/bin/codegraph'
+    assert config['mcp_servers']['codegraph']['args'] == ['serve', '--mcp']
+    assert config['features']['external_migration'] is False
+
+
 def test_materialize_codex_profile_preserves_nested_inline_table_arrays(
     tmp_path: Path,
     monkeypatch,

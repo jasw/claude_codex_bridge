@@ -95,6 +95,7 @@ def materialize_codex_home_config(
         _write_codex_api_authority_config(
             target_config,
             authority,
+            profile=profile,
             source_config=source_config,
             project_root=project_root,
             workspace_path=workspace_path,
@@ -102,10 +103,11 @@ def materialize_codex_home_config(
     elif _inherits_config(profile) and _inherits_api(profile) and _source_config_valid(source_config):
         if source_config.is_file():
             payload = _read_source_config_payload(source_config)
-            if payload:
+            if payload or _profile_mcp_servers(profile):
                 _write_managed_codex_config(
                     target_config,
                     payload,
+                    profile=profile,
                     project_root=project_root,
                     workspace_path=workspace_path,
                 )
@@ -114,9 +116,19 @@ def materialize_codex_home_config(
                 _append_managed_codex_feature_overrides(target_config)
                 _append_managed_codex_project_trust(target_config, project_root=project_root, workspace_path=workspace_path)
         else:
-            _write_managed_config_stub(target_config, project_root=project_root, workspace_path=workspace_path)
+            _write_managed_config_stub(
+                target_config,
+                profile=profile,
+                project_root=project_root,
+                workspace_path=workspace_path,
+            )
     else:
-        _write_managed_config_stub(target_config, project_root=project_root, workspace_path=workspace_path)
+        _write_managed_config_stub(
+            target_config,
+            profile=profile,
+            project_root=project_root,
+            workspace_path=workspace_path,
+        )
 
     _materialize_auth_file(
         source_home / 'auth.json',
@@ -266,19 +278,28 @@ def _write_codex_api_authority_config(
     target: Path,
     authority: CodexApiAuthority,
     *,
+    profile,
     source_config: Path,
     project_root: Path | None,
     workspace_path: Path | None,
 ) -> None:
     target.parent.mkdir(parents=True, exist_ok=True)
     payload = _managed_codex_config_payload(source_config, authority=authority)
+    _merge_codex_mcp_server_overrides(payload, profile=profile)
     _trust_managed_codex_project_paths(payload, project_root=project_root, workspace_path=workspace_path)
     target.write_text(_render_toml_document(payload), encoding='utf-8')
 
 
-def _write_managed_config_stub(target: Path, *, project_root: Path | None, workspace_path: Path | None) -> None:
+def _write_managed_config_stub(
+    target: Path,
+    *,
+    profile,
+    project_root: Path | None,
+    workspace_path: Path | None,
+) -> None:
     target.parent.mkdir(parents=True, exist_ok=True)
     payload: dict[str, object] = {}
+    _merge_codex_mcp_server_overrides(payload, profile=profile)
     _trust_managed_codex_project_paths(payload, project_root=project_root, workspace_path=workspace_path)
     rendered = _render_toml_document(payload) if payload else '# ccb agent-local codex config\n'
     target.write_text(rendered, encoding='utf-8')
@@ -288,12 +309,14 @@ def _write_managed_codex_config(
     target: Path,
     payload: dict[str, object],
     *,
+    profile,
     project_root: Path | None,
     workspace_path: Path | None,
 ) -> None:
     target.parent.mkdir(parents=True, exist_ok=True)
     sanitized = _disable_interactive_migration_features(payload)
     _strip_unmanaged_hook_config(sanitized)
+    _merge_codex_mcp_server_overrides(sanitized, profile=profile)
     _trust_managed_codex_project_paths(sanitized, project_root=project_root, workspace_path=workspace_path)
     target.write_text(_render_toml_document(sanitized), encoding='utf-8')
 
@@ -475,6 +498,52 @@ def _strip_unmanaged_hook_config(payload: dict[str, object]) -> None:
     # CCB installs its own per-agent managed hook declarations below. Inherited
     # user hooks would couple agent runtime behavior to the outer Codex home.
     payload.pop('hooks', None)
+
+
+def _merge_codex_mcp_server_overrides(payload: dict[str, object], *, profile) -> None:
+    overrides = _profile_mcp_servers(profile)
+    if not overrides:
+        return
+
+    existing = _codex_mcp_servers_as_mapping(payload.get('mcp_servers'))
+    for name, server in overrides.items():
+        existing[name] = _clone_mapping(server)
+    payload['mcp_servers'] = existing
+
+
+def _profile_mcp_servers(profile) -> dict[str, dict[str, object]]:
+    raw = getattr(profile, 'mcp_servers', {}) if profile is not None else {}
+    if not isinstance(raw, dict):
+        return {}
+    normalized: dict[str, dict[str, object]] = {}
+    for raw_name, raw_server in raw.items():
+        name = str(raw_name or '').strip()
+        if not name or not isinstance(raw_server, dict):
+            continue
+        normalized[name] = _clone_mapping(raw_server)
+    return normalized
+
+
+def _codex_mcp_servers_as_mapping(value: object) -> dict[str, dict[str, object]]:
+    if isinstance(value, dict):
+        return {
+            str(name): _clone_mapping(server)
+            for name, server in value.items()
+            if str(name).strip() and isinstance(server, dict)
+        }
+    if isinstance(value, list):
+        servers: dict[str, dict[str, object]] = {}
+        for item in value:
+            if not isinstance(item, dict):
+                continue
+            name = str(item.get('name') or '').strip()
+            if not name:
+                continue
+            server = _clone_mapping(item)
+            server.pop('name', None)
+            servers[name] = server
+        return servers
+    return {}
 
 
 def _import_optional_toml_reader():

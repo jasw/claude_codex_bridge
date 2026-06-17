@@ -518,6 +518,13 @@ inherit_memory = false
 
 [agents.agent1.provider_profile.env]
 OPENAI_API_KEY = "sk-test"
+
+[agents.agent1.provider_profile.mcp_servers.codegraph]
+command = "/usr/local/bin/codegraph"
+args = ["serve", "--mcp"]
+
+[agents.agent1.provider_profile.mcp_servers.hindsight.env]
+HINDSIGHT_AGENT_NAME = "agent1"
 """,
     )
 
@@ -532,6 +539,10 @@ OPENAI_API_KEY = "sk-test"
     assert spec.provider_profile.inherit_commands is False
     assert spec.provider_profile.inherit_memory is False
     assert spec.provider_profile.env == {'OPENAI_API_KEY': 'sk-test'}
+    assert spec.provider_profile.mcp_servers == {
+        'codegraph': {'command': '/usr/local/bin/codegraph', 'args': ['serve', '--mcp']},
+        'hindsight': {'env': {'HINDSIGHT_AGENT_NAME': 'agent1'}},
+    }
 
 
 def test_load_project_config_supports_workspace_path_and_group_fields(tmp_path: Path) -> None:
