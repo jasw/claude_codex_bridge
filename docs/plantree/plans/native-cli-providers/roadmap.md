@@ -4,17 +4,20 @@ Date: 2026-06-13
 
 ## Status Summary
 
-- Current status: native completion pivot has landed in source. Kimi,
-  DeepSeek/DeepCode, AGY, and MiMo no longer use `CCB_DONE` as their primary
-  completion signal. Kimi and OpenCode inherited ask skill injection landed in
-  commit `a4395c2`; MiMo inherited ask instruction injection and native
-  `mimo run --format json` execution landed in commit `fce17c3`.
+- Current status: native completion pivot has landed in source and `v7.5.0`
+  has been published. Kimi, DeepSeek/DeepCode, AGY, and MiMo no longer use
+  `CCB_DONE` as their primary completion signal. Kimi and OpenCode inherited
+  ask skill injection landed in commit `a4395c2`; MiMo inherited ask
+  instruction injection and native `mimo run --format json` execution landed
+  in commit `fce17c3`.
 - Last verified: focused native completion tests, provider catalog tests,
   Kimi/OpenCode skill projection tests, and a real MiMo CCB ask passed after
   switching CCB MiMo execution to `mimo run --pure --format json`; full
   pytest release gate passed with `2613 passed, 2 skipped`.
-- Next target: publish the 7.5 patch release that includes MiMo in the public
-  README/provider surface.
+- Next target: review and release readiness for the next native CLI provider
+  wave after source-runtime and real CLI version smoke passed for Qwen Code,
+  Cursor Agent, GitHub Copilot CLI, Charm Crush, Kiro CLI, and Pi. Talk1's
+  Crush visible-pane isolation blocker has been fixed in source.
 
 ## Done
 
@@ -153,17 +156,87 @@ Date: 2026-06-13
     test/test_provider_execution_service_runtime.py`: `263 passed, 1 skipped`.
   - Final full release-gate pytest: `2613 passed, 2 skipped`.
   - `git diff --check`: passed.
+- Installed and researched the next requested CLI wave in an external lab:
+  - `qwen`: `@qwen-code/qwen-code@0.18.0`, binary `qwen`.
+  - `copilot`: `@github/copilot@1.0.61`, binary `copilot`.
+  - `cursor`: official Cursor Agent install, binary `agent`, version
+    `2026.06.12-19-59-36-f6aba9a`.
+  - `kiro`: official Kiro CLI install, binary `kiro-cli`, version `2.7.0`.
+  - `crush`: `@charmland/crush@0.76.0`, binary `crush`.
+- Cloned or located source/bundle evidence under
+  `/home/bfly/yunwei/test_ccb2/cli-integration-lab`:
+  - `src/qwen-code` from `QwenLM/qwen-code`.
+  - `src/copilot-cli` from `github/copilot-cli`.
+  - `src/crush` from `charmbracelet/crush`.
+  - `src/kiro` from `kirodotdev/Kiro`; this is project/docs evidence, not full
+    CLI source.
+  - Cursor Agent installed bundle under
+    `home/.local/share/cursor-agent/versions/2026.06.12-19-59-36-f6aba9a`.
+- Landed the next-wave minimal built-in provider path in source:
+  - `qwen`, `cursor`, `copilot`, `crush`, `kiro`, and `pi` are optional provider ids
+    with modern backend shape.
+  - Shared native CLI subprocess support handles per-job command execution,
+    stdout/stderr artifacts, structured-result parsing, stdout-on-exit
+    completion, empty replies, nonzero exits, run timeouts with process
+    termination, and tool/intermediate events.
+  - Qwen, Cursor, Copilot, and Pi use JSONL/stream-json result parsing; Crush
+    and Kiro use subprocess exit plus stdout.
+  - Crush visible pane startup now passes `--data-dir <provider-state>/data`,
+    matching the ask execution isolation boundary.
+  - Qwen, Cursor, Copilot, Crush, Kiro, and Pi provider-state contents now
+    classify as native CLI provider-owned session/cache or projected skill
+    evidence.
+  - Focused source tests passed with `35 passed`.
+- Fixed control-plane environment propagation for provider start-command
+  overrides:
+  - `runtime_env.control_plane` now allows the provider `*_START_CMD` variables
+    exported by `provider_core.runtime_shared`.
+  - Outer provider home/session authority such as `CODEX_HOME`, `QWEN_HOME`, and
+    `CCB_SESSION_ID` remains filtered.
+  - This fixed source-runtime launch when deterministic provider stubs are
+    supplied through `QWEN_START_CMD`, `CURSOR_START_CMD`, `COPILOT_START_CMD`,
+    `CRUSH_START_CMD`, `KIRO_START_CMD`, and `PI_START_CMD`.
+- Validated next-wave source runtime with
+  `/home/bfly/yunwei/test_ccb2/next_wave_provider_smoke`:
+  - `config validate` accepted
+    `qwen1:qwen, cursor1:cursor, copilot1:copilot, crush1:crush, kiro1:kiro, pi1:pi`.
+  - `ccb_test -s` mounted all six providers after Pi was added.
+  - Prior ask traces for Qwen/Cursor/Copilot/Crush/Kiro completed with
+    `qwen_run_stop`, `cursor_run_stop`, `copilot_run_stop`, `crush_run_exit`,
+    and `kiro_run_exit`; Pi add-on smoke completed with `pi_run_stop`.
+  - Pi session payload confirmed isolated `PI_CODING_AGENT_DIR`,
+    `PI_CODING_AGENT_SESSION_DIR`, `PI_SKIP_VERSION_CHECK=1`,
+    `PI_TELEMETRY=0`, and visible `--session-dir ... --no-approve`.
+- Validated no-account real CLI version smoke in
+  `/home/bfly/yunwei/test_ccb2/cli-integration-lab`:
+  - Qwen `0.18.0`.
+  - Cursor Agent `2026.06.12-19-59-36-f6aba9a`.
+  - GitHub Copilot CLI `1.0.61`.
+  - Charm Crush `0.76.0`.
+  - Kiro CLI `2.7.0`.
+  - Pi `0.79.3`.
+- Native CLI adapter timeout regression passed with `23 passed`; wider
+  touched-provider suite including storage classification passed with
+  `238 passed`; post-review source-runtime recheck passed for the first five
+  next-wave providers and confirmed Crush visible-pane `--data-dir`; Pi
+  add-on smoke passed with `pi_run_stop`; full source test gate passed with
+  `2621 passed, 2 skipped, 21 deselected`;
+  `git diff --check` passed.
 
 ## In Progress
 
-- 7.5 patch release packaging for the landed MiMo provider integration.
-- README/npm release surface now needs final gate checks and publication.
+- Provider-specific auth/doctor diagnostics decision for the next-wave CLIs.
+- Review and release readiness for the current dirty source changes.
 
 ## Next
 
-1. Publish `v7.5.1` through the release workflow/push-agent path.
-2. Review reusable smoke projects under `/home/bfly/yunwei/test_ccb2` before
-   final cleanup if the release gate requires a clean test directory.
+1. Decide whether any provider needs a follow-up doctor/auth diagnostic before
+   release.
+2. Decide whether to keep
+   `/home/bfly/yunwei/test_ccb2/next_wave_provider_smoke` as a reusable smoke
+   fixture.
+3. Review the full dirty source diff, excluding unrelated managed-tool/neovim
+   changes already present in the worktree.
 
 ## Deferred
 
@@ -176,3 +249,6 @@ Date: 2026-06-13
   key is needed.
 - Model/key/url shortcut projection after upstream config semantics are stable
   and tested.
+- Native ACP/server-mode integrations for Qwen, Copilot, or Cursor. First CCB
+  support should prefer simpler per-job subprocess execution until the provider
+  contract proves stable.

@@ -157,6 +157,10 @@ Rules:
 - generated OpenCode `provider-state/opencode/opencode.json` is
   `PROJECTED_CONFIG`; project `opencode.json` remains user content outside the
   provider-state tree
+- Qwen, Cursor, Copilot, Crush, Kiro, and Pi use shared native CLI provider-state
+  roots with `<provider>_home` and `<provider>_data_dir`; until provider-native
+  config projection is added, their contents are classified as provider-owned
+  session/auth/cache evidence rather than project worktree content
 - sharing is allowed only after content-addressed whole-bundle storage and
   atomic replacement are implemented
 - default behavior remains per-agent/per-home storage

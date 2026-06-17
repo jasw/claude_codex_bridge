@@ -22,12 +22,7 @@ def normalize_agent_specs(agents: dict, *, allow_empty: bool = False) -> dict:
     return normalized_agents
 
 
-def normalize_default_agents(
-    default_agents: tuple[str, ...],
-    *,
-    normalized_agents: dict,
-    allow_empty: bool = False,
-) -> tuple[str, ...]:
+def normalize_default_agents(default_agents: tuple[str, ...], *, normalized_agents: dict, allow_empty: bool = False) -> tuple[str, ...]:
     defaults = tuple(normalize_agent_name(item) for item in default_agents)
     if not defaults and not allow_empty:
         raise AgentValidationError('default_agents cannot be empty')

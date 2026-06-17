@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from provider_core.runtime_shared import provider_start_env_vars
 from runtime_env.control_plane import control_plane_env
 
 
@@ -21,12 +22,36 @@ def test_control_plane_env_keeps_provider_api_env(monkeypatch) -> None:
     assert env['GOOGLE_GEMINI_BASE_URL'] == 'https://chatapi.onechats.ai'
 
 
+def test_control_plane_env_keeps_provider_start_overrides(monkeypatch) -> None:
+    for env_name in provider_start_env_vars():
+        monkeypatch.setenv(env_name, f'/tmp/{env_name.lower()} --stub')
+    monkeypatch.setenv('CODEX_HOME', '/tmp/global-codex-home')
+    monkeypatch.setenv('QWEN_HOME', '/tmp/global-qwen-home')
+    monkeypatch.setenv('CCB_SESSION_ID', 'stale-session')
+
+    env = control_plane_env()
+
+    for env_name in provider_start_env_vars():
+        assert env[env_name] == f'/tmp/{env_name.lower()} --stub'
+    assert 'CODEX_HOME' not in env
+    assert 'QWEN_HOME' not in env
+    assert 'CCB_SESSION_ID' not in env
+
+
 def test_control_plane_env_keeps_claude_keychain_override(monkeypatch) -> None:
     monkeypatch.setenv('CCB_KEYCHAIN_SERVICE_OVERRIDE', 'Claude Code-credentials-account-a')
 
     env = control_plane_env()
 
     assert env['CCB_KEYCHAIN_SERVICE_OVERRIDE'] == 'Claude Code-credentials-account-a'
+
+
+def test_control_plane_env_keeps_agent_roles_store_pin(monkeypatch) -> None:
+    monkeypatch.setenv('AGENT_ROLES_STORE', '/home/demo/.roles')
+
+    env = control_plane_env()
+
+    assert env['AGENT_ROLES_STORE'] == '/home/demo/.roles'
 
 
 def test_control_plane_env_keeps_user_session_transport_for_cmd_shell(monkeypatch) -> None:
@@ -43,6 +68,38 @@ def test_control_plane_env_keeps_user_session_transport_for_cmd_shell(monkeypatc
     assert env['DBUS_SESSION_BUS_ADDRESS'] == 'unix:path=/run/user/1000/bus'
     assert env['XAUTHORITY'] == '/tmp/.Xauthority'
     assert env['SSH_AUTH_SOCK'] == '/tmp/ssh-agent.sock'
+
+
+def test_control_plane_env_keeps_rich_terminal_workbench_signals(monkeypatch) -> None:
+    monkeypatch.setenv('TERM_PROGRAM', 'WezTerm')
+    monkeypatch.setenv('TERM_PROGRAM_VERSION', '20260615')
+    monkeypatch.setenv('WEZTERM_EXECUTABLE', '/usr/bin/wezterm')
+    monkeypatch.setenv('WEZTERM_PANE', '7')
+    monkeypatch.setenv('WEZTERM_UNIX_SOCKET', '/tmp/wezterm.sock')
+    monkeypatch.setenv('KITTY_WINDOW_ID', '42')
+    monkeypatch.setenv('CCB_WORKBENCH_PROFILE', 'rich')
+    monkeypatch.setenv('CCB_WORKBENCH_FORCE_RICH', '1')
+    monkeypatch.setenv('CCB_WORKBENCH_ROOT', '/tmp/workbench')
+    monkeypatch.setenv('CCB_WORKBENCH_TERMINAL_PROGRAM', 'WezTerm')
+    monkeypatch.setenv('CCB_WORKBENCH_TERMINAL_PROGRAM_VERSION', '20260615')
+    monkeypatch.setenv('CCB_WORKBENCH_YAZI_SAFE_CONFIG', '/tmp/workbench/yazi-safe')
+    monkeypatch.setenv('CCB_WORKBENCH_YAZI_RICH_CONFIG', '/tmp/workbench/yazi-rich')
+
+    env = control_plane_env()
+
+    assert env['TERM_PROGRAM'] == 'WezTerm'
+    assert env['TERM_PROGRAM_VERSION'] == '20260615'
+    assert env['WEZTERM_EXECUTABLE'] == '/usr/bin/wezterm'
+    assert env['WEZTERM_PANE'] == '7'
+    assert env['WEZTERM_UNIX_SOCKET'] == '/tmp/wezterm.sock'
+    assert env['KITTY_WINDOW_ID'] == '42'
+    assert env['CCB_WORKBENCH_PROFILE'] == 'rich'
+    assert env['CCB_WORKBENCH_FORCE_RICH'] == '1'
+    assert env['CCB_WORKBENCH_ROOT'] == '/tmp/workbench'
+    assert env['CCB_WORKBENCH_TERMINAL_PROGRAM'] == 'WezTerm'
+    assert env['CCB_WORKBENCH_TERMINAL_PROGRAM_VERSION'] == '20260615'
+    assert env['CCB_WORKBENCH_YAZI_SAFE_CONFIG'] == '/tmp/workbench/yazi-safe'
+    assert env['CCB_WORKBENCH_YAZI_RICH_CONFIG'] == '/tmp/workbench/yazi-rich'
 
 
 def test_control_plane_env_keeps_network_transport_without_provider_authority(monkeypatch) -> None:

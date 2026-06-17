@@ -92,7 +92,10 @@ def _invalidate_project_view_cache(project_view_service: object | None) -> None:
 
 
 def _invalidate_and_refresh_project_view(deps: ProjectFocusDependencies, backend, namespace) -> None:
-    _invalidate_project_view_cache(deps.project_view_service)
+    project_view_service = deps.project_view_service
+    _invalidate_project_view_cache(project_view_service)
+    if _request_project_view_sidebar_refresh(project_view_service):
+        return
     try:
         refresh_sidebar_panes(
             backend,
@@ -101,6 +104,17 @@ def _invalidate_and_refresh_project_view(deps: ProjectFocusDependencies, backend
         )
     except Exception:
         return
+
+
+def _request_project_view_sidebar_refresh(project_view_service: object | None) -> bool:
+    requester = getattr(project_view_service, 'request_sidebar_refresh', None)
+    if not callable(requester):
+        return False
+    try:
+        requester()
+    except Exception:
+        return False
+    return True
 
 
 def _valid_window_name(value: str) -> str:

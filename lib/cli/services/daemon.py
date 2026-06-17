@@ -176,6 +176,8 @@ def ping_local_state(context: CliContext) -> LocalPingSummary:
         heartbeat_fresh=inspection.heartbeat_fresh,
         takeover_allowed=inspection.takeover_allowed,
         reason=inspection.reason,
+        ccbd_pid=inspection.lease.ccbd_pid if inspection.lease else None,
+        keeper_pid=inspection.lease.keeper_pid if inspection.lease else None,
         startup_id=getattr(inspection, 'startup_id', None),
         startup_stage=getattr(inspection, 'startup_stage', None),
         last_progress_at=getattr(inspection, 'last_progress_at', None),

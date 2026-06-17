@@ -78,10 +78,11 @@ jobs:
           "
 
       - name: Test unified commands syntax
+        shell: bash
         run: |
-          python bin/ask --help
-          python ccb ping --help
-          python ccb pend --help
+          ./bin/ask --help
+          ./ccb ping --help
+          ./ccb pend --help
           echo "✅ Unified commands syntax test passed"
 
       - name: Test completion hook imports

@@ -1,5 +1,198 @@
 # Changelog
 
+## v7.6.8 (2026-06-17)
+
+### Role Pack Current Store
+
+- **Single Current Role Store**: Role Pack runtime lookup now follows the
+  installed current role package under `.roles/installed/<role-id>/current`;
+  legacy `versions/<version>/<digest>` stores remain compatibility input, not
+  runtime authority.
+- **Project Role Locks Demoted**: `.ccb/role-lock.json` is no longer written or
+  used to pin role resolution. Existing lock files are treated as legacy
+  diagnostics and no longer suppress role memory or skills.
+- **Role-Aware Restart Guard**: provider launch session files now record role
+  id, version, and digest. `ccb restart <agent>` fails explicitly when the
+  launched digest differs from installed current, avoiding a misleading resume
+  of an old provider conversation.
+- **Release Metadata Patch Fixed**: release artifact builds now patch version,
+  commit, and date metadata in `ccb.py` after the bash launcher split.
+- **Release Surface Synchronized**: VERSION, CLI version constants,
+  package.json, release workflow defaults, README release notes, and npm
+  packaging metadata are aligned for 7.6.8.
+
+## v7.6.7 (2026-06-17)
+
+### Rich Workbench Closure
+
+- **Rich Launcher Closure**: plain `ccb` and `ccb rich` now start the
+  CCB-managed rich WezTerm launcher unless already running inside that managed
+  rich session; ordinary external WezTerm sessions no longer suppress rich
+  auto-start.
+- **Runtime Launcher Pinning**: command entrypoints now share the `_ccb-python`
+  launcher so installed and source runtimes use a consistent interpreter.
+- **Default Self Window Updated**: the built-in default config keeps `ccb_self`
+  in its own window with the `claude` provider while preserving the rich-only
+  optional workbench model and avoiding ordinary default Neovim tool windows.
+- **Release Surface Synchronized**: VERSION, CLI version constants,
+  package.json, release workflow defaults, README release notes, and npm
+  packaging metadata are aligned for 7.6.7.
+
+## v7.6.6 (2026-06-16)
+
+### Role Store Home Pinning
+
+- **Managed Provider Role Lookup Fixed**: CCB now pins role store resolution
+  outside managed provider homes so provider session `HOME` rewrites no longer
+  make `agentroles.*` lookups fall back to `.ccb/agents/.../provider-state/.../home/.roles`.
+- **Role Store Diagnostics Improved**: missing role errors now include the
+  resolved role store path, making provider-home drift visible when diagnosing
+  role installation or host-adapter startup issues.
+- **Release Surface Synchronized**: VERSION, CLI version constants,
+  package.json, release workflow defaults, README release notes, and npm
+  packaging metadata are aligned for 7.6.6.
+
+## v7.6.5 (2026-06-16)
+
+### Rich WezTerm IME
+
+- **Rich WezTerm IME Fixed**: generated rich WezTerm profiles now enable IME
+  support and derive `xim_im_name` from `XMODIFIERS`, allowing X11 fcitx/ibus
+  input methods to connect when users type Chinese or other IME-backed text.
+- **Workbench IME Environment Normalized**: generated `ccb-workbench` wrappers
+  preserve user-provided input-method variables, and otherwise detect
+  `fcitx5`, `fcitx`, or `ibus-daemon` before launching WezTerm, filling
+  `XMODIFIERS`, `GTK_IM_MODULE`, and `QT_IM_MODULE` only when unset.
+- **Release Surface Synchronized**: VERSION, CLI version constants,
+  package.json, release workflow defaults, README release notes, and npm
+  packaging metadata are aligned for 7.6.5.
+
+## v7.6.4 (2026-06-16)
+
+### macOS Release Install Smoke
+
+- **macOS Install Smoke Fixed**: CI release-install smoke now explicitly opts
+  into installing a temporary release prefix with a temporary sibling
+  `CODEX_BIN_DIR`, matching the hardened temporary install guard introduced in
+  7.6.3 without weakening user-facing installer safety.
+- **Release Surface Synchronized**: VERSION, CLI version constants,
+  package.json, release workflow defaults, README release notes, and the macOS
+  install smoke workflow are aligned for 7.6.4.
+
+## v7.6.3 (2026-06-16)
+
+### macOS CI Green Patch
+
+- **macOS Temporary Roots Fixed**: install-time temporary-prefix guards now
+  recognize the canonical `${TMPDIR:-/tmp}` parent in addition to `/tmp`,
+  `/private/tmp`, `/var/tmp`, and `/dev/shm`, matching GitHub Actions macOS
+  runner paths under `/private/var/folders/...`.
+- **Doctor Temporary Detection Fixed**: doctor runtime checks include the
+  resolved `tempfile.gettempdir()` root so temporary ccbd implementations are
+  diagnosed consistently across Linux and macOS `/tmp` symlink behavior.
+- **Release Surface Synchronized**: VERSION, CLI version constants,
+  package.json, release workflow defaults, README release notes, and the macOS
+  CI compatibility tests are aligned for 7.6.3.
+
+## v7.6.2 (2026-06-16)
+
+### Rich Workbench Hotfix
+
+- **Rich Layout Alias Fixed**: `.ccb/ccb.config` can now use `rich` as a
+  tool/layout alias without requiring a provider runtime. The alias is
+  materialized as a managed tool pane/window and remains outside `ask`
+  routing.
+- **Rich Auto-Start Added**: after `ccb update rich` installs and enables the
+  bundle, plain `ccb` can launch the rich workbench by default outside an
+  existing rich/WezTerm session while avoiding recursive WezTerm launches.
+- **Rich Disable/Uninstall Added**: `ccb uninstall rich`, `ccb rich uninstall`,
+  and `ccb rich disable` remove or disable rich mode without changing the
+  normal full `ccb uninstall` path.
+- **Legacy Editor Cleanup Hardened**: rich updates clean CCB-owned legacy
+  standalone editor roots and links while leaving user-owned editor
+  installations and personal config untouched.
+- **Release Surface Synchronized**: VERSION, CLI version constants,
+  package.json, release workflow defaults, README release notes, and focused
+  rich workbench tests are aligned for 7.6.2.
+
+## v7.6.1 (2026-06-16)
+
+### Rich Workbench Binary Packaging
+
+- **Yazi Bundle Download Added**: `ccb update rich` now downloads CCB-owned
+  Yazi/ya release binaries where supported and places them under the managed
+  workbench `bin` directory before falling back to system package managers.
+- **Linux Musl Preference Added**: Linux x86_64/aarch64 rich installs prefer
+  official Yazi musl builds before GNU builds, avoiding newer glibc
+  requirements on older stable distributions.
+- **Binary Validation Hardened**: downloaded `yazi` and `ya` must pass
+  `--version` validation before activation; invalid managed binaries are
+  removed so package-manager fallback remains possible.
+- **WSL WezTerm Routing Added**: rich launchers under WSL can use
+  Windows-native `wezterm.exe` while keeping CCB, Yazi, and preview helpers
+  running inside the current Linux distribution.
+- **Release Surface Synchronized**: VERSION, CLI version constants,
+  package.json, release workflow defaults, README release notes, and rich
+  workbench plan-tree evidence are aligned for 7.6.1.
+
+## v7.6.0 (2026-06-15)
+
+### Rich Workbench Lifecycle
+
+- **Rich Workbench Bundle Added**: rich workbench components now install and
+  update through the explicit `ccb update rich` entrypoint instead of ordinary
+  CCB install/update paths.
+- **Standalone Neovim Provisioning Removed**: normal `install.sh install`,
+  `ccb update`, and public `ccb tools ... neovim` routes no longer provision a
+  standalone Neovim tool. They now direct users to `ccb update rich`.
+- **Rich Launch Tightened**: `ccb rich` launches only an installed and enabled
+  rich bundle, preventing implicit provisioning from the launch path.
+- **tmux Status Simplified**: CCB returns to a single-line tmux status bar and
+  removes the old second-line copy hint.
+- **Release Surface Synchronized**: VERSION, CLI version constants,
+  package.json, release workflow defaults, README release notes, and rich
+  workbench documentation are aligned for 7.6.0.
+
+## v7.5.3 (2026-06-14)
+
+### Kimi Runtime Reliability And Hindsight Compatibility
+
+- **Kimi Pane Fallback Added**: Kimi can now use stable pane evidence for K2.7
+  Code when the native turn log does not expose a completed reply in time,
+  without changing other provider execution paths.
+- **Kimi Hindsight Bridge Added**: Kimi can recall and retain Hindsight memory
+  at the CCB execution boundary when `.hindsight/kimi.json`,
+  `.hindsight/codex.json`, `HINDSIGHT_API_URL`, or `HINDSIGHT_BANK_ID` is
+  configured. Hindsight failures remain non-blocking diagnostics.
+- **Hindsight Token Compatibility Fixed**: both `HINDSIGHT_API_KEY` and
+  `HINDSIGHT_API_TOKEN` are accepted by the Kimi bridge and the
+  `scripts/hindsight` helper.
+- **Codex Hindsight Hook Inheritance Scoped**: managed Codex homes may inherit
+  only allowlisted Hindsight hooks from `.hindsight/codex/scripts/`, preserving
+  CCB-managed activity hooks and filtering unrelated root hooks.
+- **README Release Surface Updated**: English and Chinese README files document
+  the Kimi/Hindsight behavior and keep the public supported-provider surface
+  aligned with the 7.5 line.
+
+## v7.5.2 (2026-06-13)
+
+### Native CLI Provider Wave
+
+- **Provider Strip Expanded**: English and Chinese README provider strips now
+  include Qwen, Cursor, GitHub Copilot, Crush, Kiro, and Pi, and the public
+  provider badge count is updated to 14 CLI families.
+- **Next-Wave Native Providers Added**: CCB registers optional provider ids
+  `qwen`, `cursor`, `copilot`, `crush`, `kiro`, and `pi` with runtime specs,
+  session bindings, simple tmux launchers, command overrides, deterministic
+  stubs, and focused execution coverage.
+- **Native Completion Preserved**: Qwen, Cursor, Copilot, and Pi parse
+  structured JSON/stream-json events, while Crush and Kiro use subprocess exit
+  plus stdout. Pi terminalizes on native `turn_end`; none of these adapters
+  require model-printed `CCB_DONE`.
+- **Release Surface Synchronized**: VERSION, CLI version constants,
+  package.json, release workflow defaults, README release notes, and native
+  provider plan-tree evidence are aligned for the 7.5.2 patch release.
+
 ## v7.5.1 (2026-06-13)
 
 ### MiMo Provider Release Surface

@@ -5,7 +5,7 @@ from pathlib import Path
 
 import cli.kill_runtime.processes as processes
 from project.resolver import bootstrap_project
-from runtime_pid_cleanup import collect_project_authority_pid_candidates, collect_project_process_candidates
+from runtime_pid_cleanup import collect_project_authority_pid_candidates, collect_project_process_candidates, list_process_cmdlines
 
 
 def test_kill_pid_tree_once_uses_taskkill_on_windows(monkeypatch) -> None:
@@ -58,6 +58,44 @@ def test_collect_project_process_candidates_finds_ccbd_project_arg(tmp_path: Pat
 
     assert set(candidates) == {101}
     assert candidates[101] == [project_root / '.ccb' / 'ccbd']
+
+
+def test_list_process_cmdlines_falls_back_to_ps_when_proc_is_unavailable(tmp_path: Path, monkeypatch) -> None:
+    proc_root = tmp_path / 'missing-proc'
+
+    class _Result:
+        returncode = 0
+        stdout = ' 101 /usr/bin/python /opt/ccb/lib/ccbd/main.py --project /tmp/repo\n 202 helper\n'
+
+    monkeypatch.setattr(
+        'runtime_pid_cleanup.procfs.subprocess.run',
+        lambda args, check=False, capture_output=True, text=True: _Result(),
+    )
+
+    mapping = list_process_cmdlines(proc_root=proc_root, current_pid=202)
+
+    assert mapping == {101: '/usr/bin/python /opt/ccb/lib/ccbd/main.py --project /tmp/repo'}
+
+
+def test_collect_project_process_candidates_falls_back_to_ps_without_proc(tmp_path: Path) -> None:
+    project_root = tmp_path / 'repo-ps-scan'
+    project_root.mkdir()
+    bootstrap_project(project_root)
+
+    candidates = collect_project_process_candidates(
+        project_root,
+        proc_root=tmp_path / 'missing-proc',
+        list_process_cmdlines_fn=lambda **kwargs: {
+            101: f'/usr/bin/python /opt/ccb/lib/ccbd/main.py --project {project_root}',
+            202: f'/usr/bin/python /opt/ccb/lib/ccbd/keeper_main.py --project {project_root}',
+            303: '/usr/bin/python unrelated.py',
+        },
+        current_pid=999,
+    )
+
+    assert sorted(candidates) == [101, 202]
+    assert candidates[101] == [project_root / '.ccb' / 'ccbd']
+    assert candidates[202] == [project_root / '.ccb' / 'ccbd']
 
 
 def test_collect_project_authority_pid_candidates_reads_lifecycle(tmp_path: Path) -> None:

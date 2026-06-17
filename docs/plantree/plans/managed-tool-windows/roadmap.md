@@ -40,27 +40,78 @@ Date: 2026-05-30
   [history/neovim-local-plugin-lab-2026-06-13.md](history/neovim-local-plugin-lab-2026-06-13.md).
 - Recorded managed Neovim enhancement defaults in
   [decisions/003-neovim-enhancement-defaults.md](decisions/003-neovim-enhancement-defaults.md).
+- Recorded the rich terminal workbench decision: WezTerm/Yazi/LazyVim can be a
+  recommended optional CCB-owned bundle, but CCB defaults remain safe and
+  capability-gated. The bundle owns generated config and can be installed,
+  enabled, launched, disabled, and uninstalled as one product unit. See
+  [decisions/004-optional-rich-terminal-workbench.md](decisions/004-optional-rich-terminal-workbench.md)
+  and [topics/rich-terminal-workbench-profile.md](topics/rich-terminal-workbench-profile.md).
+- Landed the first managed Neovim enhancement slice for Linux/tmux:
+  parser runtimepath preservation, read-only capability diagnostics, Snacks
+  folder defaults with watcher disabled, guarded `render-markdown.nvim`, and
+  no implicit Treesitter parser downloads. Evidence is recorded in
+  [history/neovim-enhancement-slice-2026-06-13.md](history/neovim-enhancement-slice-2026-06-13.md).
+- Landed the managed Neovim open/fallback slice:
+  generated `ccb-open.lua`, `CCBOpenCurrent`, `CCBOpenUnderCursor`,
+  `CCBOpenImage`, `CCBRevealCurrent`, conservative external opener selection,
+  direct image-file external fallback, and WSL mounted-drive diagnostics. The
+  same slice also added a managed `string.buffer` fallback needed by Snacks
+  picker on the current test host. Evidence is recorded in
+  [history/neovim-open-fallback-slice-2026-06-14.md](history/neovim-open-fallback-slice-2026-06-14.md).
+- Landed the first rich workbench bundle slice:
+  `ccb tools doctor/install/update/enable/launch/disable/uninstall workbench`,
+  CCB-owned Yazi safe/rich profiles, Markdown/PDF/video preview helpers,
+  generated WezTerm config, JSON manifest, and source-wrapper validation from
+  `/home/bfly/yunwei/test_ccb2`. Evidence is recorded in
+  [history/workbench-bundle-slice-2026-06-15.md](history/workbench-bundle-slice-2026-06-15.md).
+- Superseded the early `ccb rich-install` setup command. The product entry for
+  installing/updating the rich workbench is now `ccb update rich`.
+- Landed the `rich` layout alias slice:
+  `rich` can be used directly in `[windows]` layouts as a non-communicating
+  tool pane/page backed by a rich-forced `ccb-workbench files` command, while
+  remaining outside `config.agents`, ask targets, and provider runtime
+  authority. Evidence is
+  recorded in
+  [history/rich-layout-alias-slice-2026-06-15.md](history/rich-layout-alias-slice-2026-06-15.md).
+- Sealed the rich WezTerm visual profile inside the generated bundle config:
+  family-only font fallback stack, compact font/geometry defaults, quiet
+  workbench theme, isolated `--config-file` launch, `--always-new-process`,
+  rich/tool active border coloring, and heavy tmux pane split lines. Design
+  contract is recorded in
+  [topics/rich-terminal-workbench-profile.md](topics/rich-terminal-workbench-profile.md);
+  landed evidence is recorded in
+  [history/workbench-bundle-slice-2026-06-15.md](history/workbench-bundle-slice-2026-06-15.md).
+- Recorded the product boundary that Neovim/LazyVim is now owned by the rich
+  bundle and is no longer installed or updated by normal CCB. See
+  [decisions/005-rich-owns-neovim.md](decisions/005-rich-owns-neovim.md).
+- Landed `ccb update rich` as the single rich install/update entry:
+  `rich-install` is removed, standalone public `ccb tools ... neovim` routes
+  now reject with guidance, normal install/update no longer provisions Neovim,
+  and `ccb rich` requires the rich bundle to be installed/enabled first.
+  Evidence is recorded in
+  [history/rich-update-entry-slice-2026-06-15.md](history/rich-update-entry-slice-2026-06-15.md).
+- Landed binary-first rich dependency hardening:
+  `ccb update rich` downloads CCB-owned Yazi/ya release binaries where
+  possible, validates them before use, prefers Linux musl builds to avoid
+  glibc drift, falls back to platform package managers for non-bundled
+  dependencies, and can launch Windows-native `wezterm.exe` from WSL while
+  keeping rich tools inside the current Linux distro. Evidence is recorded in
+  [history/rich-binary-dependency-slice-2026-06-15.md](history/rich-binary-dependency-slice-2026-06-15.md).
 
 ## In Progress
 
-- Run the live `/home/bfly/yunwei/test_ccb2` Neovim add/remove reload scenario
-  from [topics/test-matrix.md](topics/test-matrix.md).
+- Continue hardening the rich terminal workbench after the lifecycle boundary:
+  direct GUI WezTerm validation across more hosts, degraded-banner behavior,
+  richer launch/close records, and macOS/WSL manual validation.
 
 ## Next
 
-1. Install the current source build into the test environment and complete live
-   validation that existing agents survive tool-window add/remove
-   and `ccb ask` still routes through the daemon.
-2. Record any live tmux/Neovim compatibility issues in the test matrix or manual
-   issue log.
-3. Implement the managed Neovim system-optimization foundation from
-   [topics/neovim-system-optimization.md](topics/neovim-system-optimization.md):
-   preserve parser runtime paths, add read-only capability diagnostics, and
-   keep doctor from mutating parser/plugin state.
-4. Prototype the first enhanced profile overlay in this order: Snacks folder
-   baseline with watcher disabled, in-buffer Markdown rendering gated on parser
-   readiness, image external-open fallback, then clipboard/opener keymaps.
-5. Add macOS, WSL home, and WSL mounted-drive manual checks before enabling
+1. Continue the rich terminal workbench implementation from
+   [topics/rich-terminal-workbench-profile.md](topics/rich-terminal-workbench-profile.md):
+   direct GUI WezTerm validation across more hosts, richer launch/close
+   records, degraded-banner behavior for `rich`, and richer diagnostics for
+   binary/package fallback decisions.
+2. Add macOS, WSL home, and WSL mounted-drive manual checks before enabling
    rich media defaults beyond Linux/tmux.
 
 ## Deferred

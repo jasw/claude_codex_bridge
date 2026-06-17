@@ -48,6 +48,8 @@ class LocalPingSummary:
     heartbeat_fresh: bool
     takeover_allowed: bool
     reason: str
+    ccbd_pid: int | None = None
+    keeper_pid: int | None = None
     startup_id: str | None = None
     startup_stage: str | None = None
     last_progress_at: str | None = None

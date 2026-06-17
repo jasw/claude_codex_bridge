@@ -7,7 +7,6 @@ from agents.models import (
     QueuePolicy,
     RestoreMode,
     RuntimeMode,
-    ToolWindowSpec,
     WindowSpec,
     WorkspaceMode,
 )
@@ -18,13 +17,16 @@ DEFAULT_AGENT_PROVIDERS = (
     ('agent1', 'codex'),
     ('agent2', 'codex'),
     ('agent3', 'claude'),
-    (DEFAULT_CCB_SELF_AGENT, 'codex'),
+    (DEFAULT_CCB_SELF_AGENT, 'claude'),
 )
 DEFAULT_AGENT_ROLES = {
     DEFAULT_CCB_SELF_AGENT: DEFAULT_CCB_SELF_ROLE,
 }
-DEFAULT_WINDOW_LAYOUT = 'agent1:codex, agent2:codex, agent3:claude, ccb_self:codex'
-DEFAULT_TOOL_WINDOW_COMMAND = 'ccb-nvim'
+DEFAULT_MAIN_WINDOW_LAYOUT = 'agent1:codex, agent2:codex, agent3:claude'
+DEFAULT_CCB_SELF_WINDOW_LAYOUT = f'{DEFAULT_CCB_SELF_AGENT}:claude'
+DEFAULT_WINDOW_LAYOUT = (
+    f'{DEFAULT_MAIN_WINDOW_LAYOUT}, {DEFAULT_CCB_SELF_WINDOW_LAYOUT}'
+)
 
 
 def build_default_project_config() -> ProjectConfig:
@@ -36,6 +38,9 @@ def build_default_project_config() -> ProjectConfig:
         )
         for name, provider in DEFAULT_AGENT_PROVIDERS
     }
+    main_agent_names = tuple(
+        name for name in DEFAULT_DEFAULT_AGENTS if name != DEFAULT_CCB_SELF_AGENT
+    )
     return ProjectConfig(
         version=2,
         default_agents=DEFAULT_DEFAULT_AGENTS,
@@ -46,18 +51,17 @@ def build_default_project_config() -> ProjectConfig:
             WindowSpec(
                 name='main',
                 order=0,
-                layout_spec=DEFAULT_WINDOW_LAYOUT,
-                agent_names=DEFAULT_DEFAULT_AGENTS,
+                layout_spec=DEFAULT_MAIN_WINDOW_LAYOUT,
+                agent_names=main_agent_names,
+            ),
+            WindowSpec(
+                name=DEFAULT_CCB_SELF_AGENT,
+                order=1,
+                layout_spec=DEFAULT_CCB_SELF_WINDOW_LAYOUT,
+                agent_names=(DEFAULT_CCB_SELF_AGENT,),
             ),
         ),
-        tool_windows=(
-            ToolWindowSpec(
-                name='neovim',
-                order=0,
-                command=DEFAULT_TOOL_WINDOW_COMMAND,
-                label='neovim',
-            ),
-        ),
+        tool_windows=(),
         entry_window='main',
         windows_explicit=True,
     )
@@ -81,7 +85,8 @@ def build_default_agent_spec(*, name: str, provider: str, role: str | None = Non
 __all__ = [
     'DEFAULT_AGENT_PROVIDERS',
     'DEFAULT_AGENT_ROLES',
-    'DEFAULT_TOOL_WINDOW_COMMAND',
+    'DEFAULT_CCB_SELF_WINDOW_LAYOUT',
+    'DEFAULT_MAIN_WINDOW_LAYOUT',
     'DEFAULT_WINDOW_LAYOUT',
     'build_default_agent_spec',
     'build_default_project_config',

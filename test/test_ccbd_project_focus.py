@@ -245,6 +245,55 @@ def test_project_focus_success_invalidates_project_view_cache(tmp_path: Path) ->
     assert project_view.invalidated == 1
 
 
+def test_project_focus_requests_sidebar_refresh_when_available(tmp_path: Path) -> None:
+    class _ProjectView:
+        invalidated = 0
+        refresh_requested = 0
+
+        def invalidate_cache(self) -> None:
+            self.invalidated += 1
+
+        def request_sidebar_refresh(self) -> None:
+            self.refresh_requested += 1
+
+    backend = _FakeTmuxBackend()
+    project_view = _ProjectView()
+    service = _service(tmp_path, backend, project_view_service=project_view)
+
+    service.focus_agent(agent='agent2', namespace_epoch=4)
+
+    assert project_view.invalidated == 1
+    assert project_view.refresh_requested == 1
+    assert backend.calls == [
+        ['select-window', '-t', 'ccb-test:ops'],
+        ['select-pane', '-t', '%2'],
+    ]
+
+
+def test_project_focus_falls_back_to_sync_sidebar_refresh_when_request_fails(tmp_path: Path) -> None:
+    class _ProjectView:
+        invalidated = 0
+        refresh_requested = 0
+
+        def invalidate_cache(self) -> None:
+            self.invalidated += 1
+
+        def request_sidebar_refresh(self) -> None:
+            self.refresh_requested += 1
+            raise RuntimeError('refresh queue unavailable')
+
+    backend = _FakeTmuxBackend()
+    project_view = _ProjectView()
+    service = _service(tmp_path, backend, project_view_service=project_view)
+
+    service.focus_agent(agent='agent2', namespace_epoch=4)
+
+    assert project_view.invalidated == 1
+    assert project_view.refresh_requested == 1
+    assert ['send-keys', '-t', '%3', 'C-l'] in backend.calls
+    assert ['send-keys', '-t', '%4', 'C-l'] in backend.calls
+
+
 def test_project_focus_rejects_stale_namespace_epoch(tmp_path: Path) -> None:
     service = _service(tmp_path, _FakeTmuxBackend())
 

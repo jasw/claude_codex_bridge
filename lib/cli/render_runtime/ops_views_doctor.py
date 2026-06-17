@@ -7,6 +7,7 @@ from .ops_views_common import binding_line
 
 def render_doctor(payload: Mapping[str, object]) -> tuple[str, ...]:
     installation = payload.get('installation') or {}
+    entrypoint = payload.get('entrypoint') or {}
     runtime = payload.get('runtime') or {}
     requirements = payload.get('requirements') or {}
     ccbd = payload['ccbd']
@@ -21,6 +22,12 @@ def render_doctor(payload: Mapping[str, object]) -> tuple[str, ...]:
         f'install_build_time: {installation.get("build_time")}',
         f'install_platform: {installation.get("platform")}',
         f'install_arch: {installation.get("arch")}',
+        f'entrypoint_status: {entrypoint.get("status")}',
+        f'entrypoint_reason: {entrypoint.get("reason")}',
+        f'entrypoint_path: {entrypoint.get("path")}',
+        f'entrypoint_realpath: {entrypoint.get("realpath")}',
+        f'entrypoint_expected_install_path: {entrypoint.get("expected_install_path")}',
+        f'entrypoint_matches_current_install: {entrypoint.get("matches_current_install")}',
         f'user_id: {runtime.get("user_id")}',
         f'user_name: {runtime.get("user_name")}',
         f'home: {runtime.get("home")}',
@@ -37,6 +44,12 @@ def render_doctor(payload: Mapping[str, object]) -> tuple[str, ...]:
         f'requirement_tmux_available: {requirements.get("tmux_available")}',
         f'requirement_tmux_path: {requirements.get("tmux_path")}',
         f'ccbd_state: {ccbd["state"]}',
+        f'ccbd_pid: {ccbd.get("pid")}',
+        f'ccbd_keeper_pid: {ccbd.get("keeper_pid")}',
+        f'ccbd_implementation_root: {ccbd.get("implementation_root")}',
+        f'ccbd_implementation_status: {ccbd.get("implementation_status")}',
+        f'ccbd_implementation_reason: {ccbd.get("implementation_reason")}',
+        f'ccbd_implementation_cmdline: {ccbd.get("implementation_cmdline")}',
         f'ccbd_socket_path: {ccbd.get("socket_path")}',
         f'ccbd_project_anchor_path: {ccbd.get("project_anchor_path")}',
         f'ccbd_runtime_state_root: {ccbd.get("runtime_state_root")}',

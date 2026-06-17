@@ -672,6 +672,62 @@ def test_kill_project_terminates_runtime_pid_files(tmp_path: Path, monkeypatch) 
     assert runtime.reconcile_state == 'stopped'
 
 
+def test_kill_project_force_terminates_authority_pids_via_project_cmdline_without_procfs(tmp_path: Path, monkeypatch) -> None:
+    project_root = tmp_path / 'repo-kill-authority-pids-cmdline'
+    (project_root / '.ccb').mkdir(parents=True, exist_ok=True)
+    (project_root / '.ccb' / 'ccb.config').write_text('demo:codex\n', encoding='utf-8')
+    bootstrap_project(project_root)
+    command = ParsedKillCommand(project=None, force=True)
+    context = CliContextBuilder().build(command, cwd=project_root, bootstrap_if_missing=False)
+
+    terminated: list[int] = []
+    monkeypatch.setattr('cli.services.kill.connect_mounted_daemon', lambda context, allow_restart_stale: (_ for _ in ()).throw(CcbdServiceError('down')))
+    monkeypatch.setattr(
+        'cli.services.kill.shutdown_daemon',
+        lambda context, force: KillSummary(
+            project_id=context.project.project_id,
+            state='unmounted',
+            socket_path=str(context.paths.ccbd_socket_path),
+            forced=force,
+        ),
+    )
+    monkeypatch.setattr(
+        'cli.services.kill._collect_project_authority_pid_candidates',
+        lambda _project_root: {
+            321: [context.paths.ccbd_lease_path],
+            654: [context.paths.ccbd_keeper_path],
+        },
+    )
+    monkeypatch.setattr('cli.services.kill._read_proc_path', lambda pid, entry: None)
+    monkeypatch.setattr(
+        'cli.services.kill._read_proc_cmdline',
+        lambda pid: (
+            f'/usr/bin/python /opt/ccb/lib/ccbd/main.py --project {project_root}'
+            if pid == 321
+            else f'/usr/bin/python /opt/ccb/lib/ccbd/keeper_main.py --project {project_root}'
+            if pid == 654
+            else ''
+        ),
+    )
+    monkeypatch.setattr('cli.services.kill.is_pid_alive', lambda pid: pid in {321, 654})
+    monkeypatch.setattr(
+        'cli.services.kill.terminate_pid_tree',
+        lambda pid, timeout_s, is_pid_alive_fn: terminated.append(pid) or True,
+    )
+    monkeypatch.setattr('cli.services.kill.set_tmux_ui_active', lambda active: None)
+    monkeypatch.setattr('cli.services.kill.ProjectNamespaceController', _namespace_controller(destroyed=False))
+    monkeypatch.setattr('cli.services.kill.cleanup_project_tmux_orphans_by_socket', lambda **kwargs: ())
+    monkeypatch.setattr(
+        'cli.services.kill.TmuxCleanupHistoryStore',
+        lambda paths: type('Store', (), {'append': staticmethod(lambda event: None)})(),
+    )
+
+    summary = kill_project(context, command)
+
+    assert summary.state == 'unmounted'
+    assert terminated == [321, 654]
+
+
 def test_shutdown_daemon_terminates_lingering_ccbd_pid(tmp_path: Path, monkeypatch) -> None:
     project_root = tmp_path / 'repo-kill-daemon-pid'
     project_root.mkdir(parents=True, exist_ok=True)

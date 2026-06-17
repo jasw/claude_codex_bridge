@@ -4,6 +4,7 @@ import argparse
 from io import StringIO
 from pathlib import Path
 
+import cli.entrypoint_runtime as entrypoint_runtime
 from cli.entrypoint import run_cli_entrypoint
 from cli.router import (
     dispatch_auxiliary_command,
@@ -53,6 +54,54 @@ def test_dispatch_management_command_parses_and_routes() -> None:
     assert name == "update"
     assert args.command == "update"
     assert args.target == "5.3.0"
+
+
+def test_dispatch_management_command_routes_update_rich() -> None:
+    calls: list[argparse.Namespace] = []
+
+    def update_handler(args: argparse.Namespace) -> int:
+        calls.append(args)
+        return 23
+
+    def fail(_args: argparse.Namespace) -> int:
+        raise AssertionError("handler should not be called")
+
+    result = dispatch_management_command(
+        ["update", "rich"],
+        update_handler=update_handler,
+        version_handler=fail,
+        uninstall_handler=fail,
+        reinstall_handler=fail,
+    )
+
+    assert result == 23
+    assert len(calls) == 1
+    assert calls[0].command == "update"
+    assert calls[0].target == "rich"
+
+
+def test_dispatch_management_command_routes_uninstall_rich() -> None:
+    calls: list[argparse.Namespace] = []
+
+    def uninstall_handler(args: argparse.Namespace) -> int:
+        calls.append(args)
+        return 24
+
+    def fail(_args: argparse.Namespace) -> int:
+        raise AssertionError("handler should not be called")
+
+    result = dispatch_management_command(
+        ["uninstall", "rich"],
+        update_handler=fail,
+        version_handler=fail,
+        uninstall_handler=uninstall_handler,
+        reinstall_handler=fail,
+    )
+
+    assert result == 24
+    assert len(calls) == 1
+    assert calls[0].command == "uninstall"
+    assert calls[0].target == "rich"
 
 
 def test_dispatch_management_command_returns_none_for_non_management() -> None:
@@ -105,10 +154,175 @@ def test_run_cli_entrypoint_prints_start_help_without_phase2() -> None:
     assert "ccb trace <id>" in stdout.getvalue()
     assert "Advanced recovery:" in stdout.getvalue()
     assert "ccb repair <ack|retry|resubmit> ..." in stdout.getvalue()
+    assert "ccb rich" in stdout.getvalue()
+    assert "ccb update rich" in stdout.getvalue()
+    assert "ccb rich-install" not in stdout.getvalue()
     assert "ccb watch <agent|job_id>" not in stdout.getvalue()
     assert "ccb inbox [--detail] <agent>" not in stdout.getvalue()
     assert "ccb ps | ccb logs <agent>" not in stdout.getvalue()
     assert stderr.getvalue() == ""
+
+
+def test_run_cli_entrypoint_rejects_removed_rich_install() -> None:
+    stdout = StringIO()
+    stderr = StringIO()
+
+    result = run_cli_entrypoint(
+        ["rich-install"],
+        version="5.2.8",
+        script_root=Path("/tmp/ccb"),
+        cwd=Path("/tmp/project"),
+        stdout=stdout,
+        stderr=stderr,
+    )
+
+    assert result == 2
+    assert stdout.getvalue() == ""
+    assert "`ccb rich-install` has been removed" in stderr.getvalue()
+    assert "ccb update rich" in stderr.getvalue()
+
+
+def test_run_cli_entrypoint_routes_rich(monkeypatch) -> None:
+    stdout = StringIO()
+    stderr = StringIO()
+    calls: list[tuple[Path, Path, object, object]] = []
+
+    def _rich(*, script_root, cwd, stdout, stderr):
+        calls.append((script_root, cwd, stdout, stderr))
+        print("rich launch ok", file=stdout)
+        return 19
+
+    monkeypatch.setattr(entrypoint_runtime, "cmd_rich", _rich)
+
+    result = run_cli_entrypoint(
+        ["rich"],
+        version="5.2.8",
+        script_root=Path("/tmp/ccb"),
+        cwd=Path("/tmp/project"),
+        stdout=stdout,
+        stderr=stderr,
+    )
+
+    assert result == 19
+    assert stdout.getvalue() == "rich launch ok\n"
+    assert stderr.getvalue() == ""
+    assert calls == [(Path("/tmp/ccb"), Path("/tmp/project"), stdout, stderr)]
+
+
+def test_run_cli_entrypoint_prints_rich_help() -> None:
+    stdout = StringIO()
+    stderr = StringIO()
+
+    result = run_cli_entrypoint(
+        ["rich", "--help"],
+        version="5.2.8",
+        script_root=Path("/tmp/ccb"),
+        cwd=Path("/tmp/project"),
+        stdout=stdout,
+        stderr=stderr,
+    )
+
+    assert result == 0
+    assert "usage: ccb rich" in stdout.getvalue()
+    assert stderr.getvalue() == ""
+
+
+def test_run_cli_entrypoint_routes_rich_uninstall(monkeypatch) -> None:
+    stdout = StringIO()
+    stderr = StringIO()
+    calls: list[str] = []
+
+    monkeypatch.setattr(
+        entrypoint_runtime,
+        "uninstall_workbench",
+        lambda **_kwargs: calls.append("uninstall") or {"status": "ok", "uninstalled": True},
+    )
+
+    result = run_cli_entrypoint(
+        ["rich", "uninstall"],
+        version="5.2.8",
+        script_root=Path("/tmp/ccb"),
+        cwd=Path("/tmp/project"),
+        stdout=stdout,
+        stderr=stderr,
+    )
+
+    assert result == 0
+    assert calls == ["uninstall"]
+    assert "workbench_status: ok" in stdout.getvalue()
+    assert stderr.getvalue() == ""
+
+
+def test_run_cli_entrypoint_auto_launches_rich_for_plain_start(monkeypatch) -> None:
+    stdout = StringIO()
+    stderr = StringIO()
+    calls: list[tuple[Path, Path, tuple[str, ...]]] = []
+
+    monkeypatch.setattr(entrypoint_runtime, "rich_auto_start_allowed", lambda: True)
+    monkeypatch.setattr(
+        entrypoint_runtime,
+        "launch_rich_ccb",
+        lambda *, script_root, cwd, start_args: calls.append((script_root, cwd, tuple(start_args)))
+        or {"status": "ok", "launch_status": "started"},
+    )
+
+    result = run_cli_entrypoint(
+        ["--project", "/tmp/project", "-n"],
+        version="5.2.8",
+        script_root=Path("/tmp/ccb"),
+        cwd=Path("/tmp/elsewhere"),
+        stdout=stdout,
+        stderr=stderr,
+    )
+
+    assert result == 0
+    assert calls == [(Path("/tmp/ccb"), Path("/tmp/elsewhere"), ("--project", "/tmp/project", "-n"))]
+    assert "launch_status: started" in stdout.getvalue()
+    assert stderr.getvalue() == ""
+
+
+def test_run_cli_entrypoint_does_not_auto_launch_rich_when_guard_blocks(monkeypatch) -> None:
+    stdout = StringIO()
+    stderr = StringIO()
+
+    monkeypatch.setattr(entrypoint_runtime, "rich_auto_start_allowed", lambda: False)
+    monkeypatch.setattr(
+        entrypoint_runtime,
+        "launch_rich_ccb",
+        lambda **_kwargs: (_ for _ in ()).throw(AssertionError("auto rich should not launch")),
+    )
+    monkeypatch.setattr(entrypoint_runtime, "maybe_handle_startup_release_update", lambda *_, **__: None)
+    monkeypatch.setattr(entrypoint_runtime, "maybe_handle_phase2", lambda *_args, **_kwargs: 31)
+
+    result = run_cli_entrypoint(
+        [],
+        version="5.2.8",
+        script_root=Path("/tmp/ccb"),
+        cwd=Path("/tmp/project"),
+        stdout=stdout,
+        stderr=stderr,
+    )
+
+    assert result == 31
+
+
+def test_run_cli_entrypoint_rejects_rich_install_help_as_removed() -> None:
+    stdout = StringIO()
+    stderr = StringIO()
+
+    result = run_cli_entrypoint(
+        ["rich-install", "--help"],
+        version="5.2.8",
+        script_root=Path("/tmp/ccb"),
+        cwd=Path("/tmp/project"),
+        stdout=stdout,
+        stderr=stderr,
+    )
+
+    assert result == 2
+    assert stdout.getvalue() == ""
+    assert "`ccb rich-install` has been removed" in stderr.getvalue()
+    assert "ccb update rich" in stderr.getvalue()
 
 
 def test_run_cli_entrypoint_prints_kill_help() -> None:

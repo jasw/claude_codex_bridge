@@ -40,6 +40,14 @@ def _delay(provider: str) -> float:
     return 0.0
 
 
+def _mode(provider: str) -> str:
+    for key in (f"{provider.upper()}_STUB_MODE", "NATIVE_CLI_STUB_MODE", "STUB_MODE"):
+        raw = os.environ.get(key)
+        if raw:
+            return raw.strip().lower()
+    return ""
+
+
 def _project_hash(path: Path) -> str:
     try:
         normalized = str(path.expanduser().absolute())
@@ -587,6 +595,183 @@ def _handle_mimo_run_cli(argv: list[str], delay_s: float) -> int:
     return 0
 
 
+def _native_cli_prompt(provider: str, argv: list[str]) -> str | None:
+    if provider == "mimo":
+        return _mimo_run_prompt(argv)
+    if provider == "qwen" and "--bare" in argv:
+        return _last_positional(argv, options_with_values={"--output-format", "--session-id", "--model"})
+    if provider == "cursor" and "--print" in argv:
+        return _last_positional(argv, options_with_values={"--output-format", "--workspace", "--model"})
+    if provider == "copilot" and "-p" in argv:
+        index = argv.index("-p")
+        return argv[index + 1] if index + 1 < len(argv) else ""
+    if provider == "crush" and "run" in argv:
+        return _last_positional(argv, options_with_values={"--data-dir", "--cwd", "--model"})
+    if provider == "kiro" and "chat" in argv and "--no-interactive" in argv:
+        return _last_positional(argv, options_with_values={"--wrap", "--model"})
+    if provider == "pi" and "--mode" in argv and "json" in argv:
+        return _last_positional(
+            argv,
+            options_with_values={
+                "--api-key",
+                "--append-system-prompt",
+                "--exclude-tools",
+                "--extension",
+                "--model",
+                "--models",
+                "--mode",
+                "--name",
+                "--provider",
+                "--session",
+                "--session-dir",
+                "--skill",
+                "--system-prompt",
+                "--theme",
+                "--thinking",
+                "--tools",
+            },
+        )
+    return None
+
+
+def _last_positional(argv: list[str], *, options_with_values: set[str]) -> str:
+    positional: list[str] = []
+    index = 0
+    while index < len(argv):
+        token = argv[index]
+        if token in options_with_values:
+            index += 2
+            continue
+        if token.startswith("-"):
+            index += 1
+            continue
+        positional.append(token)
+        index += 1
+    return positional[-1] if positional else ""
+
+
+def _handle_native_cli_run(provider: str, argv: list[str], delay_s: float) -> int:
+    prompt = _native_cli_prompt(provider, argv) or ""
+    req_match = REQ_ID_RE.search(prompt)
+    req_id = req_match.group(1).strip() if req_match else f"job_{provider}_run"
+    mode = _mode(provider)
+    if delay_s:
+        time.sleep(delay_s)
+    if mode in {"permission", "denied", "error"}:
+        print(f"{provider} permission denied for {req_id}", file=sys.stderr, flush=True)
+        return 13
+    if mode == "timeout":
+        time.sleep(float(os.environ.get("STUB_TIMEOUT_SLEEP", "5")))
+        return 0
+    reply = "" if mode == "empty" else f"stub reply for {req_id}"
+    if provider == "pi":
+        print(
+            json.dumps(
+                {
+                    "type": "session",
+                    "version": 3,
+                    "id": f"ses-pi-{req_id}",
+                    "timestamp": _now_iso(),
+                    "cwd": os.getcwd(),
+                },
+                ensure_ascii=True,
+            ),
+            flush=True,
+        )
+        if mode in {"tool", "tool_then_final"}:
+            print(
+                json.dumps(
+                    {
+                        "type": "tool_execution_start",
+                        "toolCallId": f"tool-{req_id}",
+                        "toolName": "stub_tool",
+                        "args": {},
+                    },
+                    ensure_ascii=True,
+                ),
+                flush=True,
+            )
+        if reply:
+            print(
+                json.dumps(
+                    {
+                        "type": "message_update",
+                        "message": {
+                            "id": f"msg-{req_id}",
+                            "role": "assistant",
+                            "content": [{"type": "text", "text": reply}],
+                        },
+                        "assistantMessageEvent": {"type": "text_delta", "delta": reply},
+                    },
+                    ensure_ascii=True,
+                ),
+                flush=True,
+            )
+        print(
+            json.dumps(
+                {
+                    "type": "turn_end",
+                    "message": {
+                        "id": f"msg-{req_id}",
+                        "role": "assistant",
+                        "content": ([{"type": "text", "text": reply}] if reply else []),
+                    },
+                    "toolResults": [],
+                    "timestamp": _now_iso(),
+                },
+                ensure_ascii=True,
+            ),
+            flush=True,
+        )
+        print(
+            json.dumps(
+                {
+                    "type": "agent_end",
+                    "messages": [
+                        {
+                            "id": f"msg-{req_id}",
+                            "role": "assistant",
+                            "content": ([{"type": "text", "text": reply}] if reply else []),
+                        }
+                    ],
+                },
+                ensure_ascii=True,
+            ),
+            flush=True,
+        )
+        return 0
+    if provider in {"crush", "kiro"}:
+        if reply:
+            print(reply, flush=True)
+        return 0
+    if mode in {"tool", "tool_then_final"}:
+        print(
+            json.dumps(
+                {
+                    "type": "tool_call",
+                    "role": "assistant",
+                    "request_id": req_id,
+                    "name": "stub_tool",
+                    "status": "tool_calls",
+                },
+                ensure_ascii=True,
+            ),
+            flush=True,
+        )
+    payload = {
+        "type": "result",
+        "role": "assistant",
+        "request_id": req_id,
+        "session_id": f"ses-{provider}-{req_id}",
+        "finish_reason": "stop",
+        "completed_at": _now_iso(),
+    }
+    if reply:
+        payload["text"] = reply
+    print(json.dumps(payload, ensure_ascii=True), flush=True)
+    return 0
+
+
 def _droid_sessions_root() -> Path:
     root = (os.environ.get("DROID_SESSIONS_ROOT") or os.environ.get("FACTORY_SESSIONS_ROOT") or "").strip()
     if root:
@@ -754,6 +939,10 @@ def main(argv: list[str]) -> int:
         "copilot",
         "codebuddy",
         "qwen",
+        "cursor",
+        "crush",
+        "kiro",
+        "pi",
     ):
         print(f"[stub] unknown provider: {provider}", file=sys.stderr)
         return 2
@@ -762,6 +951,8 @@ def main(argv: list[str]) -> int:
 
     if provider == "mimo" and _mimo_run_prompt(argv[1:]) is not None:
         return _handle_mimo_run_cli(argv[1:], delay_s)
+    if provider in {"qwen", "cursor", "copilot", "crush", "kiro", "pi"} and _native_cli_prompt(provider, argv[1:]) is not None:
+        return _handle_native_cli_run(provider, argv[1:], delay_s)
 
     # Provider-specific initialization.
     gemini_messages: list[dict] = []

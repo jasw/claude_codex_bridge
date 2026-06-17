@@ -298,6 +298,7 @@ Managed provider startup mutation rules:
 - provider bootstrap config needed for managed launches must live under `.ccb/agents/<agent>/provider-state/<provider>/` or an explicit validated provider-profile runtime home
 - managed OpenCode startup writes `.ccb/agents/<agent>/provider-state/opencode/opencode.json` as a generated `OPENCODE_CONFIG` file; it reads and merges project `opencode.json` without modifying that project file, uses project-relative memory instructions through `.ccb/runtime/memory/<agent>.md`, uses project-relative inherited ask skill instructions through `.ccb/runtime/skills/<agent>/opencode/ask.md`, and disables OpenCode autoupdate for managed panes so startup and job delivery cannot be blocked by an interactive update prompt
 - managed MiMo startup writes `.ccb/agents/<agent>/provider-state/mimo/mimocode.json` as a generated `MIMOCODE_CONFIG` file, uses per-agent `MIMOCODE_HOME` under `.ccb/agents/<agent>/provider-state/mimo/home`, uses project-relative memory instructions through `.ccb/runtime/memory/<agent>.md`, uses project-relative inherited ask skill instructions through `.ccb/runtime/skills/<agent>/mimo/ask.md`, and disables MiMo autoupdate/analysis in managed panes
+- managed Qwen, Cursor, Copilot, Crush, Kiro, and Pi startup uses the shared native CLI launcher shape: provider state under `.ccb/agents/<agent>/provider-state/<provider>/`, session payloads that record `<provider>_state_dir`, `<provider>_home`, and `<provider>_data_dir`, and start-command overrides through `QWEN_START_CMD`, `CURSOR_START_CMD`, `COPILOT_START_CMD`, `CRUSH_START_CMD`, `KIRO_START_CMD`, and `PI_START_CMD`; per-job ask completion is detected from provider-native subprocess output rather than model-printed `CCB_DONE`
 - agent workspaces may still be created or reconciled as workspace mounts, but provider configuration/trust state must remain inside the managed provider boundary rather than the project worktree
 - a configured `git-worktree` workspace requires the project root to be a git repository; startup must fail rather than silently copying a non-git project tree
 - the project control plane (`ccb`, keeper, `ccbd`) must not inherit provider-runtime session identity or managed-home variables from the caller shell:
@@ -434,10 +435,10 @@ Foreground command split:
     - the foreground attach RPC budget is allowed to match the stable operational client budget, while daemon config/probe checks must remain fast-fail
     - the foreground attach target-ready budget must remain bounded by the startup transaction budget so namespace/UI lag does not redefine backend startup authority
   - once the tmux client is observed attached, `ccb` should issue a best-effort tmux client refresh so the first attached frame does not depend on a manual user redraw
-  - if the foreground tmux client later exits and the authoritative project
-    session no longer exists on the project-owned socket, `ccb` must best-effort
-    request project stop-all before returning so `[server exited]` cannot leave
-    an apparently active backend behind
+  - once foreground attach has been established, later foreground client exit,
+    detach, terminal close, or transport loss must not rewrite project
+    lifecycle authority or request shutdown; only explicit `ccb kill` or
+    backend-owned severe-loss recovery may transition the project toward stop
   - in a non-interactive terminal, reports the start transaction without attaching to tmux
   - startup success and foreground attach success are distinct outcomes; foreground attach failure must not rewrite a successful startup report as failed
   - foreground attach errors must state whether `ccbd` failed to answer the attach ping or whether `ccbd` was responsive but the project namespace was not attachable
@@ -484,7 +485,8 @@ Project namespace compatibility:
 - for a fresh namespace, the `cmd` pane bootstrap happens only after layout finalization and must replace that silent placeholder in place
 - project-namespace bootstrap must treat tmux server warmup and tmux server-policy persistence as separate steps:
   - `prepare_server` warms the server boundary only
-  - CCB-managed tmux policy that may require a live server/session, such as `destroy-unattached off`, `mouse on`, `history-limit 50000`, `set-clipboard on`, `mode-keys vi`, vi copy-mode bindings, and Vim-style pane focus/resize bindings, must be applied only after the authoritative project session exists
+  - CCB-managed tmux policy that may require a live server/session, such as `destroy-unattached off`, `mouse on`, `history-limit 50000`, `set-clipboard on`, `allow-passthrough on`, `mode-keys vi`, vi copy-mode bindings, and Vim-style pane focus/resize bindings, must be applied only after the authoritative project session exists
+  - tmux environment synchronization must preserve terminal/media capability signals including `TERM`, `TERM_PROGRAM`, `TERM_PROGRAM_VERSION`, WezTerm/Kitty image-protocol identifiers, and CCB rich-workbench variables such as `CCB_WORKBENCH_TERMINAL_PROGRAM`, so CCB-owned tool panes can make the same rich-media decision as the foreground launcher
 - project-owned pane mutation commands, including `respawn-pane` used by `cmd` bootstrap and pane-backed runtime launch/relaunch, must use the same shared tmux ready-retry budget as namespace create/reflow rather than a separate shorter timeout
 - namespace session liveness on the project-owned tmux socket must treat both `can't find session` and `no server running on <project socket>` as "namespace absent" for create/recreate decisions; startup must not fail that path as a generic tmux inspect error
 - startup must not rely on "real shell first, respawn later" behavior for the `cmd` pane, because that leaves stale prompt residue and can surface zsh no-newline `%` markers
@@ -624,6 +626,12 @@ Target architecture:
 - config-check or live-ping timeout against a nominally mounted daemon is degraded observation only unless lifecycle state or ownership proof explicitly marks the generation failed
 - keeper config-check and graceful-shutdown probes must use the shared short `rpc_probe_timeout_s`; they must not use private shorter literals that make mounted generations look failed during normal startup load
 - if takeover does occur, any superseded daemon that wakes up again must fail its next lease refresh and exit rather than continuing to serve against stale authority
+- keeper restart is a keepalive mechanism, not an unbounded crash-loop generator:
+  - resource-pressure startup failures such as fork/process exhaustion, memory exhaustion, or file-descriptor exhaustion must suppress automatic restart immediately
+  - repeated `ccbd` startup transaction failures must suppress automatic restart after a bounded attempt count
+  - suppression must record lifecycle `phase=failed`, `desired_state=stopped`, and a `last_failure_reason` prefixed with `keeper_restart_suppressed`
+  - the keeper process must then exit instead of polling forever; a later explicit user `ccb` command may clear shutdown intent, express `desired_state=running`, and start a fresh keeper
+  - suppression must not apply to normal mounted-daemon observation failures where the generation is still live and heartbeat-fresh; those remain degraded observations, not replacement authority
 
 If keeper is absent, the system can only provide "restart on next `ccb` command", which is weaker than the target contract.
 
@@ -863,6 +871,11 @@ Minimum content:
 - `restart_count`
 - optional `last_restart_at`
 - optional `last_failure_reason`
+
+When automatic daemon restart is suppressed, `state` must become `failed` and
+`last_failure_reason` must use the `keeper_restart_suppressed:*` prefix. This is
+keeper keepalive state only; backend authority remains in lifecycle and lease
+records.
 
 ### 7.7 Shutdown Intent
 

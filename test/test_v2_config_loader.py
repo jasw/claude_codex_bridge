@@ -21,12 +21,26 @@ from agents.config_loader import (
     load_project_config,
     render_project_config_text,
 )
+import runtime_env.source_home as source_home_module
 from agents.models import AgentApiSpec, PermissionMode, QueuePolicy, RestoreMode, RuntimeMode, WorkspaceMode
 
 
 def _write(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding='utf-8')
+
+
+def _write_installed_role(store_root: Path, role_id: str, *, default_agent_name: str = 'mother') -> None:
+    role_root = store_root / 'installed' / role_id / 'current'
+    _write(
+        role_root / 'role.toml',
+        f'''id = "{role_id}"
+version = "0.1.0"
+
+[identity]
+default_agent_name = "{default_agent_name}"
+''',
+    )
 
 
 def test_load_valid_project_config(tmp_path: Path) -> None:
@@ -50,6 +64,93 @@ def test_load_valid_project_config(tmp_path: Path) -> None:
     assert result.config.windows[0].agent_names == ('agent1',)
     assert result.config.maintenance_heartbeat.enabled is False
     assert result.config.maintenance_heartbeat.assessor == 'ccb_self'
+
+
+def test_load_project_config_resolves_role_store_from_account_home_inside_provider_home(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = tmp_path / 'repo-provider-home-role-store'
+    config_path = project_root / '.ccb' / 'ccb.config'
+    _write(
+        config_path,
+        '''
+version = 2
+entry_window = "main"
+
+[windows]
+main = "agentroles.mother:codex"
+''',
+    )
+    account_home = tmp_path / 'account-home'
+    provider_home = (
+        project_root
+        / '.ccb'
+        / 'agents'
+        / 'agent1'
+        / 'provider-state'
+        / 'codex'
+        / 'home'
+    )
+    _write_installed_role(account_home / '.roles', 'agentroles.mother', default_agent_name='mother')
+    monkeypatch.setenv('HOME', str(provider_home))
+    monkeypatch.delenv('AGENT_ROLES_STORE', raising=False)
+    monkeypatch.delenv('CCB_SOURCE_HOME', raising=False)
+    if source_home_module.pwd is not None:
+        monkeypatch.setattr(
+            source_home_module.pwd,
+            'getpwuid',
+            lambda _uid: type('PwdEntry', (), {'pw_dir': str(account_home)})(),
+        )
+
+    loaded = load_project_config(project_root).config
+
+    assert loaded.agents['mother'].role == 'agentroles.mother'
+    assert loaded.windows[0].layout_spec == 'mother:codex'
+
+
+def test_load_project_config_role_missing_reports_resolved_store(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = tmp_path / 'repo-provider-home-missing-role'
+    config_path = project_root / '.ccb' / 'ccb.config'
+    _write(
+        config_path,
+        '''
+version = 2
+entry_window = "main"
+
+[windows]
+main = "agentroles.mother:codex"
+''',
+    )
+    account_home = tmp_path / 'account-home'
+    provider_home = (
+        project_root
+        / '.ccb'
+        / 'agents'
+        / 'agent1'
+        / 'provider-state'
+        / 'codex'
+        / 'home'
+    )
+    monkeypatch.setenv('HOME', str(provider_home))
+    monkeypatch.delenv('AGENT_ROLES_STORE', raising=False)
+    monkeypatch.delenv('CCB_SOURCE_HOME', raising=False)
+    if source_home_module.pwd is not None:
+        monkeypatch.setattr(
+            source_home_module.pwd,
+            'getpwuid',
+            lambda _uid: type('PwdEntry', (), {'pw_dir': str(account_home)})(),
+        )
+
+    with pytest.raises(ConfigValidationError) as exc_info:
+        load_project_config(project_root)
+
+    message = str(exc_info.value)
+    assert 'role agentroles.mother is not installed in role store' in message
+    assert str(account_home / '.roles' / 'installed') in message
 
 
 def test_load_project_config_accepts_kimi_and_deepseek_providers(tmp_path: Path) -> None:
@@ -177,9 +278,8 @@ def test_load_project_config_uses_builtin_default_when_project_config_is_missing
     assert config.cmd_enabled is False
     assert config.windows_explicit is True
     assert config.entry_window == 'main'
-    assert [window.name for window in config.windows] == ['main']
-    assert [tool.name for tool in config.tool_windows] == ['neovim']
-    assert config.tool_windows[0].command == 'ccb-nvim'
+    assert [window.name for window in config.windows] == ['main', 'ccb_self']
+    assert config.tool_windows == ()
     loaded = load_project_config(project_root)
     assert loaded.source_path is None
     assert loaded.source_kind == CONFIG_SOURCE_BUILTIN_DEFAULT
@@ -188,30 +288,29 @@ def test_load_project_config_uses_builtin_default_when_project_config_is_missing
     assert loaded.config.cmd_enabled is False
     assert loaded.config.windows_explicit is True
     assert loaded.config.entry_window == 'main'
-    assert [window.name for window in loaded.config.windows] == ['main']
-    assert [tool.name for tool in loaded.config.tool_windows] == ['neovim']
-    assert loaded.config.tool_windows[0].command == 'ccb-nvim'
+    assert [window.name for window in loaded.config.windows] == ['main', 'ccb_self']
+    assert loaded.config.tool_windows == ()
     assert set(loaded.config.agents) == {'agent1', 'agent2', 'agent3', 'ccb_self'}
     assert loaded.config.agents['agent1'].provider == 'codex'
     assert loaded.config.agents['agent2'].provider == 'codex'
     assert loaded.config.agents['agent3'].provider == 'claude'
-    assert loaded.config.agents['ccb_self'].provider == 'codex'
+    assert loaded.config.agents['ccb_self'].provider == 'claude'
     assert loaded.config.agents['ccb_self'].role == 'agentroles.ccb_self'
     assert loaded.config.agents['agent1'].workspace_mode is WorkspaceMode.INPLACE
     assert loaded.config.agents['agent1'].runtime_mode is RuntimeMode.PANE_BACKED
 
 
-def test_render_default_project_config_text_includes_neovim_tool_window(tmp_path: Path) -> None:
+def test_render_default_project_config_text_omits_optional_tool_windows(tmp_path: Path) -> None:
     from agents.config_loader import render_default_project_config_text
 
     rendered = render_default_project_config_text()
 
     assert '[windows]' in rendered
-    assert 'main = "agent1:codex, agent2:codex, agent3:claude, ccb_self:codex"' in rendered
+    assert 'main = "agent1:codex, agent2:codex, agent3:claude"' in rendered
+    assert 'ccb_self = "ccb_self:claude"' in rendered
     assert '[agents.ccb_self]' in rendered
     assert 'role = "agentroles.ccb_self"' in rendered
-    assert '[tool_windows.neovim]' in rendered
-    assert 'command = "ccb-nvim"' in rendered
+    assert '[tool_windows.' not in rendered
     assert '[ui.sidebar.view]' in rendered
     assert 'agents_height = "50%"' in rendered
     assert 'comms_height = "23%"' in rendered
@@ -219,7 +318,7 @@ def test_render_default_project_config_text_includes_neovim_tool_window(tmp_path
     config_path = tmp_path / 'repo-render-default' / '.ccb' / 'ccb.config'
     _write(config_path, rendered)
     loaded = load_project_config(config_path.parents[1]).config
-    assert [tool.name for tool in loaded.tool_windows] == ['neovim']
+    assert loaded.tool_windows == ()
     assert loaded.agents['ccb_self'].role == 'agentroles.ccb_self'
 
 
@@ -1308,6 +1407,49 @@ show_in_sidebar = true
         }
     ]
     assert 'neovim' not in project_config_identity_payload(result.config)['known_agents']
+
+
+def test_load_project_config_supports_rich_layout_alias_without_agent_runtime(tmp_path: Path) -> None:
+    project_root = tmp_path / 'repo-rich-layout-alias'
+    config_path = project_root / '.ccb' / 'ccb.config'
+    _write(
+        config_path,
+        """version = 2
+
+[windows]
+main = "agent1:codex, rich"
+rich_page = "rich"
+""",
+    )
+
+    result = load_project_config(project_root)
+
+    assert set(result.config.agents) == {'agent1'}
+    assert result.config.default_agents == ('agent1',)
+    assert [window.name for window in result.config.windows] == ['main', 'rich_page']
+    assert result.config.windows[0].agent_names == ('agent1',)
+    assert result.config.windows[0].tool_names == ('rich',)
+    assert result.config.windows[1].agent_names == ()
+    assert result.config.windows[1].tool_names == ('rich',)
+    assert 'rich' not in result.config.agents
+    assert 'rich' not in project_config_identity_payload(result.config)['known_agents']
+    assert result.config.topology_signature_payload['windows'][0]['tools'] == ['rich']
+
+
+def test_load_project_config_rejects_rich_alias_with_provider(tmp_path: Path) -> None:
+    project_root = tmp_path / 'repo-rich-layout-invalid'
+    config_path = project_root / '.ccb' / 'ccb.config'
+    _write(
+        config_path,
+        """version = 2
+
+[windows]
+main = "agent1:codex, rich:codex"
+""",
+    )
+
+    with pytest.raises(ConfigValidationError, match="tool alias 'rich' must not declare a provider"):
+        load_project_config(project_root)
 
 
 def test_load_project_config_tool_windows_affect_topology_identity(tmp_path: Path) -> None:

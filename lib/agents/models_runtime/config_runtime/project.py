@@ -44,11 +44,7 @@ class ProjectConfig:
             raise AgentValidationError(f'version must be {SCHEMA_VERSION}')
         explicit_windows = bool(self.windows_explicit) if self.windows_explicit is not None else self.windows is not None
         normalized_agents = normalize_agent_specs(self.agents, allow_empty=explicit_windows)
-        defaults = normalize_default_agents(
-            self.default_agents,
-            normalized_agents=normalized_agents,
-            allow_empty=explicit_windows,
-        )
+        defaults = normalize_default_agents(self.default_agents, normalized_agents=normalized_agents, allow_empty=explicit_windows)
         if explicit_windows:
             windows_input = tuple(self.windows or ())
             rendered_layout = str(self.layout_spec or (windows_input[0].layout_spec if windows_input else '')).strip()

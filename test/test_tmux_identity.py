@@ -30,5 +30,19 @@ def test_render_tmux_session_theme_uses_terminal_profile_overrides() -> None:
         environ={'TERM_PROGRAM': 'Apple_Terminal'},
     )
     assert rendered.profile_name == 'contrast'
+    assert rendered.window_options['pane-border-lines'] == 'heavy'
     assert rendered.window_options['pane-border-style'] == 'fg=#565f89,bold'
     assert rendered.window_options['window-style'] == 'bg=#181825'
+
+
+def test_render_tmux_session_theme_uses_single_status_line() -> None:
+    rendered = render_tmux_session_theme(
+        ccb_version='9.9.9',
+        status_script=None,
+        git_script=None,
+        environ={},
+    )
+
+    assert rendered.session_options['status'] == 'on'
+    assert 'status-format[1]' not in rendered.session_options
+    assert 'Copy: MouseDrag' not in ''.join(rendered.session_options.values())

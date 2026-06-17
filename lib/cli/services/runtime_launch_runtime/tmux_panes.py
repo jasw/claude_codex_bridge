@@ -7,6 +7,9 @@ from pathlib import Path
 from terminal_runtime.placeholders import pane_placeholder_argv
 
 _TMUX_ENVIRONMENT_KEYS = (
+    'TERM',
+    'TERM_PROGRAM',
+    'TERM_PROGRAM_VERSION',
     'DISPLAY',
     'WAYLAND_DISPLAY',
     'XDG_RUNTIME_DIR',
@@ -14,7 +17,20 @@ _TMUX_ENVIRONMENT_KEYS = (
     'WSL_INTEROP',
     'SSH_AUTH_SOCK',
     'SSH_CONNECTION',
+    'KITTY_WINDOW_ID',
+    'WEZTERM_EXECUTABLE',
+    'WEZTERM_PANE',
+    'WEZTERM_UNIX_SOCKET',
+    'CCB_WORKBENCH_PROFILE',
+    'CCB_WORKBENCH_FORCE_RICH',
+    'CCB_WORKBENCH_ROOT',
+    'CCB_WORKBENCH_TERMINAL_PROGRAM',
+    'CCB_WORKBENCH_TERMINAL_PROGRAM_VERSION',
+    'CCB_WORKBENCH_YAZI_SAFE_CONFIG',
+    'CCB_WORKBENCH_YAZI_RICH_CONFIG',
+    'AGENT_ROLES_STORE',
 )
+_PREPARED_DETACHED_TMUX_SERVER_KEYS: set[tuple[object, ...]] = set()
 _CLIPBOARD_PIPE_COMMAND = (
     "sh -lc '"
     "tmp=$(mktemp \"${TMPDIR:-/tmp}/ccb-clipboard.XXXXXX\") || exit 0; "
@@ -122,41 +138,61 @@ def detached_pane(
 
 
 def prepare_detached_tmux_server(backend) -> None:
-    best_effort_tmux_run(backend, ['start-server'])
-    best_effort_tmux_run(backend, ['set-option', '-g', 'destroy-unattached', 'off'])
-    best_effort_tmux_run(backend, ['set-option', '-g', 'mouse', 'on'])
-    best_effort_tmux_run(backend, ['set-option', '-g', 'history-limit', '50000'])
-    best_effort_tmux_run(backend, ['set-option', '-g', 'set-clipboard', 'on'])
-    best_effort_tmux_run(backend, ['set-option', '-g', 'focus-events', 'on'])
-    best_effort_tmux_run(backend, ['set-option', '-g', 'escape-time', '10'])
-    _best_effort_tmux_environment_policy(backend)
-    best_effort_tmux_run(backend, ['set-window-option', '-g', 'mode-keys', 'vi'])
-    best_effort_tmux_run(backend, ['bind-key', '-T', 'copy-mode-vi', 'v', 'send-keys', '-X', 'begin-selection'])
-    best_effort_tmux_run(backend, ['bind-key', '-T', 'copy-mode-vi', 'C-v', 'send-keys', '-X', 'rectangle-toggle'])
+    cache_key = _detached_tmux_server_prepare_key(backend)
+    if cache_key in _PREPARED_DETACHED_TMUX_SERVER_KEYS:
+        return
+
+    prepared = True
+    prepared = best_effort_tmux_run(backend, ['start-server']) and prepared
+    prepared = best_effort_tmux_run(backend, ['set-option', '-g', 'destroy-unattached', 'off']) and prepared
+    prepared = best_effort_tmux_run(backend, ['set-option', '-g', 'mouse', 'on']) and prepared
+    prepared = best_effort_tmux_run(backend, ['set-option', '-g', 'history-limit', '50000']) and prepared
+    prepared = best_effort_tmux_run(backend, ['set-option', '-g', 'set-clipboard', 'on']) and prepared
+    prepared = best_effort_tmux_run(backend, ['set-option', '-g', 'focus-events', 'on']) and prepared
+    prepared = best_effort_tmux_run(backend, ['set-option', '-g', 'escape-time', '10']) and prepared
+    prepared = best_effort_tmux_run(backend, ['set-option', '-g', 'allow-passthrough', 'on']) and prepared
+    prepared = _best_effort_tmux_environment_policy(backend) and prepared
+    prepared = best_effort_tmux_run(backend, ['set-window-option', '-g', 'mode-keys', 'vi']) and prepared
+    prepared = best_effort_tmux_run(backend, ['bind-key', '-T', 'copy-mode-vi', 'v', 'send-keys', '-X', 'begin-selection']) and prepared
+    prepared = best_effort_tmux_run(backend, ['bind-key', '-T', 'copy-mode-vi', 'C-v', 'send-keys', '-X', 'rectangle-toggle']) and prepared
     for key in ('y', 'Enter', 'MouseDragEnd1Pane'):
-        best_effort_tmux_run(
+        prepared = best_effort_tmux_run(
             backend,
             ['bind-key', '-T', 'copy-mode-vi', key, 'send-keys', '-X', 'copy-pipe-and-cancel', _CLIPBOARD_PIPE_COMMAND],
-        )
+        ) and prepared
     for key, direction in (('h', '-L'), ('j', '-D'), ('k', '-U'), ('l', '-R')):
-        best_effort_tmux_run(backend, ['bind-key', key, 'select-pane', direction])
+        prepared = best_effort_tmux_run(backend, ['bind-key', key, 'select-pane', direction]) and prepared
     for key, direction in (('H', '-L'), ('J', '-D'), ('K', '-U'), ('L', '-R')):
-        best_effort_tmux_run(backend, ['bind-key', '-r', key, 'resize-pane', direction, '5'])
+        prepared = best_effort_tmux_run(backend, ['bind-key', '-r', key, 'resize-pane', direction, '5']) and prepared
 
 
-def best_effort_tmux_run(backend, argv: list[str]) -> None:
+    if prepared:
+        _PREPARED_DETACHED_TMUX_SERVER_KEYS.add(cache_key)
+
+
+def _detached_tmux_server_prepare_key(backend) -> tuple[object, ...]:
+    socket_path = str(getattr(backend, 'socket_path', '') or '').strip()
+    socket_name = str(getattr(backend, 'socket_name', '') or '').strip()
+    socket_key = ('path', socket_path) if socket_path else ('name', socket_name or '<default>')
+    env_key = tuple((key, os.environ.get(key) or '') for key in _TMUX_ENVIRONMENT_KEYS)
+    return (*socket_key, env_key)
+
+
+def best_effort_tmux_run(backend, argv: list[str]) -> bool:
     try:
-        backend._tmux_run(argv, check=False)  # type: ignore[attr-defined]
+        result = backend._tmux_run(argv, check=False)  # type: ignore[attr-defined]
     except Exception:
-        pass
+        return False
+    return int(getattr(result, 'returncode', 0) or 0) == 0
 
 
-def _best_effort_tmux_environment_policy(backend) -> None:
-    best_effort_tmux_run(backend, ['set-option', '-g', 'update-environment', ' '.join(_TMUX_ENVIRONMENT_KEYS)])
+def _best_effort_tmux_environment_policy(backend) -> bool:
+    prepared = best_effort_tmux_run(backend, ['set-option', '-g', 'update-environment', ' '.join(_TMUX_ENVIRONMENT_KEYS)])
     for key in _TMUX_ENVIRONMENT_KEYS:
         value = os.environ.get(key)
         if value:
-            best_effort_tmux_run(backend, ['set-environment', '-g', key, value])
+            prepared = best_effort_tmux_run(backend, ['set-environment', '-g', key, value]) and prepared
+    return prepared
 
 
 def create_detached_tmux_pane(backend, *, cmd: str, cwd: Path, session_name: str) -> str:

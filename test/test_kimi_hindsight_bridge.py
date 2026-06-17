@@ -235,3 +235,39 @@ def test_kimi_can_render_visible_hindsight_hook_context(monkeypatch, tmp_path: P
     assert "hook context:   <hindsight_memories>" in recall.context
     assert "visible memory" in recall.context
     assert recall.diagnostics["show_hook_context"] is True
+
+
+def test_kimi_hindsight_accepts_api_key_or_token_env(monkeypatch, tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    config_dir = home / ".hindsight"
+    config_dir.mkdir(parents=True)
+    (config_dir / "kimi.json").write_text(
+        json.dumps(
+            {
+                "hindsightApiUrl": "http://127.0.0.1:18888",
+                "bankId": "local-ai-memory",
+            }
+        ),
+        encoding="utf-8",
+    )
+    seen_tokens: list[str] = []
+
+    def request_stub(method: str, path: str, payload: object, **kwargs) -> object:
+        del method, path, payload
+        config = kwargs["config"]
+        seen_tokens.append(config.api_token)
+        return {"results": [{"content": "token memory"}]}
+
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("HINDSIGHT_API_KEY", "key-token")
+    monkeypatch.setattr(kimi_hindsight, "_request", request_stub)
+
+    recall = kimi_hindsight.recall_hindsight_memories(
+        "please use memory",
+        session_id="session-1",
+        agent_name="kimi1",
+        workspace_path="/repo",
+    )
+
+    assert "token memory" in recall.context
+    assert seen_tokens == ["key-token"]

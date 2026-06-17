@@ -560,7 +560,9 @@ def _materialize_auth_file(source: Path, target: Path, *, profile, authority: Co
 
 
 def _sync_auth_file(source: Path, target: Path, *, profile) -> None:
-    if not _inherits_auth(profile) or not source.is_file():
+    if not _inherits_auth(profile):
+        return
+    if not source.is_file():
         target.unlink(missing_ok=True)
         return
     _sync_file(source, target)
@@ -781,7 +783,7 @@ def _codex_activity_hook_command(
     runtime_dir: Path,
     workspace_path: Path,
 ) -> str:
-    script_path = Path(__file__).resolve().parents[2] / 'bin' / 'ccb-provider-activity-hook'
+    script_path = Path(__file__).resolve().parents[2] / 'bin' / 'ccb-provider-activity-hook.py'
     parts = [
         sys.executable,
         str(script_path),

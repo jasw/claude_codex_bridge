@@ -4,12 +4,17 @@ Date: 2026-06-13
 
 ## Current Phase
 
-Native completion pivot is implemented in source. Kimi,
-DeepSeek/DeepCode, AGY, and MiMo now use provider-native session/event logs or
-structured result streams for completion detection instead of asking the model
-to print `CCB_DONE`. Kimi and OpenCode inherited ask skill injection landed in
-commit `a4395c2`. MiMo inherited ask instruction injection and `mimo run
---format json` execution landed in commit `fce17c3`.
+Native completion pivot is implemented in source and `v7.5.0` has been
+published. Kimi, DeepSeek/DeepCode, AGY, and MiMo now use provider-native
+session/event logs or structured result streams for completion detection
+instead of asking the model to print `CCB_DONE`. Kimi and OpenCode inherited
+ask skill injection landed in commit `a4395c2`. MiMo inherited ask instruction
+injection and `mimo run --format json` execution landed in commit `fce17c3`.
+
+The active phase is next-wave provider validation for Qwen Code, GitHub
+Copilot CLI, Cursor Agent, Kiro CLI, Charm Crush, and Pi. Source implementation has
+landed for the minimal built-in provider path, and the stub-backed
+source-runtime smoke plus real CLI version smoke have passed.
 
 ## Last Landed
 
@@ -52,19 +57,46 @@ commit `a4395c2`. MiMo inherited ask instruction injection and `mimo run
   - Completion parser handles MiMo 0.1.0 JSON events where reply text is in
     `part.text` and stop reason is in `part.reason` under a
     `step_finish` event.
+- Next-wave native CLI provider implementation:
+  - Optional provider ids `qwen`, `cursor`, `copilot`, `crush`, `kiro`, and
+    `pi`
+    are registered through provider-core manifests, execution adapters,
+    session bindings, runtime launchers, runtime specs, command defaults, and
+    session filenames.
+  - Shared native CLI subprocess support now handles prompt wrapping without
+    `CCB_DONE`, stdout/stderr artifacts, JSONL/stream-json result parsing,
+    stdout-on-exit providers, empty reply diagnostics, nonzero exit failures,
+    and tool/intermediate events that do not terminalize early.
+  - Default commands and overrides:
+    `qwen`/`QWEN_START_CMD`, `agent`/`CURSOR_START_CMD`,
+    `copilot`/`COPILOT_START_CMD`, `crush`/`CRUSH_START_CMD`,
+    `kiro-cli`/`KIRO_START_CMD`, and `pi`/`PI_START_CMD`.
+  - Visible panes use the shared simple-tmux launcher while CCB ask execution
+    uses per-job subprocesses: structured JSON for Qwen/Cursor/Copilot/Pi and
+    process exit plus stdout for Crush/Kiro.
+  - Talk1 review found one release-blocking gap: Crush ask execution used
+    `--data-dir`, but the visible pane did not. The shared native CLI launcher
+    now supports prepared-state-derived visible arguments, and the Crush visible
+    pane starts with `--data-dir <provider-state>/data`.
+  - Storage classification now recognizes Qwen, Cursor, Copilot, Crush, Kiro,
+    and Pi provider-state contents as native CLI provider-owned session/cache
+    or projected skill evidence instead of leaving them as unknown paths.
 
 ## Active TODO
 
-1. Publish the 7.5 patch release with MiMo in the public provider strip.
-2. Decide whether to keep the smoke/real test projects as reusable validation
+1. Decide whether to keep the smoke/real test projects as reusable validation
    fixtures.
+2. Decide whether provider-specific auth diagnostics should land before the
+   next public release or remain a follow-up.
+3. Decide whether real authenticated blackbox asks for all six next-wave CLIs
+   should be required before a public release or tracked as manual follow-up.
 
 ## Blocked By
 
-None for the current slice. Real provider API execution may require user-owned
-Kimi/DeepSeek/MiMo credentials; CCB integration can still be validated with
-provider command templates, installed CLI help/version checks, and the real
-MiMo run test already recorded below.
+None for design. Real provider API execution may require user-owned
+Kimi/DeepSeek/MiMo/Qwen/Copilot/Cursor/Kiro/Crush/Pi credentials; CCB integration
+can still be validated with provider command templates, installed CLI
+help/version checks, and source-backed parser tests.
 
 ## Last Verified
 
@@ -192,6 +224,132 @@ Current native pivot verification:
     test/test_native_cli_providers.py`: passed.
   - `python -m pytest -q test/test_native_cli_providers.py`: `5 passed`.
 
+Next-wave provider source verification:
+
+- Landing history:
+  [history/next-wave-provider-landing-2026-06-13.md](history/next-wave-provider-landing-2026-06-13.md)
+- Compile check:
+  `python -m py_compile lib/provider_backends/native_cli_support/*.py
+  lib/provider_backends/qwen/*.py lib/provider_backends/copilot/*.py
+  lib/provider_backends/cursor/*.py lib/provider_backends/crush/*.py
+  lib/provider_backends/kiro/*.py lib/provider_core/runtime_specs.py
+  lib/provider_core/runtime_shared.py lib/provider_core/pathing.py
+  lib/provider_core/registry_runtime/builtin_backends.py
+  test/stubs/provider_stub.py`: passed.
+- Focused source tests:
+  `pytest -q test/test_native_cli_provider_execution.py
+  test/test_v2_provider_catalog.py test/test_v2_provider_core_registry.py
+  test/test_v2_execution_registry.py test/test_runtime_specs.py
+  test/test_v2_runtime_launch.py::test_provider_start_parts_respect_env_override
+  test/test_v2_runtime_launch.py::test_provider_start_parts_fall_back_to_default_binary
+  test/test_v2_runtime_launch.py::test_native_cli_launcher_builds_provider_state_payload`:
+  `35 passed`.
+- Native CLI adapter timeout regression:
+  `pytest -q test/test_native_cli_provider_execution.py`: `23 passed`.
+  This covers completed, empty reply, nonzero exit, run timeout, and structured
+  tool-event intermediate behavior for `qwen`, `cursor`, `copilot`, `crush`,
+  and `kiro`.
+- Control-plane env regression:
+  `pytest -q test/test_runtime_env_control_plane.py
+  test/test_v2_runtime_launch.py::test_provider_start_parts_respect_env_override
+  test/test_v2_runtime_launch.py::test_provider_start_parts_fall_back_to_default_binary`:
+  `9 passed`.
+- Wider touched-provider suite:
+  `pytest -q test/test_native_cli_provider_execution.py
+  test/test_v2_provider_catalog.py test/test_v2_provider_core_registry.py
+  test/test_v2_execution_registry.py test/test_runtime_specs.py
+  test/test_v2_config_loader.py test/test_v2_runtime_launch.py
+  test/test_storage_classification.py test/test_repo_hygiene.py`:
+  `238 passed`.
+- Talk1 blocker fix verification:
+  `pytest -q
+  test/test_v2_runtime_launch.py::test_native_cli_launcher_builds_provider_state_payload
+  test/test_storage_classification.py`: `14 passed`.
+- Native execution/control-plane regression after the blocker fix:
+  `pytest -q test/test_native_cli_provider_execution.py
+  test/test_runtime_env_control_plane.py`: `30 passed`.
+- Compile check after the blocker fix:
+  `python -m py_compile lib/provider_backends/native_cli_support/launcher.py
+  lib/provider_backends/crush/launcher.py
+  lib/storage_classification/provider_home.py
+  test/test_v2_runtime_launch.py test/test_storage_classification.py`: passed.
+- Source-runtime smoke from
+  `/home/bfly/yunwei/test_ccb2/next_wave_provider_smoke` with isolated
+  `HOME=/home/bfly/yunwei/test_ccb2/source_home` and provider `*_START_CMD`
+  overrides pointing at `test/stubs/provider_stub.py`:
+  - `ccb_test config validate`: valid, agents
+    `qwen1, cursor1, copilot1, crush1, kiro1`.
+  - `ccb_test -s`: `start_status: ok`, mounted all five providers.
+  - Initial launch exposed a control-plane env gap: ccbd filtered
+    `QWEN_START_CMD` and failed with `qwen executable not found in PATH`.
+    `runtime_env.control_plane` now explicitly passes provider
+    start-command override env vars while continuing to filter outer provider
+    home/session authority.
+  - `ccb_test ask qwen1`: job `job_1129f5da5303`, completed with
+    reason `qwen_run_stop`.
+  - `ccb_test ask cursor1`: job `job_2e2e1e2d4b9a`, completed with
+    reason `cursor_run_stop`.
+  - `ccb_test ask copilot1`: job `job_a302bc361685`, completed with
+    reason `copilot_run_stop`.
+  - `ccb_test ask crush1`: job `job_b4c402fa2231`, completed with
+    reason `crush_run_exit`.
+  - `ccb_test ask kiro1`: job `job_9ad49ec0674a`, completed with
+    reason `kiro_run_exit`.
+  - `ccb_test pend --queue --detail all`: queue depth 0, pending replies 0,
+    all five agents idle/restored.
+  - Post-review recheck confirmed `.ccb/.crush-crush1-session` start command
+    contains `--data-dir` with
+    `/home/bfly/yunwei/test_ccb2/next_wave_provider_smoke/.ccb/agents/crush1/provider-state/crush/data`.
+  - Post-review asks completed:
+    `job_4f21ddb8ba16` (`qwen_run_stop`),
+    `job_2450b6ebe7fa` (`cursor_run_stop`),
+    `job_264559b3e599` (`copilot_run_stop`),
+    `job_4217a811aebe` (`crush_run_exit`), and
+    `job_abaee56ecd84` (`kiro_run_exit`).
+  - Post-review `ccb_test pend --queue --detail all`: queue depth 0, pending
+    replies 0, all five agents idle/restored.
+  - Smoke runtime stopped with `ccb_test kill -f`.
+- Current focused verification after Pi landing:
+  `python -m pytest -q test/test_native_cli_provider_execution.py
+  test/test_runtime_env_control_plane.py test/test_v2_provider_catalog.py
+  test/test_v2_provider_core_registry.py test/test_v2_execution_registry.py
+  test/test_runtime_specs.py test/test_v2_config_loader.py
+  test/test_v2_runtime_launch.py test/test_storage_classification.py
+  test/test_repo_hygiene.py`: `238 passed`.
+  `python -m py_compile` for touched provider/core modules passed.
+  `git diff --check` passed.
+- Real CLI version smoke from
+  `/home/bfly/yunwei/test_ccb2/cli-integration-lab`:
+  - `qwen --version`: `0.18.0`.
+  - `agent --version`: `2026.06.12-19-59-36-f6aba9a`.
+  - `copilot --version`: `GitHub Copilot CLI 1.0.61`.
+  - `crush --version`: `crush version v0.76.0`.
+  - `kiro-cli --version`: `kiro-cli 2.7.0`.
+  - `pi --version`: `0.79.3`.
+- Pi add-on source-runtime smoke after adding `pi1:pi`:
+  - Installed `@earendil-works/pi-coding-agent@0.79.3` into
+    `/home/bfly/yunwei/test_ccb2/cli-integration-lab/npm-prefix`.
+  - `/home/bfly/yunwei/test_ccb2/.ccb/ccb.config` now includes `pi1:pi` in the
+    `native` window, with PATH pointing at the lab npm prefix.
+  - `/home/bfly/yunwei/test_ccb2/next_wave_provider_smoke/.ccb/ccb.config`
+    now includes `pi1:pi`.
+  - `ccb_test config validate` accepted all six smoke agents.
+  - `ccb_test -s` mounted `qwen1, cursor1, copilot1, crush1, kiro1, pi1`.
+  - `ccb_test ask pi1`: job `job_69a5905eb423`, completed with reply
+    `stub reply for job_69a5905eb423`.
+  - `ccb_test trace job_69a5905eb423`: reply reason `pi_run_stop`.
+  - `.ccb/.pi-pi1-session` start command contains isolated
+    `PI_CODING_AGENT_DIR`, `PI_CODING_AGENT_SESSION_DIR`,
+    `PI_SKIP_VERSION_CHECK=1`, `PI_TELEMETRY=0`, and visible
+    `--session-dir <provider-state>/sessions --no-approve`.
+  - Smoke runtime stopped with `ccb_test kill -f`.
+- Full source test gate on the current branch:
+  `pytest test/ -q -m "not provider_blackbox"`:
+  `2621 passed, 2 skipped, 21 deselected`.
+- Full compile gate:
+  `python -m compileall -q lib bin ccb`: passed.
+- `git diff --check`: passed.
+
 Ask skill injection verification:
 
 - `python -m py_compile lib/provider_backends/opencode/launcher.py
@@ -258,4 +416,26 @@ MiMo provider verification:
   test/test_opencode_execution_polling.py
   test/test_provider_execution_service_runtime.py`: `263 passed, 1 skipped`.
 - Full release-gate pytest: `2613 passed, 2 skipped`.
+
+Next-wave install/source lab:
+
+- External lab root:
+  `/home/bfly/yunwei/test_ccb2/cli-integration-lab`.
+- Installed binary checks:
+  - `qwen --version`: `0.18.0`.
+  - `copilot --version`: `GitHub Copilot CLI 1.0.61`.
+  - `crush --version`: `crush version v0.76.0`.
+  - `agent --version`: `2026.06.12-19-59-36-f6aba9a`.
+  - `kiro-cli --version`: `kiro-cli 2.7.0`.
+- Installed package/source checks:
+  - `@qwen-code/qwen-code` exposes bin `qwen` and requires Node `>=22.0.0`.
+  - `@github/copilot` exposes bin `copilot`.
+  - `@charmland/crush` exposes bin `crush`.
+  - Cursor Agent and Kiro CLI install from official shell installers, not npm.
+- Source/bundle locations:
+  - `/home/bfly/yunwei/test_ccb2/cli-integration-lab/src/qwen-code`.
+  - `/home/bfly/yunwei/test_ccb2/cli-integration-lab/src/copilot-cli`.
+  - `/home/bfly/yunwei/test_ccb2/cli-integration-lab/src/crush`.
+  - `/home/bfly/yunwei/test_ccb2/cli-integration-lab/src/kiro`.
+  - `/home/bfly/yunwei/test_ccb2/cli-integration-lab/home/.local/share/cursor-agent/versions/2026.06.12-19-59-36-f6aba9a`.
 - `git diff --check`: passed.

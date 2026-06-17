@@ -33,12 +33,20 @@ Date: 2026-06-04
 - Added regression coverage that catalog `current` Role Packs do not call
   update hooks, and that inherited `ccb-config` docs use `ccb.archi` only as a
   legacy alias.
+- `install.sh install` now refuses a temporary `CODEX_INSTALL_PREFIX` when
+  `CODEX_BIN_DIR` is outside the same temporary prefix or temporary HOME,
+  preventing release smoke installs from rewriting the user's real stable
+  `ccb` wrapper by accident.
 
 ## In Progress
 
 - Define no-repeat provisioning contracts for dependencies and Role Packs.
 - Define Chinese/English prompt coverage for shell installer and Python update
   paths.
+- Extend update-tarball smoke isolation beyond the shell installer gate. A
+  2026-06-15 audit found real user `ccb` pointing at
+  `/tmp/ccb-v7.2.1-install-smoke/prefix/ccb`, with multiple live daemons using
+  that temporary prefix; the direct install path is now guarded.
 
 ## Next
 
@@ -51,7 +59,11 @@ Date: 2026-06-04
    Chinese and English.
 4. Add automated tests for every scenario in
    [topics/environment-and-scenario-matrix.md](topics/environment-and-scenario-matrix.md).
-5. Add a real upgrade runbook that starts from an older released version with
+5. Add update-level temporary-prefix isolation tests for release simulations:
+   when `HOME`, `XDG_*`, `CODEX_INSTALL_PREFIX`, and `CODEX_BIN_DIR` point at a
+   disposable location, update must not mutate the real user's
+   `~/.local/bin/ccb`, shell startup files, or live project daemons.
+6. Add a real upgrade runbook that starts from an older released version with
    installed legacy `ccb.archi`, updates to the new release, and confirms no
    user-facing Role Pack error.
 

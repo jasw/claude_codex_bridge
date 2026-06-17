@@ -71,6 +71,8 @@ def default_agent_roles_source(*, refresh: bool = False) -> Path | None:
     candidates.append(Path.home() / 'yunwei' / 'agent-roles-spec')
     for candidate in candidates:
         if _looks_like_agent_roles_spec(candidate):
+            if refresh:
+                _refresh_git_agent_roles_source(candidate)
             return candidate.resolve()
     remote = _ensure_remote_agent_roles_source(refresh=refresh)
     if remote is not None:
@@ -604,10 +606,16 @@ def _ensure_remote_agent_roles_source(*, refresh: bool = False) -> Path | None:
     target = _remote_agent_roles_cache_path()
     if _looks_like_agent_roles_spec(target):
         if refresh:
-            _refresh_remote_agent_roles_source(target)
+            refreshed = _refresh_remote_agent_roles_source(target)
+            if refreshed is not None:
+                return refreshed.resolve()
         return target.resolve()
     if target.exists():
         return None
+    return _clone_or_download_remote_agent_roles_source(target)
+
+
+def _clone_or_download_remote_agent_roles_source(target: Path) -> Path | None:
     target.parent.mkdir(parents=True, exist_ok=True)
     cmd = ['git', 'clone', '--depth', '1', _remote_agent_roles_git_url(), str(target)]
     try:
@@ -667,9 +675,9 @@ def _find_extracted_agent_roles_source(root: Path) -> Path | None:
     return None
 
 
-def _refresh_remote_agent_roles_source(target: Path) -> None:
+def _refresh_git_agent_roles_source(target: Path) -> Path | None:
     if not (target / '.git').is_dir():
-        return
+        return None
     cmd = ['git', '-C', str(target), 'pull', '--ff-only']
     try:
         subprocess.run(
@@ -681,7 +689,44 @@ def _refresh_remote_agent_roles_source(target: Path) -> None:
             timeout=_remote_agent_roles_git_timeout(),
         )
     except Exception:
-        return
+        return None
+    return target.resolve() if _looks_like_agent_roles_spec(target) else None
+
+
+def _refresh_remote_agent_roles_source(target: Path) -> Path | None:
+    refreshed = _refresh_git_agent_roles_source(target)
+    if refreshed is not None:
+        return refreshed
+    return _replace_remote_agent_roles_source(target)
+
+
+def _replace_remote_agent_roles_source(target: Path) -> Path | None:
+    if (target / '.git').is_dir():
+        return target.resolve() if _looks_like_agent_roles_spec(target) else None
+    parent = target.parent
+    parent.mkdir(parents=True, exist_ok=True)
+    try:
+        with tempfile.TemporaryDirectory(prefix=f'{target.name}-refresh-', dir=str(parent)) as temp:
+            replacement = Path(temp) / target.name
+            refreshed = _clone_or_download_remote_agent_roles_source(replacement)
+            if refreshed is None or not _looks_like_agent_roles_spec(replacement):
+                return None
+            backup = parent / f'.{target.name}.previous'
+            shutil.rmtree(backup, ignore_errors=True)
+            try:
+                target.rename(backup)
+            except OSError:
+                return None
+            try:
+                shutil.move(str(replacement), str(target))
+            except Exception:
+                if not target.exists() and backup.exists():
+                    backup.rename(target)
+                return None
+            shutil.rmtree(backup, ignore_errors=True)
+            return target.resolve() if _looks_like_agent_roles_spec(target) else None
+    except Exception:
+        return None
 
 
 def _remote_agent_roles_cache_path() -> Path:

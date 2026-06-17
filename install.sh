@@ -243,11 +243,78 @@ require_non_root_execution() {
   confirm_root_install_if_needed
 }
 
+canonical_existing_parent_path() {
+  local path="$1"
+  if [[ -d "$path" ]]; then
+    (cd "$path" && pwd -P)
+    return
+  fi
+  local dir base
+  dir="$(dirname "$path")"
+  base="$(basename "$path")"
+  if [[ -d "$dir" ]]; then
+    printf '%s/%s\n' "$(cd "$dir" && pwd -P)" "$base"
+  else
+    printf '%s\n' "$path"
+  fi
+}
+
+path_is_within() {
+  local root="$1"
+  local candidate="$2"
+  [[ "$candidate" == "$root" || "$candidate" == "$root/"* ]]
+}
+
+path_is_temporary_rooted() {
+  local path="$1"
+  case "$path" in
+    /tmp|/tmp/*|/var/tmp|/var/tmp/*|/dev/shm|/dev/shm/*|/private/tmp|/private/tmp/*)
+      return 0
+      ;;
+  esac
+  local tmp_root=""
+  tmp_root="$(canonical_existing_parent_path "${TMPDIR:-/tmp}" 2>/dev/null || true)"
+  if [[ -n "$tmp_root" && ( "$path" == "$tmp_root" || "$path" == "$tmp_root/"* ) ]]; then
+    return 0
+  fi
+  return 1
+}
+
+validate_temporary_install_scope() {
+  if env_value_is_true "${CCB_ALLOW_TEMP_INSTALL_GLOBAL_BIN:-}"; then
+    return 0
+  fi
+
+  local prefix_path bin_path home_path
+  prefix_path="$(canonical_existing_parent_path "$INSTALL_PREFIX")"
+  bin_path="$(canonical_existing_parent_path "$BIN_DIR")"
+  home_path="$(canonical_existing_parent_path "$HOME")"
+
+  if ! path_is_temporary_rooted "$prefix_path"; then
+    return 0
+  fi
+  if path_is_within "$prefix_path" "$bin_path"; then
+    return 0
+  fi
+  if path_is_temporary_rooted "$home_path" && path_is_within "$home_path" "$bin_path"; then
+    return 0
+  fi
+
+  echo "ERROR: Refusing to install a temporary CODEX_INSTALL_PREFIX into an external bin directory." >&2
+  echo "   install prefix : $INSTALL_PREFIX" >&2
+  echo "   bin directory  : $BIN_DIR" >&2
+  echo "   Use an isolated CODEX_BIN_DIR under the same temp prefix/home, or set CCB_ALLOW_TEMP_INSTALL_GLOBAL_BIN=1 if intentional." >&2
+  exit 1
+}
+
 SCRIPTS_TO_LINK=(
+  bin/_ccb-python
   bin/ask
   bin/autonew
   bin/build-ccb-agent-sidebar
+  bin/build-ccb-rs-helper
   bin/ccb-agent-sidebar
+  bin/ccb-rs-helper
   bin/ccb-provider-activity-hook
   bin/ctx-transfer
   ccb
@@ -325,9 +392,9 @@ Optional environment variables:
                            auto = enabled for macOS release installs, disabled for source/dev installs
   CCB_INSTALL_TOMLI        Auto-install tomli on Python versions without tomllib (default: 1; set 0 to skip)
   CCB_INSTALL_WATCHDOG     Auto-install optional watchdog dependency (default: 1; set 0 to skip)
-  CCB_INSTALL_NEOVIM       Install default Neovim/LazyVim tool: auto soft (default), 1 required, 0 skip
   CCB_INSTALL_ROLES        Install catalog Role Packs and dependencies: auto soft (default), 1 required, 0 skip
   CCB_ALLOW_ROOT_INSTALL   Set to 1 to explicitly allow a root-owned install
+  CCB_ALLOW_TEMP_INSTALL_GLOBAL_BIN Set to 1 to allow a temporary install prefix to write outside its isolated bin/home
   CCB_CONFIRM_MAJOR_UPGRADE Set to 1 to confirm replacing a pre-v6 install with v6+
 USAGE
 }
@@ -1143,8 +1210,8 @@ read_installed_version() {
     echo "$build_info_version"
     return
   fi
-  if [[ -f "$INSTALL_PREFIX/ccb" ]]; then
-    sed -n 's/^VERSION[[:space:]]*=[[:space:]]*"\(.*\)"/\1/p' "$INSTALL_PREFIX/ccb" | head -1
+  if [[ -f "$INSTALL_PREFIX/ccb.py" ]]; then
+    sed -n 's/^VERSION[[:space:]]*=[[:space:]]*"\(.*\)"/\1/p' "$INSTALL_PREFIX/ccb.py" | head -1
   fi
 }
 
@@ -1248,8 +1315,8 @@ write_install_metadata() {
   local version commit date build_time installed_at platform_name arch_name channel source_kind install_mode
   local install_user_id install_user_name sudo_user root_install_json install_user_id_json
   version="$(resolve_install_version)"
-  commit="$(read_embedded_assignment "$INSTALL_PREFIX/ccb" "GIT_COMMIT")"
-  date="$(read_embedded_assignment "$INSTALL_PREFIX/ccb" "GIT_DATE")"
+  commit="$(read_embedded_assignment "$INSTALL_PREFIX/ccb.py" "GIT_COMMIT")"
+  date="$(read_embedded_assignment "$INSTALL_PREFIX/ccb.py" "GIT_DATE")"
   if [[ -z "$commit" ]]; then
     commit="$(read_source_build_info_field "commit")"
   fi
@@ -1499,9 +1566,9 @@ copy_project() {
   fi
 
   # Method 4: From embedded package metadata
-  if [[ -z "$git_commit" && -f "$INSTALL_PREFIX/ccb" ]]; then
-    git_commit=$(sed -n 's/^GIT_COMMIT = "\(.*\)"/\1/p' "$INSTALL_PREFIX/ccb" | head -1)
-    git_date=$(sed -n 's/^GIT_DATE = "\(.*\)"/\1/p' "$INSTALL_PREFIX/ccb" | head -1)
+  if [[ -z "$git_commit" && -f "$INSTALL_PREFIX/ccb.py" ]]; then
+    git_commit=$(sed -n 's/^GIT_COMMIT = "\(.*\)"/\1/p' "$INSTALL_PREFIX/ccb.py" | head -1)
+    git_date=$(sed -n 's/^GIT_DATE = "\(.*\)"/\1/p' "$INSTALL_PREFIX/ccb.py" | head -1)
   fi
 
   # Method 5: From GitHub API (fallback)
@@ -1514,10 +1581,10 @@ copy_project() {
     fi
   fi
 
-  if [[ -n "$git_commit" && -f "$INSTALL_PREFIX/ccb" ]]; then
-    sed -i.bak "s/^GIT_COMMIT = .*/GIT_COMMIT = \"$git_commit\"/" "$INSTALL_PREFIX/ccb"
-    sed -i.bak "s/^GIT_DATE = .*/GIT_DATE = \"$git_date\"/" "$INSTALL_PREFIX/ccb"
-    rm -f "$INSTALL_PREFIX/ccb.bak"
+  if [[ -n "$git_commit" && -f "$INSTALL_PREFIX/ccb.py" ]]; then
+    sed -i.bak "s/^GIT_COMMIT = .*/GIT_COMMIT = \"$git_commit\"/" "$INSTALL_PREFIX/ccb.py"
+    sed -i.bak "s/^GIT_DATE = .*/GIT_DATE = \"$git_date\"/" "$INSTALL_PREFIX/ccb.py"
+    rm -f "$INSTALL_PREFIX/ccb.py.bak"
   fi
 }
 
@@ -1707,6 +1774,50 @@ is_python_entrypoint() {
   [[ "$first_line" == '#!'*python* ]]
 }
 
+# Detects the new bash-launcher form (#!/usr/bin/env bash + exec ".../_ccb-python" ...)
+# that wraps a sibling .py body. These are present at the top-level (ccb -> ccb.py)
+# and under bin/ (ask -> bin/ask.py, etc).
+is_ccb_launcher_entrypoint() {
+  local source_path="$1"
+  [[ -f "$source_path" ]] || return 1
+  local first_line=""
+  IFS= read -r first_line < "$source_path" || true
+  [[ "$first_line" == '#!'*bash* ]] || return 1
+  grep -q '_ccb-python' "$source_path" 2>/dev/null
+}
+
+# Resolve the .py body name a launcher targets, e.g. "ask" for bin/ask -> ask.py.
+ccb_launcher_target_name() {
+  local source_path="$1"
+  basename "$source_path"
+}
+
+write_ccb_launcher_release_wrapper() {
+  local source_path="$1"
+  local destination_path="$2"
+  local target_name
+  target_name="$(ccb_launcher_target_name "$source_path")"
+  local body_name="$target_name.py"
+  local launcher_path body_path
+  if [[ "$source_path" == */bin/* ]]; then
+    launcher_path="$INSTALL_PREFIX/bin/_ccb-python"
+    body_path="$INSTALL_PREFIX/bin/$body_name"
+  else
+    launcher_path="$INSTALL_PREFIX/bin/_ccb-python"
+    body_path="$INSTALL_PREFIX/$body_name"
+  fi
+  mkdir -p "$(dirname "$destination_path")"
+  clear_installed_path "$destination_path"
+  cat > "$destination_path" <<EOF
+#!/usr/bin/env bash
+if [[ "\${TERM:-}" == "xterm-ghostty" ]]; then
+  export TERM=xterm-256color
+fi
+exec "$launcher_path" "$body_path" "\$@"
+EOF
+  chmod +x "$destination_path" 2>/dev/null || true
+}
+
 install_entrypoint_executable() {
   local source_path="$1"
   local destination_path="$2"
@@ -1720,6 +1831,19 @@ install_entrypoint_executable() {
   if [[ "$absolute_source" != /* ]]; then
     absolute_source="$(cd "$(dirname "$source_path")" && pwd)/$(basename "$source_path")"
   fi
+
+  # New-form launchers (bash, exec _ccb-python <name>.py): under live source we
+  # symlink straight back so the launcher resolves the source tree itself; under
+  # release install we emit a wrapper pinned to INSTALL_PREFIX paths.
+  if is_ccb_launcher_entrypoint "$absolute_source"; then
+    if install_uses_live_source; then
+      install_owned_executable "$source_path" "$destination_path"
+      return 0
+    fi
+    write_ccb_launcher_release_wrapper "$absolute_source" "$destination_path"
+    return 0
+  fi
+
   if ! is_python_entrypoint "$absolute_source"; then
     install_owned_executable "$source_path" "$destination_path"
     return 0
@@ -1788,6 +1912,118 @@ sidebar_helper_unavailable_error() {
   echo "   Sidebar panes will not work without a runnable helper."
   echo "   Install Rust and re-run install.sh, or install an official release package with a prebuilt helper."
   exit 1
+}
+
+is_rs_helper_wrapper() {
+  local path="$1"
+  [[ -f "$path" ]] && grep -q 'CCB_RS_HELPER_WRAPPER' "$path" 2>/dev/null
+}
+
+rs_helper_runs_on_this_host() {
+  local binary="$1"
+  [[ -x "$binary" ]] || return 1
+  "$binary" --capabilities >/dev/null 2>&1
+}
+
+require_rs_helper_rust_toolchain() {
+  local missing=()
+  if ! command -v cargo >/dev/null 2>&1; then
+    missing+=(cargo)
+  fi
+  if ! command -v rustc >/dev/null 2>&1; then
+    missing+=(rustc)
+  fi
+  if [[ ${#missing[@]} -eq 0 ]]; then
+    return 0
+  fi
+
+  echo "ERROR: Rust toolchain required to build ccb-rs-helper"
+  echo "   Missing: ${missing[*]}"
+  echo "   Rust helpers require bin/ccb-rs-helper; install Rust or use a release package with a prebuilt helper."
+  case "$(detect_platform)" in
+    macos)
+      echo "   macOS: brew install rust"
+      ;;
+    linux)
+      echo "   Debian/Ubuntu: sudo apt-get install -y cargo rustc"
+      ;;
+  esac
+  echo "   Rustup: https://rustup.rs/"
+  exit 1
+}
+
+rs_helper_unavailable_error() {
+  echo "ERROR: ccb-rs-helper binary not available"
+  echo "   Rust helper-backed paths require a runnable helper when explicitly enabled."
+  echo "   Install Rust and re-run install.sh, or install an official release package with a prebuilt helper."
+  exit 1
+}
+
+install_prebuilt_rs_helper() {
+  local binary="$1"
+  local target="$2"
+  if ! rs_helper_runs_on_this_host "$binary"; then
+    return 1
+  fi
+  cp -f "$binary" "$target"
+  chmod +x "$target" 2>/dev/null || true
+  if ! rs_helper_runs_on_this_host "$target"; then
+    rm -f "$target"
+    return 1
+  fi
+  echo "Installed prebuilt ccb-rs-helper"
+  return 0
+}
+
+build_rs_helper_if_possible() {
+  local asset_root crate_dir binary target
+  asset_root="$(resolve_install_asset_root)"
+  crate_dir="$asset_root/tools/ccb-rs-helper"
+  binary="$crate_dir/target/release/ccb-rs-helper"
+  target="$asset_root/bin/ccb-rs-helper"
+
+  if [[ ! -f "$crate_dir/Cargo.toml" ]]; then
+    if [[ -x "$target" ]] && ! is_rs_helper_wrapper "$target" && rs_helper_runs_on_this_host "$target"; then
+      return
+    fi
+    rs_helper_unavailable_error
+  fi
+
+  if install_uses_live_source; then
+    if [[ -x "$binary" ]] && rs_helper_runs_on_this_host "$binary"; then
+      return
+    fi
+    require_rs_helper_rust_toolchain
+    echo "Building ccb-rs-helper..."
+    if cargo build --release --manifest-path "$crate_dir/Cargo.toml" >/dev/null 2>&1 && [[ -x "$binary" ]]; then
+      echo "Built ccb-rs-helper"
+      return
+    fi
+    rs_helper_unavailable_error
+  fi
+
+  mkdir -p "$asset_root/bin"
+  if [[ -x "$target" ]] && ! is_rs_helper_wrapper "$target" && rs_helper_runs_on_this_host "$target"; then
+    return
+  fi
+
+  if [[ -x "$binary" ]] && install_prebuilt_rs_helper "$binary" "$target"; then
+    return
+  fi
+
+  require_rs_helper_rust_toolchain
+  echo "Building ccb-rs-helper..."
+  if cargo build --release --manifest-path "$crate_dir/Cargo.toml" >/dev/null 2>&1 && [[ -x "$binary" ]]; then
+    cp -f "$binary" "$target"
+    chmod +x "$target" 2>/dev/null || true
+    if rs_helper_runs_on_this_host "$target"; then
+      echo "Built ccb-rs-helper"
+      return
+    fi
+    rm -f "$target"
+  fi
+
+  rs_helper_unavailable_error
 }
 
 install_prebuilt_sidebar_helper() {
@@ -1868,7 +2104,7 @@ install_bin_links() {
     local target_path="$target_root/$path"
     if ! install_entrypoint_executable "$target_path" "$BIN_DIR/$name"; then
       case "$path" in
-        bin/build-ccb-agent-sidebar|bin/ccb-agent-sidebar)
+        bin/build-ccb-agent-sidebar|bin/ccb-agent-sidebar|bin/build-ccb-rs-helper|bin/ccb-rs-helper)
           ;;
         *)
           return 1
@@ -2870,17 +3106,42 @@ cleanup_legacy_files() {
   fi
 }
 
+cleanup_legacy_neovim_tool() {
+  local data_home state_home root state_root link target
+  data_home="${XDG_DATA_HOME:-$HOME/.local/share}"
+  state_home="${XDG_STATE_HOME:-$HOME/.local/state}"
+  root="$data_home/ccb/tools/neovim"
+  state_root="$state_home/ccb/tools/neovim"
+  link="$BIN_DIR/ccb-nvim"
+
+  if [[ -L "$link" ]]; then
+    target="$(readlink "$link" 2>/dev/null || true)"
+    case "$target" in
+      "$root"|"$root"/*)
+        rm -f "$link"
+        ;;
+    esac
+  elif [[ -f "$link" ]] && grep -q 'NVIM_APPNAME=nvim' "$link" 2>/dev/null && grep -q 'ccb/tools/neovim' "$link" 2>/dev/null; then
+    rm -f "$link"
+  fi
+
+  rm -rf "$root" "$state_root"
+}
+
 install_all() {
+  validate_temporary_install_scope
   require_major_upgrade_confirmation
   install_requirements
   remove_codex_mcp
   cleanup_legacy_files
+  cleanup_legacy_neovim_tool
   prepare_install_tree
   install_managed_venv
   if ! install_uses_live_source; then
     write_install_metadata
   fi
   build_sidebar_helper_if_possible
+  build_rs_helper_if_possible
   install_bin_links
   verify_installed_entrypoints
   ensure_path_configured
@@ -2893,7 +3154,6 @@ install_all() {
   install_settings_permissions
   install_tmux_config
   provision_role_packs
-  provision_neovim_tool
   echo "OK: Installation complete"
   echo "   Executable dir : $BIN_DIR"
   if install_uses_live_source; then
@@ -2979,41 +3239,6 @@ provision_default_role_pack() {
   sed 's/^/   /' "$log_file" 2>/dev/null || true
   rm -f "$log_file"
   return 1
-}
-
-provision_neovim_tool() {
-  local requested="${CCB_INSTALL_NEOVIM:-auto}"
-  if env_value_is_false "$requested"; then
-    echo "INFO: Neovim tool provisioning skipped by CCB_INSTALL_NEOVIM=0"
-    return 0
-  fi
-  local required=0
-  if env_value_is_true "$requested"; then
-    required=1
-  else
-    echo "INFO: Neovim/LazyVim provisioning enabled by default; set CCB_INSTALL_NEOVIM=0 to skip."
-  fi
-  local ccb_entry
-  if install_uses_live_source; then
-    ccb_entry="$(resolve_live_source_root)/ccb"
-  else
-    ccb_entry="$INSTALL_PREFIX/ccb"
-  fi
-  if [[ ! -x "$ccb_entry" ]]; then
-    echo "WARN: Neovim tool provisioning skipped; ccb entrypoint not executable: $ccb_entry"
-    [[ "$required" == "1" ]] && return 1 || return 0
-  fi
-  local log_file
-  log_file="$(mktemp "${TMPDIR:-/tmp}/ccb-neovim-install.XXXXXX")"
-  if CODEX_BIN_DIR="$BIN_DIR" "$ccb_entry" tools install neovim >"$log_file" 2>&1; then
-    rm -f "$log_file"
-    echo "OK: Neovim tool provisioning checked"
-    return 0
-  fi
-  echo "WARN: Neovim tool provisioning failed"
-  sed 's/^/   /' "$log_file" 2>/dev/null || true
-  rm -f "$log_file"
-  [[ "$required" == "1" ]] && return 1 || return 0
 }
 
 uninstall_claude_md_config() {

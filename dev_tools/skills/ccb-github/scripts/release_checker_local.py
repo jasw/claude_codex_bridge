@@ -182,6 +182,7 @@ def check_local_files(root: Path, version: str, repo: str, issues: list[str], wa
     files = {
         "VERSION": read(root / "VERSION"),
         "ccb": read(root / "ccb"),
+        "ccb.py": read(root / "ccb.py"),
         "CHANGELOG.md": read(root / "CHANGELOG.md"),
         "README.md": read(root / "README.md"),
         "README_zh.md": read(root / "README_zh.md"),
@@ -189,8 +190,8 @@ def check_local_files(root: Path, version: str, repo: str, issues: list[str], wa
 
     if files["VERSION"].strip() != bare_version:
         fail(issues, f"VERSION is {files['VERSION'].strip()!r}, expected {bare_version!r}", fix=f"write exactly {bare_version} to VERSION")
-    if f'VERSION = "{bare_version}"' not in files["ccb"]:
-        fail(issues, f"ccb does not contain VERSION = {bare_version!r}", fix=f'update ccb to VERSION = "{bare_version}"')
+    if f'VERSION = "{bare_version}"' not in files["ccb"] and f'VERSION = "{bare_version}"' not in files["ccb.py"]:
+        fail(issues, f"ccb.py does not contain VERSION = {bare_version!r}", fix=f'update ccb.py to VERSION = "{bare_version}"')
 
     changelog_section = markdown_section(files["CHANGELOG.md"], version)
     if changelog_section is None:

@@ -19,6 +19,14 @@ from cli.roles_runtime import cmd_roles
 from cli.sidebar_click import maybe_handle_sidebar_click_command
 from cli.sidebar_resize_sync import maybe_handle_sidebar_resize_sync_command
 from cli.tools_runtime import cmd_tools
+from cli.tools_runtime.workbench import (
+    cmd_rich,
+    disable_workbench,
+    launch_rich_ccb,
+    print_workbench_status,
+    rich_auto_start_allowed,
+    uninstall_workbench,
+)
 
 
 def _should_print_version(tokens: list[str]) -> bool:
@@ -41,7 +49,7 @@ def _is_start_help(tokens: list[str]) -> bool:
         return False
     if tokens[0] in {"-h", "--help", "help"}:
         return True
-    if tokens[0] in SUBCOMMANDS or tokens[0] in {"version", "update", "uninstall", "reinstall", "droid", "tools", "roles", "mail", "provider", "up"}:
+    if tokens[0] in SUBCOMMANDS or tokens[0] in {"version", "update", "uninstall", "reinstall", "droid", "tools", "roles", "mail", "provider", "up", "rich", "rich-install"}:
         return False
     return any(token in {"-h", "--help", "help"} for token in tokens)
 
@@ -123,6 +131,12 @@ def _handle_removed_commands(tokens: list[str], *, stderr: TextIO) -> int | None
             command=tokens[0],
             guidance="💡 Use `ccb ask` for task submission/results, `ccb doctor` for diagnostics, and `ccb trace` for lineage details.",
         )
+    if tokens and tokens[0] == "rich-install":
+        return _write_removed_command_error(
+            stderr,
+            command="rich-install",
+            guidance="💡 Use: ccb update rich",
+        )
     return None
 
 
@@ -150,6 +164,53 @@ def _dispatch_tools(tokens: list[str], *, script_root: Path, stdout: TextIO, std
     if not (tokens and tokens[0] == 'tools'):
         return None
     return cmd_tools(tokens[1:], script_root=script_root, stdout=stdout, stderr=stderr)
+
+
+def _dispatch_rich(tokens: list[str], *, script_root: Path, cwd: Path, stdout: TextIO, stderr: TextIO) -> int | None:
+    if not (tokens and tokens[0] == 'rich'):
+        return None
+    if len(tokens) > 1:
+        action = tokens[1]
+        if action in {'-h', '--help', 'help'}:
+            _print_rich_usage(stdout)
+            return 0
+        if action in {'uninstall', 'remove'} and len(tokens) == 2:
+            result = uninstall_workbench(profile='rich', remove_cache=False)
+            print_workbench_status(result, stdout)
+            return 0 if result.get('status') in {'ok', 'missing'} else 1
+        if action in {'disable', 'off'} and len(tokens) == 2:
+            result = disable_workbench(profile='rich', close=True)
+            print_workbench_status(result, stdout)
+            return 0 if result.get('status') in {'ok', 'degraded', 'missing'} else 1
+        _print_rich_usage(stdout)
+        return 2
+    return cmd_rich(script_root=script_root, cwd=cwd, stdout=stdout, stderr=stderr)
+
+
+def _print_rich_usage(stdout: TextIO) -> None:
+    print('usage: ccb rich [uninstall|disable]', file=stdout)
+
+
+def _tokens_are_start_command(tokens: list[str]) -> bool:
+    visible = _strip_global_project_tokens(tokens)
+    if not visible:
+        return True
+    allowed = {'-s', '--safe', '-n', '--new-context'}
+    return all(token in allowed for token in visible)
+
+
+def _dispatch_auto_rich_start(tokens: list[str], *, script_root: Path, cwd: Path, stdout: TextIO, stderr: TextIO) -> int | None:
+    if not _tokens_are_start_command(tokens):
+        return None
+    if not rich_auto_start_allowed():
+        return None
+    result = launch_rich_ccb(script_root=script_root, cwd=cwd, start_args=tokens)
+    print_workbench_status(result, stdout)
+    if result.get('status') not in {'ok', 'degraded'}:
+        if result.get('reason'):
+            print(f"ERROR: {result['reason']}", file=stderr)
+        return 1
+    return 0 if result.get('launch_status') == 'started' else 1
 
 
 def _dispatch_roles(tokens: list[str], *, script_root: Path, cwd: Path, stdout: TextIO, stderr: TextIO) -> int | None:
@@ -202,6 +263,10 @@ def run_cli_entrypoint(
     if management_result is not None:
         return management_result
 
+    rich_result = _dispatch_rich(tokens, script_root=script_root, cwd=cwd, stdout=stdout, stderr=stderr)
+    if rich_result is not None:
+        return rich_result
+
     tools_result = _dispatch_tools(tokens, script_root=script_root, stdout=stdout, stderr=stderr)
     if tools_result is not None:
         return tools_result
@@ -209,6 +274,10 @@ def run_cli_entrypoint(
     roles_result = _dispatch_roles(tokens, script_root=script_root, cwd=cwd, stdout=stdout, stderr=stderr)
     if roles_result is not None:
         return roles_result
+
+    auto_rich_result = _dispatch_auto_rich_start(tokens, script_root=script_root, cwd=cwd, stdout=stdout, stderr=stderr)
+    if auto_rich_result is not None:
+        return auto_rich_result
 
     startup_update_result = maybe_handle_startup_release_update(
         tokens,

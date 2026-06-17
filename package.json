@@ -1,7 +1,7 @@
 {
   "name": "@seemseam/ccb",
-  "version": "7.5.1",
-  "description": "Visible, controllable multi-agent CLI workspace for Codex, Claude, Gemini, Kimi, MiMo, OpenCode, Antigravity, and Droid.",
+  "version": "7.6.8",
+  "description": "Visible, controllable multi-agent CLI workspace for Codex, Claude, Gemini, Kimi, MiMo, Qwen, Cursor, Copilot, Crush, Kiro, Pi, OpenCode, Antigravity, and Droid.",
   "license": "AGPL-3.0-only",
   "homepage": "https://github.com/SeemSeam/claude_codex_bridge#readme",
   "repository": {
@@ -19,6 +19,12 @@
     "gemini",
     "kimi",
     "mimo",
+    "qwen",
+    "cursor",
+    "copilot",
+    "crush",
+    "kiro",
+    "pi",
     "opencode",
     "tmux",
     "cli"

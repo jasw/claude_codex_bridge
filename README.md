@@ -6,14 +6,31 @@
 **Visible, controllable multi-agent cooperative TUI workspace**
 
 <p>
-  <img src="https://img.shields.io/badge/version-7.5.1-orange.svg" alt="version">
+  <img src="https://img.shields.io/badge/version-7.6.8-orange.svg" alt="version">
   <img src="https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20WSL-lightgrey.svg" alt="platform">
-  <img src="https://img.shields.io/badge/providers-8%20CLI%20families-0B7285.svg" alt="providers">
+  <img src="https://img.shields.io/badge/providers-14%20CLI%20families-0B7285.svg" alt="providers">
+</p>
+
+<p>
+  <img src="https://img.shields.io/badge/Codex-111111?style=flat-square&logo=openai&logoColor=white" alt="Codex">
+  <img src="https://img.shields.io/badge/Claude-D97757?style=flat-square&logo=anthropic&logoColor=white" alt="Claude">
+  <img src="https://img.shields.io/badge/Gemini-4285F4?style=flat-square&logo=googlegemini&logoColor=white" alt="Gemini">
+  <img src="https://img.shields.io/badge/Kimi-111111?style=flat-square&logo=moonshotai&logoColor=white" alt="Kimi">
+  <img src="https://img.shields.io/badge/MiMo-FF6900?style=flat-square&logo=xiaomi&logoColor=white" alt="MiMo">
+  <img src="https://img.shields.io/badge/Qwen-6A5CFF?style=flat-square" alt="Qwen">
+  <img src="https://img.shields.io/badge/Cursor-111111?style=flat-square" alt="Cursor">
+  <img src="https://img.shields.io/badge/Copilot-111111?style=flat-square&logo=githubcopilot&logoColor=white" alt="GitHub Copilot">
+  <img src="https://img.shields.io/badge/Crush-FF5A5F?style=flat-square" alt="Crush">
+  <img src="https://img.shields.io/badge/Kiro-6D5EF6?style=flat-square" alt="Kiro">
+  <img src="https://img.shields.io/badge/Pi-111111?style=flat-square" alt="Pi">
+  <img src="https://img.shields.io/badge/OpenCode-111111?style=flat-square" alt="OpenCode">
+  <img src="https://img.shields.io/badge/Antigravity-6D5EF6?style=flat-square&logo=google&logoColor=white" alt="Antigravity">
+  <img src="https://img.shields.io/badge/Droid-3DDC84?style=flat-square&logo=android&logoColor=white" alt="Droid">
 </p>
 
 **English** | [中文](README_zh.md)
 
-[Quick Start](#quick-start) · [v7 UI](#v7-ui-tour) · [Configure Agents](#configure-your-agent-team) · [User Guide](docs/manuals/user-guide/) · [Developer Guide](docs/manuals/developer-guide/)
+[Quick Start](#quick-start) · [v7 UI](#v7-ui-tour) · [Rich Mode](#rich-mode-new) · [Configure Agents](#configure-your-agent-team) · [User Guide](docs/manuals/user-guide/) · [Developer Guide](docs/manuals/developer-guide/)
 
 <p align="center">
   <img src="assets/readme_v7/ccb-hero-en.png" alt="CCB v7 visible multi-agent CLI workspace" width="960">
@@ -23,28 +40,32 @@
 
 ---
 
+## Supported CLIs
+
+Mix CLIs per agent in `.ccb/ccb.config`; actual availability depends on the local CLI installation and account access.
+
+- Codex (`codex`)
+- Claude (`claude`)
+- Gemini (`gemini`)
+- Kimi (`kimi`)
+- MiMo (`mimo`)
+- Qwen (`qwen`)
+- Cursor (`cursor`)
+- GitHub Copilot CLI (`copilot`)
+- Crush (`crush`)
+- Kiro CLI (`kiro`)
+- Pi (`pi`)
+- OpenCode (`opencode`)
+- Antigravity (`agy`)
+- Droid (`droid`)
+
+**New role specification**: package skills, memory, and tool dependencies into self-contained Role Packs, then create hot-loadable and removable specialist agents.
+
 ## Why CCB?
 
 | See the work | Mix providers | Keep control |
 | :--- | :--- | :--- |
 | Every agent is a real terminal with layout control. | Run multiple CLIs concurrently from one command. | Stable background communication for multi-line task orchestration. |
-
-## Supported CLIs
-
-<p>
-  <img src="https://img.shields.io/badge/Codex-111111?style=flat-square&logo=openai&logoColor=white" alt="Codex">
-  <img src="https://img.shields.io/badge/Claude-D97757?style=flat-square&logo=anthropic&logoColor=white" alt="Claude">
-  <img src="https://img.shields.io/badge/Gemini-4285F4?style=flat-square&logo=googlegemini&logoColor=white" alt="Gemini">
-  <img src="https://img.shields.io/badge/Kimi-111111?style=flat-square&logo=moonshotai&logoColor=white" alt="Kimi">
-  <img src="https://img.shields.io/badge/MiMo-FF6900?style=flat-square&logo=xiaomi&logoColor=white" alt="MiMo">
-  <img src="https://img.shields.io/badge/OpenCode-111111?style=flat-square" alt="OpenCode">
-  <img src="https://img.shields.io/badge/Antigravity-6D5EF6?style=flat-square&logo=google&logoColor=white" alt="Antigravity">
-  <img src="https://img.shields.io/badge/Droid-3DDC84?style=flat-square&logo=android&logoColor=white" alt="Droid">
-</p>
-
-Mix CLIs per agent in `.ccb/ccb.config`. Common provider ids include `codex`, `claude`, `gemini`, `kimi`, `mimo`, `opencode`, `agy`, and `droid`; actual availability depends on the local CLI installation and account access.
-
-**New role specification**: package skills, memory, and tool dependencies into self-contained Role Packs, then create hot-loadable and removable specialist agents.
 
 ## Quick Start
 
@@ -61,6 +82,14 @@ After CCB is installed, use CCB's updater:
 ```bash
 ccb update
 ```
+
+Install or refresh the optional rich media workbench; it bundles verified binaries where possible and installs only the required terminal/media/font dependencies through the platform package manager:
+
+```bash
+ccb update rich
+```
+
+After rich is enabled, plain `ccb` opens the rich WezTerm launcher unless it is already running inside a CCB-managed rich WezTerm; use `ccb uninstall rich` to return to the normal terminal startup.
 
 <details>
 <summary><b>GitHub release package and source install fallbacks</b></summary>
@@ -149,6 +178,16 @@ Agents can also call `/ask` from workflow orchestration to delegate and hand off
 | Workspace | Every pane is a real CLI. Switch by mouse or tmux shortcuts. |
 | Useful shortcuts | `Ctrl-b h/j/k/l` switches adjacent panes; `Ctrl-b z` zooms or restores the current CLI pane. |
 
+<a id="rich-mode-new"></a>
+
+### Rich Mode (NEW!)
+
+Run `ccb update rich` to install the optional rich workbench; it bundles Yazi where possible, uses WezTerm for the rich terminal surface, and gives Markdown rendering plus image/PDF/video previews. After installation, plain `ccb` automatically opens this rich launcher unless it is already running inside a CCB-managed rich WezTerm; `ccb rich` remains available as an explicit launcher.
+
+<p align="center">
+  <img src="assets/readme_v7/rich-workbench.png" alt="CCB rich workbench with Yazi preview in WezTerm" width="860">
+</p>
+
 ### Contact
 
 - Email: `bfly123@126.com`
@@ -166,7 +205,7 @@ CCB is a project-level agent CLI workspace. It uses tmux to manage multiple real
 
 - **Real CLI sessions, not fake panels**: every agent pane runs the actual provider CLI.
 - **Visible collaboration**: the sidebar shows windows, agents, status, and communication; users can switch panes by mouse.
-- **Mixed providers**: one project can run Codex, Claude, Gemini, Kimi (`kimi`), MiMo (`mimo`), OpenCode, Droid, and Antigravity (`agy`) together.
+- **Mixed providers**: one project can run Codex, Claude, Gemini, Kimi (`kimi`), MiMo (`mimo`), Qwen (`qwen`), Cursor (`cursor`), Copilot (`copilot`), Crush (`crush`), Kiro (`kiro`), Pi (`pi`), OpenCode, Droid, and Antigravity (`agy`) together.
 - **Project config**: `.ccb/ccb.config` defines the team, layout, windows, worktrees, model, key, and url.
 - **Built-in CCB expert**: blank projects include `ccb_self`, a self-maintenance agent with deep CCB knowledge for usage guidance, config design, diagnostics, recovery, and workflow repair.
 - **Roles**: a new role packaging model that lets specialized agents carrying
@@ -206,14 +245,14 @@ Multi-agent systems are not one fixed shape. Use the short table first; expand t
 | :--- | :--- | :--- |
 | [Claude Code native subagents](https://code.claude.com/docs/en/sub-agents) / [agent teams](https://code.claude.com/docs/en/agent-teams) | Native delegation inside Claude Code. | You mostly stay in Claude Code and want more coordination handled by a Claude lead. |
 | [Hive / OpenHive](https://github.com/aden-hive/hive) | Production-oriented multi-agent workflow harness. | You need state, recovery, observability, cost controls, and graph workflows. |
-| CCB | Visible, controllable local CLI-agent workspace with mixed providers. | You want Codex, Claude, Gemini, Kimi, MiMo, OpenCode, Antigravity, and other real CLIs in one project terminal. |
+| CCB | Visible, controllable local CLI-agent workspace with mixed providers. | You want Codex, Claude, Gemini, Kimi, MiMo, Qwen, Cursor, Copilot, Crush, Kiro, OpenCode, Antigravity, and other real CLIs in one project terminal. |
 
 <details>
 <summary><b>Details: model choice, control, context, and complex workflows</b></summary>
 
 | Question | Claude Code native | Hive / OpenHive | CCB |
 | :--- | :--- | :--- | :--- |
-| Different model vendors? | Can choose Claude models for teammates/subagents; overall path is still Claude Code. | LiteLLM route covers many hosted and local providers. | Choose Codex, Claude, Gemini, Kimi, MiMo, OpenCode, Droid, Antigravity, and per-agent model/key/url. |
+| Different model vendors? | Can choose Claude models for teammates/subagents; overall path is still Claude Code. | LiteLLM route covers many hosted and local providers. | Choose Codex, Claude, Gemini, Kimi, MiMo, Qwen, Cursor, Copilot, Crush, Kiro, OpenCode, Droid, Antigravity, and per-agent model/key/url. |
 | Is the process visible? | In-process or split panes depending on mode. | Runtime observability and dashboard-style control. | Real tmux panes by default; users can click, type, copy, and inspect each CLI. |
 | Is topology controllable? | Natural-language teammate setup, with much coordination handled by the lead. | Goal-generated graph-like topology, harness oriented. | Config explicitly defines agents, windows, panes, worktrees, and sidebar behavior. |
 | Is context manageable? | Subagents/teammates have separate contexts; teams have task and message state. | Role memory, durable state, and recovery are core design points. | Each CLI keeps its provider session; shared project memory and per-agent memory are optional. |
@@ -233,6 +272,9 @@ CCB also supports complex workflows, but it is not an automatic DAG generator. Y
 | Stop this project's background runtime | `ccb kill` |
 | Force cleanup before rebuilding | `ccb kill -f` then `ccb -n` |
 | Update to the latest stable release | `ccb update` |
+| Install or refresh the optional rich workbench | `ccb update rich` |
+| Remove rich mode and return normal startup | `ccb uninstall rich` |
+| Open the rich workbench | `ccb rich` |
 | Inspect the active config layer | `ccb config validate` |
 | Preview a config reload plan without changing tmux | `ccb reload --dry-run` |
 | Apply supported config changes without restarting other agents | `ccb reload` |
@@ -291,7 +333,7 @@ CCB resolves config in three layers, from lowest to highest priority:
 3. Project config at `.ccb/ccb.config`.
 
 Higher layers replace lower layers as a whole; they are not merged. The project authority file is `.ccb/ccb.config`. The old `.ccb_config/ccb.config` path is legacy migration evidence only.
-The built-in default is a v2 `[windows]` config with `agent1`, `agent2`, `agent3`, `ccb_self`, and a managed `neovim` tool window using `ccb-nvim`. The default `ccb_self` agent uses `codex` and is bound to `agentroles.ccb_self`.
+The built-in default is a v2 `[windows]` config with `agent1`, `agent2`, `agent3`, and `ccb_self`. The optional rich workbench can be installed with `ccb update rich`; once enabled, normal `ccb` startup uses the rich launcher unless you run `ccb uninstall rich`. The default `ccb_self` agent uses `codex` and is bound to `agentroles.ccb_self`.
 
 `.ccb/ccb.config` mainly controls:
 
@@ -301,7 +343,7 @@ The built-in default is a v2 `[windows]` config with `agent1`, `agent2`, `agent3
 | Agent name and provider | `main:codex`, `reviewer:claude` | Names are used by the UI, ask routing, and memory files; provider decides which CLI starts. |
 | Workspace isolation | `worker1:codex(worktree)` | Gives implementation agents isolated git worktrees to reduce accidental overlap. |
 | Sidebar behavior | `[ui.sidebar]` | Controls whether the sidebar appears in every window, plus width and Comms height. |
-| Tool windows | `[tool_windows.<name>]` | Add managed non-agent windows such as Neovim; they appear as one sidebar row and are not `ask` targets. |
+| Tool windows | `[tool_windows.<name>]` | Add managed non-agent windows such as the rich workbench; they appear as one sidebar row and are not `ask` targets. |
 | Per-agent model/API | `[agents.<name>]` | Configure `model`, `key`, `url`, and related agent-local overrides. |
 | Role Pack binding | `agentroles.archi:codex` | Bind a reusable role package through a window leaf; role assets are installed once and projected into the derived agent. |
 | Role description | `[agents.<name>] description = "..."` | Give an agent a short responsibility note; longer workflow rules belong in memory. |
@@ -403,7 +445,7 @@ comms_limit = 3
 
 Note: `cmd` belongs to compact/hybrid single-window layouts. Do not put `cmd` inside `[windows]`.
 
-#### Managed Neovim tool window
+#### Rich workbench tool window
 
 Tool windows are tmux windows managed by CCB, but they are not agents. They do not appear in `ccb ask` targets and do not create provider runtime records.
 
@@ -414,15 +456,12 @@ entry_window = "main"
 [windows]
 main = "main:codex"
 
-[tool_windows.neovim]
-command = "ccb-nvim"
-label = "neovim"
+[tool_windows.rich]
+command = "CCB_WORKBENCH_PROFILE=rich CCB_WORKBENCH_FORCE_RICH=1 ccb-workbench files"
+label = "rich"
 ```
 
-`ccb tools install neovim` prepares an isolated `ccb-nvim` wrapper and LazyVim profile under CCB-owned XDG paths. `install.sh install` and `ccb update` automatically attempt this provisioning by default and keep failures non-blocking. Set `CCB_INSTALL_NEOVIM=1` to make install provisioning required or `CCB_INSTALL_NEOVIM=0` to skip it.
-If `nvim` is not already on `PATH`, provisioning attempts to download the official Neovim release tarball for Linux/macOS and verifies the release sha256 before activating it. It does not write `~/.config/nvim`.
-The managed profile defaults to ASCII icons so terminals without Nerd Font support do not show unreadable boxes. To opt back into LazyVim glyph icons, launch with `CCB_LAZYVIM_ICON_STYLE=glyph ccb-nvim`.
-Use `ccb tools doctor neovim` to verify the managed profile. A working LazyVim setup reports `neovim_status: ok` and `lazyvim_health_status: ok`; damaged or partially downloaded plugin trees report `degraded` and can be repaired by rerunning `ccb tools install neovim`.
+`ccb update rich` prepares the optional workbench bundle under CCB-owned XDG paths, downloads and validates bundled binaries where available, and uses the platform package manager only for required rich dependencies such as WezTerm, Markdown/PDF/image/video helpers, and recommended fonts. Under WSL, CCB can launch Windows-native `wezterm.exe` while running the rich tools inside the current Linux distro. Normal `ccb update` keeps this bundle untouched; rerun `ccb update rich` to install, repair, or refresh it. Run `ccb uninstall rich` to remove the bundle and return plain `ccb` to normal terminal startup. Set `CCB_RICH_DOWNLOAD_BINARIES=0` to skip bundled binary downloads, or `CCB_RICH_INSTALL_DEPS=0` to skip system package installation.
 
 #### Per-agent model, API key, or base URL
 
@@ -512,14 +551,6 @@ If agent A is handling a user-originated CCB task and needs agent B's result to 
 
 </details>
 
-### Editor Workflow
-
-<p align="center">
-  <img src="assets/nvim.png" alt="Neovim integration with multi-model code review" width="860">
-</p>
-
-CCB does not require leaving your editor. A common setup is: editor for code, CCB terminal for multi-agent planning, implementation, review, testing, and handoff.
-
 ### Install And Update
 
 #### Requirements
@@ -527,7 +558,7 @@ CCB does not require leaving your editor. A common setup is: editor for code, CC
 - Node.js and npm for the recommended npm install path
 - Python 3.10+
 - `tmux`
-- At least one agent CLI you plan to use, such as Codex, Claude, Gemini, Kimi, MiMo, OpenCode, Droid, or Antigravity
+- At least one agent CLI you plan to use, such as Codex, Claude, Gemini, Kimi, MiMo, Qwen, Cursor, Copilot, Crush, Kiro, OpenCode, Droid, or Antigravity
 - Linux, macOS, or WSL
 
 Current v7 / newer versions do not claim native Windows support. Native Windows support only applies to the v5 line. If you are on Windows and want current versions, use WSL and keep both `ccb` and agent CLIs inside WSL.
@@ -610,6 +641,169 @@ v7 highlights:
 - Hardened tmux, Ghostty, release helper, Codex trust, and provider session restore paths.
 
 <details open>
+<summary><b>v7.6.8</b> - Role Pack Current Store</summary>
+
+- Role Pack runtime lookup now follows the installed current package under
+  `.roles/installed/<role-id>/current`; legacy multi-version stores remain
+  compatibility input only.
+- Project `.ccb/role-lock.json` files are now legacy diagnostics: CCB no
+  longer writes them, adopts from them, or suppresses role memory and skills
+  because of stale lock residue.
+- Provider launch sessions record role id, version, and digest; restart now
+  fails explicitly when the launch digest differs from installed current instead
+  of silently resuming an old provider conversation.
+- Release artifact metadata patching now targets `ccb.py` after the bash
+  launcher split, keeping built tarballs on the intended version.
+
+</details>
+
+<details>
+<summary><b>v7.6.7</b> - Rich Workbench Closure</summary>
+
+- Plain `ccb` and `ccb rich` now launch the CCB-managed rich WezTerm unless
+  already inside that managed rich session; ordinary external WezTerm sessions
+  no longer suppress rich auto-start.
+- Runtime entrypoints share the `_ccb-python` launcher, keeping installed and
+  source command execution pinned to the intended Python interpreter.
+- Built-in defaults keep `ccb_self` in its own `claude` window, while ordinary
+  default startup still avoids standalone Neovim tool windows.
+
+</details>
+
+<details>
+<summary><b>v7.6.6</b> - Role Store Home Pinning</summary>
+
+- Pins role store lookup outside managed provider homes so provider session
+  `HOME` rewrites no longer make role checks search provider-local `.roles`
+  directories.
+- Preserves `AGENT_ROLES_STORE` through CCB launch boundaries and falls back to
+  the real source/account home role store when no explicit store is set.
+- Missing role diagnostics now print the resolved role store path, making
+  provider-home drift easier to identify.
+
+</details>
+
+<details>
+<summary><b>v7.6.5</b> - Rich WezTerm IME</summary>
+
+- Enables IME support in the generated rich WezTerm config and maps
+  `XMODIFIERS=@im=...` into WezTerm's XIM name so X11 fcitx/ibus input works
+  for Chinese and other IME-backed text.
+- Generated `ccb-workbench` wrappers now detect running or installed
+  `fcitx5`, `fcitx`, or `ibus-daemon` before launching WezTerm, while
+  preserving any user-provided input-method environment.
+- Keeps the v7.6.4 green release surface and all v7.6.2 rich/tmux fixes intact
+  for npm latest install testing.
+
+</details>
+
+<details>
+<summary><b>v7.6.4</b> - macOS Release Install Smoke</summary>
+
+- Keeps the 7.6.3 macOS temporary-root hardening and updates the CI release
+  install smoke to use the explicit temporary-bin override for its isolated
+  sibling `CODEX_BIN_DIR`.
+- Leaves user-facing installer safety intact while allowing the release
+  workflow to validate macOS package installation from a temporary smoke root.
+- Keeps the v7.6.2 rich workbench and tmux single-status-row fixes intact for
+  user install testing.
+
+</details>
+
+<details>
+<summary><b>v7.6.3</b> - macOS CI Green Patch</summary>
+
+- Fixes macOS temporary-root detection for install guards by recognizing the
+  resolved `${TMPDIR:-/tmp}` parent used by GitHub Actions runners.
+- Aligns doctor temporary implementation detection with macOS `/tmp` symlink
+  behavior, preventing false red CI on `/private/tmp` and
+  `/private/var/folders/...` paths.
+- Keeps the v7.6.2 rich workbench and tmux single-status-row fixes intact for
+  user install testing.
+
+</details>
+
+<details>
+<summary><b>v7.6.2</b> - Rich Workbench Hotfix</summary>
+
+- Allows `rich` in `.ccb/ccb.config` as a tool/layout alias without requiring
+  a provider runtime; it materializes as a managed tool pane/window and is not
+  an `ask` target.
+- After `ccb update rich` enables the bundle, plain `ccb` can use the rich
+  launcher outside an existing rich/WezTerm session while avoiding recursive
+  WezTerm launches.
+- Adds `ccb uninstall rich`, `ccb rich uninstall`, and `ccb rich disable` for
+  returning to normal CCB startup without changing full `ccb uninstall`
+  behavior.
+- Rich updates clean only CCB-owned legacy editor roots and links, leaving
+  user-owned editor installs and personal config untouched.
+
+</details>
+
+<details>
+<summary><b>v7.6.1</b> - Rich Workbench Binary Packaging</summary>
+
+- `ccb update rich` now bundles verified Yazi/ya binaries where possible before
+  falling back to package managers.
+- Linux rich installs prefer official Yazi musl builds before GNU builds to
+  avoid newer glibc requirements on older stable distributions.
+- Downloaded Yazi binaries must pass `--version` validation before activation,
+  and invalid managed binaries are removed so fallback paths remain available.
+- Under WSL, rich launchers can use Windows-native `wezterm.exe` while keeping
+  CCB, Yazi, and preview helpers inside the current Linux distro.
+
+</details>
+
+<details>
+<summary><b>v7.6.0</b> - Rich Workbench Lifecycle</summary>
+
+- Makes rich workbench an explicit optional bundle installed with
+  `ccb update rich`.
+- Keeps ordinary `install.sh install` and `ccb update` focused on CCB itself;
+  they no longer auto-provision standalone Neovim.
+- Public `ccb tools ... neovim` routes now refuse standalone provisioning and
+  point users to `ccb update rich`; `ccb rich` launches only an installed and
+  enabled rich bundle.
+- Restores the CCB tmux status bar to one line by removing the old second-line
+  copy hint.
+
+</details>
+
+<details>
+<summary><b>v7.5.3</b> - Kimi Runtime Reliability And Hindsight Compatibility</summary>
+
+- Adds Kimi runtime hardening without changing other provider execution paths:
+  Kimi can fall back to stable pane evidence for K2.7 Code when the native turn
+  log does not expose a completed reply in time.
+- Makes Kimi Hindsight memory opt-in at the CCB execution boundary. It activates
+  only when `.hindsight/kimi.json`, `.hindsight/codex.json`,
+  `HINDSIGHT_API_URL`, or `HINDSIGHT_BANK_ID` is configured, and failures remain
+  non-blocking provider diagnostics.
+- Accepts both `HINDSIGHT_API_KEY` and `HINDSIGHT_API_TOKEN` for the Kimi
+  bridge and the `scripts/hindsight` helper.
+- Documents the supported provider surface more clearly in the README while
+  keeping unrelated provider behavior unchanged.
+
+</details>
+
+<details>
+<summary><b>v7.5.2</b> - Native CLI Provider Wave</summary>
+
+- Adds built-in optional provider ids for Qwen Code (`qwen`), Cursor Agent
+  (`cursor`), GitHub Copilot CLI (`copilot`), Crush (`crush`), Kiro CLI
+  (`kiro`), and Pi (`pi`).
+- Uses native per-job CLI execution and provider-owned completion signals:
+  stream-json / JSON result events for Qwen, Cursor, Copilot, and Pi; process
+  exit plus stdout for Crush and Kiro. These adapters do not require
+  model-printed `CCB_DONE`; Pi terminalizes on native `turn_end`.
+- Adds `QWEN_START_CMD`, `CURSOR_START_CMD`, `COPILOT_START_CMD`,
+  `CRUSH_START_CMD`, `KIRO_START_CMD`, and `PI_START_CMD` command overrides plus provider
+  session bindings, runtime launchers, deterministic stubs, and focused
+  execution tests.
+
+</details>
+
+<details>
 <summary><b>v7.5.1</b> - MiMo Provider Release Surface</summary>
 
 - Adds MiMo Code to the public README provider strip with a Xiaomi-branded
@@ -930,7 +1124,7 @@ v7 highlights:
 - Adds the Role Pack surface with the built-in `ccb.archi` architecture role, role memory, Codex/Claude skill projection, and project role locks.
 - Makes `ccb roles add ccb.archi:codex` the primary role onboarding command; config stores the shorthand while runtime resolves it to the local `archi` agent.
 - Makes `ccb roles install/update ccb.archi` refresh role assets and dependencies by default; install/update prompts interactive users and gives non-interactive users the follow-up command.
-- Adds managed tool windows such as `[tool_windows.neovim]`, plus `ccb tools install/doctor neovim`, sidebar rows, and safe reload add/remove behavior for non-agent tools.
+- Adds managed tool windows, sidebar rows, and safe reload add/remove behavior for non-agent tools.
 - Includes the new `agy` / Google Antigravity provider support from `main`.
 
 </details>

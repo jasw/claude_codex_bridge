@@ -27,6 +27,9 @@ class ControlPlaneMetrics:
     last_project_view_tmux_command_count: int | None = None
     last_project_view_capture_pane_count: int | None = None
     last_project_view_store_scan_count: int | None = None
+    project_view_sidebar_refreshes: int = 0
+    project_view_sidebar_refresh_failures: int = 0
+    last_project_view_sidebar_refresh_duration_s: float | None = None
     service_graph_version: int | None = None
     service_graph_created_at: str | None = None
     service_graph_retained_count: int | None = None

@@ -12,10 +12,6 @@ from ..names import AgentValidationError, normalize_agent_name
 
 
 _WINDOW_NAME_RE = re.compile(r'^[A-Za-z][A-Za-z0-9_-]*$')
-_LAYOUT_TOOL_ALIASES = {'rich'}
-_LAYOUT_TOOL_ALIAS_COMMANDS = {
-    'rich': 'CCB_WORKBENCH_PROFILE=rich CCB_WORKBENCH_FORCE_RICH=1 ccb-workbench files',
-}
 SIDEBAR_MODE_EVERY_WINDOW = 'every_window'
 SIDEBAR_MODE_OFF = 'off'
 DEFAULT_SIDEBAR_VIEW_TIPS = (
@@ -150,16 +146,14 @@ class WindowSpec:
         agent_names = tuple(normalize_agent_name(item) for item in self.agent_names)
         tool_names = tuple(normalize_layout_tool_alias(item) for item in self.tool_names)
         if not agent_names and not tool_names:
-            raise AgentValidationError(f'windows.{name} must contain at least one agent or tool')
+            raise AgentValidationError(f'windows.{name} must contain at least one agent or tool alias')
         if len(set(agent_names)) != len(agent_names):
             raise AgentValidationError(f'windows.{name} cannot contain duplicate agents')
         if len(set(tool_names)) != len(tool_names):
             raise AgentValidationError(f'windows.{name} cannot contain duplicate tool aliases')
-        conflicts = set(agent_names).intersection(tool_names)
+        conflicts = set(agent_names) & set(tool_names)
         if conflicts:
-            raise AgentValidationError(
-                f'windows.{name} cannot use {sorted(conflicts)[0]} as both agent and tool'
-            )
+            raise AgentValidationError(f'windows.{name} leaf cannot be both agent and tool alias: {sorted(conflicts)[0]}')
         object.__setattr__(self, 'name', name)
         object.__setattr__(self, 'order', order)
         object.__setattr__(self, 'layout_spec', layout_spec)
@@ -167,13 +161,42 @@ class WindowSpec:
         object.__setattr__(self, 'tool_names', tool_names)
 
     def to_record(self) -> dict[str, object]:
-        return {
+        payload = {
             'name': self.name,
             'order': self.order,
             'layout_spec': self.layout_spec,
             'agent_names': list(self.agent_names),
-            'tool_names': list(self.tool_names),
         }
+        if self.tool_names:
+            payload['tool_names'] = list(self.tool_names)
+        return payload
+
+
+LAYOUT_TOOL_ALIASES: dict[str, dict[str, str]] = {
+    'rich': {
+        'label': 'rich',
+        'command': 'CCB_WORKBENCH_PROFILE=rich CCB_WORKBENCH_FORCE_RICH=1 ccb-workbench files',
+    },
+}
+
+
+def normalize_layout_tool_alias(value: object) -> str:
+    name = str(value or '').strip().lower()
+    if name not in LAYOUT_TOOL_ALIASES:
+        raise AgentValidationError(f'unknown layout tool alias: {value!r}')
+    return name
+
+
+def is_layout_tool_alias(value: object) -> bool:
+    return str(value or '').strip().lower() in LAYOUT_TOOL_ALIASES
+
+
+def layout_tool_alias_command(value: object) -> str:
+    return LAYOUT_TOOL_ALIASES[normalize_layout_tool_alias(value)]['command']
+
+
+def layout_tool_alias_label(value: object) -> str:
+    return LAYOUT_TOOL_ALIASES[normalize_layout_tool_alias(value)]['label']
 
 
 @dataclass(frozen=True)
@@ -274,26 +297,6 @@ def _normalize_tip(value: object) -> str:
     if not text:
         raise AgentValidationError('ui.sidebar.view.tips cannot contain empty strings')
     return text
-
-
-def is_layout_tool_alias(value: object) -> bool:
-    return str(value or '').strip().lower() in _LAYOUT_TOOL_ALIASES
-
-
-def normalize_layout_tool_alias(value: object) -> str:
-    alias = str(value or '').strip().lower()
-    if alias not in _LAYOUT_TOOL_ALIASES:
-        raise AgentValidationError(f'unknown layout tool alias: {value}')
-    return alias
-
-
-def layout_tool_alias_command(value: object) -> str:
-    alias = normalize_layout_tool_alias(value)
-    return _LAYOUT_TOOL_ALIAS_COMMANDS[alias]
-
-
-def layout_tool_alias_label(value: object) -> str:
-    return normalize_layout_tool_alias(value)
 
 
 def normalize_windows(
@@ -455,10 +458,10 @@ __all__ = [
     'WindowSpec',
     'default_sidebar_spec',
     'default_sidebar_view_spec',
-    'legacy_main_window',
     'is_layout_tool_alias',
     'layout_tool_alias_command',
     'layout_tool_alias_label',
+    'legacy_main_window',
     'normalize_layout_tool_alias',
     'normalize_sidebar_width',
     'normalize_sidebar_view_height',

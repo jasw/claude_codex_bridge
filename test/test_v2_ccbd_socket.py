@@ -636,6 +636,57 @@ def test_ccbd_stop_all_does_not_run_post_shutdown_heartbeat(tmp_path: Path) -> N
     assert lifecycle.phase == 'unmounted'
 
 
+def test_ccbd_stop_all_does_not_scan_project_processes_during_rpc(tmp_path: Path, monkeypatch) -> None:
+    project_root = tmp_path / 'repo-stop-all-no-project-scan'
+    _prepare_project(project_root, _single_agent_config_text('demo', 'fake'))
+    app = CcbdApp(project_root)
+    app.project_namespace.ensure = lambda: SimpleNamespace(  # type: ignore[method-assign]
+        tmux_socket_path=str(app.paths.ccbd_tmux_socket_path),
+        tmux_session_name=app.paths.ccbd_tmux_session_name,
+        namespace_epoch=1,
+    )
+    app.project_namespace.destroy = lambda **kwargs: SimpleNamespace(destroyed=True, namespace_epoch=1)  # type: ignore[method-assign]
+    captured: dict[str, object] = {}
+
+    def _capture_terminate_runtime_pids(
+        *,
+        project_root,
+        pid_candidates,
+        is_pid_alive_fn,
+        pid_matches_project_fn,
+        terminate_pid_tree_fn,
+        remove_pid_files_fn,
+        collect_project_process_candidates_fn=None,
+    ):
+        del project_root
+        del pid_candidates
+        del is_pid_alive_fn
+        del pid_matches_project_fn
+        del terminate_pid_tree_fn
+        del remove_pid_files_fn
+        captured['collect_project_process_candidates_fn'] = collect_project_process_candidates_fn
+
+    monkeypatch.setattr(
+        'ccbd.stop_flow_runtime.pid_cleanup._terminate_runtime_pids_impl',
+        _capture_terminate_runtime_pids,
+    )
+
+    thread = threading.Thread(target=app.serve_forever, kwargs={'poll_interval': 0.05}, daemon=True)
+    thread.start()
+    _wait_for(app.paths.ccbd_socket_path)
+
+    client = CcbdClient(app.paths.ccbd_socket_path)
+    started = client.start(agent_names=('demo',), restore=False, auto_permission=False)
+    assert started['started'] == ['demo']
+
+    stopped = client.stop_all(force=False)
+    assert stopped['state'] == 'unmounted'
+
+    thread.join(timeout=2)
+    assert not thread.is_alive()
+    assert captured['collect_project_process_candidates_fn'] is None
+
+
 def test_ccbd_stop_all_force_terminalizes_running_jobs_before_restart_restore(tmp_path: Path) -> None:
     project_root = tmp_path / 'repo-stop-all-running-job'
     _prepare_project(project_root, _single_agent_config_text('demo', 'fake'))

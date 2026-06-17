@@ -163,7 +163,7 @@ def _load_config() -> _HindsightConfig:
         recall_preamble=str(payload.get("recallPromptPreamble") or "Relevant memories from past conversations:"),
         show_hook_context=_bool_env("CCB_KIMI_HINDSIGHT_SHOW_HOOK_CONTEXT")
         or _bool(payload.get("showHookContext"), False),
-        api_token=str(os.environ.get("HINDSIGHT_API_TOKEN") or payload.get("hindsightApiToken") or ""),
+        api_token=str(_api_token_from_env_or_payload(payload)),
         config_path=str(path or ""),
     )
 
@@ -307,6 +307,16 @@ def _bool(value: object, default: bool) -> bool:
 
 def _bool_env(name: str) -> bool:
     return _bool(os.environ.get(name), False)
+
+
+def _api_token_from_env_or_payload(payload: dict[str, object]) -> object:
+    return (
+        os.environ.get("HINDSIGHT_API_TOKEN")
+        or os.environ.get("HINDSIGHT_API_KEY")
+        or payload.get("hindsightApiToken")
+        or payload.get("hindsightApiKey")
+        or ""
+    )
 
 
 def _quote(value: str) -> str:
