@@ -38,7 +38,7 @@ def _run_ccb(args: list[str], *, cwd: Path) -> subprocess.CompletedProcess[str]:
         if name.startswith(('CCB_CALLER_', 'CODEX_', 'CLAUDE_', 'GEMINI_', 'OPENCODE_', 'DROID_')):
             env.pop(name, None)
     return subprocess.run(
-        [sys.executable, str(_repo_root() / 'ccb'), *args],
+        [sys.executable, str(_repo_root() / 'ccb.py'), *args],
         cwd=str(cwd),
         env=env,
         stdout=subprocess.PIPE,
@@ -157,8 +157,10 @@ def _run_phase2_local(args: list[str], *, cwd: Path, start_app: CcbdApp | None =
 def _phase2_start_against_app(app: CcbdApp):
     # In-process app tests own the daemon lifecycle; starting keeper here races the fixture.
     def _start(context, command, *, terminal_size=None):
+        from cli.services.daemon_runtime.policy import STARTUP_TRANSACTION_TIMEOUT_S
+
         assert context.project.project_root == app.project_root
-        payload = CcbdClient(app.paths.ccbd_socket_path).start(
+        payload = CcbdClient(app.paths.ccbd_socket_path, timeout_s=STARTUP_TRANSACTION_TIMEOUT_S).start(
             agent_names=command.agent_names,
             restore=command.restore,
             auto_permission=command.auto_permission,
@@ -840,7 +842,7 @@ def test_phase2_doctor_storage_renders_storage_summary(monkeypatch, tmp_path: Pa
     monkeypatch.setattr(
         phase2_module,
         'doctor_storage_summary',
-        lambda context: {
+        lambda context, *, compact=False: {
             'schema_version': 1,
             'project': str(context.project.project_root),
             'project_id': context.project.project_id,
@@ -890,7 +892,7 @@ def test_phase2_doctor_storage_json_emits_full_payload(monkeypatch, tmp_path: Pa
     monkeypatch.setattr(
         phase2_module,
         'doctor_storage_summary',
-        lambda context: {
+        lambda context, *, compact=False: {
             'schema_version': 1,
             'project': str(context.project.project_root),
             'project_id': context.project.project_id,

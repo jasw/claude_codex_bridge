@@ -5,6 +5,7 @@ from pathlib import Path
 
 from ccbd.api_models import DeliveryScope, JobEvent, JobRecord, JobStatus, MessageEnvelope, SubmissionRecord, TargetKind
 from jobs.store import JobEventStore, JobStore, SubmissionStore
+from rust_helpers import RUST_HELPER_BIN_ENV
 from storage.paths import PathLayout
 
 
@@ -18,6 +19,173 @@ def _envelope() -> MessageEnvelope:
         reply_to=None,
         message_type='ask',
         delivery_scope=DeliveryScope.SINGLE,
+    )
+
+
+def _write_helper(path: Path, body: str) -> Path:
+    path.write_text('#!/usr/bin/env python3\n' + body, encoding='utf-8')
+    path.chmod(0o755)
+    return path
+
+
+def _strict_jsonl_file_helper(path: Path) -> Path:
+    return _write_helper(
+        path,
+        """import json, sys
+from pathlib import Path
+
+if sys.argv[1:] == ['--capabilities']:
+    print(json.dumps({'schema_version': 1, 'capabilities': ['jsonl.tail.strict']}))
+else:
+    request = json.loads(sys.stdin.read())
+    output = []
+    for item in request['payload']['requests']:
+        target = Path(item['path'])
+        rows = []
+        if target.is_file() and item['n'] > 0:
+            parsed = []
+            for line in target.read_text(encoding='utf-8').splitlines():
+                text = line.strip()
+                if not text:
+                    continue
+                value = json.loads(text)
+                if not isinstance(value, dict):
+                    print(json.dumps({'schema_version': 1, 'ok': True, 'capability': request['capability'], 'payload': {
+                        'requests': [], 'error': {'kind': 'non_object', 'path': str(target), 'message': 'expected object'}
+                    }}))
+                    raise SystemExit(0)
+                parsed.append(value)
+            rows = parsed[-int(item['n']):]
+        output.append({'id': item['id'], 'rows': rows})
+    print(json.dumps({'schema_version': 1, 'ok': True, 'capability': request['capability'], 'payload': {'requests': output, 'error': None}}))
+""",
+    )
+
+
+def _project_view_recent_jobs_helper(path: Path) -> Path:
+    return _write_helper(
+        path,
+        """import json, sys
+if sys.argv[1:] == ['--capabilities']:
+    print(json.dumps({'schema_version': 1, 'capabilities': ['project_view.recent_jobs']}))
+else:
+    request = json.loads(sys.stdin.read())
+    print(json.dumps({'schema_version': 1, 'ok': True, 'capability': request['capability'], 'payload': {
+        'jobs': [{
+            'job_id': 'job-helper-1',
+            'agent_name': 'agent1',
+            'target_name': 'agent1',
+            'provider': 'codex',
+            'status': 'completed',
+            'terminal_decision': {'reason': 'task_complete'},
+            'created_at': '2026-03-18T00:00:00Z',
+            'updated_at': '2026-03-18T00:00:09Z',
+            'provider_options': {},
+            'request': {
+                'project_id': 'proj-1',
+                'to_agent': 'agent1',
+                'from_actor': 'cmd',
+                'body': 'from helper',
+                'task_id': None,
+                'reply_to': None,
+                'message_type': 'ask',
+                'delivery_scope': 'single',
+                'silence_on_success': False,
+                'route_options': {},
+                'body_artifact': None,
+            },
+        }],
+        'error': None,
+    }}))
+""",
+    )
+
+
+def _jobs_query_recent_helper(path: Path) -> Path:
+    return _write_helper(
+        path,
+        """import json, sys
+if sys.argv[1:] == ['--capabilities']:
+    print(json.dumps({'schema_version': 1, 'capabilities': ['jobs.query.recent']}))
+else:
+    request = json.loads(sys.stdin.read())
+    payload = request['payload']
+    assert payload['per_agent_initial'] == 4
+    assert payload['per_agent_max'] == 16
+    print(json.dumps({'schema_version': 1, 'ok': True, 'capability': request['capability'], 'payload': {
+        'jobs': [{
+            'job_id': 'job-query-helper',
+            'agent_name': 'agent1',
+            'target_name': 'agent1',
+            'provider': 'codex',
+            'status': 'completed',
+            'terminal_decision': {'reason': 'task_complete'},
+            'created_at': '2026-03-18T00:00:00Z',
+            'updated_at': '2026-03-18T00:00:09Z',
+            'provider_options': {},
+            'request': {
+                'project_id': 'proj-1',
+                'to_agent': 'agent1',
+                'from_actor': 'cmd',
+                'body': 'from query helper',
+                'task_id': None,
+                'reply_to': None,
+                'message_type': 'ask',
+                'delivery_scope': 'single',
+                'silence_on_success': False,
+                'route_options': {},
+                'body_artifact': None,
+            },
+        }],
+        'scanned': 4,
+        'returned': 1,
+        'truncated': False,
+        'next_budget_hint': {'per_agent_initial': 4, 'per_agent_max': 16},
+        'error': None,
+    }}))
+""",
+    )
+
+
+def _job_summary_tail_helper(path: Path) -> Path:
+    return _write_helper(
+        path,
+        """import json, sys
+if sys.argv[1:] == ['--capabilities']:
+    print(json.dumps({'schema_version': 1, 'capabilities': ['jobs.tail.summary']}))
+else:
+    request = json.loads(sys.stdin.read())
+    print(json.dumps({'schema_version': 1, 'ok': True, 'capability': request['capability'], 'payload': {
+        'requests': [
+            {'id': item['id'], 'jobs': [{
+                'job_id': 'job-summary-helper',
+                'agent_name': item['id'],
+                'target_name': item['id'],
+                'provider': 'codex',
+                'status': 'completed',
+                'terminal_decision': {'reason': 'task_complete'},
+                'created_at': '2026-06-15T00:00:00Z',
+                'updated_at': '2026-06-15T00:00:01Z',
+                'provider_options': {},
+                'request': {
+                    'project_id': 'proj-1',
+                    'to_agent': item['id'],
+                    'from_actor': 'cmd',
+                    'body': 'summary helper body',
+                    'task_id': None,
+                    'reply_to': None,
+                    'message_type': 'ask',
+                    'delivery_scope': 'single',
+                    'silence_on_success': False,
+                    'route_options': {},
+                    'body_artifact': None,
+                },
+            }]}
+            for item in request['payload']['requests']
+        ],
+        'error': None,
+    }}))
+""",
     )
 
 
@@ -209,6 +377,324 @@ def test_job_store_lists_agent_tail(tmp_path: Path) -> None:
     records = store.list_agent_tail('agent1', limit=3)
 
     assert [record.job_id for record in records] == ['job-3', 'job-4', 'job-5']
+
+
+def test_job_store_lists_agent_tails_batch(tmp_path: Path) -> None:
+    layout = PathLayout(tmp_path / 'repo-batch-tail')
+    store = JobStore(layout)
+    for agent_name in ('agent1', 'agent2'):
+        for index in range(3):
+            store.append(
+                JobRecord(
+                    job_id=f'{agent_name}-job-{index}',
+                    submission_id=None,
+                    agent_name=agent_name,
+                    provider='codex',
+                    request=_envelope(),
+                    status=JobStatus.COMPLETED,
+                    terminal_decision={'reason': 'task_complete'},
+                    cancel_requested_at=None,
+                    created_at='2026-03-18T00:00:00Z',
+                    updated_at=f'2026-03-18T00:00:0{index}Z',
+                )
+            )
+
+    records = store.list_agent_tails_batch(('agent1', 'agent2'), limit=2)
+
+    assert [record.job_id for record in records['agent1']] == ['agent1-job-1', 'agent1-job-2']
+    assert [record.job_id for record in records['agent2']] == ['agent2-job-1', 'agent2-job-2']
+
+
+def test_job_store_batch_tail_uses_required_strict_helper(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    layout = PathLayout(tmp_path / 'repo-batch-tail-helper')
+    store = JobStore(layout)
+    helper = _strict_jsonl_file_helper(tmp_path / 'helper.py')
+    monkeypatch.setenv('CCB_RUST_JSONL_STORE', '1')
+    monkeypatch.setenv(RUST_HELPER_BIN_ENV, str(helper))
+    for agent_name in ('agent1', 'agent2'):
+        for index in range(3):
+            store.append(
+                JobRecord(
+                    job_id=f'{agent_name}-job-{index}',
+                    submission_id=None,
+                    agent_name=agent_name,
+                    provider='codex',
+                    request=_envelope(),
+                    status=JobStatus.COMPLETED,
+                    terminal_decision={'reason': 'task_complete'},
+                    cancel_requested_at=None,
+                    created_at='2026-03-18T00:00:00Z',
+                    updated_at=f'2026-03-18T00:00:0{index}Z',
+                )
+            )
+
+    records = store.list_agent_tails_batch(('agent1', 'agent2'), limit=1)
+
+    assert [record.job_id for record in records['agent1']] == ['agent1-job-2']
+    assert [record.job_id for record in records['agent2']] == ['agent2-job-2']
+
+
+def test_job_store_required_batch_tail_missing_helper_does_not_fallback(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    layout = PathLayout(tmp_path / 'repo-batch-tail-helper-missing')
+    store = JobStore(layout)
+    store.append(
+        JobRecord(
+            job_id='job-1',
+            submission_id=None,
+            agent_name='agent1',
+            provider='codex',
+            request=_envelope(),
+            status=JobStatus.COMPLETED,
+            terminal_decision={'reason': 'task_complete'},
+            cancel_requested_at=None,
+            created_at='2026-03-18T00:00:00Z',
+            updated_at='2026-03-18T00:00:01Z',
+        )
+    )
+    monkeypatch.setenv('CCB_RUST_JSONL_STORE', '1')
+    monkeypatch.setenv(RUST_HELPER_BIN_ENV, str(tmp_path / 'missing-helper'))
+
+    try:
+        store.list_agent_tails_batch(('agent1',), limit=1)
+    except RuntimeError as exc:
+        assert 'no Python fallback' in str(exc)
+    else:
+        raise AssertionError('expected required helper path to fail without Python fallback')
+
+
+def test_job_store_lists_agent_tail_summaries_batch(tmp_path: Path) -> None:
+    layout = PathLayout(tmp_path / 'repo-batch-summary-tail')
+    store = JobStore(layout)
+    for agent_name in ('agent1', 'agent2'):
+        for index in range(3):
+            store.append(
+                JobRecord(
+                    job_id=f'{agent_name}-job-{index}',
+                    submission_id=None,
+                    agent_name=agent_name,
+                    provider='codex',
+                    request=_envelope(),
+                    status=JobStatus.COMPLETED,
+                    terminal_decision={'reason': 'task_complete'},
+                    cancel_requested_at=None,
+                    created_at='2026-03-18T00:00:00Z',
+                    updated_at=f'2026-03-18T00:00:0{index}Z',
+                )
+            )
+
+    summaries = store.list_agent_tail_summaries_batch(('agent1', 'agent2'), limit=2)
+
+    assert [summary.job_id for summary in summaries['agent1']] == ['agent1-job-1', 'agent1-job-2']
+    assert summaries['agent2'][1].request.from_actor == 'user'
+
+
+def test_job_store_agent_tail_summaries_use_required_projection_helper(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    layout = PathLayout(tmp_path / 'repo-batch-summary-helper')
+    store = JobStore(layout)
+    helper = _job_summary_tail_helper(tmp_path / 'job_summary.py')
+    monkeypatch.setenv('CCB_RUST_JOB_SUMMARY_TAIL', '1')
+    monkeypatch.setenv(RUST_HELPER_BIN_ENV, str(helper))
+    store.append(
+        JobRecord(
+            job_id='job-python-path-should-not-run',
+            submission_id=None,
+            agent_name='agent1',
+            provider='codex',
+            request=_envelope(),
+            status=JobStatus.COMPLETED,
+            terminal_decision={'reason': 'task_complete'},
+            cancel_requested_at=None,
+            created_at='2026-03-18T00:00:00Z',
+            updated_at='2026-03-18T00:00:01Z',
+        )
+    )
+
+    summaries = store.list_agent_tail_summaries_batch(('agent1',), limit=1)
+
+    assert [summary.job_id for summary in summaries['agent1']] == ['job-summary-helper']
+    assert summaries['agent1'][0].request.body == 'summary helper body'
+
+
+def test_job_store_agent_tail_summaries_missing_helper_does_not_fallback(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    layout = PathLayout(tmp_path / 'repo-batch-summary-helper-missing')
+    store = JobStore(layout)
+    monkeypatch.setenv('CCB_RUST_JOB_SUMMARY_TAIL', '1')
+    monkeypatch.setenv(RUST_HELPER_BIN_ENV, str(tmp_path / 'missing-helper'))
+
+    try:
+        store.list_agent_tail_summaries_batch(('agent1',), limit=1)
+    except RuntimeError as exc:
+        assert 'no Python fallback' in str(exc)
+    else:
+        raise AssertionError('expected required helper path to fail without Python fallback')
+
+
+def test_job_store_lists_project_view_recent_job_summaries(tmp_path: Path) -> None:
+    layout = PathLayout(tmp_path / 'repo-project-view-summary')
+    store = JobStore(layout)
+    for index, status in enumerate((JobStatus.RUNNING, JobStatus.COMPLETED, JobStatus.FAILED)):
+        store.append(
+            JobRecord(
+                job_id=f'job-{index}',
+                submission_id=None,
+                agent_name='agent1',
+                provider='codex',
+                request=_envelope(),
+                status=status,
+                terminal_decision={'reason': status.value} if status in {JobStatus.COMPLETED, JobStatus.FAILED} else None,
+                cancel_requested_at=None,
+                created_at='2026-03-18T00:00:00Z',
+                updated_at=f'2026-03-18T00:00:0{index}Z',
+            )
+        )
+
+    summaries = store.list_project_view_recent_jobs(
+        ('agent1',),
+        per_agent_limit=10,
+        result_limit=8,
+        statuses=('completed', 'failed'),
+    )
+
+    assert [summary.job_id for summary in summaries] == ['job-2', 'job-1']
+    assert summaries[0].status is JobStatus.FAILED
+    assert summaries[0].request.from_actor == 'user'
+
+
+def test_job_store_project_view_recent_jobs_uses_required_helper(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    layout = PathLayout(tmp_path / 'repo-project-view-summary-helper')
+    store = JobStore(layout)
+    helper = _project_view_recent_jobs_helper(tmp_path / 'recent_jobs.py')
+    monkeypatch.setenv('CCB_RUST_PROJECT_VIEW_RECENT_JOBS', '1')
+    monkeypatch.setenv(RUST_HELPER_BIN_ENV, str(helper))
+
+    summaries = store.list_project_view_recent_jobs(
+        ('agent1',),
+        per_agent_limit=128,
+        result_limit=8,
+        statuses=('completed',),
+    )
+
+    assert [summary.job_id for summary in summaries] == ['job-helper-1']
+    assert summaries[0].request.body == 'from helper'
+
+
+def test_job_store_project_view_recent_jobs_adaptive_python_scan(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    layout = PathLayout(tmp_path / 'repo-project-view-summary-adaptive')
+    store = JobStore(layout)
+    for index in range(12):
+        store.append(
+            JobRecord(
+                job_id=f'job-{index}',
+                submission_id=None,
+                agent_name='agent1',
+                provider='codex',
+                request=_envelope(),
+                status=JobStatus.COMPLETED,
+                terminal_decision={'reason': 'task_complete'},
+                cancel_requested_at=None,
+                created_at='2026-03-18T00:00:00Z',
+                updated_at=f'2026-03-18T00:00:{index:02d}Z',
+            )
+        )
+    original = store.list_agent_tail
+    limits: list[int] = []
+
+    def recording_tail(agent_name: str, *, limit: int):
+        limits.append(limit)
+        return original(agent_name, limit=limit)
+
+    monkeypatch.setattr(store, 'list_agent_tail', recording_tail)
+
+    summaries = store.list_project_view_recent_jobs(
+        ('agent1',),
+        per_agent_initial_limit=4,
+        per_agent_limit=16,
+        result_limit=8,
+        statuses=('completed',),
+    )
+
+    assert limits == [4, 8]
+    assert [summary.job_id for summary in summaries] == [
+        'job-11',
+        'job-10',
+        'job-9',
+        'job-8',
+        'job-7',
+        'job-6',
+        'job-5',
+        'job-4',
+    ]
+
+
+def test_job_store_project_view_recent_jobs_adaptive_required_helper(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    layout = PathLayout(tmp_path / 'repo-project-view-summary-query-helper')
+    store = JobStore(layout)
+    helper = _jobs_query_recent_helper(tmp_path / 'recent_query.py')
+    monkeypatch.setenv('CCB_RUST_PROJECT_VIEW_RECENT_JOBS', '1')
+    monkeypatch.setenv(RUST_HELPER_BIN_ENV, str(helper))
+
+    summaries = store.list_project_view_recent_jobs(
+        ('agent1',),
+        per_agent_initial_limit=4,
+        per_agent_limit=16,
+        result_limit=8,
+        statuses=('completed',),
+    )
+
+    assert [summary.job_id for summary in summaries] == ['job-query-helper']
+    assert summaries[0].request.body == 'from query helper'
+
+
+def test_job_store_project_view_recent_jobs_missing_helper_does_not_fallback(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    layout = PathLayout(tmp_path / 'repo-project-view-summary-helper-missing')
+    store = JobStore(layout)
+    store.append(
+        JobRecord(
+            job_id='job-python-fallback-would-return',
+            submission_id=None,
+            agent_name='agent1',
+            provider='codex',
+            request=_envelope(),
+            status=JobStatus.COMPLETED,
+            terminal_decision={'reason': 'task_complete'},
+            cancel_requested_at=None,
+            created_at='2026-03-18T00:00:00Z',
+            updated_at='2026-03-18T00:00:01Z',
+        )
+    )
+    monkeypatch.setenv('CCB_RUST_PROJECT_VIEW_RECENT_JOBS', '1')
+    monkeypatch.setenv(RUST_HELPER_BIN_ENV, str(tmp_path / 'missing-helper'))
+
+    try:
+        store.list_project_view_recent_jobs(('agent1',), per_agent_limit=128, result_limit=8)
+    except RuntimeError as exc:
+        assert 'no Python fallback' in str(exc)
+    else:
+        raise AssertionError('expected required helper path to fail without Python fallback')
 
 
 def test_job_store_roundtrips_silence_on_success_request_flag(tmp_path: Path) -> None:

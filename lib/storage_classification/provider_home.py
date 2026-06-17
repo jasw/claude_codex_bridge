@@ -17,6 +17,23 @@ _GEMINI_PROJECTED_NAMES = {'settings.json', 'trustedFolders.json'}
 _CODEX_PROJECTED_NAMES = {'config.toml'}
 _OPENCODE_PROJECTED_NAMES = {'opencode.json'}
 _MIMO_PROJECTED_NAMES = {'mimocode.json'}
+_NATIVE_CLI_PROVIDERS = {'qwen', 'cursor', 'copilot', 'crush', 'kiro', 'pi'}
+_NATIVE_CLI_PROJECTED_ROOTS = {'inherited-skills', 'role-skills'}
+_NATIVE_CLI_CACHE_ROOTS = {'.cache', '.npm', '.tmp', 'cache', 'node_modules', 'tmp'}
+_NATIVE_CLI_SESSION_ROOTS = {
+    '.config',
+    '.crush',
+    '.cursor',
+    '.kiro',
+    '.local',
+    '.pi',
+    '.qwen',
+    'data',
+    'logs',
+    'session',
+    'sessions',
+    'state',
+}
 _CODEX_SESSION_NAMES = {
     '.ccb-session-namespace.json',
     'history.jsonl',
@@ -70,6 +87,8 @@ def classify_provider_home(
         return _classify_mimo_home(path, relative_path, remainder, size=size, provider=provider, agent=agent, root_kind=root_kind)
     if provider == 'droid':
         return _classify_droid_home(path, relative_path, remainder, size=size, provider=provider, agent=agent, root_kind=root_kind)
+    if provider in _NATIVE_CLI_PROVIDERS:
+        return _classify_native_cli_home(path, relative_path, remainder, size=size, provider=provider, agent=agent, root_kind=root_kind)
     return _entry(path, relative_path, StorageClass.UNKNOWN, size, provider=provider, agent=agent, root_kind=root_kind)
 
 
@@ -264,6 +283,47 @@ def _classify_droid_home(
     if remainder[0] == 'skills':
         return _entry(path, relative_path, StorageClass.PROJECTED_CONFIG, size, provider=provider, agent=agent, root_kind=root_kind)
     return _entry(path, relative_path, StorageClass.UNKNOWN, size, provider=provider, agent=agent, root_kind=root_kind)
+
+
+def _classify_native_cli_home(
+    path: Path,
+    relative_path: str,
+    remainder: tuple[str, ...],
+    *,
+    size: int,
+    provider: str,
+    agent: str,
+    root_kind: str,
+) -> StorageEntry:
+    name = remainder[-1]
+    if remainder[0] in _NATIVE_CLI_PROJECTED_ROOTS:
+        return _entry(path, relative_path, StorageClass.PROJECTED_CONFIG, size, provider=provider, agent=agent, root_kind=root_kind)
+    if remainder[0] in _NATIVE_CLI_CACHE_ROOTS:
+        return _entry(path, relative_path, StorageClass.REBUILDABLE_CACHE, size, provider=provider, agent=agent, root_kind=root_kind)
+    if (
+        remainder[0] in _NATIVE_CLI_SESSION_ROOTS
+        or name.endswith(('.db', '.jsonl', '.log', '.sqlite', '.sqlite-shm', '.sqlite-wal'))
+    ):
+        return _entry(
+            path,
+            relative_path,
+            StorageClass.SESSION,
+            size,
+            provider=provider,
+            agent=agent,
+            reason='native_cli_provider_state',
+            root_kind=root_kind,
+        )
+    return _entry(
+        path,
+        relative_path,
+        StorageClass.SESSION,
+        size,
+        provider=provider,
+        agent=agent,
+        reason='native_cli_provider_owned_state',
+        root_kind=root_kind,
+    )
 
 
 def _entry(

@@ -7,7 +7,7 @@ from pathlib import Path
 from provider_runtime.helper_manifest import load_helper_manifest
 from storage.paths import PathLayout
 
-from .procfs import read_pid_file, read_proc_cmdline
+from .procfs import list_process_cmdlines, read_pid_file, read_proc_cmdline
 from .utils import coerce_pid, resolved_runtime_roots
 
 
@@ -35,6 +35,7 @@ def collect_project_process_candidates(
     *,
     proc_root: Path = Path('/proc'),
     read_proc_cmdline_fn=read_proc_cmdline,
+    list_process_cmdlines_fn=list_process_cmdlines,
     current_pid: int | None = None,
 ) -> dict[int, list[Path]]:
     current_pid = int(current_pid or os.getpid())
@@ -44,15 +45,16 @@ def collect_project_process_candidates(
     if not markers:
         return {}
     candidates: dict[int, list[Path]] = {}
-    try:
-        entries = list(proc_root.iterdir())
-    except Exception:
-        return candidates
-    for entry in entries:
-        pid = coerce_pid(entry.name)
+    process_cmdlines = list_process_cmdlines_fn(
+        proc_root=proc_root,
+        current_pid=current_pid,
+        read_proc_cmdline_fn=read_proc_cmdline_fn,
+    )
+    for pid, cmdline in process_cmdlines.items():
+        pid = coerce_pid(pid)
         if pid is None or pid == current_pid:
             continue
-        cmdline = str(read_proc_cmdline_fn(pid) or '').strip()
+        cmdline = str(cmdline or '').strip()
         matched_markers = tuple(marker for marker in markers if str(marker) in cmdline)
         control_plane_marker = _control_plane_marker(project_root, cmdline=cmdline, layout=layout)
         if control_plane_marker is not None and control_plane_marker not in matched_markers:

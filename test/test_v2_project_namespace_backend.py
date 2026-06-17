@@ -18,6 +18,15 @@ from ccbd.services.project_namespace_runtime.backend import (
 )
 from terminal_runtime.tmux_readiness import TmuxTransientServerUnavailable
 
+_TMUX_UPDATE_ENVIRONMENT_FOR_TEST = (
+    'TERM TERM_PROGRAM TERM_PROGRAM_VERSION DISPLAY WAYLAND_DISPLAY XDG_RUNTIME_DIR '
+    'WSL_DISTRO_NAME WSL_INTEROP SSH_AUTH_SOCK SSH_CONNECTION KITTY_WINDOW_ID '
+    'WEZTERM_EXECUTABLE WEZTERM_PANE WEZTERM_UNIX_SOCKET CCB_WORKBENCH_PROFILE '
+    'CCB_WORKBENCH_FORCE_RICH CCB_WORKBENCH_ROOT CCB_WORKBENCH_TERMINAL_PROGRAM '
+    'CCB_WORKBENCH_TERMINAL_PROGRAM_VERSION CCB_WORKBENCH_YAZI_SAFE_CONFIG '
+    'CCB_WORKBENCH_YAZI_RICH_CONFIG AGENT_ROLES_STORE'
+)
+
 
 def _clipboard_pipe_command_for_test() -> str:
     return (
@@ -95,6 +104,7 @@ class _FlakyBackend:
 def test_prepare_server_then_create_session_and_server_policy_retry_transient_tmux_failures(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setenv('CCB_TMUX_OBJECT_READY_POLL_INTERVAL_S', '0')
     monkeypatch.setenv('DISPLAY', ':99')
+    monkeypatch.setenv('AGENT_ROLES_STORE', '/home/demo/.roles')
     backend = _FlakyBackend()
     backend.fail_once('start-server')
     backend.fail_once('set-option', '-g', 'destroy-unattached', 'off')
@@ -127,6 +137,7 @@ def test_prepare_server_then_create_session_and_server_policy_retry_transient_tm
     assert backend.calls.count(('set-option', '-g', 'set-clipboard', 'on')) == 1
     assert backend.calls.count(('set-option', '-g', 'focus-events', 'on')) == 1
     assert backend.calls.count(('set-option', '-g', 'escape-time', '10')) == 1
+    assert backend.calls.count(('set-option', '-g', 'allow-passthrough', 'on')) == 1
     assert backend.calls.count(('set-window-option', '-g', 'mode-keys', 'vi')) == 1
     assert backend.calls.count(('bind-key', '-T', 'copy-mode-vi', 'v', 'send-keys', '-X', 'begin-selection')) == 1
     assert ('bind-key', '-T', 'copy-mode-vi', 'y', 'send-keys', '-X', 'copy-selection-and-cancel') not in backend.calls
@@ -137,6 +148,7 @@ def test_prepare_server_then_create_session_and_server_policy_retry_transient_tm
         for call in backend.calls
     )
     assert ('set-environment', '-g', 'DISPLAY', ':99') in backend.calls
+    assert ('set-environment', '-g', 'AGENT_ROLES_STORE', '/home/demo/.roles') in backend.calls
     assert backend.calls.count(('bind-key', 'h', 'select-pane', '-L')) == 1
     assert backend.calls.count(('bind-key', '-r', 'L', 'resize-pane', '-R', '5')) == 1
     assert backend.calls.count(
@@ -178,6 +190,23 @@ def test_prepare_server_does_not_require_server_policy_before_session_exists(mon
     monkeypatch.delenv('WSL_INTEROP', raising=False)
     monkeypatch.delenv('SSH_AUTH_SOCK', raising=False)
     monkeypatch.delenv('SSH_CONNECTION', raising=False)
+    for key in (
+        'TERM',
+        'TERM_PROGRAM',
+        'TERM_PROGRAM_VERSION',
+        'KITTY_WINDOW_ID',
+        'WEZTERM_EXECUTABLE',
+        'WEZTERM_PANE',
+        'WEZTERM_UNIX_SOCKET',
+        'CCB_WORKBENCH_PROFILE',
+        'CCB_WORKBENCH_FORCE_RICH',
+        'CCB_WORKBENCH_ROOT',
+        'CCB_WORKBENCH_TERMINAL_PROGRAM',
+        'CCB_WORKBENCH_TERMINAL_PROGRAM_VERSION',
+        'CCB_WORKBENCH_YAZI_SAFE_CONFIG',
+        'CCB_WORKBENCH_YAZI_RICH_CONFIG',
+    ):
+        monkeypatch.delenv(key, raising=False)
     backend = _FlakyBackend()
     backend.require_session_for_server_policy = True
 
@@ -199,7 +228,8 @@ def test_prepare_server_does_not_require_server_policy_before_session_exists(mon
         ('set-option', '-g', 'set-clipboard', 'on'),
         ('set-option', '-g', 'focus-events', 'on'),
         ('set-option', '-g', 'escape-time', '10'),
-        ('set-option', '-g', 'update-environment', 'DISPLAY WAYLAND_DISPLAY XDG_RUNTIME_DIR WSL_DISTRO_NAME WSL_INTEROP SSH_AUTH_SOCK SSH_CONNECTION'),
+        ('set-option', '-g', 'allow-passthrough', 'on'),
+        ('set-option', '-g', 'update-environment', _TMUX_UPDATE_ENVIRONMENT_FOR_TEST),
         ('set-window-option', '-g', 'mode-keys', 'vi'),
         ('bind-key', '-T', 'copy-mode-vi', 'v', 'send-keys', '-X', 'begin-selection'),
         ('bind-key', '-T', 'copy-mode-vi', 'C-v', 'send-keys', '-X', 'rectangle-toggle'),
@@ -439,8 +469,9 @@ def test_ensure_server_policy_accepts_fast_probe_timeout(monkeypatch) -> None:
         ('set-option', '-g', 'set-clipboard', 'on'),
         ('set-option', '-g', 'focus-events', 'on'),
         ('set-option', '-g', 'escape-time', '10'),
-        ('set-option', '-g', 'update-environment', 'DISPLAY WAYLAND_DISPLAY XDG_RUNTIME_DIR WSL_DISTRO_NAME WSL_INTEROP SSH_AUTH_SOCK SSH_CONNECTION'),
+        ('set-option', '-g', 'allow-passthrough', 'on'),
     ]
+    assert ('set-option', '-g', 'update-environment', _TMUX_UPDATE_ENVIRONMENT_FOR_TEST) in backend.calls
     assert (
         'bind-key',
         '-T',

@@ -150,6 +150,42 @@ def test_required_dev_workflows_depend_on_branch() -> None:
     }
 
 
+def test_check_local_files_accepts_ccb_py_version_for_shell_launcher(tmp_path: Path) -> None:
+    checker = _load_checker()
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "VERSION").write_text("9.9.9\n", encoding="utf-8")
+    (repo / "ccb").write_text("#!/usr/bin/env bash\nexec ./ccb.py \"$@\"\n", encoding="utf-8")
+    (repo / "ccb.py").write_text('VERSION = "9.9.9"\n', encoding="utf-8")
+    (repo / "CHANGELOG.md").write_text(
+        "## v9.9.9 (2026-06-17)\n\n- Rich launcher closure release notes.\n",
+        encoding="utf-8",
+    )
+    release_block = (
+        "<details open>\n"
+        "<summary><b>v9.9.9</b> - Rich launcher closure</summary>\n\n"
+        "- Rich launcher closure release notes.\n\n"
+        "</details>\n\n"
+    )
+    for name, heading in (("README.md", "How to Install"), ("README_zh.md", "如何安装")):
+        (repo / name).write_text(
+            f"https://img.shields.io/badge/version-9.9.9-orange.svg\n\n"
+            f"## Release Notes\n\n{release_block}"
+            f"## {heading}\n\n"
+            "```bash\n"
+            "git clone https://github.com/SeemSeam/claude_codex_bridge.git\n"
+            "```\n\n"
+            ".ccb/ccb_memory.md\n",
+            encoding="utf-8",
+        )
+
+    issues: list[str] = []
+    warnings: list[str] = []
+    checker.check_local_files(repo, "v9.9.9", "SeemSeam/claude_codex_bridge", issues, warnings)
+
+    assert not issues
+
+
 def test_check_dev_branch_workflows_entrypoint_uses_compat_signature(monkeypatch, tmp_path: Path) -> None:
     checker = _load_checker()
     observed: dict[str, object] = {}

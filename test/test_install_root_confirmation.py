@@ -86,6 +86,41 @@ def _run_main_with_stubs(
     )
 
 
+def _run_temp_scope_gate(
+    tmp_path: Path,
+    *,
+    install_prefix: Path,
+    bin_dir: Path,
+    extra_env: dict[str, str] | None = None,
+) -> subprocess.CompletedProcess[str]:
+    env = os.environ.copy()
+    env.update(
+        {
+            "CCB_LANG": "en",
+            "CCB_TEST_EUID": "1000",
+            "HOME": str(tmp_path / "home"),
+            "CODEX_INSTALL_PREFIX": str(install_prefix),
+            "CODEX_BIN_DIR": str(bin_dir),
+        }
+    )
+    if extra_env:
+        env.update(extra_env)
+    command = textwrap.dedent(
+        f"""
+        set -euo pipefail
+        source {shlex.quote(str(INSTALL_SH))}
+        validate_temporary_install_scope
+        echo gate-passed
+        """
+    )
+    return subprocess.run(
+        ["bash", "-lc", command],
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+
+
 def test_root_gate_allows_non_root_without_prompt(tmp_path: Path) -> None:
     completed = _run_root_gate(tmp_path, euid=1000)
 
@@ -152,3 +187,39 @@ def test_main_applies_root_confirmation_to_install_only(tmp_path: Path) -> None:
     assert uninstall.returncode == 0, uninstall.stderr or uninstall.stdout
     assert "Root install is not recommended" not in uninstall.stderr
     assert "uninstall-called" in uninstall.stdout
+
+
+def test_temp_install_scope_blocks_external_bin_dir(tmp_path: Path) -> None:
+    completed = _run_temp_scope_gate(
+        tmp_path,
+        install_prefix=tmp_path / "smoke" / "prefix",
+        bin_dir=tmp_path / "external-bin",
+    )
+
+    assert completed.returncode != 0
+    assert "Refusing to install a temporary CODEX_INSTALL_PREFIX" in completed.stderr
+    assert "gate-passed" not in completed.stdout
+
+
+def test_temp_install_scope_allows_bin_inside_prefix(tmp_path: Path) -> None:
+    prefix = tmp_path / "smoke" / "prefix"
+    completed = _run_temp_scope_gate(
+        tmp_path,
+        install_prefix=prefix,
+        bin_dir=prefix / "bin",
+    )
+
+    assert completed.returncode == 0, completed.stderr or completed.stdout
+    assert "gate-passed" in completed.stdout
+
+
+def test_temp_install_scope_allows_explicit_override(tmp_path: Path) -> None:
+    completed = _run_temp_scope_gate(
+        tmp_path,
+        install_prefix=tmp_path / "smoke" / "prefix",
+        bin_dir=tmp_path / "external-bin",
+        extra_env={"CCB_ALLOW_TEMP_INSTALL_GLOBAL_BIN": "1"},
+    )
+
+    assert completed.returncode == 0, completed.stderr or completed.stdout
+    assert "gate-passed" in completed.stdout

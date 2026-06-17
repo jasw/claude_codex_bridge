@@ -89,22 +89,27 @@ Operator precedence:
 
 Examples:
 
-- `cmd; agent1:codex`
-- `cmd; agent1:codex, agent2:claude`
-- `cmd, agent1:codex; agent2:codex, agent3:claude`
-- `cmd, agent1:codex; agent2:codex, (agent3:claude; agent4:gemini)`
-- `cmd; kimi_agent:kimi, deep_agent:deepseek, mimo_agent:mimo`
+- `agent1:codex`
+- `agent1:codex, agent2:claude`
+- `agent1:codex; agent2:codex, agent3:claude`
+- `agent1:codex; agent2:codex, (agent3:claude; agent4:gemini)`
+- `kimi_agent:kimi, qwen_agent:qwen, cursor_agent:cursor, kiro_agent:kiro, pi_agent:pi`
 
 ## 4. Semantic Rules
 
-- `cmd` is reserved and must not declare a provider.
+- `cmd` is a legacy compact-layout concept and is not accepted as a `[windows]`
+  topology leaf.
 - Each configured agent must appear exactly once in the layout.
 - Built-in provider keys are currently `codex`, `claude`, `gemini`,
-  `opencode`, `droid`, `agy`, `kimi`, `deepseek`, and `mimo`. The
-  `deepseek` provider key launches the DeepSeek-oriented Deep Code CLI command
-  `deepcode` by default; `mimo` launches Xiaomi MiMo Code with command `mimo`.
-- `cmd` may appear at most once.
-- When `cmd` is enabled, `cmd` must be the first leaf in layout traversal so the invoking pane remains the command pane anchor.
+  `opencode`, `droid`, `agy`, `kimi`, `deepseek`, `mimo`, `qwen`, `cursor`,
+  `copilot`, `crush`, `kiro`, and `pi`. The `deepseek` provider key launches the
+  DeepSeek-oriented Deep Code CLI command `deepcode` by default; `mimo`
+  launches Xiaomi MiMo Code with command `mimo`; `qwen`, `cursor`, `copilot`,
+  `crush`, `kiro`, and `pi` launch `qwen`, `agent`, `copilot`, `crush`,
+  `kiro-cli`, and `pi` respectively unless overridden by their provider start-command
+  environment variable.
+- The command pane remains a runtime anchor outside the `[windows]` agent leaf
+  grammar.
 - Compact config leaf order defines `default_agents`.
 - Rich `ccb.config` formats may define agents separately, but must still provide a `layout` compatible with the same leaf rules.
 
@@ -371,6 +376,20 @@ Contract:
 - Config rendering and recovery must preserve the user-facing `key/url` shortcut
   instead of expanding it back into verbose provider-profile API env or nested
   `api` tables.
+
+For Codex official-login users who do not have an API key, `key/url` is not
+available. A project with multiple concurrent Codex agents must not copy one
+file-backed ChatGPT `auth.json` into every managed home because refresh-token
+rotation is a single serialized stream. Such projects may set:
+
+```toml
+[agents.agent1.provider_profile]
+inherit_auth = false
+```
+
+and then log in that agent's managed Codex home directly. With no explicit
+agent API authority, `inherit_auth = false` means "do not inherit global
+Codex credentials"; it must preserve an existing agent-local `auth.json`.
 
 ### 4.3 Agent Model Shortcut
 

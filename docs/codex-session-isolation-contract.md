@@ -114,7 +114,14 @@ be used as normal managed authority.
 Credential, config, and memory projection is not conversation identity. `ccb`
 may project the user's source Codex credentials and config into the private
 managed home so the provider can authenticate, but projected credential files
-remain secret material and must not be exported by diagnostics. The managed
+remain secret material and must not be exported by diagnostics. For Codex
+official-login auth, copied file-backed `auth.json` credentials are only safe
+for a single serialized Codex stream; multiple concurrent managed Codex agents
+must not rely on independent copies of the same ChatGPT refresh token. When a
+Codex profile sets `inherit_auth=false` without an explicit agent API key, `ccb`
+must not copy global source-home credentials and must preserve any existing
+agent-local `auth.json` in the managed Codex home so operators can maintain
+one official-login auth stream per agent. The managed
 `CODEX_HOME/AGENTS.md` file is a CCB-generated memory bundle, not user data; it
 combines filtered inheritable source-home `AGENTS.md`, project shared
 `.ccb/ccb_memory.md`, and agent-private `.ccb/agents/<agent>/memory.md` when
@@ -140,6 +147,10 @@ When `ccb` starts a managed Codex agent:
 - it must refresh only inheritable Codex config, auth, skills, commands,
   plugin-bundle, and memory projections into the managed home on each managed
   launch so source-home and project-memory updates become visible after restart
+- for Codex official-login auth with `inherit_auth=false` and no explicit API
+  authority, it must leave an existing managed-home `auth.json` untouched rather
+  than deleting it, because that file may be an agent-local ChatGPT login stream
+  with its own refresh token
 - it must obtain `project_root`, `workspace_path`, and agent event-path context
   from the launcher's `prepare_launch_context` output rather than reverse
   engineering identity from provider runtime paths

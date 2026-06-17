@@ -11,6 +11,15 @@ coding CLIs:
 - `deepseek`: DeepSeek-oriented Deep Code CLI, command `deepcode`.
 - `mimo`: Xiaomi MiMo Code CLI, command `mimo`.
 
+Next-wave research also covers five requested CLIs:
+
+- `qwen`: Qwen Code CLI, command `qwen`.
+- `copilot`: GitHub Copilot CLI, command `copilot`.
+- `cursor`: Cursor Agent CLI, command `agent`.
+- `kiro`: Kiro CLI, command `kiro-cli`.
+- `crush`: Charm Crush CLI, command `crush`.
+- `pi`: Pi coding agent, command `pi`.
+
 The current landing slice makes these providers usable in `.ccb/ccb.config`,
 mounts them in managed tmux panes, sends CCB ask prompts, detects replies via
 provider-native session/event logs, and exposes diagnostics consistent with
@@ -39,14 +48,25 @@ override the shipped contracts.
   package, install, command, and auth findings.
 - [topics/integration-design.md](topics/integration-design.md): CCB provider
   architecture, completion detection, configuration, and testing plan.
+- [history/next-wave-cli-lab-2026-06-13.md](history/next-wave-cli-lab-2026-06-13.md):
+  local install/source lab record for Qwen, Copilot, Cursor, Kiro, and Crush.
+- [history/pi-provider-landing-2026-06-13.md](history/pi-provider-landing-2026-06-13.md):
+  Pi provider evidence, implementation, and validation record.
 
 ## Scope
 
 In scope:
 
 - Provider keys `kimi`, `deepseek`, and `mimo`.
+- Next-wave provider keys `qwen`, `copilot`, `cursor`, `kiro`, `crush`, and
+  `pi`.
 - Default executables `kimi`, `deepcode`, and `mimo`.
+- Default next-wave executables `qwen`, `copilot`, `agent`, `kiro-cli`,
+  `crush`, and `pi`.
 - `KIMI_START_CMD`, `DEEPSEEK_START_CMD`, and `MIMO_START_CMD` overrides.
+- Next-wave command overrides `QWEN_START_CMD`, `COPILOT_START_CMD`,
+  `CURSOR_START_CMD`, `KIRO_START_CMD`, `CRUSH_START_CMD`, and
+  `PI_START_CMD`.
 - Managed tmux pane startup using the existing simple tmux runtime path.
 - Native completion detection using `CCB_REQ_ID` binding plus provider-owned
   Kimi `wire.jsonl` and DeepCode session stores.
@@ -56,11 +76,15 @@ In scope:
 - MiMo ask execution through native `mimo run --format json` result events,
   using `part.text` plus `step_finish` / `part.reason=stop` as completion
   evidence.
+- Pi ask execution through native `pi --mode json` events, using `turn_end`
+  with assistant message content as completion evidence.
 - AGY completion alignment to Antigravity transcript logs, so AGY no longer
   relies on `CCB_DONE` as its primary completion signal.
 - Empty-reply and timeout diagnostics aligned with existing pane-backed
   providers.
 - Unit and isolated source-runtime validation in `/home/bfly/yunwei/test_ccb2`.
+- Local install/source research under
+  `/home/bfly/yunwei/test_ccb2/cli-integration-lab` before source integration.
 
 Out of scope for the first slice:
 
@@ -68,3 +92,5 @@ Out of scope for the first slice:
 - Provider-specific key/url shortcut projection in `.ccb/ccb.config`.
 - Switching Kimi to a noninteractive `kimi --prompt` execution adapter.
 - Supporting multiple DeepSeek community CLIs under one provider key.
+- Publishing next-wave provider support before each CLI has command, state,
+  auth, completion, and skill-injection validation.

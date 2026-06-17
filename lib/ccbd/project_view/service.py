@@ -1,15 +1,17 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import os
 from pathlib import Path
 from time import monotonic
 from typing import Any
+import threading
 
 from agents.config_loader import load_project_config
 from agents.models import AgentState
 from ccbd.api_models import JobStatus, TargetKind
 from ccbd.models import MountState
-from ccbd.project_focus.tmux import backend_for_namespace
+from ccbd.project_focus.tmux import backend_for_namespace, refresh_sidebar_panes
 from ccbd.services.dispatcher_runtime import comms_recoverability_for_job
 from ccbd.system import parse_utc_timestamp, utc_now
 from message_bureau import CallbackEdgeState
@@ -29,8 +31,10 @@ from .sequence import ProjectViewSequenceCache
 PROJECT_VIEW_SCHEMA_VERSION = 1
 PROJECT_VIEW_TTL_MS = 1000
 PROJECT_VIEW_COMMS_LIMIT = 8
-_RECENT_JOB_SCAN_LIMIT_PER_AGENT = 128
 _RECENT_JOB_RESULT_LIMIT = PROJECT_VIEW_COMMS_LIMIT * 8
+_RECENT_JOB_SCAN_LIMIT_PER_AGENT = 128
+_RECENT_JOB_INITIAL_SCAN_MIN = 8
+_RECENT_JOB_INITIAL_SCAN_MAX = 32
 _COMMS_RECENT_STATUSES = frozenset(
     {
         JobStatus.COMPLETED,
@@ -78,6 +82,9 @@ class _ProjectViewBuildContext:
     metrics_context: _ProjectViewMetricsContext | None = None
     backend_loaded: bool = False
     backend: object | None = None
+    tmux_facts_loaded: bool = False
+    tmux_focus: dict[str, object] = field(default_factory=dict)
+    tmux_snapshot: dict[str, dict[str, object]] = field(default_factory=dict)
     pane_text_by_id: dict[str, str | None] = field(default_factory=dict)
     provider_activity_by_agent: dict[str, object | None] = field(default_factory=dict)
 
@@ -92,6 +99,12 @@ class _ProjectViewBuildContext:
         except Exception:
             self.backend = None
         return self.backend
+
+    def tmux_project_view_facts(self) -> tuple[dict[str, object], dict[str, dict[str, object]]]:
+        if not self.tmux_facts_loaded:
+            self.tmux_facts_loaded = True
+            self.tmux_focus, self.tmux_snapshot = _collect_tmux_project_view_facts(self)
+        return self.tmux_focus, self.tmux_snapshot
 
     def pane_text_hint(self, pane_id: object) -> str | None:
         pane = str(pane_id or '').strip()
@@ -234,23 +247,39 @@ class ProjectViewService:
         self._deps = deps
         self._sequence_cache = deps.sequence_cache or ProjectViewSequenceCache()
         self._cached_response: _CachedProjectViewResponse | None = None
+        self._sidebar_refresh_lock = threading.Lock()
+        self._sidebar_refresh_pending = False
 
     def invalidate_cache(self) -> None:
         self._cached_response = None
+
+    def request_sidebar_refresh(self) -> None:
+        with self._sidebar_refresh_lock:
+            self._sidebar_refresh_pending = True
 
     def build_response(self, *, schema_version: int = PROJECT_VIEW_SCHEMA_VERSION) -> dict[str, object]:
         if int(schema_version) != PROJECT_VIEW_SCHEMA_VERSION:
             raise ValueError(f'project_view schema_version must be {PROJECT_VIEW_SCHEMA_VERSION}')
         response_started = monotonic()
+        sidebar_refresh_started = None
         ttl_ms = _project_view_ttl_ms(self._deps)
         ttl_s = max(0.0, ttl_ms / 1000.0)
         now = monotonic()
+        did_refresh_sidebar = False
         if ttl_s > 0:
             cached = self._cached_response
             if cached is not None and now < cached.expires_at:
+                did_refresh_sidebar = self._consume_sidebar_refresh_request()
+                if did_refresh_sidebar:
+                    sidebar_refresh_started = monotonic()
+                    did_refresh_sidebar = self._refresh_sidebar_panes(refresh_started=sidebar_refresh_started)
                 _record_project_view_cache_hit(self._deps.metrics, response_started=response_started)
                 return cached.response
         metrics_context = _ProjectViewMetricsContext()
+        sidebar_refresh_started = monotonic()
+        did_refresh_sidebar = self._consume_sidebar_refresh_request()
+        if did_refresh_sidebar:
+            did_refresh_sidebar = self._refresh_sidebar_panes(refresh_started=sidebar_refresh_started)
         generated_at = self._deps.clock()
         build_started = monotonic()
         view = build_project_view(self._deps, generated_at=generated_at, metrics_context=metrics_context)
@@ -275,6 +304,40 @@ class ProjectViewService:
         )
         return response
 
+    def _consume_sidebar_refresh_request(self) -> bool:
+        with self._sidebar_refresh_lock:
+            if not self._sidebar_refresh_pending:
+                return False
+            self._sidebar_refresh_pending = False
+            return True
+
+    def _refresh_sidebar_panes(self, *, refresh_started: float | None = None) -> bool:
+        if self._deps.namespace_controller is None:
+            return False
+        namespace = self._deps.namespace_state_store.load()
+        if namespace is None:
+            return False
+        started = refresh_started if refresh_started is not None else monotonic()
+        try:
+            backend = backend_for_namespace(self._deps.namespace_controller._backend_factory, namespace)
+            refresh_sidebar_panes(
+                backend,
+                project_id=self._deps.project_id,
+                session_name=namespace.tmux_session_name,
+            )
+            _record_project_view_sidebar_refresh(
+                self._deps.metrics,
+                refresh_started=started,
+                success=True,
+            )
+            return True
+        except Exception:
+            _record_project_view_sidebar_refresh(
+                self._deps.metrics,
+                refresh_started=started,
+                success=False,
+            )
+            return False
 
 def build_project_view(
     deps: ProjectViewDependencies,
@@ -367,6 +430,17 @@ def _record_project_view_cache_miss(
     metrics.last_project_view_tmux_command_count = context.tmux_command_count
     metrics.last_project_view_capture_pane_count = context.capture_pane_count
     metrics.last_project_view_store_scan_count = context.store_scan_count
+
+
+def _record_project_view_sidebar_refresh(metrics, *, refresh_started: float, success: bool) -> None:
+    if metrics is None:
+        return
+    metrics.project_view_sidebar_refreshes = int(getattr(metrics, 'project_view_sidebar_refreshes', 0) or 0) + 1
+    if not success:
+        metrics.project_view_sidebar_refresh_failures = (
+            int(getattr(metrics, 'project_view_sidebar_refresh_failures', 0) or 0) + 1
+        )
+    metrics.last_project_view_sidebar_refresh_duration_s = max(0.0, monotonic() - refresh_started)
 
 
 def _agent_view(
@@ -583,6 +657,7 @@ def _window_views(*, config, focus: dict[str, object], tmux_snapshot: dict[str, 
                 'active': window.name == (focus.get('active_window') or config.entry_window),
                 'sidebar_pane_id': tmux_snapshot.get(window.name, {}).get('sidebar_pane_id'),
                 'agents': list(window.agent_names),
+                'tools': list(getattr(window, 'tool_names', ()) or ()),
             }
         )
     offset = len(rows)
@@ -605,26 +680,178 @@ def _window_views(*, config, focus: dict[str, object], tmux_snapshot: dict[str, 
 
 
 def _tmux_snapshot(context: _ProjectViewBuildContext) -> dict[str, dict[str, object]]:
+    return context.tmux_project_view_facts()[1]
+
+
+def _collect_tmux_project_view_facts(context: _ProjectViewBuildContext) -> tuple[dict[str, object], dict[str, dict[str, object]]]:
     namespace = context.namespace
     backend = context.namespace_backend()
     if namespace is None or backend is None:
-        return {}
-    windows = _tmux_windows(
+        return {}, {}
+    focus_cp = _tmux_run_best_effort(
         backend,
-        session_name=namespace.tmux_session_name,
+        [
+            'display-message',
+            '-p',
+            '-t',
+            namespace.tmux_session_name,
+            '#{window_name}\t#{pane_id}\t#{@ccb_role}\t#{@ccb_slot}',
+        ],
         metrics_context=context.metrics_context,
     )
-    sidebars = _tmux_sidebar_panes(
+    windows_cp = _tmux_run_best_effort(
         backend,
-        session_name=namespace.tmux_session_name,
-        project_id=context.deps.project_id,
+        [
+            'list-windows',
+            '-t',
+            namespace.tmux_session_name,
+            '-F',
+            '#{window_name}\t#{window_id}\t#{window_index}',
+        ],
         metrics_context=context.metrics_context,
     )
+    sidebars_cp = _tmux_run_best_effort(
+        backend,
+        [
+            'list-panes',
+            '-a',
+            '-F',
+            '#{session_name}\t#{window_name}\t#{pane_id}\t#{@ccb_project_id}\t#{@ccb_role}\t#{@ccb_sidebar_instance}\t#{@ccb_window}',
+        ],
+        metrics_context=context.metrics_context,
+    )
+    parsed = _parse_tmux_project_view_outputs(
+        focus_stdout=str(getattr(focus_cp, 'stdout', '') or '') if focus_cp is not None else '',
+        windows_stdout=str(getattr(windows_cp, 'stdout', '') or '') if windows_cp is not None else '',
+        sidebars_stdout=str(getattr(sidebars_cp, 'stdout', '') or '') if sidebars_cp is not None else '',
+        session_name=str(namespace.tmux_session_name or ''),
+        project_id=str(context.deps.project_id or ''),
+    )
+    focus = parsed.get('focus') if isinstance(parsed, dict) else {}
+    if not isinstance(focus, dict):
+        focus = {}
+    windows = parsed.get('windows') if isinstance(parsed, dict) else {}
+    if not isinstance(windows, dict):
+        windows = {}
+    sidebars = parsed.get('sidebars') if isinstance(parsed, dict) else {}
+    if not isinstance(sidebars, dict):
+        sidebars = {}
     result: dict[str, dict[str, object]] = {}
     for window_name, window_facts in windows.items():
+        if not isinstance(window_name, str) or not isinstance(window_facts, dict):
+            continue
         result[window_name] = dict(window_facts)
     for window_name, pane_id in sidebars.items():
+        if not isinstance(window_name, str):
+            continue
         result.setdefault(window_name, {})['sidebar_pane_id'] = pane_id
+    return dict(focus), result
+
+
+def _parse_tmux_project_view_outputs(
+    *,
+    focus_stdout: str,
+    windows_stdout: str,
+    sidebars_stdout: str,
+    session_name: str,
+    project_id: str,
+) -> dict[str, object]:
+    mode = str(os.environ.get('CCB_RUST_PROJECT_VIEW', '')).strip().lower()
+    required = mode == 'required'
+    try:
+        from rust_helpers_project_view import parse_tmux_project_view_outputs
+    except Exception as exc:
+        if required:
+            raise RuntimeError(
+                'project_view.tmux.parse requires ccb-rs-helper; no Python fallback is available for this path'
+            ) from exc
+        return _parse_tmux_project_view_outputs_python(
+            focus_stdout=focus_stdout,
+            windows_stdout=windows_stdout,
+            sidebars_stdout=sidebars_stdout,
+            session_name=session_name,
+            project_id=project_id,
+        )
+    try:
+        return parse_tmux_project_view_outputs(
+            focus_stdout=focus_stdout,
+            windows_stdout=windows_stdout,
+            sidebars_stdout=sidebars_stdout,
+            session_name=session_name,
+            project_id=project_id,
+        ).value
+    except Exception:
+        if required:
+            raise
+        return _parse_tmux_project_view_outputs_python(
+            focus_stdout=focus_stdout,
+            windows_stdout=windows_stdout,
+            sidebars_stdout=sidebars_stdout,
+            session_name=session_name,
+            project_id=project_id,
+        )
+
+
+def _parse_tmux_project_view_outputs_python(
+    *,
+    focus_stdout: str,
+    windows_stdout: str,
+    sidebars_stdout: str,
+    session_name: str,
+    project_id: str,
+) -> dict[str, object]:
+    return {
+        'focus': _parse_focus_stdout(focus_stdout),
+        'windows': _parse_windows_stdout(windows_stdout),
+        'sidebars': _parse_sidebars_stdout(sidebars_stdout, session_name=session_name, project_id=project_id),
+    }
+
+
+def _parse_focus_stdout(stdout: str) -> dict[str, object]:
+    parts = ((str(stdout or '').splitlines() or [''])[0]).split('\t')
+    if len(parts) != 4:
+        return {}
+    active_agent = parts[3].strip() if parts[2].strip() == 'agent' else None
+    return {
+        'active_window': parts[0].strip() or None,
+        'active_pane_id': parts[1].strip() or None,
+        'active_agent': active_agent or None,
+    }
+
+
+def _parse_windows_stdout(stdout: str) -> dict[str, dict[str, object]]:
+    result: dict[str, dict[str, object]] = {}
+    for line in (stdout or '').splitlines():
+        parts = line.split('\t')
+        if len(parts) != 3:
+            continue
+        window_name, window_id, window_index = (_clean_text(item) for item in parts)
+        if window_name is None:
+            continue
+        result[window_name] = {
+            'tmux_window_id': window_id,
+            'tmux_window_index': _coerce_int(window_index),
+        }
+    return result
+
+
+def _parse_sidebars_stdout(stdout: str, *, session_name: str, project_id: str) -> dict[str, str]:
+    result: dict[str, str] = {}
+    for line in (stdout or '').splitlines():
+        parts = line.split('\t')
+        if len(parts) != 7:
+            continue
+        session, window_name, pane_id, pane_project_id, role, sidebar_instance, ccb_window = (
+            _clean_text(item) for item in parts
+        )
+        if session != session_name or pane_project_id != project_id or role != 'sidebar':
+            continue
+        if pane_id is None or not pane_id.startswith('%'):
+            continue
+        resolved_window = sidebar_instance or ccb_window or window_name
+        if resolved_window is None or resolved_window in result:
+            continue
+        result[resolved_window] = pane_id
     return result
 
 
@@ -976,12 +1203,52 @@ def _recent_jobs(
     if store is None:
         return ()
     jobs: list[object] = []
+    agent_names = tuple(agents)
+    initial_scan_limit = _recent_job_initial_scan_limit(
+        agent_count=len(agent_names),
+        result_limit=_RECENT_JOB_RESULT_LIMIT,
+        max_per_agent=_RECENT_JOB_SCAN_LIMIT_PER_AGENT,
+    )
+    if hasattr(store, 'list_project_view_recent_jobs'):
+        try:
+            if metrics_context is not None:
+                metrics_context.store_scan_count += len(agent_names)
+            jobs = list(
+                store.list_project_view_recent_jobs(
+                    agent_names,
+                    per_agent_limit=_RECENT_JOB_SCAN_LIMIT_PER_AGENT,
+                    per_agent_initial_limit=initial_scan_limit,
+                    result_limit=_RECENT_JOB_RESULT_LIMIT,
+                    statuses=tuple(status.value for status in _COMMS_RECENT_STATUSES),
+                )
+            )
+        except Exception:
+            jobs = []
+        return tuple(sorted(jobs, key=lambda item: item.updated_at, reverse=True)[:_RECENT_JOB_RESULT_LIMIT])
+    if hasattr(store, 'list_agent_tails_batch'):
+        try:
+            if metrics_context is not None:
+                metrics_context.store_scan_count += len(agent_names)
+            records_by_agent = store.list_agent_tails_batch(agent_names, limit=initial_scan_limit)
+        except Exception:
+            records_by_agent = {}
+        for agent_name in agents:
+            records = records_by_agent.get(agent_name, ()) if isinstance(records_by_agent, dict) else ()
+            latest_by_job: dict[str, object] = {}
+            for record in records:
+                latest_by_job[record.job_id] = record
+            jobs.extend(
+                record
+                for record in latest_by_job.values()
+                if getattr(record, 'status', None) in _COMMS_RECENT_STATUSES
+            )
+        return tuple(sorted(jobs, key=lambda item: item.updated_at, reverse=True)[:_RECENT_JOB_RESULT_LIMIT])
     for agent_name in agents:
         try:
             if metrics_context is not None:
                 metrics_context.store_scan_count += 1
             if hasattr(store, 'list_agent_tail'):
-                records = store.list_agent_tail(agent_name, limit=_RECENT_JOB_SCAN_LIMIT_PER_AGENT)
+                records = store.list_agent_tail(agent_name, limit=initial_scan_limit)
             else:
                 records = store.list_agent(agent_name)
         except Exception:
@@ -995,6 +1262,15 @@ def _recent_jobs(
             if getattr(record, 'status', None) in _COMMS_RECENT_STATUSES
         )
     return tuple(sorted(jobs, key=lambda item: item.updated_at, reverse=True)[:_RECENT_JOB_RESULT_LIMIT])
+
+
+def _recent_job_initial_scan_limit(*, agent_count: int, result_limit: int, max_per_agent: int) -> int:
+    if agent_count <= 0 or result_limit <= 0 or max_per_agent <= 0:
+        return 0
+    per_agent = ((result_limit + agent_count - 1) // agent_count) * 2
+    per_agent = max(_RECENT_JOB_INITIAL_SCAN_MIN, per_agent)
+    per_agent = min(_RECENT_JOB_INITIAL_SCAN_MAX, per_agent)
+    return min(max_per_agent, per_agent)
 
 
 def _configured_agent_names(dispatcher) -> frozenset[str]:
@@ -1406,40 +1682,7 @@ def _runtime_state(runtime) -> str | None:
 
 
 def _focus_snapshot(context: _ProjectViewBuildContext) -> dict[str, object]:
-    namespace = context.namespace
-    if namespace is None:
-        return {}
-    backend = context.namespace_backend()
-    if backend is None:
-        return {}
-    try:
-        if context.metrics_context is not None:
-            context.metrics_context.tmux_command_count += 1
-        cp = backend._tmux_run(
-            [
-                'display-message',
-                '-p',
-                '-t',
-                namespace.tmux_session_name,
-                '#{window_name}\t#{pane_id}\t#{@ccb_role}\t#{@ccb_slot}',
-            ],
-            capture=True,
-            check=False,
-            timeout=0.5,
-        )
-    except Exception:
-        return {}
-    if getattr(cp, 'returncode', 1) != 0:
-        return {}
-    parts = ((getattr(cp, 'stdout', '') or '').splitlines() or [''])[0].split('\t')
-    if len(parts) != 4:
-        return {}
-    active_agent = parts[3].strip() if parts[2].strip() == 'agent' else None
-    return {
-        'active_window': parts[0].strip() or None,
-        'active_pane_id': parts[1].strip() or None,
-        'active_agent': active_agent or None,
-    }
+    return context.tmux_project_view_facts()[0]
 
 
 __all__ = [

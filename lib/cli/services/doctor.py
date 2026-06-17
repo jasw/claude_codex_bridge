@@ -11,6 +11,7 @@ from .doctor_runtime import (
     agent_summaries,
     ccbd_summary,
     doctor_stores,
+    entrypoint_summary,
     installation_summary,
     requirements_summary,
     runtime_identity_summary,
@@ -40,6 +41,7 @@ def doctor_summary(context) -> dict:
         'project': str(context.project.project_root),
         'project_id': context.project.project_id,
         'installation': installation,
+        'entrypoint': entrypoint_summary(installation=installation),
         'runtime': runtime_identity_summary(
             context.project.project_root,
             ccb_dir=context.paths.ccb_dir,

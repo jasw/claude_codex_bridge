@@ -45,8 +45,9 @@ def handle_doctor(context, command, out, services) -> int:
         services.write_lines(out, services.render_doctor_bundle(summary))
         return 0
     if getattr(command, 'storage', False):
-        payload = services.doctor_storage_summary(context)
-        if getattr(command, 'json_output', False):
+        json_output = getattr(command, 'json_output', False)
+        payload = services.doctor_storage_summary(context, compact=not json_output)
+        if json_output:
             out.write(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
             out.write('\n')
             return 0

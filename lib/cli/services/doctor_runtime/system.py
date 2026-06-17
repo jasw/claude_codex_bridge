@@ -6,6 +6,7 @@ from pathlib import Path
 import platform
 import shutil
 import sys
+import tempfile
 from typing import Any
 
 from cli.management import find_install_dir, get_version_info
@@ -70,6 +71,33 @@ def runtime_identity_summary(
     }
 
 
+def entrypoint_summary(*, installation: dict[str, object] | None = None) -> dict[str, object]:
+    installation = installation or {}
+    command_path = shutil.which('ccb')
+    install_path = _resolved_path(str(installation.get('path') or '').strip())
+    realpath = _resolved_path(command_path)
+    matches_install = _path_is_within(install_path, realpath) if install_path and realpath else False
+    status = 'ok'
+    reason = 'matches_current_install'
+    if not command_path:
+        status = 'degraded'
+        reason = 'ccb_not_found_in_path'
+    elif realpath is not None and _path_is_temporary(realpath):
+        status = 'degraded'
+        reason = 'bare_ccb_resolves_under_temporary_directory'
+    elif install_path is not None and realpath is not None and not matches_install:
+        status = 'degraded'
+        reason = 'bare_ccb_resolves_outside_current_install'
+    return {
+        'status': status,
+        'reason': reason,
+        'path': command_path,
+        'realpath': str(realpath) if realpath is not None else None,
+        'expected_install_path': str(install_path) if install_path is not None else None,
+        'matches_current_install': matches_install,
+    }
+
+
 def requirements_summary() -> dict[str, object]:
     tmux_path = shutil.which('tmux')
     providers = []
@@ -95,6 +123,39 @@ def requirements_summary() -> dict[str, object]:
 
 def _script_root() -> Path:
     return Path(__file__).resolve().parents[4]
+
+
+def _resolved_path(path: str | os.PathLike[str] | None) -> Path | None:
+    text = str(path or '').strip()
+    if not text:
+        return None
+    try:
+        return Path(text).expanduser().resolve(strict=False)
+    except Exception:
+        return Path(text).expanduser()
+
+
+def _path_is_within(root: Path | None, candidate: Path | None) -> bool:
+    if root is None or candidate is None:
+        return False
+    try:
+        candidate.relative_to(root)
+        return True
+    except ValueError:
+        return False
+
+
+def _path_is_temporary(path: Path) -> bool:
+    text = str(path)
+    temporary_roots = ('/tmp', '/var/tmp', '/dev/shm', '/private/tmp', _resolved_tempdir())
+    return any(text == root or text.startswith(f'{root}/') for root in temporary_roots)
+
+
+def _resolved_tempdir() -> str:
+    try:
+        return str(Path(tempfile.gettempdir()).expanduser().resolve(strict=False))
+    except Exception:
+        return str(Path(tempfile.gettempdir()).expanduser())
 
 
 def _effective_uid() -> int:
@@ -169,4 +230,4 @@ def _coerce_int(value: object) -> int | None:
         return None
 
 
-__all__ = ['installation_summary', 'requirements_summary', 'runtime_identity_summary']
+__all__ = ['entrypoint_summary', 'installation_summary', 'requirements_summary', 'runtime_identity_summary']

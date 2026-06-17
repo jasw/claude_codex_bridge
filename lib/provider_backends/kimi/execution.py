@@ -19,14 +19,16 @@ from provider_execution.base import ProviderPollResult, ProviderRuntimeContext, 
 from provider_execution.common import build_item, error_submission, send_prompt_to_runtime_target
 
 from provider_core.protocol import request_anchor_for_job
+from .hindsight import recall_hindsight_memories, retain_hindsight_turn
 from .session import load_project_session
-from .native_log import observe_kimi_turn
+from .native_log import KimiTurnObservation, observe_kimi_turn
 
 
 PANE_LINES_DEFAULT = 2000
 MAX_WAIT_SECS = 300.0
 ANCHOR_WAIT_SECS = 120.0
 READY_WAIT_SECS = 60.0
+PANE_FALLBACK_STABLE_SECS = 10.0
 
 
 class KimiProviderAdapter:
@@ -134,7 +136,17 @@ def _start_submission(
         )
 
     req_id = request_anchor_for_job(job.job_id)
-    prompt = wrap_native_prompt(job.request.body or "", req_id)
+    original_prompt_body = job.request.body or ""
+    prompt_body = _with_kimi_context_pointer(original_prompt_body, session)
+    hindsight_recall = recall_hindsight_memories(
+        original_prompt_body,
+        session_id=str(getattr(session, "session_id", "") or req_id),
+        agent_name=job.agent_name,
+        workspace_path=str(work_dir),
+    )
+    if hindsight_recall.context:
+        prompt_body = f"{hindsight_recall.context}\n\n{prompt_body}"
+    prompt = wrap_native_prompt(prompt_body, req_id)
     initial_content = _pane_snapshot(backend, pane_id, lines=PANE_LINES_DEFAULT)
     prompt_deferred_until_ready = not _pane_ready_for_input(initial_content)
     send_error: str | None = None
@@ -155,6 +167,8 @@ def _start_submission(
         diagnostics["send_error"] = send_error
     if prompt_deferred_until_ready:
         diagnostics["prompt_deferred_until_ready"] = True
+    if hindsight_recall.diagnostics:
+        diagnostics["hindsight_recall"] = hindsight_recall.diagnostics
 
     return ProviderSubmission(
         job_id=job.job_id,
@@ -173,6 +187,8 @@ def _start_submission(
             "request_anchor": req_id,
             "req_id": req_id,
             "work_dir": str(work_dir),
+            "hindsight_user_prompt": original_prompt_body,
+            "hindsight_recall": hindsight_recall.diagnostics or {},
             "started_at": now,
             "last_poll_at": now,
             "prompt_sent": prompt_sent,
@@ -240,6 +256,14 @@ def _poll_submission(submission: ProviderSubmission, *, now: str) -> ProviderPol
     state["total_secs"] = total_secs
 
     observation = observe_kimi_turn(Path(work_dir), req_id)
+    pane_observation = _observe_kimi_pane_turn(backend, pane_id, req_id)
+    if pane_observation is not None:
+        pane_observation = _stabilize_pane_observation(state, pane_observation, now)
+    if pane_observation is not None and (
+        observation is None or (pane_observation.completed and not observation.completed)
+    ):
+        observation = pane_observation
+        state["pane_fallback_observed"] = True
     if observation is None:
         if total_secs >= ANCHOR_WAIT_SECS:
             return _terminal(
@@ -343,6 +367,19 @@ def _poll_submission(submission: ProviderSubmission, *, now: str) -> ProviderPol
 
     boundary_ref = str(observation.provider_turn_ref or observation.session_id or session_path or req_id)
     if observation.completed and boundary_ref != _state_str(state, "turn_boundary_ref"):
+        hindsight_prompt = _state_str(state, "hindsight_user_prompt")
+        if reply and hindsight_prompt and not bool(state.get("hindsight_retained")):
+            retain_result = retain_hindsight_turn(
+                prompt=hindsight_prompt,
+                reply=reply,
+                session_id=_state_str(state, "request_anchor") or submission.job_id,
+                job_id=submission.job_id,
+                agent_name=submission.agent_name,
+                workspace_path=work_dir,
+            )
+            state["hindsight_retained"] = bool(retain_result.retained)
+            if retain_result.diagnostics:
+                state["hindsight_retain"] = retain_result.diagnostics
         items.append(
             build_item(
                 submission,
@@ -508,7 +545,151 @@ def _pane_snapshot(backend: object, pane_id: str, *, lines: int) -> str:
 
 def _pane_ready_for_input(content: str) -> bool:
     text = content or ""
-    return "── input" in text and "agent (" in text
+    legacy_ready = "── input" in text and "agent (" in text
+    k27_ready = "│ >" in text and "K2.7 Code" in text and "context:" in text
+    return legacy_ready or k27_ready
+
+
+def _observe_kimi_pane_turn(backend: object, pane_id: str, req_id: str) -> KimiTurnObservation | None:
+    content = _pane_snapshot(backend, pane_id, lines=PANE_LINES_DEFAULT)
+    if not content or req_id not in content:
+        return None
+    completed = _pane_ready_for_input(content)
+    reply = _extract_kimi_pane_reply(content, req_id) if completed else ""
+    return KimiTurnObservation(
+        request_seen=True,
+        completed=bool(completed and reply),
+        reply=reply,
+        session_id=pane_id,
+        session_path=f"pane:{pane_id}",
+        provider_turn_ref=f"pane:{pane_id}:{req_id}",
+        line_count=len(content.splitlines()),
+        native_started_at=None,
+        native_completed_at=None,
+    )
+
+
+def _stabilize_pane_observation(
+    state: dict[str, object],
+    observation: KimiTurnObservation,
+    now: str,
+) -> KimiTurnObservation:
+    reply = observation.reply or ""
+    if not reply:
+        state.pop("pane_fallback_candidate_signature", None)
+        state.pop("pane_fallback_candidate_since", None)
+        return observation
+
+    signature = _hash_text(reply)
+    if signature != _state_str(state, "pane_fallback_candidate_signature"):
+        state["pane_fallback_candidate_signature"] = signature
+        state["pane_fallback_candidate_since"] = now
+        return replace(observation, completed=False)
+
+    stable_since = _state_str(state, "pane_fallback_candidate_since") or now
+    stable_secs = _seconds_between(stable_since, now)
+    state["pane_fallback_stable_secs"] = stable_secs
+    if stable_secs < PANE_FALLBACK_STABLE_SECS:
+        return replace(observation, completed=False)
+    return observation
+
+
+def _extract_kimi_pane_reply(content: str, req_id: str) -> str:
+    tail = content.split(req_id, 1)[-1]
+    lines = tail.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    answer_start: int | None = None
+    first_answer_line = ""
+    for index, line in enumerate(lines):
+        stripped = line.strip()
+        if not stripped.startswith(("●", "•")):
+            continue
+        candidate = stripped.lstrip("●•").strip()
+        if not candidate or _looks_like_kimi_non_answer(candidate):
+            continue
+        answer_start = index
+        first_answer_line = candidate
+        break
+    if answer_start is None:
+        return ""
+
+    reply_lines = [first_answer_line]
+    for line in lines[answer_start + 1 :]:
+        stripped = line.strip()
+        if _looks_like_kimi_input_box_line(stripped):
+            break
+        if stripped.startswith(("●", "•")) and _looks_like_kimi_non_answer(stripped.lstrip("●•").strip()):
+            break
+        reply_lines.append(line.rstrip())
+    return _clean_kimi_pane_reply("\n".join(reply_lines), req_id)
+
+
+def _clean_kimi_pane_reply(text: str, req_id: str) -> str:
+    lines = [line.rstrip() for line in text.replace("\r\n", "\n").replace("\r", "\n").split("\n")]
+    while lines and not lines[0].strip():
+        lines.pop(0)
+    while lines and not lines[-1].strip():
+        lines.pop()
+    if lines and lines[0].strip().startswith(("●", "•")):
+        lines[0] = lines[0].strip().lstrip("●•").strip()
+    return "\n".join(lines).strip()
+
+
+def _looks_like_kimi_input_box_line(stripped: str) -> bool:
+    if not stripped:
+        return False
+    if stripped.startswith("╭") or stripped.startswith("╰"):
+        return True
+    if stripped.startswith("│ >"):
+        return True
+    return "K2.7 Code" in stripped and "context:" in stripped
+
+
+def _looks_like_kimi_non_answer(text: str) -> bool:
+    stripped = text.strip()
+    lowered = stripped.lower()
+    if not stripped or all(char in "🌑🌒🌓🌔🌕🌖🌗🌘⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏ .·" for char in stripped):
+        return True
+    return lowered.startswith(
+        (
+            "using ",
+            "used ",
+            "reading ",
+            "read ",
+            "run ",
+            "running ",
+            "todo",
+            "thinking",
+            "user wants",
+            "user asks",
+            "user says",
+            "user requests",
+            "user requested",
+            "the user wants",
+            "the user asks",
+            "the user says",
+            "the user requested",
+            "they want",
+            "they ask",
+            "they request",
+            "let me ",
+            "let's ",
+            "i'll ",
+            "i will ",
+            "i can ",
+            "i am ",
+            "i'm ",
+            "i need",
+            "i should",
+            "should ",
+            "we have",
+            "we need",
+            "need ",
+            "now need",
+            "good. ",
+            "no docs lint script",
+            "the task",
+        )
+    )
 
 
 def _send_prompt(backend: object, pane_id: str, prompt: str) -> str | None:
@@ -517,6 +698,25 @@ def _send_prompt(backend: object, pane_id: str, prompt: str) -> str | None:
     except Exception as exc:
         return f"send_text_failed:{exc!r}"
     return None
+
+
+def _with_kimi_context_pointer(message: str, session: object) -> str:
+    data = getattr(session, "data", None)
+    context_path = ""
+    if isinstance(data, dict):
+        context_path = str(data.get("kimi_context_path") or "").strip()
+    if not context_path:
+        return message
+    context = "\n".join(
+        [
+            "CCB Kimi context:",
+            f"- Read and follow: {context_path}",
+            "- Kimi does not load local CCB skills directly; this context file is the scoped CCB memory/rules projection.",
+            "- Implementation completed is not review/archive; keep lifecycle truth separate.",
+            "",
+        ]
+    )
+    return f"{context}{message or ''}"
 
 
 def _resolve_work_dir(job: JobRecord, context: ProviderRuntimeContext | None) -> Path | None:

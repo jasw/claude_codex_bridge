@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Any, Callable, TypeVar
 
@@ -81,6 +82,11 @@ class JsonlStore:
         target = Path(path)
         if not target.exists():
             return []
+        if _strict_jsonl_helper_required():
+            from rust_helpers_jsonl import read_jsonl_tail_strict_required
+
+            rows = read_jsonl_tail_strict_required(target, limit).value
+            return [loader(payload) if loader else payload for payload in rows]
         rows: list[T] | list[dict[str, Any]] = []
         with target.open('rb') as handle:
             handle.seek(0, 2)
@@ -155,3 +161,13 @@ class JsonlStore:
                     if predicate(payload):
                         return loader(payload) if loader else payload
         return None
+
+
+def _strict_jsonl_helper_required() -> bool:
+    return str(os.environ.get('CCB_RUST_JSONL_STORE') or '').strip().lower() in {
+        '1',
+        'true',
+        'yes',
+        'on',
+        'required',
+    }

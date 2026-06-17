@@ -4,6 +4,8 @@ from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from agents.models import (
     AgentRuntime,
     AgentSpec,
@@ -38,6 +40,8 @@ from message_bureau import CallbackEdgeStore, CallbackEdgeState
 from message_bureau.models import AttemptRecord, AttemptState, ReplyRecord, ReplyTerminalStatus
 from project.ids import compute_project_id
 from provider_hooks.activity import load_activity, write_activity
+from rust_helpers import RUST_HELPER_BIN_ENV
+from rust_helpers_project_view import RUST_PROJECT_VIEW_ENV
 from storage.paths import PathLayout
 
 
@@ -47,6 +51,12 @@ NOW = '2026-05-20T12:00:00Z'
 def _write(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding='utf-8')
+
+
+def _write_helper(path: Path, body: str) -> Path:
+    path.write_text('#!/usr/bin/env python3\n' + body, encoding='utf-8')
+    path.chmod(0o755)
+    return path
 
 
 def _spec(name: str, provider: str) -> AgentSpec:
@@ -1789,6 +1799,145 @@ def test_project_view_recent_jobs_uses_bounded_tail_reads(tmp_path: Path, monkey
     ]
 
 
+def test_project_view_recent_jobs_uses_adaptive_scan_budget(tmp_path: Path, monkeypatch) -> None:
+    project_root = tmp_path / 'repo-comms-adaptive-budget'
+    project_root.mkdir()
+    layout = PathLayout(project_root)
+    project_id = compute_project_id(project_root)
+    config = _config()
+    registry = AgentRegistry(layout, config)
+    for agent_name in config.agents:
+        registry.upsert(_runtime(agent_name, project_id=project_id))
+    mount_manager = MountManager(layout, clock=lambda: NOW)
+    mount_manager.mark_mounted(project_id=project_id, pid=123, socket_path=layout.ccbd_socket_path, generation=1, started_at=NOW)
+    dispatcher = JobDispatcher(layout, config, registry, clock=lambda: NOW)
+    captured: dict[str, object] = {}
+
+    def fake_recent_jobs(agent_names, *, per_agent_limit, per_agent_initial_limit, result_limit, statuses):
+        captured['agent_names'] = tuple(agent_names)
+        captured['per_agent_limit'] = per_agent_limit
+        captured['per_agent_initial_limit'] = per_agent_initial_limit
+        captured['result_limit'] = result_limit
+        captured['statuses'] = tuple(statuses)
+        return ()
+
+    monkeypatch.setattr(dispatcher._job_store, 'list_project_view_recent_jobs', fake_recent_jobs)
+    service = ProjectViewService(
+        ProjectViewDependencies(
+            project_root=project_root,
+            project_id=project_id,
+            config=config,
+            registry=registry,
+            mount_manager=mount_manager,
+            namespace_state_store=ProjectNamespaceStateStore(layout),
+            dispatcher=dispatcher,
+            clock=lambda: NOW,
+        )
+    )
+
+    service.build_response()
+
+    assert captured['agent_names'] == ('agent1', 'agent2', 'agent3')
+    assert captured['per_agent_limit'] == 128
+    assert captured['per_agent_initial_limit'] == 32
+    assert captured['result_limit'] == 64
+    assert 'completed' in captured['statuses']
+
+
+def test_project_view_recent_jobs_uses_required_rust_summary_helper(tmp_path: Path, monkeypatch) -> None:
+    project_root = tmp_path / 'repo-comms-summary-helper'
+    project_root.mkdir()
+    layout = PathLayout(project_root)
+    project_id = compute_project_id(project_root)
+    config = _config()
+    registry = AgentRegistry(layout, config)
+    for agent_name in config.agents:
+        registry.upsert(_runtime(agent_name, project_id=project_id))
+    mount_manager = MountManager(layout, clock=lambda: NOW)
+    mount_manager.mark_mounted(project_id=project_id, pid=123, socket_path=layout.ccbd_socket_path, generation=1, started_at=NOW)
+    dispatcher = JobDispatcher(layout, config, registry, clock=lambda: NOW)
+    dispatcher._append_job(
+        _job(
+            project_id,
+            job_id='job_python_path_should_not_run',
+            sender='cmd',
+            target='agent1',
+            status=JobStatus.COMPLETED,
+            updated_at='2026-05-20T12:00:01Z',
+            body='python fallback should not run',
+        )
+    )
+    helper = _write_helper(
+        tmp_path / 'recent_jobs_helper.py',
+        """import json, sys
+if sys.argv[1:] == ['--capabilities']:
+    print(json.dumps({'schema_version': 1, 'capabilities': ['project_view.recent_jobs', 'jobs.query.recent']}))
+else:
+    request = json.loads(sys.stdin.read())
+    print(json.dumps({'schema_version': 1, 'ok': True, 'capability': request['capability'], 'payload': {
+        'jobs': [{
+            'job_id': 'job_from_summary_helper',
+            'agent_name': 'agent1',
+            'target_name': 'agent1',
+            'provider': 'codex',
+            'status': 'completed',
+            'terminal_decision': {'reason': 'task_complete'},
+            'created_at': '2026-05-20T11:59:00Z',
+            'updated_at': '2026-05-20T12:00:09Z',
+            'provider_options': {},
+            'request': {
+                'project_id': 'proj',
+                'to_agent': 'agent1',
+                'from_actor': 'cmd',
+                'body': 'summary helper body',
+                'task_id': None,
+                'reply_to': None,
+                'message_type': 'ask',
+                'delivery_scope': 'single',
+                'silence_on_success': False,
+                'route_options': {},
+                'body_artifact': None,
+            },
+        }],
+        'scanned': 1,
+        'returned': 1,
+        'truncated': False,
+        'next_budget_hint': {'per_agent_initial': 32, 'per_agent_max': 64},
+        'error': None,
+    }}))
+""",
+    )
+    monkeypatch.setenv('CCB_RUST_PROJECT_VIEW_RECENT_JOBS', '1')
+    monkeypatch.setenv(RUST_HELPER_BIN_ENV, str(helper))
+    monkeypatch.setattr(
+        dispatcher._job_store,
+        'list_agent_tail',
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError('unexpected Python list_agent_tail fallback')),
+    )
+    monkeypatch.setattr(
+        dispatcher._job_store,
+        'list_agent_tails_batch',
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError('unexpected Python batch tail fallback')),
+    )
+    service = ProjectViewService(
+        ProjectViewDependencies(
+            project_root=project_root,
+            project_id=project_id,
+            config=config,
+            registry=registry,
+            mount_manager=mount_manager,
+            namespace_state_store=ProjectNamespaceStateStore(layout),
+            dispatcher=dispatcher,
+            clock=lambda: NOW,
+        )
+    )
+
+    comms = service.build_response()['view']['comms']
+
+    assert [item['id'] for item in comms] == ['job_from_summary_helper']
+    assert comms[0]['body_preview'] == 'summary helper body'
+
+
 def test_project_view_backfills_reply_delivery_source_outside_recent_tail(tmp_path: Path) -> None:
     project_root = tmp_path / 'repo-comms-delivery-tail'
     project_root.mkdir()
@@ -2180,6 +2329,62 @@ def test_project_view_updates_build_cache_and_tmux_metrics(tmp_path: Path) -> No
     assert metrics.last_project_view_store_scan_count == 3
 
 
+def test_project_view_consumes_sidebar_refresh_request_without_crashing(tmp_path: Path) -> None:
+    project_root = tmp_path / 'repo-project-view-sidebar-refresh'
+    project_root.mkdir()
+    layout = PathLayout(project_root)
+    project_id = compute_project_id(project_root)
+    config = _config()
+    registry = AgentRegistry(layout, config)
+    registry.upsert(_runtime('agent1', project_id=project_id))
+    mount_manager = MountManager(layout, clock=lambda: NOW)
+    mount_manager.mark_mounted(project_id=project_id, pid=123, socket_path=layout.ccbd_socket_path, generation=1, started_at=NOW)
+    ProjectNamespaceStateStore(layout).save(
+        ProjectNamespaceState(
+            project_id=project_id,
+            namespace_epoch=3,
+            tmux_socket_path=str(layout.ccbd_tmux_socket_path),
+            tmux_session_name='ccb-project-view-sidebar-refresh',
+            layout_version=2,
+        )
+    )
+    dispatcher = JobDispatcher(layout, config, registry, clock=lambda: NOW)
+    backend = _SidebarRefreshBackend(session_name='ccb-project-view-sidebar-refresh')
+    controller = ProjectNamespaceController(
+        layout,
+        project_id,
+        backend_factory=lambda socket_path=None: backend,
+    )
+    metrics = SimpleNamespace(
+        project_view_sidebar_refreshes=0,
+        project_view_sidebar_refresh_failures=0,
+        last_project_view_sidebar_refresh_duration_s=None,
+    )
+    service = ProjectViewService(
+        ProjectViewDependencies(
+            project_root=project_root,
+            project_id=project_id,
+            config=config,
+            registry=registry,
+            mount_manager=mount_manager,
+            namespace_state_store=ProjectNamespaceStateStore(layout),
+            dispatcher=dispatcher,
+            namespace_controller=controller,
+            clock=lambda: NOW,
+            metrics=metrics,
+        )
+    )
+
+    service.request_sidebar_refresh()
+    response = service.build_response()
+
+    assert response['cache']['sequence'] == 1
+    assert ['send-keys', '-t', '%90', 'C-l'] in backend.calls
+    assert metrics.project_view_sidebar_refreshes == 1
+    assert metrics.project_view_sidebar_refresh_failures == 0
+    assert metrics.last_project_view_sidebar_refresh_duration_s >= 0.0
+
+
 class _FocusBackend:
     def _tmux_run(self, args: list[str], *, capture=False, check=False, timeout=None):
         del check, timeout
@@ -2229,6 +2434,26 @@ class _SnapshotBackend:
         if args[:3] == ['capture-pane', '-p', '-t']:
             return type('CP', (), {'returncode': 0, 'stdout': '', 'stderr': ''})()
         raise AssertionError(args)
+
+
+class _SidebarRefreshBackend(_SnapshotBackend):
+    def __init__(self, *, session_name: str) -> None:
+        super().__init__()
+        self.session_name = session_name
+
+    def list_panes_by_user_options(self, expected: dict[str, str]) -> list[str]:
+        if expected.get('@ccb_role') == 'sidebar':
+            return ['%90']
+        return []
+
+    def _tmux_run(self, args: list[str], *, capture=False, check=False, timeout=None):
+        if args == ['display-message', '-p', '-t', '%90', '#{session_name}']:
+            self.calls.append(list(args))
+            return type('CP', (), {'returncode': 0, 'stdout': f'{self.session_name}\n', 'stderr': ''})()
+        if args[:2] == ['send-keys', '-t']:
+            self.calls.append(list(args))
+            return type('CP', (), {'returncode': 0, 'stdout': '', 'stderr': ''})()
+        return super()._tmux_run(args, capture=capture, check=check, timeout=timeout)
 
 
 class _ProviderPromptBackend(_SnapshotBackend):
@@ -2393,6 +2618,92 @@ def test_project_view_reads_window_and_sidebar_tmux_metadata(tmp_path: Path) -> 
         ('main', '@1', 0, '%90'),
         ('ops', '@2', 1, '%91'),
     ]
+
+
+def test_project_view_uses_rust_tmux_parser_when_enabled(tmp_path: Path, monkeypatch) -> None:
+    project_root = tmp_path / 'repo-snapshot-helper'
+    project_root.mkdir()
+    layout = PathLayout(project_root)
+    config = _config()
+    registry = AgentRegistry(layout, config)
+    mount_manager = MountManager(layout, clock=lambda: NOW)
+    mount_manager.mark_mounted(project_id='proj-snap-helper', pid=123, socket_path=layout.ccbd_socket_path, generation=1, started_at=NOW)
+    ProjectNamespaceStateStore(layout).save(
+        ProjectNamespaceState(
+            project_id='proj-snap-helper',
+            namespace_epoch=3,
+            tmux_socket_path=str(layout.ccbd_tmux_socket_path),
+            tmux_session_name='ccb-snap-helper',
+            layout_version=2,
+        )
+    )
+    dispatcher = JobDispatcher(layout, config, registry, clock=lambda: NOW)
+    backend = _SnapshotBackend()
+    controller = ProjectNamespaceController(
+        layout,
+        'proj-snap-helper',
+        backend_factory=lambda socket_path=None: backend,
+    )
+    helper = _write_helper(
+        tmp_path / 'project_view_helper.py',
+        """import json, sys
+if sys.argv[1:] == ['--capabilities']:
+    print(json.dumps({'schema_version': 1, 'capabilities': ['project_view.tmux.parse']}))
+else:
+    request = json.loads(sys.stdin.read())
+    print(json.dumps({'schema_version': 1, 'ok': True, 'capability': request['capability'], 'payload': {
+        'focus': {'active_window': 'ops', 'active_pane_id': '%22', 'active_agent': 'agent3'},
+        'windows': {
+            'main': {'tmux_window_id': '@helper-main', 'tmux_window_index': 10},
+            'ops': {'tmux_window_id': '@helper-ops', 'tmux_window_index': 11}
+        },
+        'sidebars': {'main': '%190', 'ops': '%191'},
+    }}))
+""",
+    )
+    monkeypatch.setenv(RUST_PROJECT_VIEW_ENV, '1')
+    monkeypatch.setenv(RUST_HELPER_BIN_ENV, str(helper))
+    service = ProjectViewService(
+        ProjectViewDependencies(
+            project_root=project_root,
+            project_id='proj-snap-helper',
+            config=config,
+            registry=registry,
+            mount_manager=mount_manager,
+            namespace_state_store=ProjectNamespaceStateStore(layout),
+            dispatcher=dispatcher,
+            namespace_controller=controller,
+            clock=lambda: NOW,
+        )
+    )
+
+    view = service.build_response()['view']
+
+    assert view['namespace']['active_window'] == 'ops'
+    assert [agent['active'] for agent in view['agents']] == [False, False, True]
+    assert [
+        (window['name'], window['tmux_window_id'], window['tmux_window_index'], window['sidebar_pane_id'])
+        for window in view['windows']
+    ] == [
+        ('main', '@helper-main', 10, '%190'),
+        ('ops', '@helper-ops', 11, '%191'),
+    ]
+
+
+def test_project_view_required_tmux_parser_missing_helper_raises_without_python_fallback(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv(RUST_PROJECT_VIEW_ENV, 'required')
+    monkeypatch.setenv(RUST_HELPER_BIN_ENV, str(tmp_path / 'missing-helper'))
+
+    with pytest.raises(RuntimeError, match='no Python fallback'):
+        project_view_service._parse_tmux_project_view_outputs(
+            focus_stdout='main\t%11\tagent\tagent1\n',
+            windows_stdout='main\t@1\t0\n',
+            sidebars_stdout='ccb-snap\tmain\t%90\tproj-snap\tsidebar\tmain\tmain\n',
+            session_name='ccb-snap',
+            project_id='proj-snap',
+        )
 
 
 def test_project_view_captures_each_running_pane_once_per_build(tmp_path: Path) -> None:

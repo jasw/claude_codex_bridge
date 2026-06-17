@@ -32,6 +32,16 @@ def summarize_storage(context_or_layout) -> dict[str, object]:
     return _summary_payload(layout, entries)
 
 
+def summarize_storage_compact(context_or_layout, *, entries_limit: int = 50) -> dict[str, object]:
+    layout = _layout_from_context(context_or_layout)
+    roots = _storage_roots(layout)
+    rust_summary = _storage_summary_payload(layout, roots, entries_limit=entries_limit)
+    if rust_summary is not None:
+        return _compact_summary_payload(layout, rust_summary, entries_limit=entries_limit, helper_used=True)
+    payload = summarize_storage(layout)
+    return _truncate_summary_entries(payload, entries_limit=entries_limit, helper_used=False)
+
+
 def _layout_from_context(context_or_layout) -> PathLayout:
     if isinstance(context_or_layout, PathLayout):
         return context_or_layout
@@ -39,13 +49,79 @@ def _layout_from_context(context_or_layout) -> PathLayout:
 
 
 def _scan_layout(layout: PathLayout) -> tuple[StorageEntry, ...]:
+    roots = _storage_roots(layout)
+    inventory = _storage_inventory_records(roots)
+    if inventory is not None:
+        return _entries_from_inventory(layout, roots, inventory)
+    return _scan_layout_python(layout, roots)
+
+
+def _storage_roots(layout: PathLayout) -> list[tuple[str, Path]]:
     roots: list[tuple[str, Path]] = [('project', layout.ccb_dir)]
     try:
         if layout.runtime_state_root != layout.ccb_dir:
             roots.append(('runtime', layout.runtime_state_root))
     except Exception:
         pass
+    return roots
 
+
+def _storage_inventory_records(roots: list[tuple[str, Path]]) -> list[dict[str, object]] | None:
+    mode = str(os.environ.get('CCB_RUST_STORAGE_SCAN', '')).strip().lower()
+    global_mode = str(os.environ.get('CCB_RUST_HELPERS', '')).strip().lower()
+    if not mode and global_mode not in {'0', 'false', 'no', 'off', 'disabled'}:
+        mode = 'auto'
+    if mode not in {'1', 'auto', 'required'}:
+        return None
+    required = mode == 'required'
+    try:
+        from rust_helpers_storage import scan_storage_inventory
+    except Exception as exc:
+        if required:
+            raise RuntimeError(
+                'storage.scan.inventory requires ccb-rs-helper; no Python fallback is available for this path'
+            ) from exc
+        return None
+
+    result = scan_storage_inventory(
+        [{'root_kind': root_kind, 'path': str(root)} for root_kind, root in roots],
+    )
+    return result.value
+
+
+def _storage_summary_payload(
+    layout: PathLayout,
+    roots: list[tuple[str, Path]],
+    *,
+    entries_limit: int,
+) -> dict[str, object] | None:
+    mode = str(os.environ.get('CCB_RUST_STORAGE_SUMMARY', '')).strip().lower()
+    if mode not in {'1', 'auto', 'required'}:
+        return None
+    required = mode == 'required'
+    try:
+        from rust_helpers_storage import scan_storage_summary
+    except Exception as exc:
+        if required:
+            raise RuntimeError(
+                'storage.scan.summary requires ccb-rs-helper; no Python fallback is available for this path'
+            ) from exc
+        return None
+
+    result = scan_storage_summary(
+        [{'root_kind': root_kind, 'path': str(root)} for root_kind, root in roots],
+        ccb_dir=layout.ccb_dir,
+        runtime_state_root=layout.runtime_state_root,
+        top_entries_limit=entries_limit,
+    )
+    if result.helper_used:
+        return result.value
+    if required:
+        raise RuntimeError('storage.scan.summary requires ccb-rs-helper; no Python fallback is available for this path')
+    return None
+
+
+def _scan_layout_python(layout: PathLayout, roots: list[tuple[str, Path]]) -> tuple[StorageEntry, ...]:
     entries: list[StorageEntry] = []
     seen: set[tuple[object, ...]] = set()
     for root_kind, root in roots:
@@ -58,6 +134,54 @@ def _scan_layout(layout: PathLayout) -> tuple[StorageEntry, ...]:
             seen.add(identity)
             entries.append(_classify_path(layout, root, path, root_kind=root_kind))
     return tuple(entries)
+
+
+def _entries_from_inventory(
+    layout: PathLayout,
+    roots: list[tuple[str, Path]],
+    inventory: list[dict[str, object]],
+) -> tuple[StorageEntry, ...]:
+    roots_by_kind = {root_kind: root for root_kind, root in roots}
+    entries: list[StorageEntry] = []
+    for record in inventory:
+        entry = _classify_inventory_record(layout, roots_by_kind, record)
+        if entry is not None:
+            entries.append(entry)
+    return tuple(entries)
+
+
+def _classify_inventory_record(
+    layout: PathLayout,
+    roots_by_kind: dict[str, Path],
+    record: dict[str, object],
+) -> StorageEntry | None:
+    root_kind = str(record.get('root_kind') or '')
+    root = roots_by_kind.get(root_kind)
+    if root is None:
+        return None
+    path = Path(str(record.get('path') or ''))
+    relative_path = str(record.get('relative_path') or '')
+    size = _record_size(record.get('size_bytes'))
+    if bool(record.get('is_symlink')):
+        if _is_allowed_provider_secret_symlink(path, layout):
+            return _classify_relative(layout, path, relative_path, size=size, root_kind=root_kind)
+        symlink_reason = _unsafe_symlink_reason(path, layout)
+        if symlink_reason is not None and not _is_marked_projected_symlink(path):
+            return StorageEntry(
+                path=path,
+                relative_path=relative_path,
+                storage_class=StorageClass.UNKNOWN,
+                size_bytes=size,
+                reason=symlink_reason,
+                root_kind=root_kind,
+            )
+    return _classify_relative(layout, path, relative_path, size=size, root_kind=root_kind)
+
+
+def _record_size(value: object) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        return 0
+    return max(0, value)
 
 
 def _walk_files(root: Path):
@@ -267,6 +391,57 @@ def _summary_payload(layout: PathLayout, entries: list[StorageEntry]) -> dict[st
     }
 
 
+def _compact_summary_payload(
+    layout: PathLayout,
+    summary: dict[str, object],
+    *,
+    entries_limit: int,
+    helper_used: bool,
+) -> dict[str, object]:
+    shared_cache_reason = _shared_cache_disabled_reason(layout)
+    shared_cache_enabled = shared_cache_reason is None
+    entries = summary.get('entries') if isinstance(summary.get('entries'), list) else []
+    return {
+        'schema_version': SCHEMA_VERSION,
+        'generated_at': datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z'),
+        'project': str(layout.project_root),
+        'project_id': layout.project_id,
+        'runtime_root_kind': layout.runtime_state_placement.root_kind,
+        'runtime_state_root': str(layout.runtime_state_root),
+        'shared_cache_root': _shared_cache_root(layout, disabled_reason=shared_cache_reason or ''),
+        'shared_cache_root_usable': shared_cache_enabled,
+        'shared_cache_status': 'enabled' if shared_cache_enabled else 'disabled',
+        'shared_cache_reason': 'enabled' if shared_cache_enabled else shared_cache_reason,
+        'total_bytes': summary.get('total_bytes', 0),
+        'total_count': summary.get('total_count', 0),
+        'by_class': summary.get('by_class') or {},
+        'by_provider': summary.get('by_provider') or {},
+        'by_agent': summary.get('by_agent') or {},
+        'entries': list(entries)[: max(0, entries_limit)],
+        'entries_truncated': int(summary.get('total_count') or 0) > max(0, entries_limit),
+        'entries_limit': max(0, entries_limit),
+        'summary_mode': 'compact',
+        'summary_helper_used': helper_used,
+    }
+
+
+def _truncate_summary_entries(
+    payload: dict[str, object],
+    *,
+    entries_limit: int,
+    helper_used: bool,
+) -> dict[str, object]:
+    compact = dict(payload)
+    entries = compact.get('entries') if isinstance(compact.get('entries'), list) else []
+    limit = max(0, entries_limit)
+    compact['entries'] = list(entries)[:limit]
+    compact['entries_truncated'] = len(entries) > limit
+    compact['entries_limit'] = limit
+    compact['summary_mode'] = 'compact'
+    compact['summary_helper_used'] = helper_used
+    return compact
+
+
 def _shared_cache_root(layout: PathLayout, *, disabled_reason: str) -> str | None:
     if disabled_reason == 'wsl_drvfs_requires_runtime_relocation':
         return None
@@ -384,4 +559,4 @@ def _is_within(path: Path, root: Path) -> bool:
         return False
 
 
-__all__ = ['summarize_storage']
+__all__ = ['summarize_storage', 'summarize_storage_compact']

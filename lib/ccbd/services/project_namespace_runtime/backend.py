@@ -19,6 +19,9 @@ from terminal_runtime.tmux_readiness import (
 from terminal_runtime.placeholders import pane_placeholder_argv, pane_placeholder_cmd
 
 _TMUX_ENVIRONMENT_KEYS = (
+    'TERM',
+    'TERM_PROGRAM',
+    'TERM_PROGRAM_VERSION',
     'DISPLAY',
     'WAYLAND_DISPLAY',
     'XDG_RUNTIME_DIR',
@@ -26,6 +29,18 @@ _TMUX_ENVIRONMENT_KEYS = (
     'WSL_INTEROP',
     'SSH_AUTH_SOCK',
     'SSH_CONNECTION',
+    'KITTY_WINDOW_ID',
+    'WEZTERM_EXECUTABLE',
+    'WEZTERM_PANE',
+    'WEZTERM_UNIX_SOCKET',
+    'CCB_WORKBENCH_PROFILE',
+    'CCB_WORKBENCH_FORCE_RICH',
+    'CCB_WORKBENCH_ROOT',
+    'CCB_WORKBENCH_TERMINAL_PROGRAM',
+    'CCB_WORKBENCH_TERMINAL_PROGRAM_VERSION',
+    'CCB_WORKBENCH_YAZI_SAFE_CONFIG',
+    'CCB_WORKBENCH_YAZI_RICH_CONFIG',
+    'AGENT_ROLES_STORE',
 )
 _CLIPBOARD_PIPE_COMMAND = (
     "sh -lc '"
@@ -76,6 +91,7 @@ def ensure_server_policy(backend, *, timeout_s: float | None = None) -> None:
     _apply_optional_server_policy(backend, option='set-clipboard', value='on', timeout_s=timeout_s)
     _apply_optional_server_policy(backend, option='focus-events', value='on', timeout_s=timeout_s)
     _apply_optional_server_policy(backend, option='escape-time', value='10', timeout_s=timeout_s)
+    _apply_optional_server_policy(backend, option='allow-passthrough', value='on', timeout_s=timeout_s)
     _apply_tmux_environment_policy(backend, timeout_s=timeout_s)
     _apply_optional_window_policy(backend, option='mode-keys', value='vi', timeout_s=timeout_s)
     _apply_optional_tmux_policy(

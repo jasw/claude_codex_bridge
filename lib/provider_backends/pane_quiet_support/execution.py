@@ -432,7 +432,9 @@ def _pane_ready_for_input(content: str, provider: str) -> bool:
     if provider != "kimi":
         return True
     text = content or ""
-    return "── input" in text and "agent (" in text
+    legacy_ready = "── input" in text and "agent (" in text
+    k27_ready = "│ >" in text and "K2.7 Code" in text and "context:" in text
+    return legacy_ready or k27_ready
 
 
 def _send_prompt(backend: object, pane_id: str, prompt: str) -> str | None:

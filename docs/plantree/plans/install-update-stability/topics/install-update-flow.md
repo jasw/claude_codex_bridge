@@ -10,22 +10,24 @@ Required flow:
 
 1. Detect language with `CCB_LANG`, `LANG`, `LC_ALL`, or `LC_MESSAGES`.
 2. Confirm root/sudo profile if effective uid is root.
-3. Check WSL compatibility and backend environment.
-4. Select Python 3.10+.
-5. Install required or optional Python packages only when missing.
-6. Check terminal backend requirements.
-7. Prepare install tree:
+3. Refuse temporary-prefix installs that would write wrappers into an external
+   bin directory, unless explicitly overridden.
+4. Check WSL compatibility and backend environment.
+5. Select Python 3.10+.
+6. Install required or optional Python packages only when missing.
+7. Check terminal backend requirements.
+8. Prepare install tree:
    - source/dev mode uses a live source root
    - release mode copies release content to the install prefix
-8. Create managed venv when policy says to use one.
-9. Write install metadata for release installs.
-10. Install wrappers and bin links.
-11. Run real installed entrypoint smoke checks.
-12. Install inherited skills, settings, tmux helpers, and other static assets.
-13. Provision optional Role Packs and tools.
-14. Print install identity and next actions.
+9. Create managed venv when policy says to use one.
+10. Write install metadata for release installs.
+11. Install wrappers and bin links.
+12. Run real installed entrypoint smoke checks.
+13. Install inherited skills, settings, tmux helpers, and other static assets.
+14. Provision optional Role Packs and tools.
+15. Print install identity and next actions.
 
-Core install success stops at step 12. Role Pack and tool provisioning are
+Core install success stops at step 13. Role Pack and tool provisioning are
 post-install checks unless the user explicitly forces them as required.
 
 ## Managed Update
@@ -94,3 +96,18 @@ The v7.2.9 incident showed that old updater code can continue after installing
 new files and try to update a legacy `ccb.archi` source that no longer exists.
 Moving post-update provisioning into the new installed entrypoint prevents this
 class of old-code/new-layout mismatch.
+
+The 2026-06-15 stable-entrypoint audit found a separate drift class: a
+temporary release simulation prefix under `/tmp/ccb-v7.2.1-install-smoke` was
+left as the user's bare `ccb` authority. The real `~/.local/bin/ccb` symlink
+pointed into that temporary prefix, and multiple live project daemons were
+running from the same prefix. Install/update validation must therefore prove
+that isolated `CODEX_INSTALL_PREFIX` and `CODEX_BIN_DIR` runs cannot mutate the
+real user wrapper or persistent shell startup files unless that real install is
+the explicit target.
+
+Closed for direct shell installs on 2026-06-15: `install.sh install` now fails
+before preparing the install tree when `CODEX_INSTALL_PREFIX` is temporary and
+`CODEX_BIN_DIR` is outside the same temporary prefix or temporary HOME. Use
+`CCB_ALLOW_TEMP_INSTALL_GLOBAL_BIN=1` only when intentionally writing from a
+temporary install prefix into an external bin directory.

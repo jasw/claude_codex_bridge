@@ -313,6 +313,8 @@ project .ccb
   - authoritative session 可 `has-session`
   - authoritative workspace window 可 `select-window`
 - 若超过有界等待仍不可见，才允许把该次 foreground attach 判为失败
+- foreground attach 一旦建立，后续 client detach / terminal 退出只表示
+  UI 连接结束，不表示项目应停机；不得据此回写 shutdown intent
 
 这样可以保证：
 

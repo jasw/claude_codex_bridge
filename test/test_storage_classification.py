@@ -4,9 +4,13 @@ import json
 import os
 from pathlib import Path
 
+import pytest
+
+from rust_helpers import RUST_HELPER_BIN_ENV, RUST_HELPERS_ENV
+from rust_helpers_storage import RUST_STORAGE_SCAN_ENV
 from storage.paths import PathLayout
 from storage.path_helpers import RuntimeStatePlacement
-from storage_classification import summarize_storage
+from storage_classification import summarize_storage, summarize_storage_compact
 from storage_classification.provider_home import classify_provider_home
 
 
@@ -17,6 +21,133 @@ def _write(path: Path, text: str = 'x') -> None:
 
 def _records_by_suffix(payload: dict[str, object]) -> dict[str, dict[str, object]]:
     return {str(item['relative_path']): item for item in payload['entries']}
+
+
+def _write_helper(path: Path, body: str) -> Path:
+    path.write_text('#!/usr/bin/env python3\n' + body, encoding='utf-8')
+    path.chmod(0o755)
+    return path
+
+
+def _storage_inventory_stub_helper(path: Path) -> Path:
+    return _write_helper(
+        path,
+        """import json, os, sys
+from pathlib import Path
+
+if sys.argv[1:] == ['--capabilities']:
+    print(json.dumps({'schema_version': 1, 'capabilities': ['storage.scan.inventory']}))
+else:
+    request = json.loads(sys.stdin.read())
+    records = []
+    seen = set()
+    for root in request['payload']['roots']:
+        root_path = Path(root['path'])
+        if not root_path.exists():
+            continue
+        for current, dirs, files in os.walk(root_path, followlinks=False):
+            current_path = Path(current)
+            safe_dirs = []
+            for dirname in dirs:
+                candidate = current_path / dirname
+                if candidate.is_symlink():
+                    paths = [candidate]
+                else:
+                    safe_dirs.append(dirname)
+                    paths = []
+                for path in paths:
+                    stat = path.lstat()
+                    identity = (stat.st_dev, stat.st_ino)
+                    if identity in seen:
+                        continue
+                    seen.add(identity)
+                    records.append({
+                        'path': str(path),
+                        'relative_path': str(path.relative_to(root_path)),
+                        'root_kind': root['root_kind'],
+                        'size_bytes': stat.st_size,
+                        'is_symlink': path.is_symlink(),
+                    })
+            dirs[:] = safe_dirs
+            for filename in files:
+                path = current_path / filename
+                stat = path.lstat()
+                identity = (stat.st_dev, stat.st_ino)
+                if identity in seen:
+                    continue
+                seen.add(identity)
+                records.append({
+                    'path': str(path),
+                    'relative_path': str(path.relative_to(root_path)),
+                    'root_kind': root['root_kind'],
+                    'size_bytes': stat.st_size,
+                    'is_symlink': path.is_symlink(),
+                })
+    print(json.dumps({'schema_version': 1, 'ok': True, 'capability': request['capability'], 'payload': records}))
+""",
+    )
+
+
+def _storage_summary_stub_helper(path: Path) -> Path:
+    return _write_helper(
+        path,
+        """import json, sys
+
+if sys.argv[1:] == ['--capabilities']:
+    print(json.dumps({'schema_version': 1, 'capabilities': ['storage.scan.summary']}))
+else:
+    request = json.loads(sys.stdin.read())
+    limit = request['payload'].get('top_entries_limit', 50)
+    entries = [
+        {
+            'path': '/repo/.ccb/agents/main/provider-state/codex/home/auth.json',
+            'relative_path': 'agents/main/provider-state/codex/home/auth.json',
+            'storage_class': 'secret',
+            'size_bytes': 9,
+            'provider': 'codex',
+            'agent': 'main',
+            'active': None,
+            'is_active_version': None,
+            'reachable_from_current_symlink': None,
+            'reclaimable': None,
+            'reason': 'provider_secret',
+            'root_kind': 'project',
+        },
+        {
+            'path': '/repo/.ccb/ccb.config',
+            'relative_path': 'ccb.config',
+            'storage_class': 'authority',
+            'size_bytes': 3,
+            'provider': None,
+            'agent': None,
+            'active': None,
+            'is_active_version': None,
+            'reachable_from_current_symlink': None,
+            'reclaimable': None,
+            'reason': None,
+            'root_kind': 'project',
+        },
+    ]
+    print(json.dumps({'schema_version': 1, 'ok': True, 'capability': request['capability'], 'payload': {
+        'total_bytes': 12,
+        'total_count': 2,
+        'by_class': {'authority': {'bytes': 3, 'count': 1}, 'secret': {'bytes': 9, 'count': 1}},
+        'by_provider': {'codex': {'bytes': 9, 'count': 1}},
+        'by_agent': {'main': {'bytes': 9, 'count': 1}},
+        'entries': entries[:limit],
+    }}))
+""",
+    )
+
+
+def _stable_summary(payload: dict[str, object]) -> dict[str, object]:
+    stable = dict(payload)
+    stable.pop('generated_at', None)
+    stable['entries'] = sorted(
+        [dict(item) for item in payload['entries']],
+        key=lambda item: (str(item['relative_path']), str(item['path'])),
+    )
+    return stable
 
 
 def test_provider_home_classifier_preserves_secret_precedence_and_unknowns(tmp_path: Path) -> None:
@@ -59,6 +190,12 @@ def test_storage_classification_keeps_provider_authority_and_cache_separate(tmp_
     opencode_state = ccb / 'agents' / 'agent4' / 'provider-state' / 'opencode'
     kimi_state = ccb / 'agents' / 'agent5' / 'provider-state' / 'kimi'
     mimo_state = ccb / 'agents' / 'agent6' / 'provider-state' / 'mimo'
+    qwen_state = ccb / 'agents' / 'agent7' / 'provider-state' / 'qwen'
+    cursor_state = ccb / 'agents' / 'agent8' / 'provider-state' / 'cursor'
+    copilot_state = ccb / 'agents' / 'agent9' / 'provider-state' / 'copilot'
+    crush_state = ccb / 'agents' / 'agent10' / 'provider-state' / 'crush'
+    kiro_state = ccb / 'agents' / 'agent11' / 'provider-state' / 'kiro'
+    pi_state = ccb / 'agents' / 'agent12' / 'provider-state' / 'pi'
 
     _write(ccb / 'ccb.config', 'agent1:codex\n')
     _write(ccb / 'ccb_memory.md', '# shared memory\n')
@@ -115,6 +252,13 @@ def test_storage_classification_keeps_provider_authority_and_cache_separate(tmp_
     _write(mimo_state / 'mimocode.json', '{}\n')
     _write(mimo_state / 'home' / 'data' / 'mimocode.db', 'db\n')
     _write(mimo_state / 'home' / 'cache' / 'bin' / 'mimo', 'bin\n')
+    _write(qwen_state / 'home' / '.cache' / 'compiled-provider-file')
+    _write(cursor_state / 'inherited-skills' / 'ask' / 'SKILL.md', '# ask\n')
+    _write(copilot_state / 'home' / '.config' / 'copilot' / 'session.json', '{}\n')
+    _write(crush_state / 'data' / 'crush.db', 'db\n')
+    _write(kiro_state / 'home' / 'logs' / 'chat.log', 'log\n')
+    _write(pi_state / 'home' / '.pi' / 'agent' / 'settings.json', '{}\n')
+    _write(pi_state / 'sessions' / 'session.jsonl', '{}\n')
 
     payload = summarize_storage(PathLayout(project_root))
     records = _records_by_suffix(payload)
@@ -191,6 +335,118 @@ def test_storage_classification_keeps_provider_authority_and_cache_separate(tmp_
     assert records['agents/agent6/provider-state/mimo/mimocode.json']['storage_class'] == 'projected_config'
     assert records['agents/agent6/provider-state/mimo/home/data/mimocode.db']['storage_class'] == 'session'
     assert records['agents/agent6/provider-state/mimo/home/cache/bin/mimo']['storage_class'] == 'rebuildable_cache'
+    assert records['agents/agent7/provider-state/qwen/home/.cache/compiled-provider-file']['storage_class'] == 'rebuildable_cache'
+    assert records['agents/agent8/provider-state/cursor/inherited-skills/ask/SKILL.md']['storage_class'] == 'projected_config'
+    assert records['agents/agent9/provider-state/copilot/home/.config/copilot/session.json']['storage_class'] == 'session'
+    assert records['agents/agent9/provider-state/copilot/home/.config/copilot/session.json']['reason'] == 'native_cli_provider_state'
+    assert records['agents/agent10/provider-state/crush/data/crush.db']['storage_class'] == 'session'
+    assert records['agents/agent10/provider-state/crush/data/crush.db']['reason'] == 'native_cli_provider_state'
+    assert records['agents/agent11/provider-state/kiro/home/logs/chat.log']['storage_class'] == 'session'
+    assert records['agents/agent12/provider-state/pi/home/.pi/agent/settings.json']['storage_class'] == 'session'
+    assert records['agents/agent12/provider-state/pi/sessions/session.jsonl']['storage_class'] == 'session'
+
+
+def test_storage_summary_rust_inventory_path_matches_python_path(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    project_root = tmp_path / 'repo'
+    ccb = project_root / '.ccb'
+    _write(ccb / 'ccb.config', 'main:codex\n')
+    _write(ccb / 'agents' / 'main' / 'runtime.json', '{}\n')
+    _write(ccb / 'agents' / 'main' / 'provider-state' / 'codex' / 'home' / 'auth.json', '{}\n')
+    _write(ccb / 'agents' / 'main' / 'provider-state' / 'codex' / 'home' / 'sessions' / 's.jsonl', '{}\n')
+    _write(ccb / 'ccbd' / 'state.json', '{}\n')
+    outside = tmp_path / 'outside'
+    _write(outside / 'target.txt', 'outside\n')
+    if hasattr(os, 'symlink'):
+        os.symlink(outside / 'target.txt', ccb / 'agents' / 'main' / 'outside-link')
+
+    layout = PathLayout(project_root)
+    monkeypatch.setenv(RUST_STORAGE_SCAN_ENV, '0')
+    monkeypatch.delenv(RUST_HELPER_BIN_ENV, raising=False)
+    python_payload = summarize_storage(layout)
+
+    helper = _storage_inventory_stub_helper(tmp_path / 'helper.py')
+    monkeypatch.delenv(RUST_STORAGE_SCAN_ENV, raising=False)
+    monkeypatch.delenv(RUST_HELPERS_ENV, raising=False)
+    monkeypatch.setenv(RUST_HELPER_BIN_ENV, str(helper))
+    helper_payload = summarize_storage(layout)
+
+    assert _stable_summary(helper_payload) == _stable_summary(python_payload)
+
+
+def test_storage_summary_default_auto_falls_back_when_helper_missing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    project_root = tmp_path / 'repo'
+    ccb = project_root / '.ccb'
+    _write(ccb / 'ccb.config', 'main:codex\n')
+    layout = PathLayout(project_root)
+    monkeypatch.delenv(RUST_STORAGE_SCAN_ENV, raising=False)
+    monkeypatch.delenv(RUST_HELPERS_ENV, raising=False)
+    monkeypatch.setenv(RUST_HELPER_BIN_ENV, str(tmp_path / 'missing-helper'))
+
+    payload = summarize_storage(layout)
+
+    assert _records_by_suffix(payload)['ccb.config']['storage_class'] == 'authority'
+
+
+def test_storage_summary_global_zero_disables_default_auto(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    project_root = tmp_path / 'repo'
+    ccb = project_root / '.ccb'
+    _write(ccb / 'ccb.config', 'main:codex\n')
+    layout = PathLayout(project_root)
+
+    def _unexpected_helper(*_args, **_kwargs):
+        raise AssertionError('storage helper must not be imported when globally disabled')
+
+    monkeypatch.delenv(RUST_STORAGE_SCAN_ENV, raising=False)
+    monkeypatch.setenv(RUST_HELPERS_ENV, '0')
+    monkeypatch.setattr('rust_helpers_storage.scan_storage_inventory', _unexpected_helper)
+
+    payload = summarize_storage(layout)
+
+    assert _records_by_suffix(payload)['ccb.config']['storage_class'] == 'authority'
+
+
+def test_storage_summary_required_missing_helper_raises_without_python_fallback(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    project_root = tmp_path / 'repo'
+    ccb = project_root / '.ccb'
+    _write(ccb / 'ccb.config', 'main:codex\n')
+    layout = PathLayout(project_root)
+    monkeypatch.setenv(RUST_STORAGE_SCAN_ENV, 'required')
+    monkeypatch.setenv(RUST_HELPER_BIN_ENV, str(tmp_path / 'missing-helper'))
+
+    with pytest.raises(RuntimeError, match='no Python fallback'):
+        summarize_storage(layout)
+
+
+def test_storage_compact_summary_uses_explicit_rust_summary_helper(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    project_root = tmp_path / 'repo'
+    ccb = project_root / '.ccb'
+    _write(ccb / 'ccb.config', 'main:codex\n')
+    layout = PathLayout(project_root)
+    helper = _storage_summary_stub_helper(tmp_path / 'summary_helper.py')
+    monkeypatch.setenv('CCB_RUST_STORAGE_SUMMARY', '1')
+    monkeypatch.setenv(RUST_HELPER_BIN_ENV, str(helper))
+
+    payload = summarize_storage_compact(layout, entries_limit=1)
+
+    assert payload['summary_mode'] == 'compact'
+    assert payload['summary_helper_used'] is True
+    assert payload['total_count'] == 2
+    assert payload['entries_truncated'] is True
+    assert payload['entries_limit'] == 1
+    assert [entry['relative_path'] for entry in payload['entries']] == [
+        'agents/main/provider-state/codex/home/auth.json',
+    ]
 
 
 def test_storage_classification_surfaces_profile_backed_runtime_home(tmp_path: Path) -> None:

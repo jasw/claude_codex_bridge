@@ -78,11 +78,18 @@ WSL_SESSION_ENV_KEYS = frozenset(
     }
 )
 
+ROLE_STORE_ENV_KEYS = frozenset(
+    {
+        'AGENT_ROLES_STORE',
+    }
+)
+
 USER_SESSION_TRANSPORT_ENV_KEYS = frozenset(
     NETWORK_PROXY_ENV_KEYS
     | TRUST_STORE_ENV_KEYS
     | DESKTOP_SESSION_ENV_KEYS
     | WSL_SESSION_ENV_KEYS
+    | ROLE_STORE_ENV_KEYS
 )
 
 
@@ -98,6 +105,7 @@ def user_session_transport_env(environ: Mapping[str, object] | None = None) -> d
 __all__ = [
     'DESKTOP_SESSION_ENV_KEYS',
     'NETWORK_PROXY_ENV_KEYS',
+    'ROLE_STORE_ENV_KEYS',
     'TRUST_STORE_ENV_KEYS',
     'USER_SESSION_TRANSPORT_ENV_KEYS',
     'WSL_SESSION_ENV_KEYS',

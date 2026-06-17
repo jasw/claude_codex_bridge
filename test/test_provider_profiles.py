@@ -721,8 +721,37 @@ def test_materialize_codex_profile_migration_respects_inherit_auth_false(tmp_pat
 
     runtime_home = Path(profile.runtime_home or '')
     assert (runtime_home / 'sessions' / '2026' / '05' / '10' / 'legacy.jsonl').is_file()
-    assert not (runtime_home / 'auth.json').exists()
+    assert (runtime_home / 'auth.json').read_text(encoding='utf-8') == '{"OPENAI_API_KEY":"legacy-key"}\n'
     assert not (legacy_home / 'sessions').exists()
+
+
+def test_materialize_codex_profile_preserves_agent_local_auth_when_inherit_auth_false(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    project_root = tmp_path / 'repo'
+    layout = PathLayout(project_root)
+    source_home = tmp_path / 'system-codex-home'
+    source_home.mkdir(parents=True, exist_ok=True)
+    (source_home / 'auth.json').write_text('{"auth_mode":"chatgpt","source":"global"}\n', encoding='utf-8')
+    monkeypatch.setenv('CODEX_HOME', str(source_home))
+    runtime_home = layout.agent_provider_state_dir('agent1', 'codex') / 'home'
+    runtime_home.mkdir(parents=True, exist_ok=True)
+    (runtime_home / 'auth.json').write_text('{"auth_mode":"chatgpt","source":"agent-local"}\n', encoding='utf-8')
+
+    profile = materialize_provider_profile(
+        layout=layout,
+        spec=_spec(
+            'agent1',
+            provider_profile=ProviderProfileSpec(mode='isolated', inherit_auth=False),
+        ),
+        workspace_path=project_root,
+    )
+
+    runtime_home = Path(profile.runtime_home or '')
+    assert (runtime_home / 'auth.json').read_text(encoding='utf-8') == (
+        '{"auth_mode":"chatgpt","source":"agent-local"}\n'
+    )
 
 
 def test_materialize_codex_profile_does_not_migrate_when_session_authority_is_malformed(

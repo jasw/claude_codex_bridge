@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+import shutil
 import subprocess
 
 
@@ -17,15 +18,26 @@ def test_install_script_links_sidebar_helper() -> None:
     assert 'ERROR: ccb-agent-sidebar binary not available' in text
 
 
-def test_install_script_provisions_neovim_tool_softly() -> None:
+def test_install_script_links_rs_helper() -> None:
     text = Path('install.sh').read_text(encoding='utf-8')
 
-    assert 'provision_neovim_tool' in text
-    assert 'CCB_INSTALL_NEOVIM=0' in text
-    assert 'Neovim/LazyVim provisioning enabled by default' in text
+    assert 'bin/ccb-rs-helper' in text
+    assert 'bin/build-ccb-rs-helper' in text
+    assert 'build_rs_helper_if_possible' in text
+    assert 'is_rs_helper_wrapper' in text
+    assert 'require_rs_helper_rust_toolchain' in text
+    assert 'cargo build --release --manifest-path "$crate_dir/Cargo.toml"' in text
+    assert 'ERROR: ccb-rs-helper binary not available' in text
+
+
+def test_install_script_does_not_provision_standalone_neovim_tool() -> None:
+    text = Path('install.sh').read_text(encoding='utf-8')
+
+    assert 'provision_neovim_tool' not in text
+    assert 'CCB_INSTALL_NEOVIM' not in text
+    assert 'Neovim/LazyVim provisioning enabled by default' not in text
     assert 'Install the default Neovim + LazyVim tool window now?' not in text
-    assert 'tools install neovim' in text
-    assert '[[ "$required" == "1" ]] && return 1 || return 0' in text
+    assert 'tools install neovim' not in text
 
 
 def test_install_script_provisions_role_packs_softly() -> None:
@@ -58,6 +70,16 @@ def test_sidebar_bin_wrapper_is_source_install_fallback() -> None:
     assert 'while :; do sleep 3600; done' in text
 
 
+def test_rs_helper_bin_wrapper_is_source_install_fallback() -> None:
+    text = Path('bin/ccb-rs-helper').read_text(encoding='utf-8')
+
+    assert 'CCB_RS_HELPER_WRAPPER' in text
+    assert 'while [[ -L "$SOURCE" ]]' in text
+    assert 'tools/ccb-rs-helper/target/release/ccb-rs-helper' in text
+    assert 'Run: bin/build-ccb-rs-helper' in text
+    assert 'exit 127' in text
+
+
 def test_rust_sidebar_enables_terminal_mouse_capture_for_sidebar_clicks() -> None:
     text = Path('tools/ccb-agent-sidebar/src/tui.rs').read_text(encoding='utf-8')
 
@@ -69,6 +91,14 @@ def test_rust_sidebar_enables_terminal_mouse_capture_for_sidebar_clicks() -> Non
 
 def test_sidebar_build_script_copies_release_binary() -> None:
     text = Path('bin/build-ccb-agent-sidebar').read_text(encoding='utf-8')
+
+    assert 'cargo build --release --manifest-path "$CRATE_DIR/Cargo.toml"' in text
+    assert 'cp -f "$TARGET_BIN" "$OUT_BIN"' in text
+    assert 'Built $OUT_BIN' in text
+
+
+def test_rs_helper_build_script_copies_release_binary() -> None:
+    text = Path('bin/build-ccb-rs-helper').read_text(encoding='utf-8')
 
     assert 'cargo build --release --manifest-path "$CRATE_DIR/Cargo.toml"' in text
     assert 'cp -f "$TARGET_BIN" "$OUT_BIN"' in text
@@ -137,6 +167,59 @@ chmod +x "$crate_dir/target/release/ccb-agent-sidebar"
     assert proc.returncode == 0, proc.stderr
     assert 'Built ' in proc.stdout
     out_bin = bin_dir / 'ccb-agent-sidebar'
+    assert out_bin.read_text(encoding='utf-8').startswith('#!/usr/bin/env bash')
+    assert os.access(out_bin, os.X_OK)
+
+
+def test_rs_helper_build_script_executes_copy_path_with_fake_cargo(tmp_path: Path) -> None:
+    repo = tmp_path / 'repo'
+    bin_dir = repo / 'bin'
+    crate_dir = repo / 'tools' / 'ccb-rs-helper'
+    fake_bin = tmp_path / 'fake-bin'
+    bin_dir.mkdir(parents=True)
+    crate_dir.mkdir(parents=True)
+    fake_bin.mkdir()
+    script = bin_dir / 'build-ccb-rs-helper'
+    script.write_text(Path('bin/build-ccb-rs-helper').read_text(encoding='utf-8'), encoding='utf-8')
+    script.chmod(0o755)
+    (crate_dir / 'Cargo.toml').write_text('[package]\nname = "ccb-rs-helper"\nversion = "0.0.0"\n', encoding='utf-8')
+    fake_cargo = fake_bin / 'cargo'
+    fake_cargo.write_text(
+        """#!/usr/bin/env bash
+set -euo pipefail
+manifest=""
+while [[ $# -gt 0 ]]; do
+  if [[ "$1" == "--manifest-path" ]]; then
+    shift
+    manifest="$1"
+  fi
+  shift || true
+done
+crate_dir="$(cd "$(dirname "$manifest")" && pwd)"
+mkdir -p "$crate_dir/target/release"
+cat > "$crate_dir/target/release/ccb-rs-helper" <<'BIN'
+#!/usr/bin/env bash
+echo rs-helper-binary
+BIN
+chmod +x "$crate_dir/target/release/ccb-rs-helper"
+""",
+        encoding='utf-8',
+    )
+    fake_cargo.chmod(0o755)
+
+    proc = subprocess.run(
+        [str(script)],
+        cwd=repo,
+        env={**os.environ, 'PATH': f'{fake_bin}:{os.environ.get("PATH", "")}'},
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        check=False,
+    )
+
+    assert proc.returncode == 0, proc.stderr
+    assert 'Built ' in proc.stdout
+    out_bin = bin_dir / 'ccb-rs-helper'
     assert out_bin.read_text(encoding='utf-8').startswith('#!/usr/bin/env bash')
     assert os.access(out_bin, os.X_OK)
 
@@ -251,6 +334,48 @@ build_sidebar_helper_if_possible
     assert out_bin.read_text(encoding='utf-8') == target_bin.read_text(encoding='utf-8')
 
 
+def test_install_script_prefers_prebuilt_rs_helper_binary(tmp_path: Path) -> None:
+    install_prefix = tmp_path / 'install'
+    crate_dir = install_prefix / 'tools' / 'ccb-rs-helper'
+    target_bin = crate_dir / 'target' / 'release' / 'ccb-rs-helper'
+    out_bin = install_prefix / 'bin' / 'ccb-rs-helper'
+    crate_dir.mkdir(parents=True)
+    out_bin.parent.mkdir(parents=True)
+    (crate_dir / 'Cargo.toml').write_text('[package]\nname = "ccb-rs-helper"\nversion = "0.0.0"\n', encoding='utf-8')
+    target_bin.parent.mkdir(parents=True)
+    target_bin.write_text('#!/usr/bin/env bash\nprintf "%s\\n" "{\\"capabilities\\":[\\"native.output.observe\\"]}"\n', encoding='utf-8')
+    target_bin.chmod(0o755)
+    out_bin.write_text('# CCB_RS_HELPER_WRAPPER\n', encoding='utf-8')
+    out_bin.chmod(0o755)
+    harness = tmp_path / 'harness.sh'
+    install_text = Path('install.sh').read_text(encoding='utf-8')
+    install_body = install_text.rsplit('main "$@"', 1)[0]
+    harness.write_text(
+        f"""#!/usr/bin/env bash
+set -euo pipefail
+export CODEX_INSTALL_PREFIX={install_prefix}
+export CODEX_BIN_DIR={tmp_path / 'bin'}
+{install_body}
+build_rs_helper_if_possible
+""",
+        encoding='utf-8',
+    )
+    harness.chmod(0o755)
+
+    proc = subprocess.run(
+        [str(harness)],
+        env={**os.environ, 'PATH': '/usr/bin:/bin'},
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        check=False,
+    )
+
+    assert proc.returncode == 0, proc.stderr
+    assert 'Installed prebuilt ccb-rs-helper' in proc.stdout
+    assert out_bin.read_text(encoding='utf-8') == target_bin.read_text(encoding='utf-8')
+
+
 def test_install_script_rebuilds_sidebar_when_installed_binary_is_not_runnable(tmp_path: Path) -> None:
     install_prefix = tmp_path / 'install'
     crate_dir = install_prefix / 'tools' / 'ccb-agent-sidebar'
@@ -333,6 +458,10 @@ def test_install_script_fails_when_sidebar_build_needs_missing_rust(tmp_path: Pa
     crate_dir.mkdir(parents=True)
     out_bin.parent.mkdir(parents=True)
     fake_bin.mkdir()
+    for tool in ('dirname', 'grep', 'mkdir', 'uname'):
+        tool_path = shutil.which(tool)
+        assert tool_path is not None
+        (fake_bin / tool).symlink_to(tool_path)
     (crate_dir / 'Cargo.toml').write_text('[package]\nname = "ccb-agent-sidebar"\nversion = "0.0.0"\n', encoding='utf-8')
     out_bin.write_text('# CCB_AGENT_SIDEBAR_WRAPPER\n', encoding='utf-8')
     out_bin.chmod(0o755)
@@ -353,7 +482,7 @@ build_sidebar_helper_if_possible
 
     proc = subprocess.run(
         ['/bin/bash', str(harness)],
-        env={**os.environ, 'PATH': '/usr/bin:/bin'},
+        env={**os.environ, 'PATH': str(fake_bin)},
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
@@ -377,19 +506,22 @@ def test_install_copy_excludes_rust_target_directory() -> None:
 def test_ci_runs_rust_sidebar_checks() -> None:
     text = Path('.github/workflows/test.yml').read_text(encoding='utf-8')
 
-    assert 'name: Rust sidebar' in text
+    assert 'name: Rust helpers' in text
     assert 'cargo test --manifest-path tools/ccb-agent-sidebar/Cargo.toml' in text
+    assert 'cargo test --manifest-path tools/ccb-rs-helper/Cargo.toml' in text
     assert 'bin/build-ccb-agent-sidebar' in text
+    assert 'bin/build-ccb-rs-helper' in text
 
 
 def test_macos_install_smoke_uses_prebuilt_sidebar_helper() -> None:
     text = Path('.github/workflows/test.yml').read_text(encoding='utf-8')
 
-    build_marker = 'Build macOS sidebar helper for release install smoke'
+    build_marker = 'Build macOS Rust helpers for release install smoke'
     smoke_marker = 'Smoke macOS release install'
     assert build_marker in text
     assert text.index(build_marker) < text.index(smoke_marker)
-    assert 'run: bin/build-ccb-agent-sidebar' in text
+    assert 'bin/build-ccb-agent-sidebar' in text
+    assert 'bin/build-ccb-rs-helper' in text
 
 
 def test_sidebar_release_workflow_publishes_linux_artifact() -> None:
@@ -417,3 +549,4 @@ def test_release_artifacts_workflow_sets_up_rust_for_sidebar_build() -> None:
     assert 'rustup target add x86_64-apple-darwin aarch64-apple-darwin' in text
     assert "grep -F 'universal binary'" in text
     assert '"$helper" --help' in text
+    assert '"$rs_helper" --capabilities' in text

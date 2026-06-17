@@ -39,6 +39,7 @@ def test_copy_repo_tree_excludes_runtime_state(tmp_path: Path) -> None:
     (repo_root / ".tmp_test_env_arch1" / "env").mkdir(parents=True)
     (repo_root / "dev_tools" / "skills").mkdir(parents=True)
     (repo_root / "tools" / "ccb-agent-sidebar" / "target" / "debug").mkdir(parents=True)
+    (repo_root / "tools" / "ccb-rs-helper" / "target" / "debug").mkdir(parents=True)
     (repo_root / "inherit_skills" / "codex_skills" / "ask").mkdir(parents=True)
     (repo_root / "inherit_skills" / "claude_skills" / "ask").mkdir(parents=True)
     (repo_root / "useful_tools" / "codex_skills" / "plan-tree").mkdir(parents=True)
@@ -56,6 +57,10 @@ def test_copy_repo_tree_excludes_runtime_state(tmp_path: Path) -> None:
     (repo_root / ".tmp_test_env_arch1" / "env" / "state.json").write_text("{}", encoding="utf-8")
     (repo_root / "dev_tools" / "skills" / "README.md").write_text("dev only\n", encoding="utf-8")
     (repo_root / "tools" / "ccb-agent-sidebar" / "target" / "debug" / "ccb-agent-sidebar").write_text(
+        "build output\n",
+        encoding="utf-8",
+    )
+    (repo_root / "tools" / "ccb-rs-helper" / "target" / "debug" / "ccb-rs-helper").write_text(
         "build output\n",
         encoding="utf-8",
     )
@@ -82,6 +87,7 @@ def test_copy_repo_tree_excludes_runtime_state(tmp_path: Path) -> None:
     assert not (destination / ".tmp_test_env_arch1").exists()
     assert not (destination / "dev_tools").exists()
     assert not (destination / "tools" / "ccb-agent-sidebar" / "target").exists()
+    assert not (destination / "tools" / "ccb-rs-helper" / "target").exists()
 
 
 def test_copy_repo_tree_excludes_generated_output_subtree_inside_repo(tmp_path: Path) -> None:
@@ -380,6 +386,101 @@ def test_build_sidebar_helper_for_release_fails_when_cargo_fails(monkeypatch, tm
         raise AssertionError("expected RuntimeError")
 
     assert "failed to build ccb-agent-sidebar" in text
+    assert "cargo failed" in text
+
+
+def test_build_rs_helper_for_release_copies_real_binary(monkeypatch, tmp_path: Path) -> None:
+    module = _load_module()
+    artifact_root = tmp_path / "artifact"
+    crate_dir = artifact_root / "tools" / "ccb-rs-helper"
+    output_bin = artifact_root / "bin" / "ccb-rs-helper"
+    crate_dir.mkdir(parents=True)
+    output_bin.parent.mkdir(parents=True)
+    (crate_dir / "Cargo.toml").write_text('[package]\nname = "ccb-rs-helper"\n', encoding="utf-8")
+    output_bin.write_text("#!/usr/bin/env bash\n# CCB_RS_HELPER_WRAPPER\n", encoding="utf-8")
+    output_bin.chmod(0o755)
+
+    def _fake_run(cmd, **kwargs):
+        assert cmd[:3] == ["cargo", "build", "--release"]
+        built = crate_dir / "target" / "release" / "ccb-rs-helper"
+        built.parent.mkdir(parents=True)
+        built.write_text("#!/usr/bin/env bash\necho release-rs-helper\n", encoding="utf-8")
+        built.chmod(0o755)
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(module.subprocess, "run", _fake_run)
+
+    module.build_rs_helper_for_release(artifact_root)
+
+    assert output_bin.read_text(encoding="utf-8") == "#!/usr/bin/env bash\necho release-rs-helper\n"
+    assert os.access(output_bin, os.X_OK)
+    assert not (crate_dir / "target").exists()
+
+
+def test_build_rs_helper_for_release_builds_macos_universal_binary(monkeypatch, tmp_path: Path) -> None:
+    module = _load_module()
+    artifact_root = tmp_path / "artifact"
+    crate_dir = artifact_root / "tools" / "ccb-rs-helper"
+    output_bin = artifact_root / "bin" / "ccb-rs-helper"
+    crate_dir.mkdir(parents=True)
+    (crate_dir / "Cargo.toml").write_text('[package]\nname = "ccb-rs-helper"\n', encoding="utf-8")
+    calls: list[list[str]] = []
+
+    def _fake_run(cmd, **kwargs):
+        calls.append(list(cmd))
+        if cmd[:3] == ["cargo", "build", "--release"]:
+            target = cmd[cmd.index("--target") + 1]
+            built = crate_dir / "target" / target / "release" / "ccb-rs-helper"
+            built.parent.mkdir(parents=True)
+            built.write_text(f"{target}\n", encoding="utf-8")
+            built.chmod(0o755)
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+        if cmd[:4] == ["lipo", "-create", "-output", str(output_bin)]:
+            output_bin.parent.mkdir(parents=True, exist_ok=True)
+            output_bin.write_text("universal-rs-helper\n", encoding="utf-8")
+            output_bin.chmod(0o755)
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+        if cmd[:1] == ["file"]:
+            return SimpleNamespace(
+                returncode=0,
+                stdout=f"{output_bin}: Mach-O universal binary with 2 architectures\n",
+                stderr="",
+            )
+        raise AssertionError(f"unexpected command: {cmd}")
+
+    monkeypatch.setattr(module.subprocess, "run", _fake_run)
+
+    module.build_rs_helper_for_release(artifact_root, target_platform="macos")
+
+    assert any("--target" in call and "x86_64-apple-darwin" in call for call in calls)
+    assert any("--target" in call and "aarch64-apple-darwin" in call for call in calls)
+    assert any(call[:4] == ["lipo", "-create", "-output", str(output_bin)] for call in calls)
+    assert output_bin.read_text(encoding="utf-8") == "universal-rs-helper\n"
+    assert os.access(output_bin, os.X_OK)
+    assert not (crate_dir / "target").exists()
+
+
+def test_build_rs_helper_for_release_fails_when_cargo_fails(monkeypatch, tmp_path: Path) -> None:
+    module = _load_module()
+    artifact_root = tmp_path / "artifact"
+    crate_dir = artifact_root / "tools" / "ccb-rs-helper"
+    crate_dir.mkdir(parents=True)
+    (crate_dir / "Cargo.toml").write_text('[package]\nname = "ccb-rs-helper"\n', encoding="utf-8")
+
+    monkeypatch.setattr(
+        module.subprocess,
+        "run",
+        lambda *args, **kwargs: SimpleNamespace(returncode=1, stdout="", stderr="cargo failed"),
+    )
+
+    try:
+        module.build_rs_helper_for_release(artifact_root)
+    except RuntimeError as exc:
+        text = str(exc)
+    else:
+        raise AssertionError("expected RuntimeError")
+
+    assert "failed to build ccb-rs-helper" in text
     assert "cargo failed" in text
 
 

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from cli.kill_runtime.processes import is_pid_alive, terminate_pid_tree
 from runtime_pid_cleanup import collect_pid_candidates as _collect_pid_candidates_impl
-from runtime_pid_cleanup import collect_project_process_candidates as _collect_project_process_candidates_impl
 from runtime_pid_cleanup import path_within as _path_within_impl
 from runtime_pid_cleanup import pid_matches_project as _pid_matches_project_impl
 from runtime_pid_cleanup import read_proc_cmdline as _read_proc_cmdline_impl
@@ -16,6 +15,9 @@ def collect_pid_candidates(agent_dir, *, runtime, fallback_to_agent_dir: bool):
 
 
 def terminate_runtime_pids(*, project_root, pid_candidates) -> None:
+    # Graceful stop-all runs inside the ccbd RPC handler. Limit the sweep to
+    # agent/provider runtime pid evidence so we do not race the control plane
+    # itself before the stop-all response is written back to the client.
     _terminate_runtime_pids_impl(
         project_root=project_root,
         pid_candidates=pid_candidates,
@@ -23,7 +25,7 @@ def terminate_runtime_pids(*, project_root, pid_candidates) -> None:
         pid_matches_project_fn=pid_matches_project,
         terminate_pid_tree_fn=terminate_pid_tree,
         remove_pid_files_fn=remove_pid_files,
-        collect_project_process_candidates_fn=collect_project_process_candidates,
+        collect_project_process_candidates_fn=None,
     )
 
 
@@ -54,8 +56,4 @@ def remove_pid_files(paths) -> None:
     _remove_pid_files_impl(paths)
 
 
-def collect_project_process_candidates(project_root, **kwargs):
-    return _collect_project_process_candidates_impl(project_root, **kwargs)
-
-
-__all__ = ['collect_pid_candidates', 'collect_project_process_candidates', 'terminate_runtime_pids']
+__all__ = ['collect_pid_candidates', 'terminate_runtime_pids']

@@ -31,6 +31,14 @@ def find_project_session_file(work_dir: Path, instance: Optional[str] = None) ->
 
 
 class CopilotProjectSession(PaneLogProjectSessionBase):
+    @property
+    def copilot_session_id(self) -> str:
+        return str(self.data.get("copilot_session_id") or self.data.get("ccb_session_id") or "").strip()
+
+    @property
+    def copilot_session_path(self) -> str:
+        return str(self.session_file)
+
     def backend(self):
         return get_backend_for_session(self.data)
 

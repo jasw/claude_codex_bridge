@@ -41,7 +41,7 @@ jobs:
           fi
 
       - name: Syntax check
-        run: python -m compileall -q lib bin ccb
+        run: python -m compileall -q lib bin ccb.py
 
       - name: Run tests
         run: pytest test/ -v --tb=short -m "not provider_blackbox"
@@ -76,7 +76,7 @@ jobs:
           sudo apt-get install -y tmux
 
       - name: Syntax check
-        run: python -m compileall -q lib bin ccb
+        run: python -m compileall -q lib bin ccb.py
 
       - name: Run provider blackbox tests
         shell: bash
@@ -85,8 +85,8 @@ jobs:
           export TERM=xterm-256color
           python -m pytest -q -m provider_blackbox test/test_v2_phase2_entrypoint.py
 
-  rust-sidebar:
-    name: Rust sidebar
+  rust-helpers:
+    name: Rust helpers
     runs-on: ubuntu-latest
 
     steps:
@@ -99,8 +99,14 @@ jobs:
       - name: Run sidebar tests
         run: cargo test --manifest-path tools/ccb-agent-sidebar/Cargo.toml
 
+      - name: Run ccb-rs-helper tests
+        run: cargo test --manifest-path tools/ccb-rs-helper/Cargo.toml
+
       - name: Build sidebar binary
         run: bin/build-ccb-agent-sidebar
+
+      - name: Build ccb-rs-helper binary
+        run: bin/build-ccb-rs-helper
 
   macos-install-smoke:
     name: macOS install smoke
@@ -140,8 +146,10 @@ jobs:
             test/test_cli_management_update.py \
             test/test_cli_startup_update.py
 
-      - name: Build macOS sidebar helper for release install smoke
-        run: bin/build-ccb-agent-sidebar
+      - name: Build macOS Rust helpers for release install smoke
+        run: |
+          bin/build-ccb-agent-sidebar
+          bin/build-ccb-rs-helper
 
       - name: Smoke macOS release install
         shell: bash
@@ -180,6 +188,7 @@ jobs:
           CCB_BUILD_CHANNEL=stable \
           CCB_BUILD_VERSION='0.0.0-ci-"quoted"' \
           CCB_BUILD_TIME=2026-05-04T00:00:00Z \
+          CCB_ALLOW_TEMP_INSTALL_GLOBAL_BIN=1 \
             bash -lc 'bash ./install.sh install'
 
           python - "$smoke_root/install/BUILD_INFO.json" <<'PY'
@@ -193,14 +202,22 @@ jobs:
           PY
 
           test -d "$smoke_root/install/.venv"
-          grep -F "$smoke_root/install/.venv/bin/python" "$smoke_root/bin/ccb"
-          grep -F "$smoke_root/install/.venv/bin/python" "$smoke_root/bin/ask"
-          grep -F "$smoke_root/install/.venv/bin/python" "$smoke_root/bin/autonew"
-          grep -F "$smoke_root/install/.venv/bin/python" "$smoke_root/bin/ctx-transfer"
+          test -x "$smoke_root/install/bin/_ccb-python"
+          "$smoke_root/install/bin/_ccb-python" --resolve >/dev/null
+          grep -F "$smoke_root/install/bin/_ccb-python" "$smoke_root/bin/ccb"
+          grep -F "$smoke_root/install/ccb.py" "$smoke_root/bin/ccb"
+          grep -F "$smoke_root/install/bin/_ccb-python" "$smoke_root/bin/ask"
+          grep -F "$smoke_root/install/bin/ask.py" "$smoke_root/bin/ask"
+          grep -F "$smoke_root/install/bin/_ccb-python" "$smoke_root/bin/autonew"
+          grep -F "$smoke_root/install/bin/autonew.py" "$smoke_root/bin/autonew"
+          grep -F "$smoke_root/install/bin/_ccb-python" "$smoke_root/bin/ctx-transfer"
+          grep -F "$smoke_root/install/bin/ctx-transfer.py" "$smoke_root/bin/ctx-transfer"
           test -x "$smoke_root/bin/ccb"
           test -x "$smoke_root/bin/ask"
           test -x "$smoke_root/bin/autonew"
           test -x "$smoke_root/bin/ctx-transfer"
+          test -x "$smoke_root/bin/ccb-rs-helper"
+          "$smoke_root/bin/ccb-rs-helper" --capabilities | grep -F 'native.output.observe'
           "$smoke_root/install/.venv/bin/python" -c 'import watchdog'
 
       - name: Smoke macOS release packaging
@@ -214,9 +231,13 @@ jobs:
           smoke_extract="$(mktemp -d)"
           tar -xzf dist-macos-smoke/ccb-macos-universal.tar.gz -C "$smoke_extract"
           helper="$smoke_extract/ccb-macos-universal/bin/ccb-agent-sidebar"
+          rs_helper="$smoke_extract/ccb-macos-universal/bin/ccb-rs-helper"
           file "$helper" | tee "$smoke_extract/sidebar-file.txt"
+          file "$rs_helper" | tee "$smoke_extract/rs-helper-file.txt"
           grep -F 'universal binary' "$smoke_extract/sidebar-file.txt"
+          grep -F 'universal binary' "$smoke_extract/rs-helper-file.txt"
           "$helper" --help >/dev/null 2>&1 || test "$?" -eq 2
+          "$rs_helper" --capabilities | grep -F 'native.output.observe'
 
   test-wsl:
     name: WSL / Ubuntu 22.04
@@ -234,14 +255,22 @@ jobs:
       - name: Install Python and dependencies in WSL
         shell: wsl-bash {0}
         run: |
+          set -euo pipefail
           sudo apt-get update
-          sudo apt-get install -y python3 python3-venv python3-pip tmux
-          python3 -m pip install --upgrade pip
-          python3 -m pip install pytest tomli
+          sudo apt-get install -y software-properties-common python3 python3-venv python3-pip tmux
+          if ! apt-cache show python3.11 >/dev/null 2>&1; then
+            sudo add-apt-repository -y ppa:deadsnakes/ppa
+            sudo apt-get update
+          fi
+          sudo apt-get install -y python3.11 python3.11-venv python3.11-dev
+          python3.11 -m venv /tmp/ccb-ci-py311
+          /tmp/ccb-ci-py311/bin/python -m pip install --upgrade pip
+          /tmp/ccb-ci-py311/bin/python -m pip install pytest tomli
 
       - name: Syntax check in WSL
         shell: wsl-bash {0}
-        run: python3 -m compileall -q lib bin ccb
+        run: |
+          /tmp/ccb-ci-py311/bin/python -m compileall -q lib bin ccb.py
 
       - name: Smoke ccb startup from /mnt/c in WSL
         shell: wsl-bash {0}
@@ -280,7 +309,7 @@ jobs:
           }
 
           cleanup() {
-            (cd "$project" && python3 "$repo/ccb" kill -f >/dev/null 2>&1) || true
+            (cd "$project" && "$repo/ccb" kill -f >/dev/null 2>&1) || true
             rm -rf "$project"
           }
           on_exit() {
@@ -300,13 +329,13 @@ jobs:
             CCB_KEEPER_READY_TIMEOUT_S=10 \
             CCB_TMUX_OBJECT_READY_TIMEOUT_S=10 \
             TERM=xterm-256color \
-            timeout 90s python3 "$repo/ccb" >start.out 2>start.err
+            timeout 90s "$repo/ccb" >start.out 2>start.err
           ); then
             exit 1
           fi
 
-          (cd "$project" && python3 "$repo/ccb" ping ccbd >ping.out 2>ping.err)
-          (cd "$project" && python3 "$repo/ccb" doctor >doctor.out 2>doctor.err)
+          (cd "$project" && "$repo/ccb" ping ccbd >ping.out 2>ping.err)
+          (cd "$project" && "$repo/ccb" doctor >doctor.out 2>doctor.err)
 
           grep -F 'start_status: ok' "$project/start.out"
           grep -F 'agents: demo' "$project/start.out"
@@ -325,4 +354,4 @@ jobs:
         shell: wsl-bash {0}
         run: |
           export TERM=xterm-256color
-          python3 -m pytest test/ -v --tb=short -m "not provider_blackbox"
+          /tmp/ccb-ci-py311/bin/python -m pytest test/ -v --tb=short -m "not provider_blackbox"

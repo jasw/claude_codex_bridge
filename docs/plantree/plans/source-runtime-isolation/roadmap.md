@@ -23,6 +23,11 @@ Date: 2026-06-09
   project paths, default roots, explicit env roots, effective roots, checked
   paths, and whether the current invocation is allowed as a source-test
   project.
+- The 2026-06-15 stable-entrypoint closure added `ccb doctor` entrypoint and
+  daemon implementation-root diagnostics, added installer protection against
+  temporary-prefix installs writing external bin dirs, and restored
+  `/home/bfly/.local/bin/ccb` to the durable installed release. See
+  [topics/stable-entrypoint-boundary.md](topics/stable-entrypoint-boundary.md).
 
 ## In Progress
 
@@ -31,16 +36,18 @@ Date: 2026-06-09
   `ccb` command.
 - Record cleanup rules for project-agent runtime state so active installed
   work-environment state is not deleted during source testing.
+- Track restart hygiene for already-running project daemons that may still have
+  inherited the old temporary smoke-prefix PATH or implementation root.
 
 ## Next
 
 1. Add a test or hygiene check that active runbooks use the absolute source
    wrapper when validating current source changes.
-2. Audit global wrapper targets such as `~/.local/bin/ccb` and `PATH` order
-   before declaring the installed work environment stable.
-3. Define an explicit test-project reset procedure for
+2. Define an explicit test-project reset procedure for
    `/home/bfly/yunwei/test_ccb2` that stops its backend before removing
    disposable runtime residue.
+3. Add a small restart runbook for moving live projects off a temporary
+   implementation root without deleting project runtime state.
 
 ## Deferred
 

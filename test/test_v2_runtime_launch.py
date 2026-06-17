@@ -37,6 +37,7 @@ from provider_backends.opencode import launcher as opencode_launcher
 from provider_backends.agy import launcher as agy_launcher
 from provider_backends.runtime_restore import ProviderRestoreTarget
 from provider_backends.codex.launcher_runtime.command import prepare_codex_home_overrides as prepare_codex_home_overrides_for_test
+from provider_core.registry import build_default_runtime_launcher_map
 import provider_profiles.codex_home_config as codex_home_config
 from provider_profiles import load_resolved_provider_profile
 from provider_profiles.models import ResolvedProviderProfile
@@ -1333,6 +1334,7 @@ def test_ensure_agent_runtime_falls_back_to_detached_tmux_session(monkeypatch, t
     assert ('set-option', ('set-option', '-g', 'set-clipboard', 'on')) in calls
     assert ('set-option', ('set-option', '-g', 'focus-events', 'on')) in calls
     assert ('set-option', ('set-option', '-g', 'escape-time', '10')) in calls
+    assert ('set-option', ('set-option', '-g', 'allow-passthrough', 'on')) in calls
     assert ('set-window-option', ('set-window-option', '-g', 'mode-keys', 'vi')) in calls
     assert ('bind-key', ('bind-key', '-T', 'copy-mode-vi', 'v', 'send-keys', '-X', 'begin-selection')) in calls
     assert _clipboard_bind_call('y') in calls
@@ -1514,6 +1516,7 @@ def test_ensure_agent_runtime_outside_tmux_relaunches_stale_binding_via_detached
     assert ('set-option', ('set-option', '-g', 'set-clipboard', 'on')) in calls
     assert ('set-option', ('set-option', '-g', 'focus-events', 'on')) in calls
     assert ('set-option', ('set-option', '-g', 'escape-time', '10')) in calls
+    assert ('set-option', ('set-option', '-g', 'allow-passthrough', 'on')) in calls
     assert ('set-window-option', ('set-window-option', '-g', 'mode-keys', 'vi')) in calls
     assert ('bind-key', ('bind-key', '-T', 'copy-mode-vi', 'y', 'send-keys', '-X', 'copy-selection-and-cancel')) not in calls
     assert _clipboard_bind_call('y') in calls
@@ -1649,11 +1652,23 @@ def test_provider_start_parts_respect_env_override(monkeypatch: pytest.MonkeyPat
     monkeypatch.setenv('CLAUDE_START_CMD', '/tmp/stub-claude')
     monkeypatch.setenv('CODEX_START_CMD', '/tmp/stub-codex --profile test')
     monkeypatch.setenv('AGY_START_CMD', '/tmp/stub-agy --profile test')
+    monkeypatch.setenv('QWEN_START_CMD', '/tmp/stub-qwen --profile test')
+    monkeypatch.setenv('CURSOR_START_CMD', '/tmp/stub-cursor --profile test')
+    monkeypatch.setenv('COPILOT_START_CMD', '/tmp/stub-copilot --profile test')
+    monkeypatch.setenv('CRUSH_START_CMD', '/tmp/stub-crush --profile test')
+    monkeypatch.setenv('KIRO_START_CMD', '/tmp/stub-kiro --profile test')
+    monkeypatch.setenv('PI_START_CMD', '/tmp/stub-pi --profile test')
 
     assert runtime_launch._provider_start_parts('gemini') == ['/tmp/stub-gemini', '--flag']
     assert runtime_launch._provider_start_parts('claude') == ['/tmp/stub-claude']
     assert runtime_launch._provider_start_parts('codex') == ['/tmp/stub-codex', '--profile', 'test']
     assert runtime_launch._provider_start_parts('agy') == ['/tmp/stub-agy', '--profile', 'test']
+    assert runtime_launch._provider_start_parts('qwen') == ['/tmp/stub-qwen', '--profile', 'test']
+    assert runtime_launch._provider_start_parts('cursor') == ['/tmp/stub-cursor', '--profile', 'test']
+    assert runtime_launch._provider_start_parts('copilot') == ['/tmp/stub-copilot', '--profile', 'test']
+    assert runtime_launch._provider_start_parts('crush') == ['/tmp/stub-crush', '--profile', 'test']
+    assert runtime_launch._provider_start_parts('kiro') == ['/tmp/stub-kiro', '--profile', 'test']
+    assert runtime_launch._provider_start_parts('pi') == ['/tmp/stub-pi', '--profile', 'test']
     monkeypatch.setenv('KIMI_START_CMD', '/tmp/stub-kimi --profile test')
     monkeypatch.setenv('DEEPSEEK_START_CMD', '/tmp/stub-deepcode --profile test')
     assert runtime_launch._provider_start_parts('kimi') == ['/tmp/stub-kimi', '--profile', 'test']
@@ -1668,6 +1683,12 @@ def test_provider_start_parts_fall_back_to_default_binary(monkeypatch: pytest.Mo
     monkeypatch.delenv('AGY_START_CMD', raising=False)
     monkeypatch.delenv('KIMI_START_CMD', raising=False)
     monkeypatch.delenv('DEEPSEEK_START_CMD', raising=False)
+    monkeypatch.delenv('QWEN_START_CMD', raising=False)
+    monkeypatch.delenv('CURSOR_START_CMD', raising=False)
+    monkeypatch.delenv('COPILOT_START_CMD', raising=False)
+    monkeypatch.delenv('CRUSH_START_CMD', raising=False)
+    monkeypatch.delenv('KIRO_START_CMD', raising=False)
+    monkeypatch.delenv('PI_START_CMD', raising=False)
 
     assert runtime_launch._provider_start_parts('gemini') == ['gemini']
     assert runtime_launch._provider_start_parts('claude') == ['claude']
@@ -1675,6 +1696,84 @@ def test_provider_start_parts_fall_back_to_default_binary(monkeypatch: pytest.Mo
     assert runtime_launch._provider_start_parts('agy') == ['agy']
     assert runtime_launch._provider_start_parts('kimi') == ['kimi']
     assert runtime_launch._provider_start_parts('deepseek') == ['deepcode']
+    assert runtime_launch._provider_start_parts('qwen') == ['qwen']
+    assert runtime_launch._provider_start_parts('cursor') == ['agent']
+    assert runtime_launch._provider_start_parts('copilot') == ['copilot']
+    assert runtime_launch._provider_start_parts('crush') == ['crush']
+    assert runtime_launch._provider_start_parts('kiro') == ['kiro-cli']
+    assert runtime_launch._provider_start_parts('pi') == ['pi']
+
+
+@pytest.mark.parametrize(
+    ('provider', 'default_executable', 'home_env'),
+    [
+        ('qwen', 'qwen', 'QWEN_HOME'),
+        ('cursor', 'agent', 'HOME'),
+        ('copilot', 'copilot', 'COPILOT_HOME'),
+        ('crush', 'crush', None),
+        ('kiro', 'kiro-cli', 'HOME'),
+        ('pi', 'pi', None),
+    ],
+)
+def test_native_cli_launcher_builds_provider_state_payload(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    provider: str,
+    default_executable: str,
+    home_env: str | None,
+) -> None:
+    monkeypatch.delenv(f'{provider.upper()}_START_CMD', raising=False)
+    project_root = tmp_path / f'repo-{provider}-launcher'
+    (project_root / '.ccb').mkdir(parents=True)
+    agent_name = f'{provider}1'
+    command = ParsedStartCommand(project=None, agent_names=(agent_name,), restore=True, auto_permission=False)
+    ctx = _context(project_root, command)
+    spec = _spec(agent_name, provider=provider, startup_args=('--demo',))
+    plan = WorkspacePlanner().plan(spec, ctx.project)
+    plan.workspace_path.mkdir(parents=True, exist_ok=True)
+    runtime_dir = ctx.paths.agent_provider_runtime_dir(agent_name, provider)
+    launcher = build_default_runtime_launcher_map(include_optional=True)[provider]
+
+    prepared = launcher.prepare_launch_context(ctx, spec, plan, runtime_dir, {})
+    start_cmd = launcher.build_start_cmd(command, spec, runtime_dir, 'sess-native', prepared_state=prepared)
+    payload = launcher.build_session_payload(
+        ctx,
+        spec,
+        plan,
+        runtime_dir,
+        plan.workspace_path,
+        '%42',
+        f'CCB-{agent_name}',
+        start_cmd,
+        'sess-native',
+        prepared,
+    )
+
+    state_dir = ctx.paths.agent_provider_state_dir(agent_name, provider)
+    assert payload[f'{provider}_state_dir'] == str(state_dir)
+    assert payload[f'{provider}_home'] == str(state_dir / 'home')
+    assert payload[f'{provider}_data_dir'] == str(state_dir / 'data')
+    assert payload[f'{provider}_session_id'] == 'sess-native'
+    if home_env:
+        assert f'{home_env}={shlex.quote(str(state_dir / "home"))}' in start_cmd
+    visible_cmd = start_cmd.rsplit('; ', 1)[-1]
+    visible_parts = shlex.split(visible_cmd)
+    if provider == 'crush':
+        assert visible_parts == [default_executable, '--data-dir', str(state_dir / 'data'), '--demo']
+    elif provider == 'pi':
+        assert f'PI_CODING_AGENT_DIR={shlex.quote(str(state_dir / "home"))}' in start_cmd
+        assert f'PI_CODING_AGENT_SESSION_DIR={shlex.quote(str(state_dir / "sessions"))}' in start_cmd
+        assert 'PI_SKIP_VERSION_CHECK=1' in start_cmd
+        assert 'PI_TELEMETRY=0' in start_cmd
+        assert visible_parts == [
+            default_executable,
+            '--session-dir',
+            str(state_dir / 'sessions'),
+            '--no-approve',
+            '--demo',
+        ]
+    else:
+        assert visible_parts == [default_executable, '--demo']
 
 
 def test_ensure_agent_runtime_falls_back_when_created_pane_is_too_small(monkeypatch, tmp_path: Path) -> None:
@@ -1748,6 +1847,7 @@ def test_ensure_agent_runtime_falls_back_when_created_pane_is_too_small(monkeypa
     assert ('set-option', ('set-option', '-g', 'set-clipboard', 'on')) in calls
     assert ('set-option', ('set-option', '-g', 'focus-events', 'on')) in calls
     assert ('set-option', ('set-option', '-g', 'escape-time', '10')) in calls
+    assert ('set-option', ('set-option', '-g', 'allow-passthrough', 'on')) in calls
     assert ('set-window-option', ('set-window-option', '-g', 'mode-keys', 'vi')) in calls
     assert _clipboard_bind_call('MouseDragEnd1Pane') in calls
     assert ('bind-key', ('bind-key', 'l', 'select-pane', '-R')) in calls
@@ -2867,6 +2967,7 @@ def test_codex_launcher_build_start_cmd_exports_user_session_transport_without_r
     monkeypatch.setenv('NO_PROXY', 'localhost,127.0.0.1')
     monkeypatch.setenv('CODEX_CA_CERTIFICATE', '/tmp/codex-ca.pem')
     monkeypatch.setenv('WSL_INTEROP', '/run/WSL/1234_interop')
+    monkeypatch.setenv('AGENT_ROLES_STORE', '/home/demo/.roles')
     monkeypatch.setenv('CODEX_RUNTIME_DIR', str(ambient_runtime))
     monkeypatch.setenv('CCB_CALLER_ACTOR', 'stale-agent')
 
@@ -2879,6 +2980,7 @@ def test_codex_launcher_build_start_cmd_exports_user_session_transport_without_r
     assert f'NO_PROXY={shlex.quote("localhost,127.0.0.1")}' in cmd
     assert f'CODEX_CA_CERTIFICATE={shlex.quote("/tmp/codex-ca.pem")}' in cmd
     assert f'WSL_INTEROP={shlex.quote("/run/WSL/1234_interop")}' in cmd
+    assert f'AGENT_ROLES_STORE={shlex.quote("/home/demo/.roles")}' in cmd
     assert f'CODEX_RUNTIME_DIR={shlex.quote(str(runtime_dir))}' in cmd
     assert str(ambient_runtime) not in cmd
     assert 'CCB_CALLER_ACTOR=stale-agent' not in cmd
@@ -3173,6 +3275,7 @@ def test_claude_launcher_build_start_cmd_exports_user_session_transport_without_
     monkeypatch.setenv('HTTPS_PROXY', 'http://127.0.0.1:7890')
     monkeypatch.setenv('NODE_EXTRA_CA_CERTS', '/tmp/node-ca.pem')
     monkeypatch.setenv('WSL_INTEROP', '/run/WSL/1234_interop')
+    monkeypatch.setenv('AGENT_ROLES_STORE', '/home/demo/.roles')
     monkeypatch.setenv('CLAUDE_PROJECTS_ROOT', str(ambient_projects))
     monkeypatch.setenv('CCB_CALLER_ACTOR', 'stale-agent')
     monkeypatch.setattr('provider_backends.claude.launcher.Path.home', lambda: source_home)
@@ -3197,6 +3300,7 @@ def test_claude_launcher_build_start_cmd_exports_user_session_transport_without_
     assert f'HTTPS_PROXY={shlex.quote("http://127.0.0.1:7890")}' in start_cmd
     assert f'NODE_EXTRA_CA_CERTS={shlex.quote("/tmp/node-ca.pem")}' in start_cmd
     assert f'WSL_INTEROP={shlex.quote("/run/WSL/1234_interop")}' in start_cmd
+    assert f'AGENT_ROLES_STORE={shlex.quote("/home/demo/.roles")}' in start_cmd
     assert f'CLAUDE_PROJECTS_ROOT={shlex.quote(str(managed_projects))}' in start_cmd
     assert str(ambient_projects) not in start_cmd
     assert 'CCB_CALLER_ACTOR=stale-agent' not in start_cmd
@@ -3480,6 +3584,7 @@ def test_gemini_launcher_build_start_cmd_exports_user_session_transport_without_
     monkeypatch.setenv('HTTPS_PROXY', 'http://127.0.0.1:7890')
     monkeypatch.setenv('REQUESTS_CA_BUNDLE', '/tmp/requests-ca.pem')
     monkeypatch.setenv('WSL_INTEROP', '/run/WSL/1234_interop')
+    monkeypatch.setenv('AGENT_ROLES_STORE', '/home/demo/.roles')
     monkeypatch.setenv('GEMINI_ROOT', str(ambient_root))
     monkeypatch.setenv('CCB_CALLER_ACTOR', 'stale-agent')
     spec = _spec('reviewer', provider='gemini')
@@ -3498,6 +3603,7 @@ def test_gemini_launcher_build_start_cmd_exports_user_session_transport_without_
     assert f'HTTPS_PROXY={shlex.quote("http://127.0.0.1:7890")}' in start_cmd
     assert f'REQUESTS_CA_BUNDLE={shlex.quote("/tmp/requests-ca.pem")}' in start_cmd
     assert f'WSL_INTEROP={shlex.quote("/run/WSL/1234_interop")}' in start_cmd
+    assert f'AGENT_ROLES_STORE={shlex.quote("/home/demo/.roles")}' in start_cmd
     assert f'GEMINI_ROOT={shlex.quote(str(managed_root))}' in start_cmd
     assert str(ambient_root) not in start_cmd
     assert 'CCB_CALLER_ACTOR=stale-agent' not in start_cmd

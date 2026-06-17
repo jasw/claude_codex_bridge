@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from cli.render_runtime.ops_views_doctor import render_doctor
-from cli.services.doctor_runtime import system
+from cli.services.doctor_runtime import ccbd, system
 
 
 def test_runtime_identity_summary_reports_root_project_owner_warning(tmp_path: Path, monkeypatch) -> None:
@@ -64,6 +64,14 @@ def test_render_doctor_includes_root_runtime_identity_lines() -> None:
             "platform": "linux",
             "arch": "x86_64",
         },
+        "entrypoint": {
+            "status": "degraded",
+            "reason": "bare_ccb_resolves_under_temporary_directory",
+            "path": "/tmp/smoke/bin/ccb",
+            "realpath": "/tmp/smoke/prefix/ccb",
+            "expected_install_path": "/opt/ccb",
+            "matches_current_install": False,
+        },
         "runtime": {
             "user_id": 0,
             "user_name": "root",
@@ -89,6 +97,12 @@ def test_render_doctor_includes_root_runtime_identity_lines() -> None:
         },
         "ccbd": {
             "state": "unmounted",
+            "pid": None,
+            "keeper_pid": None,
+            "implementation_root": None,
+            "implementation_status": "unknown",
+            "implementation_reason": "pid_unavailable",
+            "implementation_cmdline": None,
             "health": "unknown",
             "generation": 0,
             "last_heartbeat_at": None,
@@ -116,6 +130,9 @@ def test_render_doctor_includes_root_runtime_identity_lines() -> None:
     assert "home: /root" in lines
     assert "root_runtime: True" in lines
     assert "install_root_owned: True" in lines
+    assert "entrypoint_status: degraded" in lines
+    assert "entrypoint_reason: bare_ccb_resolves_under_temporary_directory" in lines
+    assert "ccbd_implementation_status: unknown" in lines
     assert "sudo_user: demo" in lines
     assert "project_owner: 1000:demo" in lines
     assert "ccb_dir_owner: 1000:demo" in lines
@@ -123,3 +140,54 @@ def test_render_doctor_includes_root_runtime_identity_lines() -> None:
         "runtime_warning: Running CCB as root in a non-root-owned project can create root-owned .ccb files."
         in lines
     )
+
+
+def test_entrypoint_summary_flags_temporary_bare_ccb(monkeypatch) -> None:
+    monkeypatch.setattr(system.shutil, "which", lambda command: "/tmp/ccb-smoke/bin/ccb")
+
+    payload = system.entrypoint_summary(installation={"path": "/home/demo/.local/share/codex-dual"})
+
+    assert payload["status"] == "degraded"
+    assert payload["reason"] == "bare_ccb_resolves_under_temporary_directory"
+    assert payload["matches_current_install"] is False
+
+
+def test_entrypoint_summary_accepts_current_install(monkeypatch, tmp_path: Path) -> None:
+    del tmp_path
+    install_dir = "/home/demo/.local/share/codex-dual"
+    monkeypatch.setattr(system.shutil, "which", lambda command: f"{install_dir}/bin/ccb")
+
+    payload = system.entrypoint_summary(installation={"path": install_dir})
+
+    assert payload["status"] == "ok"
+    assert payload["reason"] == "matches_current_install"
+    assert payload["matches_current_install"] is True
+
+
+def test_ccbd_implementation_summary_flags_temporary_root(monkeypatch) -> None:
+    monkeypatch.setattr(
+        ccbd,
+        "_process_cmdline",
+        lambda pid: ("python3", "/tmp/ccb-smoke/prefix/lib/ccbd/main.py", "--project", "/repo"),
+    )
+
+    payload = ccbd._implementation_summary(1234)
+
+    assert payload["status"] == "degraded"
+    assert payload["reason"] == "ccbd_implementation_root_is_temporary"
+    assert payload["root"] == str(Path("/tmp/ccb-smoke/prefix").resolve(strict=False))
+
+
+def test_ccbd_implementation_summary_flags_resolved_tempdir_root(monkeypatch) -> None:
+    temp_root = Path("/private/var/folders/ccb-test/T").resolve(strict=False)
+    monkeypatch.setattr(ccbd.tempfile, "gettempdir", lambda: str(temp_root))
+    monkeypatch.setattr(
+        ccbd,
+        "_process_cmdline",
+        lambda pid: ("python3", str(temp_root / "prefix/lib/ccbd/main.py"), "--project", "/repo"),
+    )
+
+    payload = ccbd._implementation_summary(1234)
+
+    assert payload["status"] == "degraded"
+    assert payload["reason"] == "ccbd_implementation_root_is_temporary"

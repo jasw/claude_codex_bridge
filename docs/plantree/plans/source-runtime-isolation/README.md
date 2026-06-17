@@ -24,6 +24,9 @@ development CCB environment or other CCB projects.
 - [topics/repository-cleanup-and-filesystem-plan.md](topics/repository-cleanup-and-filesystem-plan.md):
   cleanup rules for source checkout runtime state, test projects, and wrapper
   path hygiene.
+- [topics/stable-entrypoint-boundary.md](topics/stable-entrypoint-boundary.md):
+  stable installed `ccb` authority, temporary-prefix drift findings, and
+  wrapper/doctor gates.
 - [decisions/001-installed-ccb-authority.md](decisions/001-installed-ccb-authority.md):
   stable installed `ccb` remains the work-environment authority.
 
@@ -61,6 +64,9 @@ Out of scope:
   environment, not the stateful source-test project.
 - Source changes must not change what the installed-release `ccb` imports for
   normal collaboration.
+- Normal bare `ccb` startup must resolve to a stable installed-release prefix,
+  not to `/tmp`, the source checkout, or a disposable install/update smoke
+  prefix.
 - Stateful source validation uses `/home/bfly/yunwei/ccb_source/ccb_test` from
   `/home/bfly/yunwei/test_ccb2` by default. Any other external test project
   requires an explicit `CCB_TEST_ROOTS` or `CCB_SOURCE_ALLOWED_ROOTS`

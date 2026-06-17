@@ -14,6 +14,12 @@ _PROVIDER_START_ENV_VARS = {
     'kimi': 'KIMI_START_CMD',
     'deepseek': 'DEEPSEEK_START_CMD',
     'mimo': 'MIMO_START_CMD',
+    'qwen': 'QWEN_START_CMD',
+    'cursor': 'CURSOR_START_CMD',
+    'copilot': 'COPILOT_START_CMD',
+    'crush': 'CRUSH_START_CMD',
+    'kiro': 'KIRO_START_CMD',
+    'pi': 'PI_START_CMD',
 }
 
 _PROVIDER_DEFAULT_EXECUTABLES = {
@@ -26,9 +32,19 @@ _PROVIDER_DEFAULT_EXECUTABLES = {
     'kimi': 'kimi',
     'deepseek': 'deepcode',
     'mimo': 'mimo',
+    'qwen': 'qwen',
+    'cursor': 'agent',
+    'copilot': 'copilot',
+    'crush': 'crush',
+    'kiro': 'kiro-cli',
+    'pi': 'pi',
 }
 
 PROVIDER_COMMAND_PLACEHOLDER = '{command}'
+
+
+def provider_start_env_vars() -> tuple[str, ...]:
+    return tuple(_PROVIDER_START_ENV_VARS.values())
 
 
 def provider_start_parts(provider: str) -> list[str]:
@@ -72,5 +88,6 @@ __all__ = [
     'apply_provider_command_template',
     'pane_title_marker',
     'provider_executable',
+    'provider_start_env_vars',
     'provider_start_parts',
 ]

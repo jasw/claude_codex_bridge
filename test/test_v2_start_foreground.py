@@ -443,10 +443,6 @@ def test_start_foreground_keeps_backend_when_session_survives_post_attach_exit(t
 
     monkeypatch.setattr('cli.services.start_foreground.shutil.which', lambda name: f'/usr/bin/{name}')
     monkeypatch.setattr('cli.services.start_foreground.CcbdClient', _FakeClient)
-    monkeypatch.setattr(
-        'cli.services.start_foreground.record_shutdown_intent',
-        lambda context, reason: pytest.fail('shutdown intent should not be recorded while session survives'),
-    )
     monkeypatch.setattr('cli.services.start_foreground.subprocess.run', _run)
     monkeypatch.setattr('cli.services.start_foreground.subprocess.Popen', _popen)
 
@@ -460,7 +456,6 @@ def test_start_foreground_keeps_backend_when_session_survives_post_attach_exit(t
         _tmux_cmd(context, 'list-clients', '-t', context.paths.ccbd_tmux_session_name, '-F', '#{client_pid}'),
         _tmux_cmd(context, 'list-clients', '-t', context.paths.ccbd_tmux_session_name, '-F', '#{client_pid}\t#{client_tty}'),
         _tmux_cmd(context, 'refresh-client', '-t', '/dev/pts/61'),
-        _tmux_cmd(context, 'has-session', '-t', context.paths.ccbd_tmux_session_name),
     ]
     assert attach_calls == [
         _tmux_cmd(context, 'attach-session', '-t', context.paths.ccbd_tmux_session_name)
@@ -468,7 +463,7 @@ def test_start_foreground_keeps_backend_when_session_survives_post_attach_exit(t
     assert _FakeClient.stop_all_calls == 0
 
 
-def test_start_foreground_stops_backend_when_session_disappears_after_attach(tmp_path: Path, monkeypatch) -> None:
+def test_start_foreground_does_not_stop_backend_when_session_disappears_after_attach(tmp_path: Path, monkeypatch) -> None:
     project_root = tmp_path / 'repo-attach-server-exited'
     (project_root / '.ccb').mkdir(parents=True, exist_ok=True)
     (project_root / '.ccb' / 'ccb.config').write_text('demo:codex\n', encoding='utf-8')
@@ -496,16 +491,11 @@ def test_start_foreground_stops_backend_when_session_disappears_after_attach(tmp
 
     run_calls: list[list[str]] = []
     attach_process = _FakeAttachProcess(pid=7171, returncode=None)
-    has_session_calls = 0
 
     def _run(args, **kwargs):
         del kwargs
-        nonlocal has_session_calls
         call = list(args)
         run_calls.append(call)
-        if 'has-session' in call:
-            has_session_calls += 1
-            return subprocess.CompletedProcess(args=args, returncode=0 if has_session_calls == 1 else 1)
         if 'list-clients' in call:
             if call[-1] == '#{client_pid}\t#{client_tty}':
                 return subprocess.CompletedProcess(args=args, returncode=0, stdout='7171\t/dev/pts/71\n')
@@ -515,20 +505,20 @@ def test_start_foreground_stops_backend_when_session_disappears_after_attach(tmp
 
     monkeypatch.setattr('cli.services.start_foreground.shutil.which', lambda name: f'/usr/bin/{name}')
     monkeypatch.setattr('cli.services.start_foreground.CcbdClient', _FakeClient)
-    intents: list[str] = []
-    monkeypatch.setattr(
-        'cli.services.start_foreground.record_shutdown_intent',
-        lambda context, reason: intents.append(reason),
-    )
     monkeypatch.setattr('cli.services.start_foreground.subprocess.run', _run)
     monkeypatch.setattr('cli.services.start_foreground.subprocess.Popen', lambda *args, **kwargs: attach_process)
 
     summary = attach_started_project_namespace(context)
 
     assert summary.project_id == context.project.project_id
-    assert intents == ['foreground_session_exit']
-    assert _FakeClient.stop_all_calls == [False]
-    assert run_calls[-1] == _tmux_cmd(context, 'has-session', '-t', context.paths.ccbd_tmux_session_name)
+    assert _FakeClient.stop_all_calls == []
+    assert run_calls == [
+        _tmux_cmd(context, 'has-session', '-t', context.paths.ccbd_tmux_session_name),
+        _tmux_cmd(context, 'select-window', '-t', f'{context.paths.ccbd_tmux_session_name}:{context.paths.ccbd_tmux_workspace_window_name}'),
+        _tmux_cmd(context, 'list-clients', '-t', context.paths.ccbd_tmux_session_name, '-F', '#{client_pid}'),
+        _tmux_cmd(context, 'list-clients', '-t', context.paths.ccbd_tmux_session_name, '-F', '#{client_pid}\t#{client_tty}'),
+        _tmux_cmd(context, 'refresh-client', '-t', '/dev/pts/71'),
+    ]
 
 
 def test_start_foreground_requires_attachable_namespace(tmp_path: Path, monkeypatch) -> None:

@@ -1,16 +1,24 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 import shlex
+import tempfile
 
 from terminal_runtime.tmux import tmux_base
 from .stores import report_summary_fields, safe_report_load
 
 
 def ccbd_summary(*, local, stores: dict[str, object], errors: list[str], remote: dict | None = None) -> dict:
+    implementation = _implementation_summary(getattr(local, 'ccbd_pid', None))
     return {
         'state': local.mount_state,
-        'pid': None,
+        'pid': local.ccbd_pid,
+        'keeper_pid': local.keeper_pid,
+        'implementation_root': implementation['root'],
+        'implementation_status': implementation['status'],
+        'implementation_reason': implementation['reason'],
+        'implementation_cmdline': implementation['cmdline'],
         'socket_path': local.socket_path,
         'project_anchor_path': local.project_anchor_path,
         'runtime_state_root': local.runtime_state_root,
@@ -94,6 +102,78 @@ def _path_bytes(path: object) -> int | None:
     if not text:
         return None
     return len(os.fsencode(text))
+
+
+def _implementation_summary(pid: object) -> dict[str, object]:
+    numeric_pid = _coerce_pid(pid)
+    if numeric_pid is None:
+        return {'root': None, 'status': 'unknown', 'reason': 'pid_unavailable', 'cmdline': None}
+    cmdline = _process_cmdline(numeric_pid)
+    if not cmdline:
+        return {'root': None, 'status': 'unknown', 'reason': 'cmdline_unavailable', 'cmdline': None}
+    root = _implementation_root_from_cmdline(cmdline)
+    if root is None:
+        return {
+            'root': None,
+            'status': 'unknown',
+            'reason': 'ccbd_entrypoint_not_found_in_cmdline',
+            'cmdline': shlex.join(cmdline),
+        }
+    if _path_is_temporary(root):
+        return {
+            'root': str(root),
+            'status': 'degraded',
+            'reason': 'ccbd_implementation_root_is_temporary',
+            'cmdline': shlex.join(cmdline),
+        }
+    return {
+        'root': str(root),
+        'status': 'ok',
+        'reason': 'ccbd_implementation_root_is_durable',
+        'cmdline': shlex.join(cmdline),
+    }
+
+
+def _coerce_pid(pid: object) -> int | None:
+    try:
+        value = int(str(pid).strip())
+    except Exception:
+        return None
+    return value if value > 0 else None
+
+
+def _process_cmdline(pid: int, *, proc_root: Path = Path('/proc')) -> tuple[str, ...]:
+    if os.name == 'nt':
+        return ()
+    try:
+        raw = (proc_root / str(pid) / 'cmdline').read_bytes()
+    except Exception:
+        return ()
+    return tuple(part.decode(errors='replace') for part in raw.split(b'\0') if part)
+
+
+def _implementation_root_from_cmdline(cmdline: tuple[str, ...]) -> Path | None:
+    for arg in cmdline:
+        path = Path(arg)
+        if path.parts[-3:] in {('lib', 'ccbd', 'main.py'), ('lib', 'ccbd', 'keeper_main.py')}:
+            try:
+                return path.expanduser().resolve(strict=False).parents[2]
+            except Exception:
+                return path.expanduser().parents[2]
+    return None
+
+
+def _path_is_temporary(path: Path) -> bool:
+    text = str(path)
+    temporary_roots = ('/tmp', '/var/tmp', '/dev/shm', '/private/tmp', _resolved_tempdir())
+    return any(text == root or text.startswith(f'{root}/') for root in temporary_roots)
+
+
+def _resolved_tempdir() -> str:
+    try:
+        return str(Path(tempfile.gettempdir()).expanduser().resolve(strict=False))
+    except Exception:
+        return str(Path(tempfile.gettempdir()).expanduser())
 
 
 def _tmux_start_server_command(socket_path: object) -> str | None:

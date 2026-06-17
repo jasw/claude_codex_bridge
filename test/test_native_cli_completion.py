@@ -13,14 +13,19 @@ from provider_backends.deepseek.native_log import (
     deepseek_project_root,
     observe_deepseek_session,
 )
-from provider_backends.kimi.execution import KimiProviderAdapter
+from provider_backends.kimi.execution import KimiProviderAdapter, _with_kimi_context_pointer
 from provider_backends.kimi.native_log import kimi_project_hash, kimi_sessions_root, observe_kimi_turn
 from provider_backends.native_cli_support import wrap_native_prompt
 from provider_execution.base import ProviderSubmission
 
 
 class _Backend:
-    pass
+    def __init__(self, text: str = "") -> None:
+        self._text = text
+
+    def get_pane_content(self, pane_id: str, *, lines: int) -> str:
+        del pane_id, lines
+        return self._text
 
 
 def _submission(
@@ -29,8 +34,10 @@ def _submission(
     source_kind: CompletionSourceKind,
     work_dir: Path,
     req_id: str = "job_native123",
+    pane_text: str = "",
     extra_state: dict[str, object] | None = None,
 ) -> ProviderSubmission:
+    backend = _Backend(pane_text)
     return ProviderSubmission(
         job_id=req_id,
         agent_name=f"{provider}1",
@@ -41,7 +48,7 @@ def _submission(
         reply="",
         runtime_state={
             "mode": "native",
-            "backend": _Backend(),
+            "backend": backend,
             "pane_id": "%9",
             "req_id": req_id,
             "request_anchor": req_id,
@@ -123,6 +130,137 @@ def test_kimi_observes_wire_turn_end_and_poll_emits_boundary(monkeypatch, tmp_pa
         CompletionItemKind.ASSISTANT_FINAL,
         CompletionItemKind.TURN_BOUNDARY,
     ]
+
+
+def test_kimi_prompt_includes_context_pointer_when_session_has_projection() -> None:
+    session = type("Session", (), {"data": {"kimi_context_path": "/tmp/CCB_KIMI_CONTEXT.md"}})()
+
+    prompt = _with_kimi_context_pointer("do work", session)
+
+    assert "/tmp/CCB_KIMI_CONTEXT.md" in prompt
+    assert "Kimi does not load local CCB skills directly" in prompt
+    assert prompt.endswith("do work")
+
+
+def test_kimi_poll_uses_k27_pane_fallback_when_wire_log_missing(tmp_path: Path) -> None:
+    work_dir = tmp_path / "project"
+    work_dir.mkdir()
+    pane_text = (
+        "✦ K2.7 Code is ready higher end-to-end coding task success rates\n"
+        "✨ CCB_REQ_ID: job_native123\n"
+        "   Please answer one line.\n"
+        " ● The user wants a one-line response. I should reply exactly that.\n"
+        " ● KIMI_READY_OK after_reload\n"
+        "╭────────────────────────────────────────────────────────╮\n"
+        "│ >                                                      │\n"
+        "╰────────────────────────────────────────────────────────╯\n"
+        "yolo  K2.7 Code thinking  /tmp/project  context: 0.1% (1/262.1k)\n"
+    )
+
+    first = KimiProviderAdapter().poll(
+        _submission(
+            provider="kimi",
+            source_kind=CompletionSourceKind.SESSION_EVENT_LOG,
+            work_dir=work_dir,
+            pane_text=pane_text,
+        ),
+        now="2026-06-13T00:00:05Z",
+    )
+
+    assert first is not None
+    assert first.decision is None
+    assert first.submission.reply == "KIMI_READY_OK after_reload"
+    assert first.submission.runtime_state["pane_fallback_observed"] is True
+    assert [item.kind for item in first.items] == [
+        CompletionItemKind.SESSION_ROTATE,
+        CompletionItemKind.ANCHOR_SEEN,
+        CompletionItemKind.ASSISTANT_FINAL,
+    ]
+
+    stable = KimiProviderAdapter().poll(first.submission, now="2026-06-13T00:00:16Z")
+
+    assert stable is not None
+    assert stable.decision is None
+    assert stable.submission.reply == "KIMI_READY_OK after_reload"
+    assert [item.kind for item in stable.items] == [CompletionItemKind.TURN_BOUNDARY]
+
+
+def test_kimi_pane_fallback_does_not_complete_on_tool_progress(tmp_path: Path) -> None:
+    work_dir = tmp_path / "project"
+    work_dir.mkdir()
+    pane_text = (
+        "✦ K2.7 Code is ready higher end-to-end coding task success rates\n"
+        "✨ CCB_REQ_ID: job_native123\n"
+        "   Please implement a task.\n"
+        " ● Using TodoList (Explore e-contract repo structure and existing HMAC verifier)\n"
+        "  🌔\n"
+        " ● Using Read\n"
+        "  🌕\n"
+        "╭────────────────────────────────────────────────────────╮\n"
+        "│ >                                                      │\n"
+        "╰────────────────────────────────────────────────────────╯\n"
+        "yolo  K2.7 Code thinking  /tmp/project  context: 0.1% (1/262.1k)\n"
+    )
+
+    result = KimiProviderAdapter().poll(
+        _submission(
+            provider="kimi",
+            source_kind=CompletionSourceKind.SESSION_EVENT_LOG,
+            work_dir=work_dir,
+            pane_text=pane_text,
+        ),
+        now="2026-06-13T00:00:05Z",
+    )
+
+    assert result is not None
+    assert result.decision is None
+    assert result.submission.reply == ""
+    assert [item.kind for item in result.items] == [
+        CompletionItemKind.SESSION_ROTATE,
+        CompletionItemKind.ANCHOR_SEEN,
+    ]
+
+
+def test_kimi_pane_fallback_keeps_multibullet_receipt_from_first_answer(tmp_path: Path) -> None:
+    work_dir = tmp_path / "project"
+    work_dir.mkdir()
+    pane_text = (
+        "✦ K2.7 Code is ready higher end-to-end coding task success rates\n"
+        "✨ CCB_REQ_ID: job_native123\n"
+        "   Please resend receipt.\n"
+        " ● User asks to resend receipt, no commands no changes.\n"
+        " ● CCB_REQ_ID: job_native123\n"
+        "\n"
+        "   Implementation Receipt\n"
+        "\n"
+        "   Changed files\n"
+        "\n"
+        "   • src/routes/modules/contract-center-internal-signature-auth.ts\n"
+        "   • src/routes/__tests__/contract-center-internal-signature-auth.spec.ts\n"
+        "\n"
+        "   Not proven / risks\n"
+        "\n"
+        "   • allowlist 配置值按 exact match 处理，含首尾空格会 fail closed。\n"
+        "╭────────────────────────────────────────────────────────╮\n"
+        "│ >                                                      │\n"
+        "╰────────────────────────────────────────────────────────╯\n"
+        "yolo  K2.7 Code thinking  /tmp/project  context: 0.1% (1/262.1k)\n"
+    )
+
+    result = KimiProviderAdapter().poll(
+        _submission(
+            provider="kimi",
+            source_kind=CompletionSourceKind.SESSION_EVENT_LOG,
+            work_dir=work_dir,
+            pane_text=pane_text,
+        ),
+        now="2026-06-13T00:00:05Z",
+    )
+
+    assert result is not None
+    assert result.submission.reply.startswith("CCB_REQ_ID: job_native123")
+    assert "Changed files" in result.submission.reply
+    assert "allowlist 配置值" in result.submission.reply
 
 
 def test_kimi_completed_empty_reply_is_incomplete(monkeypatch, tmp_path: Path) -> None:
