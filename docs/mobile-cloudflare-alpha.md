@@ -125,6 +125,10 @@ tools/mobile_gateway_terminal_smoke.py \
 If the preflight returns `status: blocked`, read the `next_actions` list in
 the JSON output. It is the shortest setup checklist for the missing
 `cloudflared` binary, config, credentials, DNS route, or ingress mismatch.
+The same JSON also includes `config_template`, a side-effect-free
+`~/.cloudflared/config.yml` draft using the requested hostname and
+`--gateway-listen` origin. Copy it only after replacing the tunnel id and
+credentials path with the values from `cloudflared tunnel create`.
 
 After the preflight passes, the development smoke can start
 `cloudflared tunnel run` for the named tunnel, start a disposable CCB gateway,
