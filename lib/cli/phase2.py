@@ -32,6 +32,7 @@ from cli.services.daemon import KillSummary
 from cli.services.kill import kill_project
 from cli.services.logs import agent_logs
 from cli.services.maintenance import maintenance_status
+from cli.services.mobile import prepare_mobile_gateway
 from cli.services.pend import pend_target
 from cli.services.ping import ping_target
 from cli.services.ps import ps_summary
@@ -146,6 +147,7 @@ def _dispatch_services():
         kill_project=kill_project,
         list_fault_rules=list_fault_rules,
         maintenance_status=maintenance_status,
+        prepare_mobile_gateway=prepare_mobile_gateway,
         pend_target=pend_target,
         ping_target=ping_target,
         ps_summary=ps_summary,

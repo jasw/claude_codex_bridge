@@ -68,6 +68,7 @@ def print_start_help(*, file=None) -> None:
               ccb reload --dry-run  Validate and plan config reload without mutation.
               ccb maintenance status Show maintenance heartbeat config and stored status.
               ccb maintenance tick   Run one maintenance heartbeat diagnosis tick.
+              ccb mobile serve       Start the loopback CCB Mobile gateway for the current project.
               ccb kill             Stop the current project's background runtime.
               ccb kill -f          Force cleanup project-owned runtime residue.
               ccb cleanup          Prune safe provider rebuildable caches after ccbd is stopped.
@@ -293,6 +294,27 @@ _COMMAND_HELP = {
           - runner is an internal project-scoped schedule consumer used by startup ensure.
           - enable and disable are config-authority in v1; edit [maintenance.heartbeat].enabled.
           - Status reads `.ccb/ccbd/maintenance-heartbeat/`, not `.ccb/ccbd/heartbeats/`.
+    """,
+    "mobile": """
+        usage: ccb mobile serve [--listen 127.0.0.1:8787]
+
+        CCB Mobile gateway:
+          ccb mobile serve
+              Start the G1 loopback, current-project HTTP gateway.
+          ccb mobile serve --listen 127.0.0.1:0
+              Start on a dynamic loopback port.
+
+        G1 endpoints:
+          GET /v1/health
+          GET /v1/projects
+          GET /v1/projects/{project_id}/view
+
+        Safety:
+          - G1 only accepts loopback listen addresses.
+          - It exposes current-project data only.
+          - It does not configure Cloudflare Tunnel, QR pairing, device tokens,
+            terminal WebSocket streaming, lifecycle, or multi-project registry.
+          - Stopping the gateway does not stop ccbd, provider panes, or tmux.
     """,
     "doctor": """
         usage: ccb doctor [ps|logs <agent>|storage] [--output [PATH]]

@@ -265,6 +265,21 @@ def render_maintenance(payload) -> tuple[str, ...]:
     return tuple(lines)
 
 
+def render_mobile_serve(summary) -> tuple[str, ...]:
+    payload = summary if isinstance(summary, Mapping) else {}
+    lines = [
+        f'mobile_status: {payload.get("mobile_status", "unknown")}',
+        f'listen: {payload.get("listen", "")}',
+        f'project_id: {payload.get("project_id", "")}',
+        f'project_root: {payload.get("project_root", "")}',
+        f'mode: {payload.get("mode", "")}',
+    ]
+    endpoints = payload.get('endpoints')
+    if isinstance(endpoints, (list, tuple)):
+        lines.append(f'endpoints: {", ".join(str(item) for item in endpoints)}')
+    return tuple(lines)
+
+
 def _maintenance_record_lines(prefix: str, payload: Mapping[str, object]) -> list[str]:
     lines = [
         f'{prefix}_state: {payload.get("state")}',
@@ -458,6 +473,7 @@ __all__ = [
     'render_kill',
     'render_logs',
     'render_maintenance',
+    'render_mobile_serve',
     'render_ps',
     'render_restart',
     'render_start',

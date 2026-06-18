@@ -43,6 +43,14 @@ class ParsedMaintenanceCommand:
 
 
 @dataclass(frozen=True)
+class ParsedMobileCommand:
+    project: str | None
+    action: str
+    listen: str = '127.0.0.1:8787'
+    kind: str = 'mobile'
+
+
+@dataclass(frozen=True)
 class ParsedCleanupCommand:
     project: str | None
     kind: str = 'cleanup'
@@ -100,6 +108,7 @@ __all__ = [
     'ParsedKillCommand',
     'ParsedLogsCommand',
     'ParsedMaintenanceCommand',
+    'ParsedMobileCommand',
     'ParsedPingCommand',
     'ParsedPsCommand',
     'ParsedReloadCommand',

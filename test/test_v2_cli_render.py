@@ -14,6 +14,7 @@ from cli.render import (
     render_inbox,
     render_kill,
     render_logs,
+    render_mobile_serve,
     render_ps,
     render_queue,
     render_reload,
@@ -107,6 +108,26 @@ def test_render_clear_includes_agent_results() -> None:
         'clear_agent: agent=agent1 status=cleared pane_id=%1',
         'clear_agent: agent=agent2 status=skipped reason=runtime_missing',
         'clear_agent: agent=agent3 status=failed pane_id=%3 reason=send failed',
+    )
+
+
+def test_render_mobile_serve_includes_loopback_gateway_summary() -> None:
+    assert render_mobile_serve(
+        {
+            'mobile_status': 'serving',
+            'listen': '127.0.0.1:8787',
+            'project_id': 'proj-1',
+            'project_root': '/tmp/project',
+            'mode': 'loopback_current_project',
+            'endpoints': ['/v1/health', '/v1/projects'],
+        }
+    ) == (
+        'mobile_status: serving',
+        'listen: 127.0.0.1:8787',
+        'project_id: proj-1',
+        'project_root: /tmp/project',
+        'mode: loopback_current_project',
+        'endpoints: /v1/health, /v1/projects',
     )
 
 

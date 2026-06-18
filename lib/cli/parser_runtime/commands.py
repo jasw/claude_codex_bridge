@@ -13,6 +13,7 @@ from cli.models import (
     ParsedKillCommand,
     ParsedLogsCommand,
     ParsedMaintenanceCommand,
+    ParsedMobileCommand,
     ParsedPendCommand,
     ParsedPingCommand,
     ParsedPsCommand,
@@ -66,6 +67,18 @@ def parse_maintenance(tokens: list[str], *, project: str | None, error_type) -> 
     if action not in {'status', 'tick', 'schedule', 'runner', 'enable', 'disable'}:
         raise error_type('maintenance supports: status, tick, schedule, runner, enable, disable')
     return ParsedMaintenanceCommand(project=project, action=action, args=tuple(tokens[1:]))
+
+
+def parse_mobile(tokens: list[str], *, project: str | None, error_type) -> ParsedMobileCommand:
+    if not tokens:
+        raise error_type('mobile requires one of: serve')
+    action = str(tokens[0] or '').strip().lower()
+    if action != 'serve':
+        raise error_type('mobile only supports: serve')
+    parser = argparse.ArgumentParser(prog='ccb mobile serve', add_help=False)
+    parser.add_argument('--listen', default='127.0.0.1:8787')
+    namespace = parse_args(parser, tokens[1:], error_message='invalid mobile serve command', error_type=error_type)
+    return ParsedMobileCommand(project=project, action=action, listen=str(namespace.listen))
 
 
 def parse_kill(tokens: list[str], *, project: str | None, error_type) -> ParsedKillCommand:
@@ -269,6 +282,7 @@ __all__ = [
     'parse_kill',
     'parse_logs',
     'parse_maintenance',
+    'parse_mobile',
     'parse_pend',
     'parse_ping',
     'parse_ps',
