@@ -117,6 +117,10 @@ tools/mobile_gateway_terminal_smoke.py \
   --route-provider cloudflare_tunnel
 ```
 
+如果 preflight 返回 `status: blocked`，读取 JSON 输出里的 `next_actions` 列表。
+它会给出缺失 `cloudflared` binary、config、credentials、DNS route 或 ingress
+mismatch 时最短的修复 checklist。
+
 preflight 通过后，开发 smoke 可以自动启动 named tunnel 的
 `cloudflared tunnel run`、启动 disposable CCB gateway、等待公网 `/v1/health`、
 执行 route diagnostics 和 terminal streaming，最后清理运行时：
