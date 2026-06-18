@@ -48,6 +48,7 @@ def prepare_mobile_gateway(context, command) -> MobileGatewayServeHandle:
                 '/v1/projects/{project_id}/focus-agent',
                 '/v1/projects/{project_id}/focus-window',
                 '/v1/projects/{project_id}/terminals',
+                '/v1/terminals/{terminal_id}',
             ],
         },
         server=server,

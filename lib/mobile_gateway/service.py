@@ -1,21 +1,25 @@
 from __future__ import annotations
 
+import base64
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 from pathlib import Path
+import threading
 from typing import Callable, Mapping
 from urllib.parse import unquote, urlparse
 
 from ccbd.socket_client import CcbdClientError
 from .pairing import MobileGatewayPairingError, MobileGatewayPairingStore
+from .terminal import TerminalAttachTarget, TerminalGeometry, create_tmux_terminal_session
+from .websocket import WebSocketConnection, WebSocketProtocolError, accept_websocket, is_websocket_upgrade
 
 _DEFAULT_HOST = '127.0.0.1'
 _DEFAULT_PORT = 8787
 _SCHEMA_VERSION = 1
 _BASE_CAPABILITIES = ('http_json', 'project_view')
-_PAIRING_CAPABILITIES = ('pairing', 'device_tokens', 'focus', 'terminal_open')
+_PAIRING_CAPABILITIES = ('pairing', 'device_tokens', 'focus', 'terminal_open', 'websocket_terminal')
 _REDACTED_NAMESPACE_KEYS = ('socket_path', 'session_name')
 _DEFAULT_ROUTE_PROVIDER = 'lan'
 _DEFAULT_PAIRING_SCOPES = ('view', 'focus', 'terminal_input')
@@ -47,11 +51,13 @@ class MobileGatewayService:
         mobile_dir: Path | None = None,
         pairing_store: MobileGatewayPairingStore | None = None,
         clock: Callable[[], str] | None = None,
+        terminal_session_factory: Callable[[TerminalAttachTarget], object] | None = None,
     ) -> None:
         self._project_id = str(project_id)
         self._project_root = Path(project_root)
         self._ccbd_client_factory = ccbd_client_factory
         self._clock = clock or _utc_now
+        self._terminal_session_factory = terminal_session_factory or create_tmux_terminal_session
         self._pairing_store = pairing_store
         if self._pairing_store is None and mobile_dir is not None:
             self._pairing_store = MobileGatewayPairingStore(Path(mobile_dir))
@@ -211,6 +217,91 @@ class MobileGatewayService:
             return 200, result
         raise MobileGatewayError('not found', status_code=404)
 
+    def terminal_id_from_path(self, path: str) -> str | None:
+        parsed = urlparse(path)
+        route = parsed.path.rstrip('/') or '/'
+        prefix = '/v1/terminals/'
+        if not route.startswith(prefix):
+            return None
+        terminal_id = unquote(route[len(prefix):].strip('/'))
+        return terminal_id or None
+
+    def handle_terminal_websocket(self, terminal_id: str, connection: WebSocketConnection) -> None:
+        store = self._require_pairing_store()
+        terminal_token = ''
+        close_reason = 'client_closed'
+        session = None
+        output_stop = threading.Event()
+        output_thread: threading.Thread | None = None
+        try:
+            open_frame = connection.read_json()
+            if open_frame is None:
+                return
+            if str(open_frame.get('type') or '') != 'open':
+                connection.send_json({'type': 'error', 'code': 'terminal_open_required'})
+                close_reason = 'invalid_open'
+                return
+            if str(open_frame.get('terminal_id') or '') != terminal_id:
+                connection.send_json({'type': 'error', 'code': 'terminal_id_mismatch'})
+                close_reason = 'invalid_open'
+                return
+            terminal_token = str(open_frame.get('token') or '')
+            record = store.authenticate_terminal_token(terminal_id=terminal_id, terminal_token=terminal_token)
+            attach_target = self._terminal_attach_target(record)
+            session = self._terminal_session_factory(attach_target)
+            output_thread = threading.Thread(
+                target=_pump_terminal_output,
+                args=(connection, session, output_stop),
+                daemon=True,
+            )
+            output_thread.start()
+            while not output_stop.is_set():
+                frame = connection.read_json()
+                if frame is None:
+                    close_reason = 'client_closed'
+                    break
+                close_reason = self._handle_terminal_frame(
+                    connection=connection,
+                    session=session,
+                    terminal_id=terminal_id,
+                    terminal_token=terminal_token,
+                    frame=frame,
+                )
+                if close_reason:
+                    break
+        except MobileGatewayPairingError as exc:
+            close_reason = str(exc.reason or 'terminal_token_denied')
+            _safe_send_json(connection, {'type': 'error', 'code': close_reason})
+        except MobileGatewayError as exc:
+            close_reason = _terminal_error_code(exc)
+            _safe_send_json(connection, {'type': 'error', 'code': close_reason})
+        except WebSocketProtocolError as exc:
+            close_reason = 'protocol_error'
+            _safe_send_json(connection, {'type': 'error', 'code': 'protocol_error', 'message': _error_text(exc)})
+        except Exception as exc:
+            close_reason = 'terminal_stream_error'
+            _safe_send_json(connection, {'type': 'error', 'code': 'terminal_stream_error', 'message': _error_text(exc)})
+        finally:
+            output_stop.set()
+            if session is not None:
+                try:
+                    session.close()
+                except Exception:
+                    pass
+            if terminal_token:
+                try:
+                    store.close_terminal_handle(
+                        terminal_id=terminal_id,
+                        terminal_token=terminal_token,
+                        reason=close_reason or 'client_closed',
+                    )
+                except MobileGatewayPairingError:
+                    pass
+            _safe_send_json(connection, {'type': 'closed', 'reason': close_reason or 'client_closed'})
+            connection.close()
+            if output_thread is not None:
+                output_thread.join(timeout=1)
+
     def _client(self):
         return self._ccbd_client_factory()
 
@@ -335,6 +426,64 @@ class MobileGatewayService:
             raise MobileGatewayError(_error_text(exc), status_code=503) from exc
         return dict(payload or {}) if isinstance(payload, dict) else {}
 
+    def _terminal_attach_target(self, record: dict[str, object]) -> TerminalAttachTarget:
+        view_payload = self._request_project_view()
+        view = _map(view_payload.get('view'))
+        namespace = _map(view.get('namespace'))
+        actual_epoch = _optional_int(namespace.get('epoch'))
+        target_epoch = _optional_int(record.get('target_epoch'))
+        if actual_epoch is None or target_epoch is None or actual_epoch != target_epoch:
+            raise MobileGatewayError('stale namespace epoch', status_code=409)
+        socket_path = _optional_text(namespace.get('socket_path'))
+        session_name = _optional_text(namespace.get('session_name'))
+        if not socket_path or not session_name:
+            raise MobileGatewayError('ProjectView tmux evidence is not attachable', status_code=409)
+        _validate_terminal_summary(record, view)
+        return TerminalAttachTarget(
+            terminal_id=str(record.get('terminal_id') or ''),
+            socket_path=socket_path,
+            session_name=session_name,
+            geometry=TerminalGeometry.from_mapping(record.get('geometry')),
+            target_summary=_map(record.get('target_summary')),
+        )
+
+    def _handle_terminal_frame(
+        self,
+        *,
+        connection: WebSocketConnection,
+        session,
+        terminal_id: str,
+        terminal_token: str,
+        frame: Mapping[str, object],
+    ) -> str:
+        frame_type = str(frame.get('type') or '').strip()
+        if frame_type == 'input':
+            seq = _required_positive_int(frame.get('seq'), 'seq')
+            data = base64.b64decode(str(frame.get('bytes_b64') or ''), validate=True)
+            self._require_pairing_store().record_terminal_input_sequence(
+                terminal_id=terminal_id,
+                terminal_token=terminal_token,
+                sequence=seq,
+            )
+            session.write(data)
+            return ''
+        if frame_type == 'paste':
+            seq = _required_positive_int(frame.get('seq'), 'seq')
+            self._require_pairing_store().record_terminal_input_sequence(
+                terminal_id=terminal_id,
+                terminal_token=terminal_token,
+                sequence=seq,
+            )
+            session.paste(str(frame.get('text') or ''))
+            return ''
+        if frame_type == 'resize':
+            session.resize(TerminalGeometry.from_mapping(frame))
+            return ''
+        if frame_type == 'closed':
+            return str(frame.get('reason') or 'client_closed')
+        connection.send_json({'type': 'error', 'code': 'unsupported_terminal_frame'})
+        return 'unsupported_terminal_frame'
+
 
 def parse_listen_address(value: str | None) -> ListenAddress:
     text = str(value or '').strip()
@@ -361,6 +510,19 @@ def build_mobile_gateway_server(listen: ListenAddress, service: MobileGatewaySer
         server_version = 'CCBMobileGateway/1'
 
         def do_GET(self) -> None:  # noqa: N802 - stdlib hook
+            terminal_id = service.terminal_id_from_path(self.path)
+            if terminal_id is not None and is_websocket_upgrade(self.headers):
+                try:
+                    connection = accept_websocket(self)
+                except WebSocketProtocolError as exc:
+                    self._send_json(400, {
+                        'schema_version': _SCHEMA_VERSION,
+                        'status': 'error',
+                        'error': _error_text(exc),
+                    })
+                    return
+                service.handle_terminal_websocket(terminal_id, connection)
+                return
             try:
                 status, payload = service.dispatch_get(self.path, self.headers)
             except MobileGatewayError as exc:
@@ -485,6 +647,18 @@ def _parse_project_action_route(route: str) -> tuple[str, str] | None:
     return unquote(project_id), action
 
 
+def _validate_terminal_summary(record: dict[str, object], view: dict[str, object]) -> None:
+    summary = _map(record.get('target_summary'))
+    agent = _optional_text(summary.get('agent'))
+    window = _optional_text(summary.get('window'))
+    agents = [_map(item) for item in _iterable(view.get('agents'))]
+    windows = [_map(item) for item in _iterable(view.get('windows'))]
+    if agent and not any(str(item.get('name') or '') == agent for item in agents):
+        raise MobileGatewayError('unknown terminal target agent', status_code=404)
+    if window and not any(str(item.get('name') or '') == window for item in windows):
+        raise MobileGatewayError('unknown terminal target window', status_code=404)
+
+
 def _validate_terminal_target(
     project_id: str,
     view_payload: dict[str, object],
@@ -563,6 +737,13 @@ def _iterable(value: object):
     return value if isinstance(value, list) else []
 
 
+def _required_positive_int(value: object, name: str) -> int:
+    parsed = _optional_int(value)
+    if parsed is None or parsed < 1:
+        raise MobileGatewayError(f'{name} must be a positive integer', status_code=400)
+    return parsed
+
+
 def _terminal_websocket_url(headers: Mapping[str, object] | None, *, terminal_id: str) -> str:
     proto = _header_value(headers, 'x-forwarded-proto').lower()
     scheme = 'wss' if proto == 'https' else 'ws'
@@ -593,6 +774,50 @@ def _ccbd_focus_status(exc: Exception) -> int:
     if text.startswith('invalid_request:') or text.startswith('target_missing:'):
         return 400
     return 503
+
+
+def _terminal_error_code(exc: MobileGatewayError) -> str:
+    text = _error_text(exc)
+    if text.startswith('stale namespace epoch'):
+        return 'stale_namespace_epoch'
+    if text.startswith('unknown terminal target agent'):
+        return 'unknown_agent'
+    if text.startswith('unknown terminal target window'):
+        return 'unknown_window'
+    if text.startswith('ProjectView tmux evidence is not attachable'):
+        return 'target_not_attachable'
+    return 'terminal_error'
+
+
+def _pump_terminal_output(connection: WebSocketConnection, session, stop: threading.Event) -> None:
+    sequence = 0
+    try:
+        while not stop.is_set():
+            data = session.read(0.1)
+            if data is None:
+                _safe_send_json(connection, {'type': 'closed', 'reason': 'pty_closed'})
+                stop.set()
+                return
+            if data:
+                sequence += 1
+                _safe_send_json(
+                    connection,
+                    {
+                        'type': 'output',
+                        'seq': sequence,
+                        'bytes_b64': base64.b64encode(data).decode('ascii'),
+                    },
+                )
+    except Exception as exc:
+        _safe_send_json(connection, {'type': 'error', 'code': 'terminal_output_error', 'message': _error_text(exc)})
+        stop.set()
+
+
+def _safe_send_json(connection: WebSocketConnection, payload: Mapping[str, object]) -> None:
+    try:
+        connection.send_json(payload)
+    except OSError:
+        pass
 
 
 def _bearer_token(headers: Mapping[str, object] | None) -> str:

@@ -315,6 +315,7 @@ _COMMAND_HELP = {
           POST /v1/projects/{project_id}/focus-agent
           POST /v1/projects/{project_id}/focus-window
           POST /v1/projects/{project_id}/terminals
+          GET /v1/terminals/{terminal_id}  WebSocket terminal frames
 
         Safety:
           - The gateway still only accepts loopback listen addresses.
@@ -323,8 +324,11 @@ _COMMAND_HELP = {
           - Focus routes require a valid device token with `focus` scope.
           - Terminal-open routes require `terminal_input` scope and mint
             short-lived terminal tokens.
-          - It does not configure Cloudflare Tunnel, terminal WebSocket
-            frame streaming, lifecycle, or multi-project registry.
+          - Terminal WebSocket streams validate terminal tokens and monotonic
+            input sequence numbers before forwarding input to a tmux attach
+            client.
+          - It does not configure Cloudflare Tunnel, lifecycle, or
+            multi-project registry.
           - Stopping the gateway does not stop ccbd, provider panes, or tmux.
     """,
     "doctor": """

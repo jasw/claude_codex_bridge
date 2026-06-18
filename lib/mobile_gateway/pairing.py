@@ -406,6 +406,114 @@ class MobileGatewayPairingStore:
             'target_summary': dict(target_summary),
         }
 
+    def authenticate_terminal_token(self, *, terminal_id: str, terminal_token: str) -> dict[str, object]:
+        token = str(terminal_token or '').strip()
+        requested = str(terminal_id or '').strip()
+        if not requested or not token:
+            raise MobileGatewayPairingError('terminal token is required', status_code=401, reason='missing_terminal_token')
+        token_hash = _token_hash(_TERMINAL_HASH_PREFIX, token)
+        with self._lock:
+            record = self._terminal_state_by_id().get(requested)
+            if record is None or record.get('token_hash') != token_hash:
+                self._append_audit(
+                    event='terminal_auth_denied',
+                    result='denied',
+                    terminal_id=requested,
+                    reason='invalid_token',
+                )
+                raise MobileGatewayPairingError('invalid terminal token', status_code=401, reason='invalid_token')
+            self._validate_terminal_record(record)
+            self._append_audit(
+                event='terminal_auth_ok',
+                result='ok',
+                project_id=str(record.get('project_id') or ''),
+                device_id=str(record.get('device_id') or ''),
+                terminal_id=requested,
+            )
+            return dict(record)
+
+    def record_terminal_input_sequence(
+        self,
+        *,
+        terminal_id: str,
+        terminal_token: str,
+        sequence: int,
+    ) -> dict[str, object]:
+        requested = str(terminal_id or '').strip()
+        token_hash = _token_hash(_TERMINAL_HASH_PREFIX, str(terminal_token or '').strip())
+        seq = int(sequence)
+        with self._lock:
+            record = self._terminal_state_by_id().get(requested)
+            if record is None or record.get('token_hash') != token_hash:
+                self._append_audit(
+                    event='terminal_input_denied',
+                    result='denied',
+                    terminal_id=requested,
+                    reason='invalid_token',
+                )
+                raise MobileGatewayPairingError('invalid terminal token', status_code=401, reason='invalid_token')
+            self._validate_terminal_record(record)
+            last_seq = _int(record.get('last_input_seq'), 0)
+            if seq <= last_seq:
+                self._append_audit(
+                    event='terminal_input_denied',
+                    result='denied',
+                    project_id=str(record.get('project_id') or ''),
+                    device_id=str(record.get('device_id') or ''),
+                    terminal_id=requested,
+                    reason='replayed_sequence',
+                    last_input_seq=last_seq,
+                    sequence=seq,
+                )
+                raise MobileGatewayPairingError('terminal input sequence replayed', status_code=409, reason='replayed_sequence')
+            updated = dict(record)
+            updated['last_input_seq'] = seq
+            _append_jsonl(self.terminal_tokens_path, updated)
+            self._append_audit(
+                event='terminal_input_accepted',
+                result='ok',
+                project_id=str(record.get('project_id') or ''),
+                device_id=str(record.get('device_id') or ''),
+                terminal_id=requested,
+                sequence=seq,
+            )
+            return updated
+
+    def close_terminal_handle(
+        self,
+        *,
+        terminal_id: str,
+        terminal_token: str,
+        reason: str = 'client_closed',
+    ) -> dict[str, object]:
+        requested = str(terminal_id or '').strip()
+        token_hash = _token_hash(_TERMINAL_HASH_PREFIX, str(terminal_token or '').strip())
+        with self._lock:
+            record = self._terminal_state_by_id().get(requested)
+            if record is None or record.get('token_hash') != token_hash:
+                self._append_audit(
+                    event='terminal_close_denied',
+                    result='denied',
+                    terminal_id=requested,
+                    reason='invalid_token',
+                )
+                raise MobileGatewayPairingError('invalid terminal token', status_code=401, reason='invalid_token')
+            if record.get('closed_at'):
+                return dict(record)
+            updated = dict(record)
+            updated['closed_at'] = _iso(self._clock())
+            updated['closed_reason'] = str(reason or 'client_closed')
+            _append_jsonl(self.terminal_tokens_path, updated)
+            self._append_audit(
+                event='terminal_closed',
+                result='ok',
+                project_id=str(record.get('project_id') or ''),
+                device_id=str(record.get('device_id') or ''),
+                terminal_id=requested,
+                reason=updated['closed_reason'],
+            )
+            return updated
+
     def _pairing_state_by_id(self) -> dict[str, dict[str, object]]:
         state: dict[str, dict[str, object]] = {}
         if not self.pairing_tokens_path.exists():
@@ -415,6 +523,52 @@ class MobileGatewayPairingStore:
             if pairing_id:
                 state[pairing_id] = record
         return state
+
+    def _terminal_state_by_id(self) -> dict[str, dict[str, object]]:
+        state: dict[str, dict[str, object]] = {}
+        if not self.terminal_tokens_path.exists():
+            return state
+        for record in _read_jsonl(self.terminal_tokens_path):
+            terminal_id = str(record.get('terminal_id') or '')
+            if terminal_id:
+                state[terminal_id] = record
+        return state
+
+    def _validate_terminal_record(self, record: dict[str, object]) -> None:
+        terminal_id = str(record.get('terminal_id') or '')
+        project_id = str(record.get('project_id') or '')
+        device_id = str(record.get('device_id') or '')
+        if record.get('revoked_at'):
+            self._append_audit(
+                event='terminal_auth_denied',
+                result='denied',
+                project_id=project_id,
+                device_id=device_id,
+                terminal_id=terminal_id,
+                reason='revoked',
+            )
+            raise MobileGatewayPairingError('terminal token revoked', status_code=401, reason='revoked')
+        if record.get('closed_at'):
+            self._append_audit(
+                event='terminal_auth_denied',
+                result='denied',
+                project_id=project_id,
+                device_id=device_id,
+                terminal_id=terminal_id,
+                reason='closed',
+            )
+            raise MobileGatewayPairingError('terminal already closed', status_code=410, reason='closed')
+        expires_at = _parse_utc(record.get('expires_at'))
+        if expires_at is not None and self._clock() > expires_at:
+            self._append_audit(
+                event='terminal_auth_denied',
+                result='denied',
+                project_id=project_id,
+                device_id=device_id,
+                terminal_id=terminal_id,
+                reason='expired',
+            )
+            raise MobileGatewayPairingError('terminal token expired', status_code=410, reason='expired')
 
     def _read_devices(self) -> list[dict[str, object]]:
         if not self.devices_path.exists():
@@ -482,6 +636,13 @@ def _public_device(record: dict[str, object]) -> dict[str, object]:
 def _clean_id(value: str | None) -> str:
     text = str(value or '').strip()
     return ''.join(ch for ch in text if ch.isalnum() or ch in {'_', '-'})
+
+
+def _int(value: object, fallback: int) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return fallback
 
 
 def _read_jsonl(path: Path) -> list[dict[str, object]]:

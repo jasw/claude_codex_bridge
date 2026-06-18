@@ -1,7 +1,12 @@
 from __future__ import annotations
 
+import base64
 import json
+import os
+import socket
+import struct
 import threading
+import time
 from pathlib import Path
 from urllib.error import HTTPError
 from urllib.request import urlopen
@@ -89,13 +94,47 @@ class _FakeCcbdClient:
         }
 
 
-def _service(fake: _FakeCcbdClient, *, mobile_dir: Path | None = None) -> MobileGatewayService:
+class _FakeTerminalSession:
+    def __init__(self, target) -> None:
+        self.target = target
+        self.outputs = [b'hello']
+        self.writes: list[bytes] = []
+        self.pastes: list[str] = []
+        self.resizes: list[object] = []
+        self.closed = False
+
+    def read(self, timeout_seconds: float = 0.1) -> bytes | None:
+        if self.outputs:
+            return self.outputs.pop(0)
+        time.sleep(min(0.01, max(0.0, timeout_seconds)))
+        return b''
+
+    def write(self, data: bytes) -> None:
+        self.writes.append(data)
+
+    def paste(self, text: str) -> None:
+        self.pastes.append(text)
+
+    def resize(self, geometry) -> None:
+        self.resizes.append(geometry)
+
+    def close(self) -> None:
+        self.closed = True
+
+
+def _service(
+    fake: _FakeCcbdClient,
+    *,
+    mobile_dir: Path | None = None,
+    terminal_session_factory=None,
+) -> MobileGatewayService:
     return MobileGatewayService(
         project_id='proj-demo',
         project_root=Path('/srv/demo'),
         ccbd_client_factory=lambda: fake,
         mobile_dir=mobile_dir,
         clock=lambda: '2026-06-18T00:00:00Z',
+        terminal_session_factory=terminal_session_factory,
     )
 
 
@@ -313,6 +352,141 @@ def test_terminal_open_rejects_missing_scope_and_stale_epoch(tmp_path: Path) -> 
     assert stale.value.status_code == 409
 
 
+def test_terminal_websocket_streams_frames_and_rejects_replayed_input(tmp_path: Path) -> None:
+    sessions: list[_FakeTerminalSession] = []
+
+    def session_factory(target):
+        session = _FakeTerminalSession(target)
+        sessions.append(session)
+        return session
+
+    service = _service(
+        _FakeCcbdClient(),
+        mobile_dir=tmp_path / 'mobile',
+        terminal_session_factory=session_factory,
+    )
+    pairing = service.create_pairing_payload(gateway_url='http://127.0.0.1:8787')
+    _, claim = service.dispatch_post(
+        '/v1/pairing/claim',
+        {
+            'pairing_code': str(pairing['pairing_code']),
+            'device_name': 'Pixel Fold',
+        },
+    )
+    _, handle = service.dispatch_post(
+        '/v1/projects/proj-demo/terminals',
+        {
+            'project_id': 'proj-demo',
+            'namespace_epoch': 4,
+            'target': {
+                'kind': 'agent',
+                'agent': 'mobile',
+                'window': 'main',
+            },
+            'geometry': {
+                'columns': 100,
+                'rows': 30,
+            },
+        },
+        {'Authorization': f'Bearer {claim["device_token"]}'},
+    )
+    server = build_mobile_gateway_server(parse_listen_address('127.0.0.1:0'), service)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    sock = None
+    try:
+        thread.start()
+        host, port = server.server_address[:2]
+        sock = _websocket_connect(host, port, f'/v1/terminals/{handle["terminal_id"]}')
+        _websocket_send_json(
+            sock,
+            {
+                'type': 'open',
+                'terminal_id': handle['terminal_id'],
+                'token': handle['terminal_token'],
+            },
+        )
+
+        output = _websocket_read_until(sock, 'output')
+        assert output['seq'] == 1
+        assert base64.b64decode(str(output['bytes_b64'])) == b'hello'
+        assert sessions
+        assert sessions[0].target.socket_path == '/tmp/ccb-demo/tmux.sock'
+        assert sessions[0].target.session_name == 'ccb-demo'
+        assert sessions[0].target.geometry.columns == 100
+        assert sessions[0].target.geometry.rows == 30
+
+        _websocket_send_json(sock, {'type': 'input', 'seq': 1, 'bytes_b64': base64.b64encode(b'a').decode('ascii')})
+        _wait_for(lambda: sessions[0].writes == [b'a'])
+        _websocket_send_json(sock, {'type': 'paste', 'seq': 2, 'text': 'hello paste'})
+        _wait_for(lambda: sessions[0].pastes == ['hello paste'])
+        _websocket_send_json(sock, {'type': 'resize', 'columns': 120, 'rows': 36})
+        _wait_for(lambda: len(sessions[0].resizes) == 1)
+        assert sessions[0].resizes[0].columns == 120
+        assert sessions[0].resizes[0].rows == 36
+
+        _websocket_send_json(sock, {'type': 'input', 'seq': 2, 'bytes_b64': base64.b64encode(b'b').decode('ascii')})
+        error = _websocket_read_until(sock, 'error')
+        assert error['code'] == 'replayed_sequence'
+        closed = _websocket_read_until(sock, 'closed')
+        assert closed['reason'] == 'replayed_sequence'
+        _wait_for(lambda: sessions[0].closed)
+
+        stored_tokens = (tmp_path / 'mobile' / 'terminal-tokens.jsonl').read_text(encoding='utf-8')
+        assert str(handle['terminal_token']) not in stored_tokens
+        assert '"last_input_seq": 2' in stored_tokens
+        assert '"closed_reason": "replayed_sequence"' in stored_tokens
+    finally:
+        if sock is not None:
+            sock.close()
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+
+
+def test_terminal_websocket_rejects_invalid_open_token(tmp_path: Path) -> None:
+    sessions: list[_FakeTerminalSession] = []
+    service = _service(
+        _FakeCcbdClient(),
+        mobile_dir=tmp_path / 'mobile',
+        terminal_session_factory=lambda target: sessions.append(_FakeTerminalSession(target)) or sessions[-1],
+    )
+    pairing = service.create_pairing_payload(gateway_url='http://127.0.0.1:8787')
+    _, claim = service.dispatch_post('/v1/pairing/claim', {'pairing_code': str(pairing['pairing_code'])})
+    _, handle = service.dispatch_post(
+        '/v1/projects/proj-demo/terminals',
+        {
+            'project_id': 'proj-demo',
+            'namespace_epoch': 4,
+            'target': {'kind': 'agent', 'agent': 'mobile', 'window': 'main'},
+        },
+        {'Authorization': f'Bearer {claim["device_token"]}'},
+    )
+    server = build_mobile_gateway_server(parse_listen_address('127.0.0.1:0'), service)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    sock = None
+    try:
+        thread.start()
+        host, port = server.server_address[:2]
+        sock = _websocket_connect(host, port, f'/v1/terminals/{handle["terminal_id"]}')
+        _websocket_send_json(
+            sock,
+            {
+                'type': 'open',
+                'terminal_id': handle['terminal_id'],
+                'token': 'wrong-token',
+            },
+        )
+        error = _websocket_read_until(sock, 'error')
+        assert error['code'] == 'invalid_token'
+        assert sessions == []
+    finally:
+        if sock is not None:
+            sock.close()
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+
+
 def test_focus_routes_require_focus_scope_and_return_redacted_project_view(tmp_path: Path) -> None:
     fake = _FakeCcbdClient()
     service = _service(fake, mobile_dir=tmp_path / 'mobile')
@@ -413,3 +587,85 @@ def test_http_server_exposes_g1_get_endpoints() -> None:
         server.shutdown()
         server.server_close()
         thread.join(timeout=2)
+
+
+def _websocket_connect(host: str, port: int, path: str) -> socket.socket:
+    sock = socket.create_connection((host, port), timeout=2)
+    key = base64.b64encode(os.urandom(16)).decode('ascii')
+    request = (
+        f'GET {path} HTTP/1.1\r\n'
+        f'Host: {host}:{port}\r\n'
+        'Upgrade: websocket\r\n'
+        'Connection: Upgrade\r\n'
+        f'Sec-WebSocket-Key: {key}\r\n'
+        'Sec-WebSocket-Version: 13\r\n'
+        '\r\n'
+    )
+    sock.sendall(request.encode('ascii'))
+    response = b''
+    while b'\r\n\r\n' not in response:
+        response += sock.recv(4096)
+    assert b' 101 ' in response.split(b'\r\n', 1)[0]
+    return sock
+
+
+def _websocket_send_json(sock: socket.socket, payload: dict[str, object]) -> None:
+    body = json.dumps(payload).encode('utf-8')
+    header = bytearray([0x81])
+    length = len(body)
+    if length < 126:
+        header.append(0x80 | length)
+    elif length <= 0xFFFF:
+        header.append(0x80 | 126)
+        header.extend(struct.pack('!H', length))
+    else:
+        header.append(0x80 | 127)
+        header.extend(struct.pack('!Q', length))
+    mask = b'\x01\x02\x03\x04'
+    encoded = bytes(byte ^ mask[index % 4] for index, byte in enumerate(body))
+    sock.sendall(bytes(header) + mask + encoded)
+
+
+def _websocket_read_json(sock: socket.socket) -> dict[str, object]:
+    sock.settimeout(2)
+    first = _recv_exact(sock, 2)
+    opcode = first[0] & 0x0F
+    length = first[1] & 0x7F
+    if length == 126:
+        length = struct.unpack('!H', _recv_exact(sock, 2))[0]
+    elif length == 127:
+        length = struct.unpack('!Q', _recv_exact(sock, 8))[0]
+    payload = _recv_exact(sock, length)
+    if opcode == 0x8:
+        return {'type': 'closed', 'reason': 'websocket_closed'}
+    decoded = json.loads(payload.decode('utf-8'))
+    assert isinstance(decoded, dict)
+    return {str(key): value for key, value in decoded.items()}
+
+
+def _websocket_read_until(sock: socket.socket, frame_type: str) -> dict[str, object]:
+    deadline = time.time() + 2
+    while time.time() < deadline:
+        frame = _websocket_read_json(sock)
+        if frame.get('type') == frame_type:
+            return frame
+    raise AssertionError(f'websocket frame not received: {frame_type}')
+
+
+def _recv_exact(sock: socket.socket, length: int) -> bytes:
+    data = b''
+    while len(data) < length:
+        chunk = sock.recv(length - len(data))
+        if not chunk:
+            raise AssertionError('socket closed before expected bytes')
+        data += chunk
+    return data
+
+
+def _wait_for(predicate) -> None:
+    deadline = time.time() + 2
+    while time.time() < deadline:
+        if predicate():
+            return
+        time.sleep(0.01)
+    raise AssertionError('condition was not reached')
