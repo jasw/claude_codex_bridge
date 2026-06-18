@@ -110,6 +110,10 @@ named-tunnel preflight. This checks the local `cloudflared` binary, config,
 credentials file, public URL, route provider, and loopback origin without
 starting a CCB runtime:
 
+For multi-ingress `cloudflared` configs, the preflight selects the ingress
+entry whose `hostname` matches `--gateway-public-url` and blocks if that
+origin does not point at the `--gateway-listen` port.
+
 ```bash
 tools/mobile_gateway_terminal_smoke.py \
   --cloudflared-named-tunnel-preflight \

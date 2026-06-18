@@ -105,6 +105,10 @@ ccb mobile revoke <device_id>
 `cloudflared` binary、config、credentials file、public URL、route provider 和
 loopback origin 是否匹配，但不会启动 CCB runtime：
 
+如果 `cloudflared` config 有多条 ingress，preflight 会选择 `hostname` 匹配
+`--gateway-public-url` 的那条，并在该 origin 没有指向 `--gateway-listen` 端口时
+阻断验证。
+
 ```bash
 tools/mobile_gateway_terminal_smoke.py \
   --cloudflared-named-tunnel-preflight \
