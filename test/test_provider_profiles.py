@@ -11,7 +11,16 @@ except ModuleNotFoundError:  # pragma: no cover - Python < 3.11
 
 import pytest
 
-from agents.models import AgentSpec, PermissionMode, ProviderProfileSpec, QueuePolicy, RestoreMode, RuntimeMode, WorkspaceMode
+from agents.models import (
+    AgentSpec,
+    PermissionMode,
+    ProviderProfileSpec,
+    QueuePolicy,
+    RestoreMode,
+    RuntimeMode,
+    SkillOverlaySpec,
+    WorkspaceMode,
+)
 import provider_backends.claude.launcher_runtime.home as claude_home_runtime
 from provider_backends.claude.launcher_runtime.home import materialize_claude_home_config
 from provider_backends.claude.launcher_runtime.binary_cache import route_claude_binary_cache
@@ -553,6 +562,92 @@ def test_materialize_codex_home_config_falls_back_to_marked_copy_when_symlink_fa
     assert not (target_home / 'skills').is_symlink()
     assert (target_home / 'skills' / 'demo' / 'SKILL.md').read_text(encoding='utf-8') == 'demo skill\n'
     assert (target_home / 'skills.ccb-projection.json').is_file()
+
+
+def test_materialize_codex_home_config_filters_inherited_skills(tmp_path: Path) -> None:
+    source_home = tmp_path / 'system-codex-home'
+    target_home = tmp_path / 'managed-codex-home'
+    for skill_name in ('ask', 'trellis-check', 'trellis-start'):
+        (source_home / 'skills' / skill_name).mkdir(parents=True, exist_ok=True)
+        (source_home / 'skills' / skill_name / 'SKILL.md').write_text(f'{skill_name}\n', encoding='utf-8')
+
+    codex_home_config.materialize_codex_home_config(
+        target_home,
+        profile=ProviderProfileSpec(
+            inherit_commands=False,
+            inherit_memory=False,
+            inherited_skill_exclude=('trellis-*',),
+        ),
+        source_home=source_home,
+    )
+
+    assert (target_home / 'skills' / 'ask' / 'SKILL.md').read_text(encoding='utf-8') == 'ask\n'
+    assert (target_home / 'skills' / 'ask.ccb-projection.json').is_file()
+    assert not (target_home / 'skills' / 'trellis-check').exists()
+    assert not (target_home / 'skills' / 'trellis-start').exists()
+    assert not (target_home / 'skills.ccb-projection.json').exists()
+
+
+def test_materialize_codex_home_config_restores_full_inherited_skills_after_filter(tmp_path: Path) -> None:
+    source_home = tmp_path / 'system-codex-home'
+    target_home = tmp_path / 'managed-codex-home'
+    for skill_name in ('ask', 'trellis-check', 'trellis-start'):
+        (source_home / 'skills' / skill_name).mkdir(parents=True, exist_ok=True)
+        (source_home / 'skills' / skill_name / 'SKILL.md').write_text(f'{skill_name}\n', encoding='utf-8')
+
+    codex_home_config.materialize_codex_home_config(
+        target_home,
+        profile=ProviderProfileSpec(
+            inherit_commands=False,
+            inherit_memory=False,
+            inherited_skill_exclude=('trellis-*',),
+        ),
+        source_home=source_home,
+    )
+    codex_home_config.materialize_codex_home_config(
+        target_home,
+        profile=ProviderProfileSpec(inherit_commands=False, inherit_memory=False),
+        source_home=source_home,
+    )
+
+    assert (target_home / 'skills' / 'ask' / 'SKILL.md').read_text(encoding='utf-8') == 'ask\n'
+    assert (target_home / 'skills' / 'trellis-check' / 'SKILL.md').read_text(encoding='utf-8') == 'trellis-check\n'
+    assert (target_home / 'skills' / 'trellis-start' / 'SKILL.md').read_text(encoding='utf-8') == 'trellis-start\n'
+    assert not (target_home / 'skills' / 'ask.ccb-projection.json').exists()
+    assert (target_home / 'skills.ccb-projection.json').is_file()
+
+
+def test_materialize_codex_home_config_projects_skill_overlays(tmp_path: Path) -> None:
+    source_home = tmp_path / 'system-codex-home'
+    overlay_home = tmp_path / 'overlay-codex-home'
+    target_home = tmp_path / 'managed-codex-home'
+    (source_home / 'skills' / 'ask').mkdir(parents=True, exist_ok=True)
+    (source_home / 'skills' / 'ask' / 'SKILL.md').write_text('ask\n', encoding='utf-8')
+    for skill_name in ('trellis-check', 'trellis-start', 'unrelated'):
+        (overlay_home / skill_name).mkdir(parents=True, exist_ok=True)
+        (overlay_home / skill_name / 'SKILL.md').write_text(f'{skill_name}\n', encoding='utf-8')
+
+    codex_home_config.materialize_codex_home_config(
+        target_home,
+        profile=ProviderProfileSpec(
+            inherit_commands=False,
+            inherit_memory=False,
+            skill_overlays={
+                'n14_trellis': SkillOverlaySpec(
+                    source=str(overlay_home),
+                    include=('trellis-*',),
+                ),
+            },
+        ),
+        source_home=source_home,
+    )
+
+    assert (target_home / 'skills' / 'ask' / 'SKILL.md').read_text(encoding='utf-8') == 'ask\n'
+    assert (target_home / 'skills' / 'trellis-check' / 'SKILL.md').read_text(encoding='utf-8') == 'trellis-check\n'
+    assert (target_home / 'skills' / 'trellis-start' / 'SKILL.md').read_text(encoding='utf-8') == 'trellis-start\n'
+    assert (target_home / 'skills' / 'trellis-check.ccb-projection.json').is_file()
+    assert (target_home / 'skills' / 'trellis-start.ccb-projection.json').is_file()
+    assert not (target_home / 'skills' / 'unrelated').exists()
 
 
 def test_materialize_codex_home_config_does_not_replace_user_asset_dir(tmp_path: Path) -> None:

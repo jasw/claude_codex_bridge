@@ -509,6 +509,8 @@ permission = "manual"
 [agents.agent1.provider_profile]
 mode = "isolated"
 home = ".ccb/provider-profiles/agent1/codex"
+inherited_skill_include = ["*"]
+inherited_skill_exclude = ["trellis-*"]
 inherit_api = false
 inherit_auth = true
 inherit_config = true
@@ -531,6 +533,11 @@ enabled = false
 
 [agents.agent1.provider_profile.plugins."agentmemory@agentmemory"]
 enabled = true
+
+[agents.agent1.provider_profile.skill_overlays.n14_trellis]
+source = "/root/.codex/skills"
+include = ["trellis-*"]
+exclude = ["trellis-meta"]
 """,
     )
 
@@ -544,6 +551,8 @@ enabled = true
     assert spec.provider_profile.inherit_skills is False
     assert spec.provider_profile.inherit_commands is False
     assert spec.provider_profile.inherit_memory is False
+    assert spec.provider_profile.inherited_skill_include == ('*',)
+    assert spec.provider_profile.inherited_skill_exclude == ('trellis-*',)
     assert spec.provider_profile.env == {'OPENAI_API_KEY': 'sk-test'}
     assert spec.provider_profile.mcp_servers == {
         'codegraph': {'command': '/usr/local/bin/codegraph', 'args': ['serve', '--mcp']},
@@ -553,6 +562,10 @@ enabled = true
         'github@openai-curated': {'enabled': False},
         'agentmemory@agentmemory': {'enabled': True},
     }
+    overlay = spec.provider_profile.skill_overlays['n14_trellis']
+    assert overlay.source == '/root/.codex/skills'
+    assert overlay.include == ('trellis-*',)
+    assert overlay.exclude == ('trellis-meta',)
 
 
 def test_load_project_config_supports_workspace_path_and_group_fields(tmp_path: Path) -> None:
@@ -1861,8 +1874,13 @@ permission = "manual"
 
 [agents.agent1.provider_profile]
 mode = "isolated"
+inherited_skill_exclude = ["trellis-*"]
 inherit_api = false
 inherit_auth = false
+
+[agents.agent1.provider_profile.skill_overlays.n14_trellis]
+source = "/root/.codex/skills"
+include = ["trellis-*"]
 
 [agents.agent1.provider_profile.env]
 ANTHROPIC_API_KEY = "claude-key"
@@ -1876,6 +1894,8 @@ ANTHROPIC_BASE_URL = "https://claude.example.test"
     assert rendered.startswith('cmd; agent1:claude(worktree)\n')
     assert '[agents.agent1.provider_profile]' in rendered
     assert '[agents.agent1.provider_profile.env]' in rendered
+    assert '[agents.agent1.provider_profile.skill_overlays.n14_trellis]' in rendered
+    assert 'inherited_skill_exclude = ["trellis-*"]' in rendered
     assert 'ANTHROPIC_API_KEY = "claude-key"' in rendered
 
     rewritten_path = tmp_path / 'repo-render-provider-profile-roundtrip' / '.ccb' / 'ccb.config'
@@ -1887,6 +1907,9 @@ ANTHROPIC_BASE_URL = "https://claude.example.test"
     assert spec.provider_profile.mode == 'isolated'
     assert spec.provider_profile.inherit_api is False
     assert spec.provider_profile.inherit_auth is False
+    assert spec.provider_profile.inherited_skill_exclude == ('trellis-*',)
+    assert spec.provider_profile.skill_overlays['n14_trellis'].source == '/root/.codex/skills'
+    assert spec.provider_profile.skill_overlays['n14_trellis'].include == ('trellis-*',)
     assert spec.provider_profile.env == {
         'ANTHROPIC_API_KEY': 'claude-key',
         'ANTHROPIC_BASE_URL': 'https://claude.example.test',
