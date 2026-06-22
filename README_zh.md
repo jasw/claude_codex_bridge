@@ -708,6 +708,9 @@ v7 线重点：
 - Claude `provider_profile.mcp_servers` 现在即使 source `.claude.json`
   不存在也会生效，`enabled = false` 会清理 agent trust file 里的 stale
   managed MCP server。
+- callback continuation 现在会保留明确的 upstream finalization target；
+  继承的 ask skills 也会提醒 agent 在 upstream 结果可用前不要提前回答
+  callback continuation。
 
 </details>
 

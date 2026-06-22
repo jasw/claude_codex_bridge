@@ -722,6 +722,9 @@ v7 highlights:
 - Claude `provider_profile.mcp_servers` now works even when the source
   `.claude.json` does not exist, and `enabled = false` clears stale managed MCP
   servers from the agent trust file.
+- Callback continuations now preserve the upstream finalization target, and
+  inherited ask skills remind agents not to answer callback continuations before
+  upstream results are available.
 
 </details>
 

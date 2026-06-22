@@ -15,6 +15,9 @@
   `provider_profile.mcp_servers` now materializes even when the source
   `.claude.json` does not exist, and `enabled = false` clears stale managed MCP
   servers from the agent trust file.
+- **Callback Continuation Guarded**: callback continuations now keep the
+  upstream finalization target explicit, and inherited ask skills warn agents
+  not to answer a callback continuation before the upstream result is available.
 - **Release Surface Synchronized**: VERSION, CLI version constants,
   package.json, release workflow defaults, README release notes, and npm
   packaging metadata are aligned for 7.6.13.
