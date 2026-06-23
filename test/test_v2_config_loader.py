@@ -311,10 +311,12 @@ def test_render_default_project_config_text_omits_optional_tool_windows(tmp_path
     assert '[agents.ccb_self]' in rendered
     assert 'role = "agentroles.ccb_self"' in rendered
     assert '[tool_windows.' not in rendered
-    assert '[ui.sidebar.view]' in rendered
+    assert '[ui.sidebar]' in rendered
+    assert '[ui.sidebar.view]' not in rendered
     assert 'agents_height = "50%"' in rendered
-    assert 'comms_height = "23%"' in rendered
-    assert 'tips_height = "27%"' in rendered
+    assert 'comms_height = "15%"' in rendered
+    assert 'tips_height = "35%"' in rendered
+    assert 'position = "left"' not in rendered
     config_path = tmp_path / 'repo-render-default' / '.ccb' / 'ccb.config'
     _write(config_path, rendered)
     loaded = load_project_config(config_path.parents[1]).config
@@ -1301,13 +1303,100 @@ bottom_height = 20
     assert result.config.sidebar.mode == 'every_window'
     assert result.config.sidebar.width == '15%'
     assert result.config.sidebar.bottom_height == 20
+    assert result.config.sidebar.position == 'left'
     assert result.config.sidebar_view.agents_height == '50%'
-    assert result.config.sidebar_view.comms_height == '23%'
-    assert result.config.sidebar_view.tips_height == '27%'
+    assert result.config.sidebar_view.comms_height == '15%'
+    assert result.config.sidebar_view.tips_height == '35%'
     assert result.config.sidebar_view.comms_limit == 5
     assert result.config.sidebar_view.tips[0] == 'C-b d  detach'
     assert 'C-b h/j/k/l pane' in result.config.sidebar_view.tips
     assert 'copy: y yank' in result.config.sidebar_view.tips
+
+
+def test_load_project_config_supports_right_sidebar_position(tmp_path: Path) -> None:
+    project_root = tmp_path / 'repo-right-sidebar'
+    config_path = project_root / '.ccb' / 'ccb.config'
+    _write(
+        config_path,
+        """version = 2
+entry_window = "main"
+
+[windows]
+main = "agent1:codex"
+
+[ui.sidebar]
+position = "right"
+""",
+    )
+
+    loaded = load_project_config(project_root).config
+    rendered = render_project_config_text(loaded)
+
+    assert loaded.sidebar.position == 'right'
+    assert 'position = "right"' in rendered
+    assert '[ui.sidebar.view]' not in rendered
+    assert 'mode = "every_window"' not in rendered
+    assert 'width = "15%"' not in rendered
+    assert 'bottom_height = 20' not in rendered
+
+
+def test_load_project_config_rejects_invalid_sidebar_position(tmp_path: Path) -> None:
+    project_root = tmp_path / 'repo-invalid-sidebar-position'
+    config_path = project_root / '.ccb' / 'ccb.config'
+    _write(
+        config_path,
+        """version = 2
+entry_window = "main"
+
+[windows]
+main = "agent1:codex"
+
+[ui.sidebar]
+position = "bottom"
+""",
+    )
+
+    with pytest.raises(ConfigValidationError, match='ui\\.sidebar\\.position must be left or right'):
+        load_project_config(project_root)
+
+
+def test_load_project_config_supports_inline_sidebar_view_options(tmp_path: Path) -> None:
+    project_root = tmp_path / 'repo-inline-sidebar-view'
+    config_path = project_root / '.ccb' / 'ccb.config'
+    _write(
+        config_path,
+        """version = 2
+entry_window = "main"
+
+[windows]
+main = "agent1:codex"
+
+[ui.sidebar]
+agents_height = "40%"
+comms_height = "15%"
+tips_height = "45%"
+comms_limit = 4
+comms_compact = true
+tips_enabled = true
+tips = ["C-b d detach", "C-b z zoom"]
+""",
+    )
+
+    loaded = load_project_config(project_root).config
+    rendered = render_project_config_text(loaded)
+
+    assert loaded.sidebar_view.agents_height == '40%'
+    assert loaded.sidebar_view.comms_height == '15%'
+    assert loaded.sidebar_view.tips_height == '45%'
+    assert loaded.sidebar_view.comms_limit == 4
+    assert loaded.sidebar_view.comms_compact is True
+    assert loaded.sidebar_view.tips_enabled is True
+    assert loaded.sidebar_view.tips == ('C-b d detach', 'C-b z zoom')
+    assert '[ui.sidebar]' in rendered
+    assert '[ui.sidebar.view]' not in rendered
+    assert 'agents_height = "40%"' in rendered
+    assert 'comms_height = "15%"' in rendered
+    assert 'tips_height = "45%"' in rendered
 
 
 def test_load_project_config_supports_sidebar_view_options_without_topology_signature_drift(tmp_path: Path) -> None:

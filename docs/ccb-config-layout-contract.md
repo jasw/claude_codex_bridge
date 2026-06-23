@@ -221,8 +221,6 @@ work = "worker1:codex(worktree), worker2:claude(worktree)"
 mode = "every_window"
 width = "15%"
 bottom_height = 20
-
-[ui.sidebar.view]
 agents_height = "50%"
 comms_height = "15%"
 tips_height = "35%"
@@ -279,11 +277,13 @@ Contract:
 - `entry_window` may reference either an agent window or a tool window.
 - Windows topology must not be combined with legacy `default_agents`, `layout`, or `cmd_enabled` fields.
 - `entry_window` is optional and defaults to the first declared window.
-- `[ui.sidebar]` is valid only with windows topology. Defaults are `mode = "every_window"`, `width = "15%"`, and `bottom_height = 20`; `width` accepts either a positive integer column count or a percentage string.
-- In `mode = "every_window"`, CCB treats `width` as a project-wide sidebar width. Topology refreshes must resize every managed sidebar pane to the same configured share of its tmux window so page/window switches do not leave sidebars at different widths. If the user drags a sidebar border, CCB stores that runtime column width in the project tmux session and applies it to every managed sidebar window until the session is recreated. If tmux later resizes a window because a terminal client attaches or changes size, CCB reapplies the stored runtime width instead of treating the auto-resized pane width as a new user preference.
-- `[ui.sidebar.view]` is optional and controls only the sidebar pane's internal presentation. It must not redefine managed windows, agents, pane ownership, provider runtime, or message/job authority.
-- `[ui.sidebar.view]` changes are UI-only: `agents_height`, `comms_height`, `tips_height`, `comms_limit`, `comms_compact`, `tips_enabled`, and `tips` are delivered through `project_view` and must not force namespace topology recreation. `agents_height` controls the top Tree/Agent panel, `comms_height` controls the Comms panel, and `tips_height` controls the Tips panel; all three accept a positive integer row count or a percentage string. The default split is `50%`, `15%`, and `35%`.
-- If a hot-loaded `[ui.sidebar.view]` parse fails, `project_view.namespace.sidebar.view_error` reports the config error and the sidebar displays a `config ✕` warning while retaining the daemon's last valid view config.
+- `[ui.sidebar]` is valid only with windows topology. Defaults are `mode = "every_window"`, `width = "15%"`, `bottom_height = 20`, and `position = "left"`; `width` accepts either a positive integer column count or a percentage string.
+- `position` accepts only `left` or `right`. `left` keeps the sidebar as the first horizontal pane before the user layout; `right` keeps the same vertical sidebar pane after the user layout. Bottom or horizontal sidebar placement is not part of this contract.
+- In `mode = "every_window"`, CCB treats `width` as a project-wide sidebar width regardless of left/right position. Topology refreshes must resize every managed sidebar pane to the same configured share of its tmux window so page/window switches do not leave sidebars at different widths. If the user drags a sidebar border, CCB stores that runtime column width in the project tmux session and applies it to every managed sidebar window until the session is recreated. If tmux later resizes a window because a terminal client attaches or changes size, CCB reapplies the stored runtime width instead of treating the auto-resized pane width as a new user preference.
+- Sidebar presentation fields live directly under `[ui.sidebar]`: `agents_height`, `comms_height`, `tips_height`, `comms_limit`, `comms_compact`, `tips_enabled`, and `tips`. They control only the sidebar pane's internal presentation and must not redefine managed windows, agents, pane ownership, provider runtime, or message/job authority.
+- Sidebar presentation field changes are UI-only: they are delivered through `project_view` and must not force namespace topology recreation. `agents_height` controls the top Tree/Agent panel, `comms_height` controls the Comms panel, and `tips_height` controls the Tips panel; all three accept a positive integer row count or a percentage string. The default split is `50%`, `15%`, and `35%`.
+- Legacy `[ui.sidebar.view]` remains accepted as a compatibility input, but config rendering must emit the single-table `[ui.sidebar]` form.
+- If a hot-loaded sidebar presentation parse fails, `project_view.namespace.sidebar.view_error` reports the config error and the sidebar displays a `config ✕` warning while retaining the daemon's last valid view config.
 - Agent leaves in `[windows]` provide canonical `provider` and default
   `workspace_mode` (`agent:provider` means `inplace`;
   `agent:provider(worktree)` means `git-worktree`). They may also include an

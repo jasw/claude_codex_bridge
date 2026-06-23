@@ -38,6 +38,7 @@ def test_namespace_topology_plan_projects_sidebar_outside_user_layout() -> None:
     assert window.realized_layout == 'sidebar; (agent1:codex, agent2:codex, agent3:claude)'
     assert window.sidebar is not None
     assert window.sidebar.width == '15%'
+    assert window.sidebar.position == 'left'
     assert window.sidebar.launch_args == (
         'ccb-agent-sidebar',
         '--ccbd-socket',
@@ -51,6 +52,29 @@ def test_namespace_topology_plan_projects_sidebar_outside_user_layout() -> None:
     assert ccb_self_window.name == 'ccb_self'
     assert ccb_self_window.user_layout == 'ccb_self:claude'
     assert ccb_self_window.realized_layout == 'sidebar; (ccb_self:claude)'
+
+
+def test_namespace_topology_plan_projects_right_sidebar_after_user_layout() -> None:
+    config = ProjectConfig(
+        version=2,
+        default_agents=('agent1',),
+        agents={'agent1': _spec('agent1', 'codex')},
+        layout_spec='agent1:codex',
+        windows=(WindowSpec(name='main', order=0, layout_spec='agent1:codex', agent_names=('agent1',)),),
+        tool_windows=(ToolWindowSpec(name='logs', order=0, command='tail -f app.log'),),
+        entry_window='main',
+        sidebar=SidebarSpec(position='right'),
+    )
+
+    plan = build_namespace_topology_plan(config, ccbd_socket_path='/tmp/ccbd.sock', project_root='/repo')
+
+    assert plan.sidebar_enabled is True
+    assert plan.windows[0].realized_layout == '(agent1:codex); sidebar'
+    assert plan.windows[0].sidebar is not None
+    assert plan.windows[0].sidebar.position == 'right'
+    assert plan.windows[1].realized_layout == '(tool); sidebar'
+    assert plan.windows[1].sidebar is not None
+    assert plan.windows[1].sidebar.position == 'right'
 
 
 def test_namespace_topology_plan_leaves_layout_plain_when_sidebar_off() -> None:

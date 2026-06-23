@@ -274,6 +274,33 @@ def _materialize_sidebar(
     sidebar = getattr(window, 'sidebar', None)
     if sidebar is None:
         return root_pane
+    if getattr(sidebar, 'position', 'left') == 'right':
+        sidebar_pane = split_pane(
+            context.backend,
+            target=root_pane,
+            direction='right',
+            percent=_sidebar_pane_percent_for_sidebar(
+                sidebar.width,
+                pane_width=_pane_width_cells(context.backend, root_pane),
+            ),
+            project_root=controller._layout.project_root,
+            timeout_s=timeout_s,
+        )
+        _respawn_sidebar(context.backend, sidebar_pane, sidebar.launch_args, cwd=str(controller._layout.project_root))
+        apply_ccb_pane_identity(
+            context.backend,
+            sidebar_pane,
+            title='sidebar',
+            agent_label='sidebar',
+            project_id=controller._project_id,
+            role='sidebar',
+            slot_key=f'sidebar:{window.name}',
+            window_name=window.name,
+            sidebar_instance=window.name,
+            namespace_epoch=epoch,
+            managed_by='ccbd',
+        )
+        return root_pane
     user_root = split_pane(
         context.backend,
         target=root_pane,
@@ -769,6 +796,13 @@ def _user_pane_percent_for_sidebar(width: object, pane_width: int = 0) -> int:
         user_cells = max(1, int(pane_width) - sidebar_cells)
         return max(1, min(99, round((user_cells * 100) / int(pane_width))))
     return max(10, min(99, 100 - _sidebar_percent(width)))
+
+
+def _sidebar_pane_percent_for_sidebar(width: object, pane_width: int = 0) -> int:
+    if pane_width > 0:
+        sidebar_cells = _sidebar_width_cells(width, pane_width)
+        return max(1, min(99, round((sidebar_cells * 100) / int(pane_width))))
+    return _sidebar_percent(width)
 
 
 def _respawn_sidebar(backend, pane_id: str, launch_args: tuple[str, ...], *, cwd: str) -> None:

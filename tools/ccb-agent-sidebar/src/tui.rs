@@ -35,8 +35,8 @@ const PROJECT_VIEW_REFRESH_MIN_MS: u64 = 100;
 const PROJECT_VIEW_REFRESH_MAX_MS: u64 = 5000;
 const PROJECT_VIEW_REFRESH_DEFAULT_MS: u64 = 1000;
 const DEFAULT_TREE_HEIGHT_PERCENT: u16 = 50;
-const DEFAULT_COMMS_HEIGHT_PERCENT: u16 = 23;
-const DEFAULT_TIPS_HEIGHT_PERCENT: u16 = 27;
+const DEFAULT_COMMS_HEIGHT_PERCENT: u16 = 15;
+const DEFAULT_TIPS_HEIGHT_PERCENT: u16 = 35;
 const TREE_CONTROL_CONTENT_WIDTH: u16 = 3;
 const TREE_REFRESH_SYMBOL: &str = "↻";
 const TREE_KILL_SYMBOL: &str = "×";
@@ -1130,11 +1130,11 @@ fn draw_tree(frame: &mut Frame<'_>, area: Rect, app: &SidebarApp) {
     );
     frame.render_widget(list, area);
     if needs_scrollbar {
-        let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
-            .begin_symbol(Some("↑"))
-            .end_symbol(Some("↓"));
+        let scrollbar = sidebar_scrollbar();
+        let scrollbar_position =
+            scrollbar_position_for_scroll(scroll, row_count, usize::from(content_height));
         let mut scrollbar_state = ScrollbarState::new(row_count)
-            .position(scroll)
+            .position(scrollbar_position)
             .viewport_content_length(usize::from(content_height));
         frame.render_stateful_widget(
             scrollbar,
@@ -1343,11 +1343,11 @@ fn draw_comms(frame: &mut Frame<'_>, area: Rect, app: &SidebarApp) {
             lines.extend(item_lines);
         }
         if needs_scrollbar {
-            let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
-                .begin_symbol(Some("↑"))
-                .end_symbol(Some("↓"));
+            let scrollbar = sidebar_scrollbar();
+            let scrollbar_position =
+                scrollbar_position_for_scroll(scroll, visible_comms.len(), visible_capacity);
             let mut scrollbar_state = ScrollbarState::new(visible_comms.len())
-                .position(scroll)
+                .position(scrollbar_position)
                 .viewport_content_length(visible_capacity);
             let paragraph =
                 Paragraph::new(lines).block(Block::default().title("Comms").borders(Borders::ALL));
@@ -1439,16 +1439,19 @@ fn draw_tips(frame: &mut Frame<'_>, area: Rect, app: &SidebarApp) {
     let scroll = app
         .tips_scroll
         .min(lines.len().saturating_sub(content_height.max(1)));
-    let paragraph = Paragraph::new(lines.clone())
-        .scroll((scroll as u16, 0))
-        .block(Block::default().title("Tips").borders(Borders::ALL));
+    let visible_lines = lines
+        .into_iter()
+        .skip(scroll)
+        .take(content_height.max(1))
+        .collect::<Vec<_>>();
+    let paragraph =
+        Paragraph::new(visible_lines).block(Block::default().title("Tips").borders(Borders::ALL));
     frame.render_widget(paragraph, area);
     if needs_scrollbar {
-        let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
-            .begin_symbol(Some("↑"))
-            .end_symbol(Some("↓"));
-        let mut scrollbar_state = ScrollbarState::new(lines.len())
-            .position(scroll)
+        let scrollbar = sidebar_scrollbar();
+        let scrollbar_position = scrollbar_position_for_scroll(scroll, tips_count, content_height);
+        let mut scrollbar_state = ScrollbarState::new(tips_count)
+            .position(scrollbar_position)
             .viewport_content_length(content_height);
         frame.render_stateful_widget(
             scrollbar,
@@ -1465,6 +1468,34 @@ fn tips_scroll_max(view: &SidebarViewInfo, viewport_height: u16) -> usize {
     view.tips
         .len()
         .saturating_sub(usize::from(viewport_height.max(1)))
+}
+
+fn sidebar_scrollbar() -> Scrollbar<'static> {
+    let track_style = Style::default().fg(Color::DarkGray);
+    let thumb_style = Style::default().fg(Color::Gray);
+    Scrollbar::new(ScrollbarOrientation::VerticalRight)
+        .begin_symbol(Some("↑"))
+        .end_symbol(Some("↓"))
+        .begin_style(track_style)
+        .end_style(track_style)
+        .track_style(track_style)
+        .thumb_style(thumb_style)
+}
+
+fn scrollbar_position_for_scroll(
+    scroll: usize,
+    content_length: usize,
+    viewport_content_length: usize,
+) -> usize {
+    if content_length == 0 || viewport_content_length == 0 {
+        return 0;
+    }
+    let max_scroll = content_length.saturating_sub(viewport_content_length);
+    if max_scroll == 0 {
+        return 0;
+    }
+    let max_position = content_length.saturating_sub(1);
+    scroll.min(max_scroll).saturating_mul(max_position) / max_scroll
 }
 
 fn empty_dash(value: &str) -> &str {
@@ -2012,7 +2043,8 @@ mod tests {
         terminal.draw(|frame| draw(frame, &app)).unwrap();
 
         let rendered = terminal.backend().to_string();
-        assert!(rendered.contains("↻  X  ⌫  agent3 > agent1 ok"));
+        assert!(rendered.contains("↻  X  ⌫  agent2 > agent1 ok"));
+        assert!(!rendered.contains("agent3 > agent1"));
         assert!(!rendered.contains("agent4 > agent1"));
         assert!(!rendered.contains("agent5 > agent1"));
         assert!(!rendered.contains("agent6 > agent1"));
@@ -2020,12 +2052,12 @@ mod tests {
         let buffer = terminal.backend().buffer();
         assert_eq!(buffer[(0, 18)].symbol(), "┌");
         assert_eq!(buffer[(1, 18)].symbol(), "C");
-        assert_eq!(buffer[(0, 27)].symbol(), "┌");
-        assert_eq!(buffer[(1, 27)].symbol(), "T");
+        assert_eq!(buffer[(0, 24)].symbol(), "┌");
+        assert_eq!(buffer[(1, 24)].symbol(), "T");
     }
 
     #[test]
-    fn tall_sidebar_uses_default_half_twenty_three_and_twenty_seven_split() {
+    fn tall_sidebar_uses_default_fifty_fifteen_and_thirty_five_split() {
         let mut app = SidebarApp::new("main".into());
         app.apply_response(sample_response_with_comms(6));
         let area = Rect::new(0, 0, 24, 40);
@@ -2033,8 +2065,8 @@ mod tests {
         let areas = sidebar_areas(area, app.sidebar_view());
 
         assert_eq!(areas.tree.height, 20);
-        assert_eq!(areas.comms.height, 10);
-        assert_eq!(areas.tips.map(|area| area.height), Some(10));
+        assert_eq!(areas.comms.height, 6);
+        assert_eq!(areas.tips.map(|area| area.height), Some(14));
     }
 
     #[test]
@@ -2114,8 +2146,8 @@ mod tests {
         let areas = app.sidebar_areas(area);
 
         assert_eq!(areas.tree.height, 20);
-        assert_eq!(areas.comms.height, 10);
-        assert_eq!(areas.tips.map(|area| area.height), Some(10));
+        assert_eq!(areas.comms.height, 6);
+        assert_eq!(areas.tips.map(|area| area.height), Some(14));
         assert_eq!(
             app.resize_divider_at(1, areas.comms.y, area),
             Some(SidebarResizeDivider::TreeComms)
@@ -2124,9 +2156,9 @@ mod tests {
         assert!(app.handle_mouse_drag(1, areas.comms.y + 4, area));
 
         let resized = app.sidebar_areas(area);
-        assert_eq!(resized.tree.height, 24);
-        assert_eq!(resized.comms.height, 6);
-        assert_eq!(resized.tips.map(|area| area.height), Some(10));
+        assert_eq!(resized.tree.height, 23);
+        assert_eq!(resized.comms.height, 3);
+        assert_eq!(resized.tips.map(|area| area.height), Some(14));
 
         app.handle_mouse_up();
         let tips = resized.tips.expect("tips area should render");
@@ -2135,12 +2167,12 @@ mod tests {
             Some(SidebarResizeDivider::CommsTips)
         );
         assert!(app.start_resize_at(1, tips.y, area));
-        assert!(app.handle_mouse_drag(1, tips.y - 3, area));
+        assert!(app.handle_mouse_drag(1, tips.y + 4, area));
 
         let resized = app.sidebar_areas(area);
-        assert_eq!(resized.tree.height, 24);
-        assert_eq!(resized.comms.height, 3);
-        assert_eq!(resized.tips.map(|area| area.height), Some(13));
+        assert_eq!(resized.tree.height, 23);
+        assert_eq!(resized.comms.height, 7);
+        assert_eq!(resized.tips.map(|area| area.height), Some(10));
     }
 
     #[test]
@@ -2484,6 +2516,14 @@ mod tests {
 
         assert!(!rendered.contains("tip one"));
         assert!(rendered.contains("tip three"));
+    }
+
+    #[test]
+    fn scrollbar_position_reaches_visual_end_at_max_scroll() {
+        assert_eq!(scrollbar_position_for_scroll(0, 20, 10), 0);
+        assert_eq!(scrollbar_position_for_scroll(10, 20, 10), 19);
+        assert_eq!(scrollbar_position_for_scroll(5, 20, 10), 9);
+        assert_eq!(scrollbar_position_for_scroll(0, 4, 10), 0);
     }
 
     #[cfg(unix)]

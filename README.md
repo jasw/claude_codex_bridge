@@ -147,8 +147,6 @@ review = "reviewer:claude, qa:gemini"
 mode = "every_window"
 width = "15%"
 bottom_height = 20
-
-[ui.sidebar.view]
 agents_height = "50%"
 comms_height = "15%"
 tips_height = "35%"
@@ -395,7 +393,7 @@ The built-in default is a v2 `[windows]` config with `agent1`, `agent2`, `agent3
 | Window grouping | `[windows]` | Group agents into tmux windows such as `main`, `work`, `review`, or `research`. |
 | Agent name and provider | `main:codex`, `reviewer:claude` | Names are used by the UI, ask routing, and memory files; provider decides which CLI starts. |
 | Workspace isolation | `worker1:codex(worktree)` | Gives implementation agents isolated git worktrees to reduce accidental overlap. |
-| Sidebar behavior | `[ui.sidebar]` | Controls whether the sidebar appears in every window, plus width and Comms height. |
+| Sidebar behavior | `[ui.sidebar]` | Controls whether the sidebar appears in every window, its left/right position, width, and Comms height. |
 | Tool windows | `[tool_windows.<name>]` | Add managed non-agent windows such as the rich workbench; they appear as one sidebar row and are not `ask` targets. |
 | Per-agent model/API | `[agents.<name>]` | Configure `model`, `key`, `url`, and related agent-local overrides. |
 | Role Pack binding | `agentroles.archi:codex` | Bind a reusable role package through a window leaf; role assets are installed once and projected into the derived agent. |
@@ -500,8 +498,6 @@ review = "reviewer:claude, qa:gemini"
 mode = "every_window"
 width = "15%"
 bottom_height = 20
-
-[ui.sidebar.view]
 agents_height = "50%"
 comms_height = "15%"
 tips_height = "35%"

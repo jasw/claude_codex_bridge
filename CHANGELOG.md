@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+### Sidebar Layout And Config
+
+- **Sidebar Config Flattened**: canonical rendering now keeps sidebar topology
+  and presentation fields in one `[ui.sidebar]` table. The legacy
+  `[ui.sidebar.view]` table remains accepted as compatibility input.
+- **Right Sidebar Placement Added**: `position = "right"` places the existing
+  vertical sidebar pane on the right side of managed tmux windows while
+  preserving the default left placement.
+- **Sidebar Scrolling Adjusted**: the default native sidebar split is Agents
+  `50%`, Comms `15%`, Tips `35%`, and sidebar scrollbars now reach the visual
+  end consistently.
+
 ## v7.6.13 (2026-06-22)
 
 ### Provider Profile Overlay Fixes

@@ -73,12 +73,7 @@ windows topology 模式声明 \src{windows}。它从 window leaves 推导 \src{d
   \item \src{mode}
   \item \src{width}
   \item \src{bottom_height}
-  \item \src{view}
-\end{itemize}
-
-\src{ui.sidebar.view} 支持：
-
-\begin{itemize}
+  \item \src{position}，可选 \src{left} 或 \src{right}，默认 \src{left}
   \item \src{agents_height}
   \item \src{comms_height}
   \item \src{tips_height}
@@ -87,6 +82,8 @@ windows topology 模式声明 \src{windows}。它从 window leaves 推导 \src{d
   \item \src{tips_enabled}
   \item \src{tips}
 \end{itemize}
+
+\src{ui.sidebar.view} 子表仍可作为旧配置兼容读取；新渲染统一输出 \src{ui.sidebar} 单表。
 
 sidebar 是 UI 投影，不应该改变 daemon ownership 或 agent mount set。
 
