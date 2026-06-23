@@ -6,7 +6,7 @@
 **可见、可控的多 Agent 合作TUI工作台**
 
 <p>
-  <img src="https://img.shields.io/badge/version-7.6.14-orange.svg" alt="version">
+  <img src="https://img.shields.io/badge/version-7.6.15-orange.svg" alt="version">
   <img src="https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20WSL-lightgrey.svg" alt="platform">
   <img src="https://img.shields.io/badge/providers-15%20CLI%20families-0B7285.svg" alt="providers">
 </p>
@@ -694,6 +694,18 @@ v7 线重点：
 - 加固 tmux、Ghostty、release helper、Codex trust 和 provider 会话恢复路径。
 
 <details open>
+<summary><b>v7.6.15</b> - Codex 诊断与 Sidebar Focus 修复</summary>
+
+- managed Codex 默认把 `logs_2.sqlite` 诊断写入重定向到临时存储，并阻断
+  diagnostic log insert；diagnostics 模式可恢复原始数据库路径用于排查。
+- 如果临时 SQLite symlink 无法安装，会回退到 in-place diagnostic trigger
+  路径，避免启动失败。
+- 修复 sidebar 点击其他 tmux window 中 agent 的聚焦路径：先选择目标
+  window，再选择 pane；缺少 window 元数据时继续保留 pane id 兜底。
+
+</details>
+
+<details>
 <summary><b>v7.6.14</b> - Mobile Gateway Alpha 与 Codex 诊断治理</summary>
 
 - 新增 Mobile Gateway Alpha 能力：认证 pairing、focus routes、terminal

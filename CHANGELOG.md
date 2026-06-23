@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+## v7.6.15 (2026-06-23)
+
+### Codex Diagnostics And Sidebar Focus
+
+- **Codex Diagnostic Logs Redirected**: managed Codex homes now redirect
+  `logs_2.sqlite` diagnostic writes to a temporary database by default and
+  block diagnostic log inserts, while diagnostics mode restores the original
+  database behavior for troubleshooting.
+- **Codex Diagnostic Fallback Hardened**: when the temporary SQLite symlink
+  path cannot be installed, CCB falls back to the in-place diagnostic trigger
+  path instead of failing startup.
+- **Sidebar Cross-Window Focus Fixed**: sidebar agent clicks now first select
+  the target tmux window and then select the pane, preserving pane-id fallback
+  when window metadata is missing.
+- **Release Surface Synchronized**: VERSION, CLI version constants,
+  package.json, release workflow defaults, README release notes, and npm
+  packaging metadata are aligned for 7.6.15.
+
 ## v7.6.14 (2026-06-23)
 
 ### Mobile Gateway Alpha And Codex Diagnostics

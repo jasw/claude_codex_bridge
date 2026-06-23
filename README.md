@@ -6,7 +6,7 @@
 **Visible, controllable multi-agent cooperative TUI workspace**
 
 <p>
-  <img src="https://img.shields.io/badge/version-7.6.14-orange.svg" alt="version">
+  <img src="https://img.shields.io/badge/version-7.6.15-orange.svg" alt="version">
   <img src="https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20WSL-lightgrey.svg" alt="platform">
   <img src="https://img.shields.io/badge/providers-15%20CLI%20families-0B7285.svg" alt="providers">
 </p>
@@ -708,6 +708,20 @@ v7 highlights:
 - Hardened tmux, Ghostty, release helper, Codex trust, and provider session restore paths.
 
 <details open>
+<summary><b>v7.6.15</b> - Codex Diagnostics And Sidebar Focus</summary>
+
+- Redirects managed Codex `logs_2.sqlite` diagnostic writes to temporary
+  storage by default and blocks diagnostic log inserts, while diagnostics mode
+  can restore the original database path for troubleshooting.
+- Falls back to the in-place diagnostic trigger path when the temporary SQLite
+  symlink cannot be installed.
+- Fixes sidebar clicks for agents in other tmux windows by selecting the target
+  window before selecting the pane, with pane-id fallback when window metadata
+  is missing.
+
+</details>
+
+<details>
 <summary><b>v7.6.14</b> - Mobile Gateway Alpha And Codex Diagnostics</summary>
 
 - Adds the mobile gateway alpha surface: authenticated pairing, focus routes,
