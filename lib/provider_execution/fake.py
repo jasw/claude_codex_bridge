@@ -47,7 +47,7 @@ class FakeProviderAdapter:
         events = tuple(normalize_script_event(raw) for raw in (directive.script or default_script(directive, mode=self._script_mode)))
         max_delay_ms = max((event.at_ms for event in events), default=0)
         ready_at = parse_utc_timestamp(now) + timedelta(milliseconds=max_delay_ms)
-        reply = f'FAKE[{job.agent_name}] {job.request.body}'
+        reply = _reply_for_body(job.agent_name, job.request.body)
         return ProviderSubmission(
             job_id=job.job_id,
             agent_name=job.agent_name,
@@ -169,6 +169,24 @@ _first_text = first_text
 _materialize_payload = materialize_payload
 _normalize_script_event = normalize_script_event
 _parse_directive = parse_directive
+
+
+def _reply_for_body(agent_name: str, body: str) -> str:
+    marker = body.strip()
+    prefix = 'ccb-local-md:'
+    if marker.startswith(prefix):
+        ident = marker[len(prefix) :].strip() or 'sample'
+        return (
+            f'# CCB Local Markdown {ident}\n\n'
+            f'- reply marker: `ccb-local-reply:{ident}`\n'
+            '- rendered list item from the real local backend\n\n'
+            '```text\n'
+            f'agent={agent_name}\n'
+            'route=local-loopback\n'
+            '```\n\n'
+            f'[blocked local link](https://example.invalid/ccb-local-md/{ident})'
+        )
+    return f'FAKE[{agent_name}] {body}'
 
 
 __all__ = [
