@@ -143,6 +143,20 @@ class _FakeCcbdClient:
         }
 
 
+class _FailingCcbdClient:
+    def __init__(self, message: str = 'ccbd unavailable at /tmp/private.sock') -> None:
+        self.message = message
+        self.calls: list[tuple[object, ...]] = []
+
+    def ping(self, target: str = 'ccbd') -> dict[str, object]:
+        self.calls.append(('ping', target))
+        raise RuntimeError(self.message)
+
+    def project_view(self, *, schema_version: int = 1) -> dict[str, object]:
+        self.calls.append(('project_view', schema_version))
+        raise RuntimeError(self.message)
+
+
 class _FakeTerminalSession:
     def __init__(self, target) -> None:
         self.target = target
@@ -299,6 +313,50 @@ def test_projects_payload_lists_registry_projects_without_exposing_tmux_socket()
     assert 'tmux.sock' not in json.dumps(projects)
     assert first.calls == [('ping', 'ccbd')]
     assert second.calls == [('ping', 'ccbd')]
+
+
+def test_projects_payload_keeps_healthy_projects_when_registry_has_unreachable_project() -> None:
+    healthy = _FakeCcbdClient(
+        project_id='proj-one',
+        project_root='/srv/one',
+        display_name='one',
+    )
+    stale = _FailingCcbdClient()
+    service = _service(
+        healthy,
+        project_registry=MobileGatewayProjectRegistry(
+            [
+                MobileGatewayProject(
+                    project_id='proj-one',
+                    project_root=Path('/srv/one'),
+                    ccbd_client_factory=lambda: healthy,
+                ),
+                MobileGatewayProject(
+                    project_id='proj-stale',
+                    project_root=Path('/srv/stale'),
+                    display_name='stale',
+                    ccbd_client_factory=lambda: stale,
+                ),
+            ]
+        ),
+    )
+
+    projects = service.projects_payload()
+
+    assert [item['id'] for item in projects['projects']] == [
+        'proj-one',
+        'proj-stale',
+    ]
+    assert projects['projects'][0]['health'] == 'healthy'
+    assert projects['projects'][0]['mount_state'] == 'mounted'
+    assert projects['projects'][1]['display_name'] == 'stale'
+    assert projects['projects'][1]['root'] == '/srv/stale'
+    assert projects['projects'][1]['health'] == 'unreachable'
+    assert projects['projects'][1]['mount_state'] == 'unavailable'
+    assert projects['projects'][1]['error'] == 'project unavailable'
+    assert '/tmp/private.sock' not in json.dumps(projects)
+    assert healthy.calls == [('ping', 'ccbd')]
+    assert stale.calls == [('ping', 'ccbd')]
 
 
 def test_project_view_redacts_server_tmux_evidence() -> None:

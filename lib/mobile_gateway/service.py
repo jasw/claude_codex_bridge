@@ -138,17 +138,18 @@ class MobileGatewayService:
     def projects_payload(self) -> dict[str, object]:
         projects: list[dict[str, object]] = []
         for project in self._project_registry.projects():
-            ccbd = self._ping_or_unavailable(project)
-            projects.append(
-                {
-                    'id': project.project_id,
-                    'display_name': project.public_display_name,
-                    'root': str(project.project_root),
-                    'health': str(ccbd.get('health') or 'unknown'),
-                    'mount_state': str(ccbd.get('mount_state') or ''),
-                    'capabilities': self._capabilities(),
-                }
-            )
+            ccbd = self._project_list_health(project)
+            item = {
+                'id': project.project_id,
+                'display_name': project.public_display_name,
+                'root': str(project.project_root),
+                'health': str(ccbd.get('health') or 'unknown'),
+                'mount_state': str(ccbd.get('mount_state') or ''),
+                'capabilities': self._capabilities(),
+            }
+            if ccbd.get('error'):
+                item['error'] = str(ccbd.get('error') or '')
+            projects.append(item)
         return {
             'schema_version': _SCHEMA_VERSION,
             'projects': projects,
@@ -918,6 +919,16 @@ class MobileGatewayService:
         except Exception as exc:
             raise MobileGatewayError(_error_text(exc), status_code=503) from exc
         return dict(payload or {}) if isinstance(payload, dict) else {}
+
+    def _project_list_health(self, project: MobileGatewayProject) -> dict[str, object]:
+        try:
+            return self._ping_or_unavailable(project)
+        except MobileGatewayError:
+            return {
+                'health': 'unreachable',
+                'mount_state': 'unavailable',
+                'error': 'project unavailable',
+            }
 
     def _request_project_view(self, project: MobileGatewayProject) -> dict[str, object]:
         try:
