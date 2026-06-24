@@ -604,6 +604,70 @@ def test_agent_conversation_includes_completed_comms_reply_preview(tmp_path: Pat
     assert 'wrong target' not in json.dumps(payload)
 
 
+def test_agent_conversation_pages_latest_then_older_items(tmp_path: Path) -> None:
+    project_root = tmp_path / 'repo'
+    snapshot_dir = project_root / '.ccb' / 'ccbd' / 'snapshots'
+    snapshot_dir.mkdir(parents=True)
+    (snapshot_dir / 'job_mobile_reply.json').write_text(
+        json.dumps({'latest_decision': {'reply': 'answer from mobile_probe'}}),
+        encoding='utf-8',
+    )
+    (snapshot_dir / 'job_mobile_old_reply.json').write_text(
+        json.dumps({'latest_decision': {'reply': 'older answer from mobile_probe'}}),
+        encoding='utf-8',
+    )
+    service = _service(
+        _FakeCcbdClientWithConversationComms(),
+        project_root=project_root,
+        mobile_dir=tmp_path / 'mobile',
+    )
+    pairing = service.create_pairing_payload(
+        gateway_url='http://127.0.0.1:8787',
+        scopes=('view',),
+    )
+    _, claim = service.dispatch_post(
+        '/v1/pairing/claim',
+        {'pairing_code': str(pairing['pairing_code'])},
+    )
+    headers = {'Authorization': f'Bearer {claim["device_token"]}'}
+
+    _, latest = service.dispatch_get(
+        '/v1/projects/proj-demo/agents/mobile/conversation?namespace_epoch=4&limit=2',
+        headers,
+    )
+    latest_conversation = latest['conversation']
+
+    assert [item['id'] for item in latest_conversation['items']] == [
+        'user-job_mobile_reply',
+        'reply-job_mobile_reply',
+    ]
+    assert latest_conversation['next_cursor'] == '4'
+
+    _, older = service.dispatch_get(
+        '/v1/projects/proj-demo/agents/mobile/conversation?namespace_epoch=4&limit=2&cursor=4',
+        headers,
+    )
+    older_conversation = older['conversation']
+
+    assert [item['id'] for item in older_conversation['items']] == [
+        'user-job_mobile_old_reply',
+        'reply-job_mobile_old_reply',
+    ]
+    assert older_conversation['next_cursor'] == '2'
+
+    _, oldest = service.dispatch_get(
+        '/v1/projects/proj-demo/agents/mobile/conversation?namespace_epoch=4&limit=2&cursor=2',
+        headers,
+    )
+    oldest_conversation = oldest['conversation']
+
+    assert [item['id'] for item in oldest_conversation['items']] == [
+        'status-mobile',
+        'reply-content-1',
+    ]
+    assert 'next_cursor' not in oldest_conversation
+
+
 def test_agent_conversation_maps_artifact_links_to_download_attachments(tmp_path: Path) -> None:
     project_root = tmp_path / 'repo'
     snapshot_dir = project_root / '.ccb' / 'ccbd' / 'snapshots'

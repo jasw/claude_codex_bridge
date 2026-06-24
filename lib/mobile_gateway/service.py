@@ -278,24 +278,30 @@ class MobileGatewayService:
             namespace_epoch=_query_int(query, 'namespace_epoch'),
         )
         limit = min(200, max(1, _query_int(query, 'limit') or 50))
-        items = _agent_conversation_items(
-            view_payload,
-            project_id=project.project_id,
-            agent=target['agent'],
-            namespace_epoch=int(target['namespace_epoch']),
+        page = _agent_conversation_page(
+            _agent_conversation_items(
+                view_payload,
+                project_id=project.project_id,
+                agent=target['agent'],
+                namespace_epoch=int(target['namespace_epoch']),
+                project_root=project.project_root,
+            ),
             limit=limit,
-            project_root=project.project_root,
+            cursor=_query_text(query, 'cursor'),
         )
+        conversation: dict[str, object] = {
+            'project_id': project.project_id,
+            'agent': target['agent'],
+            'namespace_epoch': target['namespace_epoch'],
+            'generated_at': self._clock(),
+            'items': page['items'],
+        }
+        if page['next_cursor'] is not None:
+            conversation['next_cursor'] = page['next_cursor']
         return {
             'schema_version': _SCHEMA_VERSION,
             'status': 'ok',
-            'conversation': {
-                'project_id': project.project_id,
-                'agent': target['agent'],
-                'namespace_epoch': target['namespace_epoch'],
-                'generated_at': self._clock(),
-                'items': items,
-            },
+            'conversation': conversation,
         }
 
     def file_upload_target_from_path(self, path: str) -> tuple[str, str] | None:
@@ -1357,7 +1363,6 @@ def _agent_conversation_items(
     project_id: str,
     agent: str,
     namespace_epoch: int,
-    limit: int,
     project_root: Path,
 ) -> list[dict[str, object]]:
     view = _map(view_payload.get('view'))
@@ -1474,9 +1479,29 @@ def _agent_conversation_items(
                 'attachments': attachments,
             }
         )
-    if len(items) > limit:
-        return items[:limit]
     return items
+
+
+def _agent_conversation_page(
+    items: list[dict[str, object]],
+    *,
+    limit: int,
+    cursor: str | None,
+) -> dict[str, object]:
+    if cursor is None:
+        end = len(items)
+    else:
+        try:
+            end = int(cursor)
+        except ValueError as exc:
+            raise MobileGatewayError('cursor must be an integer', status_code=400) from exc
+        if end < 0 or end > len(items):
+            raise MobileGatewayError('cursor is out of range', status_code=400)
+    start = max(0, end - limit)
+    return {
+        'items': items[start:end],
+        'next_cursor': str(start) if start > 0 else None,
+    }
 
 
 def _conversation_item_belongs_to_agent(item: dict[str, object], agent: str) -> bool:
