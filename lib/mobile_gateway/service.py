@@ -1503,7 +1503,7 @@ def _completion_reply_for_job(
         or _optional_text(payload.get('latest_reply_preview'))
         or ''
     )
-    
+
     attachments = []
     payload_obj = _map(latest_decision.get('payload'))
     if 'attachments' in payload_obj:

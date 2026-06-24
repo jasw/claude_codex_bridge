@@ -190,17 +190,17 @@ def _reply_for_body(job: JobRecord) -> tuple[str, list[dict[str, object]]]:
             f'[blocked local link](https://example.invalid/ccb-local-md/{ident})',
             []
         )
-    
+
     artifact_prefix = 'ccb-local-artifact:'
     if marker.startswith(artifact_prefix):
         ident = marker[len(artifact_prefix) :].strip() or 'sample'
-        
+
         import uuid
         import json
         import hashlib
         from pathlib import Path
         from datetime import datetime, timezone
-        
+
         project_id = job.request.project_id
         route_options = dict(getattr(job.request, 'route_options', None) or {})
         mobile_files_dir_text = str(route_options.get('mobile_files_dir') or '').strip()
@@ -212,9 +212,9 @@ def _reply_for_body(job: JobRecord) -> tuple[str, list[dict[str, object]]]:
                 return (f"FAKE_ERROR: no mobile file store to generate artifact for {ident}", [])
             project_root = Path(workspace_path).parents[4]
             mobile_files_dir = project_root / '.ccb' / 'ccbd' / 'mobile' / 'files'
-        
+
         attachments = []
-        
+
         txt_file_id = f'mobile-file-{uuid.uuid4().hex[:16]}'
         txt_body = f'Generated text artifact for {ident}'.encode('utf-8')
         txt_digest = hashlib.sha256(txt_body).hexdigest()
@@ -241,7 +241,7 @@ def _reply_for_body(job: JobRecord) -> tuple[str, list[dict[str, object]]]:
             'size_bytes': len(txt_body),
             'kind': 'document',
         })
-        
+
         png_file_id = f'mobile-file-{uuid.uuid4().hex[:16]}'
         png_body = b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15\xc4\x89\x00\x00\x00\rIDATx\x9cc\xfc\xcf\xc0\x00\x00\x03\x01\x01\x00\x18\xdd\x8d\xb0\x00\x00\x00\x00IEND\xaeB`\x82'
         png_digest = hashlib.sha256(png_body).hexdigest()
@@ -268,7 +268,7 @@ def _reply_for_body(job: JobRecord) -> tuple[str, list[dict[str, object]]]:
             'size_bytes': len(png_body),
             'kind': 'image',
         })
-        
+
         return (
             f'# CCB Local Artifacts {ident}\n\n'
             f'- generated artifact: [{txt_meta["file_name"]}](ccb-artifact://{txt_file_id})\n'
