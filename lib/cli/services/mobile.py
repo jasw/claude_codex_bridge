@@ -2,13 +2,18 @@ from __future__ import annotations
 
 import base64
 from dataclasses import dataclass
+import hashlib
+import socket
 from urllib.parse import urlparse, urlunsplit
 
 from ccbd.socket_client import CcbdClient
 from mobile_gateway import (
+    MobileGatewayProjectRegistry,
     MobileGatewayPairingStore,
     MobileGatewayService,
     build_mobile_gateway_server,
+    load_mobile_gateway_project_registry,
+    mobile_host_state_dir,
     parse_listen_address,
 )
 from mobile_gateway.relay import LocalRelayServerHarness, MobileGatewayRelayOutboundClient
@@ -50,6 +55,74 @@ def prepare_mobile_gateway(context, command) -> MobileGatewayServeHandle:
         'project_id': context.project.project_id,
         'project_root': str(context.project.project_root),
         'mode': 'loopback_current_project',
+        'pairing': pairing,
+        'endpoints': [
+            '/v1/health',
+            '/v1/projects',
+            '/v1/projects/{project_id}/view',
+            '/v1/pairing/claim',
+            '/v1/devices/me',
+            '/v1/devices/{device_id}/revoke',
+            '/v1/projects/{project_id}/lifecycle',
+            '/v1/projects/{project_id}/focus-agent',
+            '/v1/projects/{project_id}/focus-window',
+            '/v1/projects/{project_id}/terminals',
+            '/v1/terminals/{terminal_id}',
+        ],
+    }
+    if relay_outbound is not None:
+        summary['relay_outbound'] = relay_outbound
+    return MobileGatewayServeHandle(
+        summary=summary,
+        server=server,
+    )
+
+
+def prepare_server_mobile_gateway(
+    command,
+    *,
+    project_registry: MobileGatewayProjectRegistry | None = None,
+    host_id: str | None = None,
+) -> MobileGatewayServeHandle:
+    registry = project_registry or load_mobile_gateway_project_registry()
+    listen = parse_listen_address(command.listen)
+    resolved_host_id = str(host_id or '').strip() or _server_host_id()
+    state_dir = mobile_host_state_dir()
+    default_project = registry.default_project
+    service = MobileGatewayService(
+        project_id=resolved_host_id,
+        project_root=state_dir,
+        ccbd_client_factory=default_project.client,
+        mobile_dir=state_dir,
+        project_registry=registry,
+        mode='loopback_server_registry',
+    )
+    projects = service.projects_payload().get('projects')
+    project_summaries = list(projects) if isinstance(projects, list) else []
+    server = build_mobile_gateway_server(listen, service)
+    try:
+        host, port = server.server_address[:2]
+        local_gateway_url = f'http://{host}:{port}'
+        gateway_url = _public_gateway_url(command.public_url, fallback=local_gateway_url)
+        route_provider = str(command.route_provider or 'lan')
+        pairing = service.create_pairing_payload(gateway_url=gateway_url, route_provider=route_provider)
+        relay_outbound = _relay_outbound_summary(resolved_host_id) if route_provider == 'relay' else None
+    except Exception:
+        server.server_close()
+        raise
+    summary = {
+        'mobile_status': 'serving',
+        'listen': f'{host}:{port}',
+        'gateway_url': gateway_url,
+        'local_gateway_url': local_gateway_url,
+        'route_provider': route_provider,
+        'host_id': resolved_host_id,
+        'project_id': resolved_host_id,
+        'project_root': '',
+        'mobile_state_dir': str(state_dir),
+        'mode': 'loopback_server_registry',
+        'project_count': len(project_summaries),
+        'projects': project_summaries,
         'pairing': pairing,
         'endpoints': [
             '/v1/health',
@@ -142,9 +215,16 @@ def _relay_demo_pubkey(host_id: str) -> str:
     return base64.urlsafe_b64encode(f'ccb-mobile-relay:{host_id}:public-key'.encode('utf-8')).decode('ascii')
 
 
+def _server_host_id() -> str:
+    seed = f'{socket.gethostname()}:{mobile_host_state_dir()}'
+    digest = hashlib.sha256(seed.encode('utf-8')).hexdigest()[:16]
+    return f'host-{digest}'
+
+
 __all__ = [
     'MobileGatewayServeHandle',
     'mobile_devices_status',
     'prepare_mobile_gateway',
+    'prepare_server_mobile_gateway',
     'revoke_mobile_device',
 ]
