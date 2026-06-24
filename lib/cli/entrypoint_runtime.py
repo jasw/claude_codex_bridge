@@ -6,7 +6,7 @@ from typing import TextIO
 
 from cli.ask_usage import write_ask_usage
 from cli.auxiliary import cmd_droid_subcommand
-from cli.management import cmd_reinstall, cmd_uninstall, cmd_update, cmd_version
+from cli.management import cmd_install, cmd_reinstall, cmd_uninstall, cmd_update, cmd_version
 from cli.management_runtime.commands_runtime.update import maybe_handle_post_update_command
 from cli.management_runtime.startup_update import (
     maybe_handle_background_update_refresh_command,
@@ -49,7 +49,7 @@ def _is_start_help(tokens: list[str]) -> bool:
         return False
     if tokens[0] in {"-h", "--help", "help"}:
         return True
-    if tokens[0] in SUBCOMMANDS or tokens[0] in {"version", "update", "uninstall", "reinstall", "droid", "tools", "roles", "mail", "provider", "up", "rich", "rich-install"}:
+    if tokens[0] in SUBCOMMANDS or tokens[0] in {"install", "version", "update", "uninstall", "reinstall", "droid", "tools", "roles", "mail", "provider", "up", "rich", "rich-install"}:
         return False
     return any(token in {"-h", "--help", "help"} for token in tokens)
 
@@ -148,11 +148,12 @@ def _dispatch_auxiliary(tokens: list[str], *, script_root: Path) -> int | None:
 
 
 def _dispatch_management(tokens: list[str], *, script_root: Path) -> int | None:
-    if not (tokens and tokens[0] in {"version", "update", "uninstall", "reinstall"}):
+    if not (tokens and tokens[0] in {"install", "version", "update", "uninstall", "reinstall"}):
         return None
 
     return dispatch_management_command(
         tokens,
+        install_handler=lambda args: cmd_install(args, script_root=script_root),
         update_handler=lambda args: cmd_update(args, script_root=script_root),
         version_handler=lambda args: cmd_version(args, script_root=script_root),
         uninstall_handler=lambda args: cmd_uninstall(args, script_root=script_root),

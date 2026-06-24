@@ -42,6 +42,7 @@ def test_dispatch_management_command_parses_and_routes() -> None:
 
     result = dispatch_management_command(
         ["update", "5.3.0"],
+        install_handler=make_handler("install"),
         update_handler=make_handler("update"),
         version_handler=make_handler("version"),
         uninstall_handler=make_handler("uninstall"),
@@ -68,6 +69,7 @@ def test_dispatch_management_command_routes_update_rich() -> None:
 
     result = dispatch_management_command(
         ["update", "rich"],
+        install_handler=fail,
         update_handler=update_handler,
         version_handler=fail,
         uninstall_handler=fail,
@@ -92,6 +94,7 @@ def test_dispatch_management_command_routes_uninstall_rich() -> None:
 
     result = dispatch_management_command(
         ["uninstall", "rich"],
+        install_handler=fail,
         update_handler=fail,
         version_handler=fail,
         uninstall_handler=uninstall_handler,
@@ -104,12 +107,50 @@ def test_dispatch_management_command_routes_uninstall_rich() -> None:
     assert calls[0].target == "rich"
 
 
+def test_dispatch_management_command_routes_install_mobile() -> None:
+    calls: list[argparse.Namespace] = []
+
+    def install_handler(args: argparse.Namespace) -> int:
+        calls.append(args)
+        return 25
+
+    def fail(_args: argparse.Namespace) -> int:
+        raise AssertionError("handler should not be called")
+
+    result = dispatch_management_command(
+        [
+            "install",
+            "mobile",
+            "--listen",
+            "127.0.0.1:0",
+            "--public-url",
+            "https://mobile.example.com",
+            "--route-provider",
+            "tailnet",
+        ],
+        install_handler=install_handler,
+        update_handler=fail,
+        version_handler=fail,
+        uninstall_handler=fail,
+        reinstall_handler=fail,
+    )
+
+    assert result == 25
+    assert len(calls) == 1
+    assert calls[0].command == "install"
+    assert calls[0].target == "mobile"
+    assert calls[0].listen == "127.0.0.1:0"
+    assert calls[0].public_url == "https://mobile.example.com"
+    assert calls[0].route_provider == "tailnet"
+
+
 def test_dispatch_management_command_returns_none_for_non_management() -> None:
     def fail(_args: argparse.Namespace) -> int:
         raise AssertionError("handler should not be called")
 
     assert dispatch_management_command(
         ["codex", "claude"],
+        install_handler=fail,
         update_handler=fail,
         version_handler=fail,
         uninstall_handler=fail,
@@ -154,6 +195,7 @@ def test_run_cli_entrypoint_prints_start_help_without_phase2() -> None:
     assert "ccb trace <id>" in stdout.getvalue()
     assert "Advanced recovery:" in stdout.getvalue()
     assert "ccb repair <ack|retry|resubmit> ..." in stdout.getvalue()
+    assert "ccb install mobile" in stdout.getvalue()
     assert "ccb rich" in stdout.getvalue()
     assert "ccb update rich" in stdout.getvalue()
     assert "ccb rich-install" not in stdout.getvalue()
@@ -180,6 +222,39 @@ def test_run_cli_entrypoint_rejects_removed_rich_install() -> None:
     assert stdout.getvalue() == ""
     assert "`ccb rich-install` has been removed" in stderr.getvalue()
     assert "ccb update rich" in stderr.getvalue()
+
+
+def test_run_cli_entrypoint_routes_install_mobile_before_phase2(monkeypatch) -> None:
+    stdout = StringIO()
+    stderr = StringIO()
+    calls: list[argparse.Namespace] = []
+
+    def _install(args, *, script_root):
+        calls.append(args)
+        assert script_root == Path("/tmp/ccb")
+        return 41
+
+    monkeypatch.setattr(entrypoint_runtime, "cmd_install", _install)
+    monkeypatch.setattr(
+        entrypoint_runtime,
+        "maybe_handle_phase2",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("phase2 should not run")),
+    )
+
+    result = run_cli_entrypoint(
+        ["install", "mobile", "--listen", "127.0.0.1:0"],
+        version="5.2.8",
+        script_root=Path("/tmp/ccb"),
+        cwd=Path("/tmp/not-a-project"),
+        stdout=stdout,
+        stderr=stderr,
+    )
+
+    assert result == 41
+    assert len(calls) == 1
+    assert calls[0].command == "install"
+    assert calls[0].target == "mobile"
+    assert calls[0].listen == "127.0.0.1:0"
 
 
 def test_run_cli_entrypoint_routes_rich(monkeypatch) -> None:

@@ -8,7 +8,7 @@ from textwrap import dedent
 AuxiliaryHandler = Callable[[Sequence[str]], int]
 ManagementHandler = Callable[[argparse.Namespace], int]
 
-_MANAGEMENT_COMMANDS = {"update", "version", "uninstall", "reinstall"}
+_MANAGEMENT_COMMANDS = {"install", "update", "version", "uninstall", "reinstall"}
 
 
 def dispatch_auxiliary_command(
@@ -25,6 +25,7 @@ def dispatch_auxiliary_command(
 def dispatch_management_command(
     argv: Sequence[str],
     *,
+    install_handler: ManagementHandler,
     update_handler: ManagementHandler,
     version_handler: ManagementHandler,
     uninstall_handler: ManagementHandler,
@@ -36,6 +37,8 @@ def dispatch_management_command(
 
     parser = _build_management_parser()
     args = parser.parse_args(tokens)
+    if args.command == "install":
+        return install_handler(args)
     if args.command == "update":
         return update_handler(args)
     if args.command == "version":
@@ -96,6 +99,7 @@ def print_start_help(*, file=None) -> None:
               ccb repair <ack|retry|resubmit> ...
 
             Management:
+              ccb install mobile    Start the server-wide CCB Mobile gateway and pairing QR.
               ccb version | ccb update [rich|VERSION] | ccb uninstall [rich] | ccb reinstall
 
             Tools:
@@ -475,6 +479,16 @@ _COMMAND_HELP = {
 def _build_management_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="ccb", description="Claude AI unified launcher", add_help=True)
     subparsers = parser.add_subparsers(dest="command", help="Subcommands")
+
+    install_parser = subparsers.add_parser("install", help="Install or activate optional CCB capabilities")
+    install_parser.add_argument("target", nargs="?", help="'mobile' to start the server-wide CCB Mobile gateway")
+    install_parser.add_argument("--listen", default="127.0.0.1:8787")
+    install_parser.add_argument("--public-url", default=None)
+    install_parser.add_argument(
+        "--route-provider",
+        default="lan",
+        choices=("lan", "tailnet", "cloudflare_tunnel", "relay"),
+    )
 
     update_parser = subparsers.add_parser("update", help="Update CCB or the optional rich bundle")
     update_parser.add_argument("target", nargs="?", help="version like '4', '4.1', '4.1.3', or 'rich'")

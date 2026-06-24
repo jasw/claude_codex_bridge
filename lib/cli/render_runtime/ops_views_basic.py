@@ -315,6 +315,24 @@ def render_mobile_serve(summary) -> tuple[str, ...]:
         f'project_root: {payload.get("project_root", "")}',
         f'mode: {payload.get("mode", "")}',
     ]
+    if payload.get('host_id'):
+        lines.insert(4, f'host_id: {payload.get("host_id", "")}')
+    if payload.get('mobile_state_dir'):
+        lines.append(f'mobile_state_dir: {payload.get("mobile_state_dir", "")}')
+    if 'project_count' in payload:
+        lines.append(f'project_count: {payload.get("project_count", 0)}')
+    projects = payload.get('projects')
+    if isinstance(projects, (list, tuple)):
+        for project in projects:
+            if not isinstance(project, Mapping):
+                continue
+            lines.append(
+                'project: '
+                f'id={project.get("id", "")} '
+                f'name={project.get("display_name", "")} '
+                f'health={project.get("health", "")} '
+                f'root={project.get("root", "")}'
+            )
     endpoints = payload.get('endpoints')
     if isinstance(endpoints, (list, tuple)):
         lines.append(f'endpoints: {", ".join(str(item) for item in endpoints)}')
