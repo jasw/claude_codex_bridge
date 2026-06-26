@@ -13,7 +13,7 @@ from .job_heartbeat_runtime import (
 
 _DEFAULT_SUBJECT_KIND = 'job_progress'
 _TRACKED_MESSAGE_TYPES = frozenset({'ask'})
-_DEFAULT_TERMINAL_NOTICE_COUNT = 3
+_DEFAULT_TERMINAL_NOTICE_COUNT: int | None = None
 
 
 class JobHeartbeatService:

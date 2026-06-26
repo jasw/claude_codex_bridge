@@ -303,11 +303,22 @@ Each active submission should expose reliability facts in runtime state:
 
 ### 7.3 Terminalization Rule
 
-New hard rule:
+Default rule:
 
-- a managed pane-backed submission may not remain active indefinitely after `no_terminal_timeout_s` without valid primary authority
+- a managed pane-backed submission may remain active indefinitely when
+  `no_terminal_timeout_s <= 0`
+- default runtime behavior should prefer waiting for provider/completion
+  authority over synthesizing a timeout when later agent-health detection can
+  handle stuck agents separately
 
-When that deadline is exceeded, the monitor must produce a terminal decision.
+Opt-in degraded closure:
+
+- a managed pane-backed submission with `no_terminal_timeout_s > 0` may not
+  remain active indefinitely after that deadline without valid primary
+  authority
+
+When an opt-in deadline is exceeded, the monitor must produce a terminal
+decision.
 Provider-native cursor movement, polling timestamps, rescan offsets, and other
 reader bookkeeping are not progress evidence and must not extend the deadline.
 Only semantic evidence such as request anchor observation, assistant reply text,
@@ -315,7 +326,7 @@ terminal artifacts, or provider turn binding should refresh progress.
 Session snapshot/rotation bookkeeping is observable state, but it is not
 completion progress by itself.
 
-Default degraded closure:
+Opt-in degraded closure result:
 
 - `status = incomplete`
 - `reason = completion_timeout`
@@ -323,11 +334,12 @@ Default degraded closure:
 
 If a provider-specific secondary source supports extracting a best-effort reply safely, that reply may be attached with clear degraded diagnostics.
 
-Running-job heartbeat is a separate no-progress guard:
+Running-job heartbeat is a separate no-progress diagnostics guard:
 
 - heartbeat observations remain internal diagnostics/events rather than caller-visible replies
-- after three consecutive heartbeat intervals without progress, the job must terminalize once with `status = incomplete`, `reason = heartbeat_timeout`, and a caller-facing recommendation to send a small communication test before another large task
-- a real terminal provider reply before that threshold remains the only normal caller-facing reply
+- default job heartbeat does not terminalize running `ask` jobs; CCB keeps waiting for provider execution or completion-tracker authority
+- `heartbeat_timeout` terminalization is opt-in/health-gated behavior and must not be used as a blind replacement for provider reliability decisions
+- when an opt-in timeout policy is enabled, a real terminal provider reply before that threshold remains the only normal caller-facing reply
 
 ## 8. New Boundary: Runtime Artifact Layout Contract
 

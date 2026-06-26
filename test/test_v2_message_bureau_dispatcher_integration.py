@@ -2639,7 +2639,8 @@ def test_job_heartbeat_records_internal_progress_without_replying_before_termina
         '2026-03-30T00:09:59Z',
         '2026-03-30T00:10:00Z',
         '2026-03-30T00:20:00Z',
-        '2026-03-30T00:21:00Z',
+        '2026-03-30T00:30:00Z',
+        '2026-03-30T00:31:00Z',
     )
     heartbeats = JobHeartbeatService(
         layout,
@@ -2681,12 +2682,20 @@ def test_job_heartbeat_records_internal_progress_without_replying_before_termina
 
     heartbeats.tick(dispatcher)
     assert ReplyStore(layout).list_message(message.message_id) == []
+    assert dispatcher.get(job_id).status is JobStatus.RUNNING
+    assert MessageStore(layout).list_all()[-1].message_state is MessageState.RUNNING
+
+    heartbeats.tick(dispatcher)
+    assert ReplyStore(layout).list_message(message.message_id) == []
+    assert dispatcher.get(job_id).status is JobStatus.RUNNING
+    assert MessageStore(layout).list_all()[-1].message_state is MessageState.RUNNING
+    assert json.loads(heartbeat_path.read_text(encoding='utf-8'))['notice_count'] == 3
 
     dispatcher.complete(
         job_id,
         replace(
             _decision(reply='final answer'),
-            finished_at='2026-03-30T00:21:00Z',
+            finished_at='2026-03-30T00:31:00Z',
         ),
     )
     heartbeats.tick(dispatcher)
@@ -2699,7 +2708,7 @@ def test_job_heartbeat_records_internal_progress_without_replying_before_termina
     assert heartbeat_path.exists() is False
 
 
-def test_job_heartbeat_terminalizes_after_three_internal_no_progress_intervals(tmp_path: Path) -> None:
+def test_job_heartbeat_terminalizes_after_three_internal_no_progress_intervals_when_enabled(tmp_path: Path) -> None:
     project_root = tmp_path / 'repo-job-heartbeat-timeout'
     ctx = _bootstrap_test_project(project_root)
     layout = PathLayout(project_root)
@@ -2758,6 +2767,7 @@ def test_job_heartbeat_terminalizes_after_three_internal_no_progress_intervals(t
             '2026-03-30T00:20:00Z',
             '2026-03-30T00:30:00Z',
         ),
+        terminal_notice_count=3,
     )
 
     receipt = dispatcher.submit(

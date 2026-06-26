@@ -29,7 +29,7 @@ class CodexProviderAdapter:
     completion_reliability_policy = CompletionReliabilityPolicy(
         provider='codex',
         primary_authority='protocol_log',
-        no_terminal_timeout_s=900.0,
+        no_terminal_timeout_s=0.0,
     )
 
     def start(self, job: JobRecord, *, context: ProviderRuntimeContext | None, now: str) -> ProviderSubmission:

@@ -14,9 +14,11 @@ An ask task is judged by several layers with different authority:
   emits completion items or terminal decisions.
 - Completion tracker turns completion items into provider-family-neutral state
   and terminal decisions.
-- Job heartbeat is a long no-progress fuse for running `ask` jobs. It can
-  terminalize as `incomplete/heartbeat_timeout` after repeated no-progress
-  notices.
+- Job heartbeat is a long no-progress diagnostics guard for running `ask` jobs.
+  Its default role is to record internal diagnostics while CCB continues
+  waiting for provider execution or completion-tracker authority. Blind
+  `heartbeat_timeout` terminalization is opt-in/health-gated behavior, not the
+  default completion authority.
 - Project view and maintenance heartbeat are diagnostics and escalation layers.
   They should not be treated as the completion authority.
 
@@ -66,11 +68,13 @@ Faults currently become terminal through these routes:
 - Codex prompt delivery failure when the anchor is still missing after the
   current log is drained, same-workspace fallback fails, and either the pane is
   unusable or the delivery timeout expires;
-- provider no-terminal reliability timeout after no semantic progress for the
-  provider policy window;
-- generic completion tracker request timeout;
-- job heartbeat timeout after repeated no-progress heartbeat notices for a
-  running `ask` job.
+- opt-in provider no-terminal reliability timeout after no semantic progress
+  for a configured provider policy window;
+- opt-in generic completion tracker request timeout;
+- explicit opt-in or health-gated job heartbeat timeout after repeated
+  no-progress heartbeat notices for a running `ask` job. The default runtime
+  path records diagnostics and does not terminalize healthy long tasks or
+  provider no-terminal stalls.
 
 Project-view fault symptoms:
 

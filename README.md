@@ -6,7 +6,7 @@
 **Visible, controllable multi-agent cooperative TUI workspace**
 
 <p>
-  <img src="https://img.shields.io/badge/version-7.6.18-orange.svg" alt="version">
+  <img src="https://img.shields.io/badge/version-7.6.19-orange.svg" alt="version">
   <img src="https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20WSL-lightgrey.svg" alt="platform">
   <img src="https://img.shields.io/badge/providers-15%20CLI%20families-0B7285.svg" alt="providers">
 </p>
@@ -709,6 +709,20 @@ v7 highlights:
 - Hardened tmux, Ghostty, release helper, Codex trust, and provider session restore paths.
 
 <details open>
+<summary><b>v7.6.19</b> - Long-Running Ask Wait Policy</summary>
+
+- Keeps ordinary long-running `ask` jobs waiting by default instead of
+  terminalizing them as `incomplete/heartbeat_timeout` from heartbeat
+  diagnostics alone.
+- Makes Codex, Claude, and Gemini pane-backed no-terminal timeouts opt-in by
+  default while preserving explicit reliability timeout policies.
+- Validated with a 32-minute source-runtime ask smoke: the job stayed running
+  past 30 minutes, then completed with `result_message` and no
+  `heartbeat_timeout`/`incomplete` evidence.
+
+</details>
+
+<details>
 <summary><b>v7.6.18</b> - CCB UI Theme Preference</summary>
 
 - Adds `ccb theme` as the top-level theme switch for CCB-owned tmux/sidebar UI,

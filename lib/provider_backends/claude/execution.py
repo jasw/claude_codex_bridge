@@ -21,7 +21,7 @@ class ClaudeProviderAdapter:
     completion_reliability_policy = CompletionReliabilityPolicy(
         provider='claude',
         primary_authority='hook_artifact_or_session_event_log',
-        no_terminal_timeout_s=900.0,
+        no_terminal_timeout_s=0.0,
     )
 
     def start(self, job: JobRecord, *, context: ProviderRuntimeContext | None, now: str) -> ProviderSubmission:

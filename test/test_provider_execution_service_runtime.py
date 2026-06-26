@@ -13,7 +13,8 @@ from completion.models import (
     CompletionStatus,
 )
 from provider_execution.base import ProviderPollResult, ProviderRuntimeContext, ProviderSubmission
-from provider_execution.reliability import CompletionReliabilityPolicy
+from provider_execution.registry import build_default_execution_registry
+from provider_execution.reliability import CompletionReliabilityPolicy, adapter_reliability_policy
 from provider_execution.service import ExecutionService
 from provider_execution.service_runtime.persistence import persist_submission
 from provider_execution.service_runtime.polling import poll_updates
@@ -70,6 +71,17 @@ def _runtime_context() -> ProviderRuntimeContext:
         runtime_ref="ref",
         session_ref="session",
     )
+
+
+def test_default_pane_backed_providers_wait_indefinitely_without_terminal_evidence() -> None:
+    registry = build_default_execution_registry(include_optional=False, include_test_doubles=False)
+
+    for provider in ("codex", "claude", "gemini"):
+        adapter = registry.get(provider)
+        assert adapter is not None
+        policy = adapter_reliability_policy(adapter)
+        assert policy is not None
+        assert policy.no_terminal_timeout_s == 0.0
 
 
 def test_poll_updates_processes_terminal_result_and_cleans_active_state(monkeypatch) -> None:

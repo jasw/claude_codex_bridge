@@ -185,7 +185,7 @@ Rules:
   after apply, is not lifecycle/lease/runtime/namespace authority, is not a
   config-watch trigger, and stale or mismatched records fail closed.
 - `artifacts/text/` stores oversized CCB agent-to-agent message and reply text. Request bodies, terminal replies, notices, and callback continuations larger than 4 KiB are written there as UTF-8 text artifacts; ledgers store only the short preview plus artifact path, byte count, and sha256 metadata. These artifacts are diagnostics/evidence and transport support, not scheduling authority.
-- running-job heartbeat observations stay in diagnostics/events and must not be emitted as caller-visible mailbox replies; after three consecutive no-progress observations, the terminal `heartbeat_timeout` reply is the caller-visible outcome
+- running-job heartbeat observations stay in diagnostics/events and must not be emitted as caller-visible mailbox replies; by default they do not terminalize running `ask` jobs while provider/runtime evidence remains active, and any `heartbeat_timeout` terminalization must be explicit opt-in or health-gated behavior
 - daemon lease heartbeat, subject/job heartbeat, and maintenance heartbeat
   schedule/status/activation state must remain separate concepts and separate
   files

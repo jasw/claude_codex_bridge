@@ -6,7 +6,7 @@
 **可见、可控的多 Agent 合作TUI工作台**
 
 <p>
-  <img src="https://img.shields.io/badge/version-7.6.18-orange.svg" alt="version">
+  <img src="https://img.shields.io/badge/version-7.6.19-orange.svg" alt="version">
   <img src="https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20WSL-lightgrey.svg" alt="platform">
   <img src="https://img.shields.io/badge/providers-15%20CLI%20families-0B7285.svg" alt="providers">
 </p>
@@ -695,6 +695,19 @@ v7 线重点：
 - 加固 tmux、Ghostty、release helper、Codex trust 和 provider 会话恢复路径。
 
 <details open>
+<summary><b>v7.6.19</b> - 长任务 ask 默认等待策略</summary>
+
+- 普通长时间 `ask` 默认继续等待真实 provider/completion 结果，不再仅因
+  heartbeat 诊断自动 terminalize 为 `incomplete/heartbeat_timeout`。
+- Codex、Claude、Gemini 的 pane-backed no-terminal timeout 默认改为显式
+  opt-in，仍保留显式 reliability timeout 策略。
+- 已用 32 分钟 source-runtime ask smoke 验证：任务超过 30 分钟仍保持
+  running，随后以 `result_message` 完成，未出现 `heartbeat_timeout` 或
+  `incomplete` 证据。
+
+</details>
+
+<details>
 <summary><b>v7.6.18</b> - CCB UI 主题偏好</summary>
 
 - 新增顶层 `ccb theme` 主题切换命令，可调整 CCB 自有 tmux/sidebar UI，

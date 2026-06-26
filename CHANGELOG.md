@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+## v7.6.19 (2026-06-26)
+
+### Long-Running Ask Wait Policy
+
+- **Ask Heartbeat Timeout Disabled By Default**: running-job heartbeat
+  observations now remain internal diagnostics by default instead of
+  terminalizing ordinary `ask` jobs as `incomplete/heartbeat_timeout`.
+- **Pane-Backed Provider Timeouts Made Opt-In**: Codex, Claude, and Gemini
+  default `no_terminal_timeout_s` values are now `0.0`; explicit reliability
+  timeout policies remain supported.
+- **Long Runtime Evidence Recorded**: a source-runtime ask smoke ran beyond 30
+  minutes, stayed running at 1800s and 1860s, then completed at 1980s with
+  `result_message` and no `heartbeat_timeout`/`incomplete` evidence.
+- **Release Surface Synchronized**: VERSION, CLI version constants,
+  package.json, release workflow defaults, README release notes, and npm
+  packaging metadata are aligned for 7.6.19.
+
 ## v7.6.18 (2026-06-26)
 
 ### CCB UI Theme Preference
