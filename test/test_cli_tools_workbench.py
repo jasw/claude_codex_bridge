@@ -7,6 +7,7 @@ import zipfile
 
 from cli.tools_runtime import cmd_tools
 from cli.tools_runtime import workbench as workbench_tools
+from terminal_runtime.ui_theme import theme_config_path
 
 
 def _fake_executable(path: Path, text: str = '#!/usr/bin/env sh\nexit 0\n') -> Path:
@@ -32,6 +33,7 @@ def _prepare_env(tmp_path: Path, monkeypatch) -> Path:
     ):
         _fake_executable(fake_bin / name)
     monkeypatch.setenv('HOME', str(tmp_path / 'home'))
+    monkeypatch.setenv('XDG_CONFIG_HOME', str(tmp_path / 'xdg-config'))
     monkeypatch.setenv('XDG_DATA_HOME', str(tmp_path / 'xdg-data'))
     monkeypatch.setenv('XDG_STATE_HOME', str(tmp_path / 'xdg-state'))
     monkeypatch.setenv('XDG_CACHE_HOME', str(tmp_path / 'xdg-cache'))
@@ -72,7 +74,8 @@ def test_workbench_install_writes_independent_bundle_profiles(tmp_path: Path, mo
     assert (root / 'profiles' / 'yazi-safe' / 'plugins' / 'piper.yazi' / 'main.lua').is_file()
     assert (root / 'profiles' / 'yazi-rich' / 'plugins' / 'piper.yazi' / 'main.lua').is_file()
     assert (root / 'profiles' / 'wezterm' / 'wezterm.lua').is_file()
-    theme_config = json.loads((tmp_path / 'home' / '.config' / 'ccb' / 'theme.json').read_text(encoding='utf-8'))
+    assert theme_config_path() == tmp_path / 'xdg-config' / 'ccb' / 'theme.json'
+    theme_config = json.loads(theme_config_path().read_text(encoding='utf-8'))
     assert theme_config['theme'] == 'dark'
     assert theme_config['palette'] == 'dark'
     assert theme_config['tmux_profile'] == 'default'
@@ -475,7 +478,7 @@ def test_workbench_terminal_reads_global_theme_config(tmp_path: Path, monkeypatc
     _stub_neovim(monkeypatch, tmp_path)
     workbench_tools.provision_workbench(profile='rich')
     wrapper = tmp_path / 'xdg-data' / 'ccb' / 'tools' / 'workbench' / 'bin' / 'ccb-workbench'
-    theme_config = tmp_path / 'home' / '.config' / 'ccb' / 'theme.json'
+    theme_config = theme_config_path()
     theme_config.write_text(
         json.dumps(
             {
