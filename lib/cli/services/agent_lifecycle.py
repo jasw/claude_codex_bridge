@@ -11,6 +11,14 @@ from agents.models import AgentValidationError, LoopRoleProfileSpec, WorkspaceMo
 from agents.store import AgentRuntimeStore
 from storage.atomic import atomic_write_json
 
+from .agent_status_diagnostics import (
+    agent_kind,
+    dispatch_state,
+    failed_apply,
+    normalize_apply_payload,
+    ownership_class,
+    pane_identity_source,
+)
 from .daemon import ping_local_state
 from .reload import reload_config
 
@@ -53,12 +61,23 @@ def _status(context, command) -> dict[str, object]:
             {
                 'agent': name,
                 'source': 'configured',
+                'agent_kind': 'static',
+                'ownership_class': 'static_configured',
                 'role': getattr(spec, 'role', None),
                 'provider': getattr(spec, 'provider', None),
                 'profile': None,
                 'role_class': role_class,
                 'lifecycle_state': 'configured',
                 'visibility_state': 'visible' if name in loaded.config.default_agents else 'configured',
+                'dispatch_disabled': bool(getattr(spec, 'dispatch_disabled', False)),
+                'dispatch_state': dispatch_state(bool(getattr(spec, 'dispatch_disabled', False))),
+                'pane_id': None,
+                'pane_identity_source': 'missing',
+                'apply_status': None,
+                'apply_plan_class': None,
+                'apply_stage': None,
+                'failed_apply': False,
+                'retained_busy': False,
                 'ask_target': name,
                 'state_path': None,
             }
@@ -83,6 +102,7 @@ def _show(context, command) -> dict[str, object]:
         record['action'] = 'show'
         record['source'] = 'dynamic'
         record['state_path'] = str(_state_path(context, name))
+        record.update(_diagnostic_fields(record, source='dynamic'))
         return record
     loaded = load_project_config(context.project.project_root, include_loop_overlays=False)
     spec = loaded.config.agents.get(name)
@@ -92,6 +112,8 @@ def _show(context, command) -> dict[str, object]:
         'agent_lifecycle_status': 'ok',
         'action': 'show',
         'source': 'configured',
+        'agent_kind': 'static',
+        'ownership_class': 'static_configured',
         'agent': name,
         'role': getattr(spec, 'role', None),
         'provider': getattr(spec, 'provider', None),
@@ -100,6 +122,15 @@ def _show(context, command) -> dict[str, object]:
         'role_class': _infer_role_class(getattr(spec, 'role', None)),
         'lifecycle_state': 'configured',
         'visibility_state': 'visible' if name in loaded.config.default_agents else 'configured',
+        'dispatch_disabled': bool(getattr(spec, 'dispatch_disabled', False)),
+        'dispatch_state': dispatch_state(bool(getattr(spec, 'dispatch_disabled', False))),
+        'pane_id': None,
+        'pane_identity_source': 'missing',
+        'apply_status': None,
+        'apply_plan_class': None,
+        'apply_stage': None,
+        'failed_apply': False,
+        'retained_busy': False,
         'ask_target': name,
     }
 
@@ -283,7 +314,7 @@ def _transition(context, command) -> dict[str, object]:
 
 def _status_record(record: dict[str, object], *, source: str) -> dict[str, object]:
     placement = record.get('placement') if isinstance(record.get('placement'), dict) else {}
-    return {
+    payload = {
         'agent': record.get('agent'),
         'source': source,
         'role': record.get('role'),
@@ -295,8 +326,31 @@ def _status_record(record: dict[str, object], *, source: str) -> dict[str, objec
         'resolved_window_name': record.get('resolved_window_name')
         or placement.get('window_name')
         or record.get('window_name'),
+        'pane_id': _optional_text(record.get('pane_id')) or _optional_text(placement.get('pane_id')),
         'ask_target': record.get('ask_target') or record.get('agent'),
         'state_path': record.get('state_path'),
+    }
+    payload.update(_diagnostic_fields(record, source=source))
+    return payload
+
+
+def _diagnostic_fields(record: dict[str, object], *, source: str) -> dict[str, object]:
+    placement = record.get('placement') if isinstance(record.get('placement'), dict) else {}
+    apply_payload = normalize_apply_payload(record)
+    dispatch_disabled = bool(record.get('dispatch_disabled'))
+    return {
+        'agent_kind': agent_kind(source),
+        'ownership_class': ownership_class(source=source, lifetime=record.get('lifetime')),
+        'dispatch_disabled': dispatch_disabled,
+        'dispatch_state': dispatch_state(dispatch_disabled),
+        'pane_identity_source': pane_identity_source(
+            record=_optional_text(record.get('pane_id')) or _optional_text(placement.get('pane_id'))
+        ),
+        'apply_status': apply_payload.get('apply_status'),
+        'apply_plan_class': apply_payload.get('plan_class'),
+        'apply_stage': apply_payload.get('stage'),
+        'failed_apply': failed_apply(apply_payload),
+        'retained_busy': bool(record.get('retained_busy')),
     }
 
 

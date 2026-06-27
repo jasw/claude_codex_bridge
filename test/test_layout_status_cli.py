@@ -64,6 +64,11 @@ plan-orchestrate = "planner:codex"
             'visibility_state': 'hidden',
             'dispatch_disabled': False,
             'window_name': 'plan-orchestrate',
+            'apply': {
+                'apply_status': 'applied',
+                'plan_class': 'add_agent',
+                'stage': 'publish_transaction',
+            },
             'placement': {
                 'mode': 'window',
                 'window_name': 'plan-orchestrate',
@@ -87,9 +92,22 @@ plan-orchestrate = "planner:codex"
     assert windows['plan-orchestrate']['agent_names'] == ['planner', 'helper']
     helper = [agent for agent in windows['plan-orchestrate']['agents'] if agent['agent'] == 'helper'][0]
     assert helper['source'] == 'dynamic'
+    assert helper['agent_kind'] == 'dynamic'
+    assert helper['ownership_class'] == 'dynamic_session'
     assert helper['lifecycle_state'] == 'hidden'
+    assert helper['dispatch_state'] == 'enabled'
+    assert helper['apply_status'] == 'applied'
+    assert helper['apply_plan_class'] == 'add_agent'
+    assert helper['failed_apply'] is False
+    assert helper['pane_identity_source'] == 'record'
     assert helper['pane_id'] == '%9'
     assert helper['runtime_state'] == 'missing'
+    frontdesk = windows['main']['agents'][0]
+    assert frontdesk['source'] == 'configured'
+    assert frontdesk['agent_kind'] == 'static'
+    assert frontdesk['ownership_class'] == 'static_configured'
+    assert frontdesk['dispatch_state'] == 'enabled'
+    assert frontdesk['failed_apply'] is False
     assert payload['namespace']['status'] == 'unmounted'
 
 
@@ -161,8 +179,71 @@ main = "orchestrator:fake"
         ('loop-round1-worker-1', 'loop', 'round1', 'node1'),
         ('loop-round1-code_reviewer-1', 'loop', 'round1', 'node1'),
     ]
+    assert node_agents[0]['agent_kind'] == 'loop'
+    assert node_agents[0]['ownership_class'] == 'loop_capacity'
+    assert node_agents[0]['dispatch_state'] == 'enabled'
     assert node_agents[0]['profile'] == 'worker'
     assert node_agents[1]['profile'] == 'code_reviewer'
+
+
+def test_layout_status_reports_parked_and_failed_apply_diagnostics(tmp_path: Path) -> None:
+    project_root = tmp_path / 'repo-layout-status-parked'
+    _write(
+        project_root / '.ccb' / 'ccb.config',
+        """version = 2
+entry_window = "main"
+
+[windows]
+main = "main:fake"
+""",
+    )
+    layout = PathLayout(project_root)
+    _write_json(
+        layout.runtime_state_root / 'runtime' / 'agents' / 'parked_helper' / 'lifecycle.json',
+        {
+            'schema_version': 1,
+            'record_type': 'ccb_dynamic_agent_lifecycle',
+            'agent_lifecycle_status': 'active',
+            'agent': 'parked_helper',
+            'role': 'agentroles.planner',
+            'provider': 'fake',
+            'workspace_mode': 'inplace',
+            'target': '.',
+            'lifecycle_state': 'parked',
+            'visibility_state': 'hidden',
+            'dispatch_disabled': True,
+            'window_name': 'main',
+            'placement': {
+                'mode': 'window',
+                'window_name': 'main',
+                'pane_id': '%5',
+            },
+            'apply': {
+                'apply_status': 'failed',
+                'plan_class': 'view_only_change',
+                'stage': 'namespace_patch',
+                'namespace_patch_status': 'failed',
+            },
+            'pane_id': '%5',
+        },
+    )
+
+    result, payload, stderr = _run_phase2(['layout', 'status', '--json'], cwd=project_root)
+
+    assert result == 0, stderr
+    windows = {window['name']: window for window in payload['windows']}
+    helper = [agent for agent in windows['main']['agents'] if agent['agent'] == 'parked_helper'][0]
+    assert helper['source'] == 'dynamic'
+    assert helper['agent_kind'] == 'dynamic'
+    assert helper['ownership_class'] == 'dynamic_session'
+    assert helper['lifecycle_state'] == 'parked'
+    assert helper['dispatch_state'] == 'disabled'
+    assert helper['dispatch_disabled'] is True
+    assert helper['apply_status'] == 'failed'
+    assert helper['apply_plan_class'] == 'view_only_change'
+    assert helper['apply_stage'] == 'namespace_patch'
+    assert helper['failed_apply'] is True
+    assert helper['pane_identity_source'] == 'record'
 
 
 def test_layout_status_skips_tmux_observation_for_unmounted_namespace_state(tmp_path: Path) -> None:

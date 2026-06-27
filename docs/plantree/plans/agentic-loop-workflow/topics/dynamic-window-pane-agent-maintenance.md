@@ -627,6 +627,27 @@ Evidence:
   `planner_helper2` unloaded with `plan_class=remove_agent`, reflow reported
   `namespace_reflowed_windows=["plan-orchestrate"]`, surviving panes stayed in
   place, and asks to `planner_helper1` and `planner_helper3` were accepted.
+- The matching guarded Claude real-provider `window-class` run passed in
+  `/home/bfly/yunwei/test_ccb2/dynamic-layout-claude-window-1782563057-window-class`:
+  `frontdesk` and `planner` started as explicit Claude panes, three Claude
+  helpers hot-loaded into `plan-orchestrate`, middle `planner_helper2` removed
+  with `plan_class=remove_agent`, reflow reported
+  `namespace_reflowed_windows=["plan-orchestrate"]`, surviving helper pane ids
+  were preserved, asks to `planner_helper1` and `planner_helper3` were
+  accepted, and cleanup returned `state: unmounted`.
+- `layout status --json` now includes script-facing ownership and apply
+  diagnostics on each agent record: `agent_kind`, `ownership_class`,
+  `dispatch_state`, `pane_identity_source`, `apply_status`,
+  `apply_plan_class`, `apply_stage`, `failed_apply`, and `retained_busy`.
+  Focused tests cover static configured agents, dynamic session helpers, loop
+  capacity agents, parked dispatch-disabled helpers, and failed apply records;
+  the fake explicit-window smoke remained green after adding the fields.
+- `agent status --json` and `agent show --json` now mirror the same
+  ownership/apply vocabulary for configured and dynamic lifecycle records, so
+  orchestrator scripts can query either the layout view or the lifecycle view
+  without switching field names. Focused tests cover static configured agents,
+  active dynamic agents, parked dispatch-disabled agents, deferred apply
+  records, and failed-apply detection.
 - Focused regression after connecting loop capacity to layout placement passed
   with `187 passed` across loop capacity, agent lifecycle, layout status, pane
   growth, layout runtime, reload patch/runtime mount, and config loader tests.

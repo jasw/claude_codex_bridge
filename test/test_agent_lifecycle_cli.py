@@ -213,6 +213,29 @@ def test_agent_add_profile_writes_runtime_overlay_and_config_includes_agent(
     assert 'reviewer' in loaded.config.default_agents
     assert loaded.config.agents['reviewer'].role == 'agentroles.code_reviewer'
 
+    result, status, stderr = _run_phase2(['agent', 'status', '--json'], cwd=project_root)
+
+    assert result == 0, stderr
+    records = {record['agent']: record for record in status['agents']}
+    assert records['main']['agent_kind'] == 'static'
+    assert records['main']['ownership_class'] == 'static_configured'
+    assert records['main']['dispatch_state'] == 'enabled'
+    assert records['main']['failed_apply'] is False
+    assert records['reviewer']['agent_kind'] == 'dynamic'
+    assert records['reviewer']['ownership_class'] == 'dynamic_session'
+    assert records['reviewer']['dispatch_state'] == 'enabled'
+    assert records['reviewer']['apply_status'] == 'deferred_until_start'
+    assert records['reviewer']['failed_apply'] is False
+    assert records['reviewer']['pane_identity_source'] == 'missing'
+
+    result, shown, stderr = _run_phase2(['agent', 'show', 'reviewer', '--json'], cwd=project_root)
+
+    assert result == 0, stderr
+    assert shown['agent_kind'] == 'dynamic'
+    assert shown['ownership_class'] == 'dynamic_session'
+    assert shown['dispatch_state'] == 'enabled'
+    assert shown['apply_status'] == 'deferred_until_start'
+
 
 def test_agent_add_to_existing_window_projects_add_agent_reload_plan(
     tmp_path: Path,
@@ -659,6 +682,12 @@ def test_agent_park_resume_projects_dispatch_disabled_overlay(
     assert parked['dispatch_disabled'] is True
     after_park = load_project_config(project_root).config
     assert after_park.agents['helper'].dispatch_disabled is True
+    result, status, stderr = _run_phase2(['agent', 'status', '--json'], cwd=project_root)
+    assert result == 0, stderr
+    helper_status = {record['agent']: record for record in status['agents']}['helper']
+    assert helper_status['dispatch_state'] == 'disabled'
+    assert helper_status['ownership_class'] == 'dynamic_session'
+    assert helper_status['failed_apply'] is False
     park_plan = build_reload_dry_run_plan(before_park, after_park, project_id='proj-1', current_namespace=_namespace('proj-1'))
     assert park_plan['plan_class'] == 'view_only_change'
     assert park_plan['operations'] == [

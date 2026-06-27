@@ -126,6 +126,20 @@ pane IDs, provider sessions, and CCB slot metadata must remain valid.
   - unloading middle `planner_helper2` removed only that dynamic agent,
     reflowed `plan-orchestrate`, preserved surviving helper panes, and kept
     asks to the survivors accepted.
-- Remaining gap: the same live pane-backed provider release still needs a
-  guarded `claude` smoke before treating provider-specific teardown and
-  recovery as proven across the main pane-backed providers.
+- Guarded Claude real-provider evidence now covers the same explicit
+  workflow-window middle release:
+  - `frontdesk` and `planner` Claude panes started in explicit `[windows]`;
+  - `planner_helper1/2/3` hot-loaded into `plan-orchestrate`;
+  - unloading middle `planner_helper2` removed only that dynamic agent,
+    reflowed `plan-orchestrate`, preserved surviving helper panes, kept asks
+    to the survivors accepted, and final cleanup unmounted the test project.
+- `layout status --json` now exposes ownership/apply diagnostics for each
+  agent record: static configured panes, dynamic session helpers, loop capacity
+  agents, parked/dispatch-disabled nodes, and failed apply attempts can be
+  distinguished without reading raw lifecycle files.
+- `ccb agent status --json` and `ccb agent show --json` now mirror the same
+  ownership/apply diagnostics for configured and dynamic lifecycle records.
+- Remaining gap: package the stable command vocabulary as a
+  dynamic-agent-lifecycle skill before orchestrator role instructions depend on
+  it, and promote the guarded provider smokes into standard release
+  regressions.

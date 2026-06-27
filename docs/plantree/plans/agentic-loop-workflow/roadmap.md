@@ -479,13 +479,38 @@ Date: 2026-06-24
   agents hot-loaded into `plan-orchestrate`, middle `planner_helper2` unloaded
   with `namespace_reflowed_windows=["plan-orchestrate"]`, surviving helper pane
   ids were preserved, and asks to both surviving helpers were accepted.
+- Ran the matching guarded Claude real-provider explicit-window smoke:
+  `CCB_DYNAMIC_LAYOUT_SMOKE_RUN_REAL=1 ... --provider claude --flow
+  window-class --provider-home-mode real-home --command-timeout 300`.
+  `/home/bfly/yunwei/test_ccb2/dynamic-layout-claude-window-1782563057-window-class`
+  passed with `frontdesk` and `planner` Claude panes, three Claude helper panes
+  hot-loaded into `plan-orchestrate`, middle `planner_helper2` unloaded with
+  `namespace_reflowed_windows=["plan-orchestrate"]`, surviving pane ids
+  preserved, asks accepted to `planner_helper1` and `planner_helper3`, and
+  final `kill -f` returning `state: unmounted`.
+- Strengthened `ccb layout status --json` as a script-facing diagnostic for
+  dynamic orchestration. Each agent record now exposes `agent_kind`,
+  `ownership_class`, `dispatch_state`, `pane_identity_source`, `apply_status`,
+  `apply_plan_class`, `apply_stage`, `failed_apply`, and `retained_busy`, so
+  orchestrator scripts can distinguish static configured panes, dynamic
+  helpers, loop capacity agents, parked/dispatch-disabled nodes, and failed
+  apply attempts without reading raw lifecycle files. Focused regression passed
+  with `104 passed`, and a fake `--flow window-class` source-wrapper smoke in
+  `/home/bfly/yunwei/test_ccb2/dynamic-layout-status-diag-1782564247-window-class`
+  stayed green.
+- Mirrored the same ownership/apply vocabulary into `ccb agent status --json`
+  and `ccb agent show --json`, keeping command-level lifecycle diagnostics
+  aligned with `layout status --json`. Focused lifecycle/layout tests passed
+  with `25 passed`; the broader dynamic lifecycle regression stayed at
+  `104 passed`, and another fake explicit-window smoke in
+  `/home/bfly/yunwei/test_ccb2/dynamic-layout-status-helper-1782565815-window-class`
+  stayed green.
 
 ## Next
 
-1. Extend generic dynamic agent lifecycle beyond the landed V1:
-   add the matching guarded `claude` provider smoke and richer status
-   diagnostics that distinguish configured/static, dynamic, loop-generated,
-   parked, dispatch-disabled, and failed-apply records.
+1. Package the script-friendly command surface into a
+   `dynamic-agent-lifecycle` skill and make orchestrator usage prefer
+   `layout status --json` / `agent status --json` over raw daemon internals.
 2. Promote the repeatable workflow closure smoke and the autonomous
    layout-cleanup gate into the standard guarded regression path once the
    release gate shape is selected.
@@ -497,8 +522,8 @@ Date: 2026-06-24
    non-loop dynamic agents while keeping loop execution capacity behind
    `ccb loop capacity`.
 5. Implement the next true hot-load slices:
-    run the guarded `claude` provider smoke using the new provider/flow
-    harness, add better pane-identity diagnostics at startup, and only later
+    extend pane-identity diagnostics into startup/mount reports, add standard
+    regression entrypoints for the guarded provider smokes, and only later
     richer live reflow beyond the proven same-window and explicit-window-class
     middle-removal cases.
 6. Wire the verified deterministic layout planner and dynamic smoke behavior

@@ -9,6 +9,14 @@ from agents.store import AgentRuntimeStore
 from ccbd.services.project_namespace_state import ProjectNamespaceStateStore
 from terminal_runtime import TmuxBackend
 
+from .agent_status_diagnostics import (
+    agent_kind,
+    dispatch_state,
+    failed_apply,
+    normalize_apply_payload,
+    ownership_class,
+    pane_identity_source,
+)
 from .daemon import ping_local_state
 
 
@@ -116,18 +124,33 @@ def _agent_status(*, agent_name: str, window_name: str, spec, dynamic, loop, run
     loop_payload = dict(loop or {})
     placement_source = dynamic_payload if dynamic is not None else loop_payload
     placement = placement_source.get('placement') if isinstance(placement_source.get('placement'), dict) else {}
+    placement = dict(placement)
     pane_id = (
         _runtime_attr(runtime, 'active_pane_id')
         or _runtime_attr(runtime, 'pane_id')
         or _optional_text(dynamic_payload.get('pane_id'))
         or _optional_text(loop_payload.get('pane_id'))
-        or _optional_text(dict(placement).get('pane_id'))
+        or _optional_text(placement.get('pane_id'))
     )
     observed_payload = dict(observed or {})
     source = 'dynamic' if dynamic is not None else ('loop' if loop is not None else 'configured')
+    dispatch_disabled = bool(
+        getattr(spec, 'dispatch_disabled', False)
+        or dynamic_payload.get('dispatch_disabled')
+        or loop_payload.get('dispatch_disabled')
+    )
+    runtime_pane_id = _runtime_attr(runtime, 'active_pane_id') or _runtime_attr(runtime, 'pane_id')
+    record_pane_id = (
+        _optional_text(dynamic_payload.get('pane_id'))
+        or _optional_text(loop_payload.get('pane_id'))
+        or _optional_text(placement.get('pane_id'))
+    )
+    apply_payload = normalize_apply_payload(dynamic_payload, loop_payload)
     return {
         'agent': agent_name,
         'source': source,
+        'agent_kind': agent_kind(source),
+        'ownership_class': ownership_class(source=source, lifetime=dynamic_payload.get('lifetime')),
         'provider': getattr(spec, 'provider', None),
         'role': (
             dynamic_payload.get('role')
@@ -148,16 +171,23 @@ def _agent_status(*, agent_name: str, window_name: str, spec, dynamic, loop, run
             if dynamic is not None
             else ('loop' if loop is not None else 'visible')
         ),
-        'dispatch_disabled': bool(
-            getattr(spec, 'dispatch_disabled', False)
-            or dynamic_payload.get('dispatch_disabled')
-            or loop_payload.get('dispatch_disabled')
-        ),
-        'window_name': _runtime_attr(runtime, 'tmux_window_name') or _optional_text(dict(placement).get('window_name')) or window_name,
+        'dispatch_disabled': dispatch_disabled,
+        'dispatch_state': dispatch_state(dispatch_disabled),
+        'window_name': _runtime_attr(runtime, 'tmux_window_name') or _optional_text(placement.get('window_name')) or window_name,
         'pane_id': pane_id,
+        'pane_identity_source': pane_identity_source(
+            observed=observed_payload.get('pane_id'),
+            runtime=runtime_pane_id,
+            record=record_pane_id,
+        ),
         'runtime_state': _runtime_state_value(runtime),
         'queue_depth': _runtime_attr(runtime, 'queue_depth', 0) if runtime is not None else 0,
         'pane_state': _runtime_attr(runtime, 'pane_state') or observed_payload.get('pane_state'),
+        'apply_status': apply_payload.get('apply_status'),
+        'apply_plan_class': apply_payload.get('plan_class'),
+        'apply_stage': apply_payload.get('stage'),
+        'failed_apply': failed_apply(apply_payload),
+        'retained_busy': bool(dynamic_payload.get('retained_busy')),
         'observed': observed_payload or None,
         'ask_target': dynamic_payload.get('ask_target') or loop_payload.get('ask_target') or agent_name,
         'state_path': dynamic_payload.get('state_path') or loop_payload.get('state_path'),
