@@ -32,19 +32,34 @@ def test_build_multi_node_config_declares_explicit_windows_and_loop_profiles() -
     assert 'role = "agentroles.code_reviewer"' in text
 
 
+def test_build_window_class_config_declares_plan_orchestrate_window() -> None:
+    module = _load_module()
+
+    text = module.build_window_class_config()
+
+    assert 'entry_window = "main"' in text
+    assert '[windows]' in text
+    assert 'main = "frontdesk:fake"' in text
+    assert 'plan-orchestrate = "planner:fake"' in text
+
+
 def test_prepare_projects_write_configs_and_roles(tmp_path: Path) -> None:
     module = _load_module()
 
     multi = module.prepare_multi_node_project(test_root=tmp_path, project_name="multi", reset=False)
     same = module.prepare_same_window_project(test_root=tmp_path, project_name="same", reset=False)
+    window_class = module.prepare_window_class_project(test_root=tmp_path, project_name="window-class", reset=False)
 
     multi_root = Path(multi["project_root"])
     same_root = Path(same["project_root"])
+    window_class_root = Path(window_class["project_root"])
     assert (multi_root / ".ccb" / "ccb.config").read_text(encoding="utf-8").startswith("version = 2")
     assert (same_root / ".ccb" / "ccb.config").read_text(encoding="utf-8").startswith("version = 2")
+    assert 'plan-orchestrate = "planner:fake"' in (window_class_root / ".ccb" / "ccb.config").read_text(encoding="utf-8")
     assert (Path(multi["role_store"]) / "installed" / "agentroles.coder" / "current" / "role.toml").is_file()
     assert (Path(multi["role_store"]) / "installed" / "agentroles.code_reviewer" / "current" / "role.toml").is_file()
     assert (Path(same["role_store"]) / "installed" / "agentroles.general" / "current" / "role.toml").is_file()
+    assert (Path(window_class["role_store"]) / "installed" / "agentroles.general" / "current" / "role.toml").is_file()
 
 
 def test_payload_helpers_extract_window_agents_and_panes() -> None:

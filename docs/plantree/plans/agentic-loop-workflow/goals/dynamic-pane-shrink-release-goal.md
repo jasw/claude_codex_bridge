@@ -110,5 +110,15 @@ pane IDs, provider sessions, and CCB slot metadata must remain valid.
   observed `1,2,3,4,5,6,7,8,7,6,5,4,3,2,1`; it created
   `frontdesk-dialog-2` at page overflow and removed that page when shrinking
   back to six.
-- Remaining gap: these are fake-agent panes. Live provider release still needs
-  busy/idle gates before wiring to dynamic capacity release.
+- Live fake-provider release evidence now covers both default and explicit
+  workflow windows:
+  - same-window middle removal in `main` preserves surviving dynamic panes and
+    reports `namespace_reflowed_windows=["main"]`;
+  - explicit `--window-class plan-orchestrate` middle removal preserves the
+    static `planner`, leaves `main=[frontdesk]` unchanged, removes only
+    `planner_helper2`, reports
+    `namespace_reflowed_windows=["plan-orchestrate"]`, and keeps surviving
+    helpers askable.
+- Remaining gap: these are fake-provider panes. Full live pane-backed
+  `codex`/`claude` release still needs a guarded real-provider smoke before
+  treating provider-specific teardown and recovery as proven.

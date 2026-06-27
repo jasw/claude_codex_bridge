@@ -600,6 +600,16 @@ Evidence:
   `/home/bfly/yunwei/test_ccb2/workflow-closure-layout-1782571` also proved
   generated loop agents release from layout and `ps` state with
   `dynamic_agents_absent_from_ps=true`.
+- `scripts/dynamic_layout_smoke.py` now includes an explicit workflow-window
+  flow for `--window-class plan-orchestrate`. The source-wrapper smoke in
+  `/home/bfly/yunwei/test_ccb2/dynamic-layout-window-class-1782560319-window-class`
+  proved `main=[frontdesk]` and
+  `plan-orchestrate=[planner, planner_helper1, planner_helper2,
+  planner_helper3]`, removed middle `planner_helper2` with
+  `plan_class=remove_agent`, reported
+  `namespace_reflowed_windows=["plan-orchestrate"]`, preserved
+  `planner_helper1` and `planner_helper3` pane ids, kept `main` unchanged, and
+  accepted asks to both surviving helpers.
 - Focused regression after connecting loop capacity to layout placement passed
   with `187 passed` across loop capacity, agent lifecycle, layout status, pane
   growth, layout runtime, reload patch/runtime mount, and config loader tests.

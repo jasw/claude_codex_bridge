@@ -64,6 +64,20 @@ def build_same_window_config() -> str:
     )
 
 
+def build_window_class_config() -> str:
+    return "\n".join(
+        [
+            "version = 2",
+            'entry_window = "main"',
+            "",
+            "[windows]",
+            'main = "frontdesk:fake"',
+            'plan-orchestrate = "planner:fake"',
+            "",
+        ]
+    )
+
+
 def prepare_multi_node_project(*, test_root: Path, project_name: str, reset: bool = False) -> dict[str, str]:
     project_root = _project_root(test_root, project_name)
     if reset and project_root.exists():
@@ -82,6 +96,17 @@ def prepare_same_window_project(*, test_root: Path, project_name: str, reset: bo
         shutil.rmtree(project_root)
     (project_root / ".ccb").mkdir(parents=True, exist_ok=True)
     (project_root / ".ccb" / "ccb.config").write_text(build_same_window_config(), encoding="utf-8")
+    role_store = project_root / "roles"
+    _write_minimal_role(role_store, "agentroles.general", default_agent_name="general")
+    return {"project_root": str(project_root), "role_store": str(role_store)}
+
+
+def prepare_window_class_project(*, test_root: Path, project_name: str, reset: bool = False) -> dict[str, str]:
+    project_root = _project_root(test_root, project_name)
+    if reset and project_root.exists():
+        shutil.rmtree(project_root)
+    (project_root / ".ccb").mkdir(parents=True, exist_ok=True)
+    (project_root / ".ccb" / "ccb.config").write_text(build_window_class_config(), encoding="utf-8")
     role_store = project_root / "roles"
     _write_minimal_role(role_store, "agentroles.general", default_agent_name="general")
     return {"project_root": str(project_root), "role_store": str(role_store)}
@@ -111,6 +136,14 @@ def run_dynamic_layout_smoke(
         _run_same_window_flow(
             test_root=test_root,
             project_name=f"{project_prefix}-same-window",
+            ccb_test=ccb_test,
+            source_home=source_home,
+            reset=reset,
+            keep_running=keep_running,
+        ),
+        _run_window_class_flow(
+            test_root=test_root,
+            project_name=f"{project_prefix}-window-class",
             ccb_test=ccb_test,
             source_home=source_home,
             reset=reset,
@@ -295,6 +328,107 @@ def _run_same_window_flow(
         }
         status = "ok" if all(checks.values()) and _all_success(commands) else "failed"
         return {"flow": "same_window_middle_release", "flow_status": status, "checks": checks, "commands": commands}
+    finally:
+        if not keep_running:
+            commands.append(_run("kill", [str(ccb_test), "--project", str(project_root), "kill", "-f"], cwd=test_root, env=env))
+
+
+def _run_window_class_flow(
+    *,
+    test_root: Path,
+    project_name: str,
+    ccb_test: Path,
+    source_home: Path,
+    reset: bool,
+    keep_running: bool,
+) -> dict[str, Any]:
+    prepared = prepare_window_class_project(test_root=test_root, project_name=project_name, reset=reset)
+    project_root = Path(prepared["project_root"])
+    env = _env(source_home=source_home, role_store=Path(prepared["role_store"]))
+    commands: list[dict[str, Any]] = []
+    try:
+        commands.append(_run("config_validate", [str(ccb_test), "--project", str(project_root), "config", "validate"], cwd=test_root, env=env))
+        commands.append(_run("start", [str(ccb_test), "--project", str(project_root)], cwd=test_root, env=env))
+        for helper in ("planner_helper1", "planner_helper2", "planner_helper3"):
+            commands.append(
+                _run_json(
+                    f"add_{helper}",
+                    [
+                        str(ccb_test),
+                        "--project",
+                        str(project_root),
+                        "agent",
+                        "add",
+                        f"{helper}:fake",
+                        "--role",
+                        "agentroles.general",
+                        "--window-class",
+                        "plan-orchestrate",
+                        "--hidden",
+                        "--json",
+                    ],
+                    cwd=test_root,
+                    env=env,
+                )
+            )
+        before = _run_json("layout_before_window_class_release", [str(ccb_test), "--project", str(project_root), "layout", "status", "--json"], cwd=test_root, env=env)
+        commands.append(before)
+        release = _run_json(
+            "remove_middle_window_class_helper",
+            [
+                str(ccb_test),
+                "--project",
+                str(project_root),
+                "agent",
+                "remove",
+                "planner_helper2",
+                "--policy",
+                "unload",
+                "--idle-only",
+                "--json",
+            ],
+            cwd=test_root,
+            env=env,
+        )
+        commands.append(release)
+        after = _run_json("layout_after_window_class_release", [str(ccb_test), "--project", str(project_root), "layout", "status", "--json"], cwd=test_root, env=env)
+        commands.append(after)
+        commands.append(
+            _run(
+                "ask_planner_helper1",
+                [str(ccb_test), "--project", str(project_root), "ask", "planner_helper1"],
+                cwd=test_root,
+                env=env,
+                input_text="window-class smoke ping planner_helper1\n",
+            )
+        )
+        commands.append(
+            _run(
+                "ask_planner_helper3",
+                [str(ccb_test), "--project", str(project_root), "ask", "planner_helper3"],
+                cwd=test_root,
+                env=env,
+                input_text="window-class smoke ping planner_helper3\n",
+            )
+        )
+        before_panes = _agent_panes(before)
+        after_panes = _agent_panes(after)
+        checks = {
+            "add_agent_panes": [_payload(item).get("apply", {}).get("plan_class") for item in commands[2:5]] == ["add_agent", "add_agent", "add_agent"],
+            "before_main_order": _window_agents(before).get("main") == ["frontdesk"],
+            "before_plan_order": _window_agents(before).get("plan-orchestrate")
+            == ["planner", "planner_helper1", "planner_helper2", "planner_helper3"],
+            "remove_agent_plan": _payload(release).get("apply", {}).get("plan_class") == "remove_agent",
+            "removed_middle_pane": _payload(release).get("applied", {}).get("removed_pane_id") == before_panes.get("planner_helper2"),
+            "reflowed_plan_window": _payload(release).get("apply", {}).get("namespace_reflowed_windows") == ["plan-orchestrate"],
+            "survivor_panes_preserved": after_panes.get("planner_helper1") == before_panes.get("planner_helper1")
+            and after_panes.get("planner_helper3") == before_panes.get("planner_helper3"),
+            "after_main_order": _window_agents(after).get("main") == ["frontdesk"],
+            "after_plan_order": _window_agents(after).get("plan-orchestrate") == ["planner", "planner_helper1", "planner_helper3"],
+            "asks_accepted": _accepted(commands[-2]) and _accepted(commands[-1]),
+        }
+        status = "ok" if all(checks.values()) and _all_success(commands) else "failed"
+        return {"flow": "window_class_middle_release", "flow_status": status, "checks": checks, "commands": commands}
     finally:
         if not keep_running:
             commands.append(_run("kill", [str(ccb_test), "--project", str(project_root), "kill", "-f"], cwd=test_root, env=env))
