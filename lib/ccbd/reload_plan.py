@@ -375,18 +375,38 @@ def _move_agent_operations_are_safe(operations: list[dict[str, object]]) -> bool
         for item in operations
         if str(item.get('op') or '') == 'move_agent' and str(item.get('from_window') or '')
     }
+    moved_target_windows = set(moved_targets.values())
+    added_agents_by_window: dict[str, set[str]] = {}
+    for item in operations:
+        if str(item.get('op') or '') != 'add_agent':
+            continue
+        agent = str(item.get('agent') or '')
+        window = str(item.get('window') or '')
+        if agent and window:
+            added_agents_by_window.setdefault(window, set()).add(agent)
     if not moved_targets:
         return False
     for item in operations:
         op = str(item.get('op') or '')
         if op == 'move_agent':
             continue
+        if op == 'add_agent':
+            window = str(item.get('window') or '')
+            if window not in moved_target_windows:
+                return False
+            continue
         if op == 'add_window':
             window = str(item.get('window') or '')
-            agents = {str(agent) for agent in tuple(item.get('agents') or ())}
+            agents = tuple(str(agent) for agent in tuple(item.get('agents') or ()))
             if not agents:
                 return False
-            if any(moved_targets.get(agent) != window for agent in agents):
+            moved_for_window = {agent for agent, target in moved_targets.items() if target == window}
+            added_for_window = added_agents_by_window.get(window, set())
+            if not moved_for_window:
+                return False
+            if set(agents[: len(moved_for_window)]) != moved_for_window:
+                return False
+            if set(agents) != set(moved_for_window) | added_for_window:
                 return False
             continue
         if op == 'layout_change' and str(item.get('change') or '') == 'remove_window':

@@ -171,7 +171,7 @@ def _materialize_new_window_agents(
     if excluded and all(name in excluded for name in agent_names):
         return {}
     if excluded and any(name in excluded for name in agent_names):
-        raise RuntimeError('new window cannot mix moved agents with newly materialized agents')
+        return {}
     layout = parse_layout_spec(window.user_layout)
     tool_names = set(str(name) for name in tuple(getattr(window, 'tool_names', ()) or ()))
     style_index_by_agent = {name: index for index, name in enumerate(agent_names)}

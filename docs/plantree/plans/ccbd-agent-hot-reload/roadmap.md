@@ -155,6 +155,16 @@ Date: 2026-06-28
   existing worker/checker pair into `node-round1-node1`, removes the evacuated
   source window, preserves pane identity, and keeps ask submission reachable
   after the transaction (`24bbad5f`).
+- Added and verified mixed move-plus-add explicit `[windows]` reload: one
+  `ccb reload` transaction can create a new target window, move existing panes
+  into it, append a newly-created agent pane after the moved anchors, remove
+  the evacuated source window, mount the new agent runtime authority, update
+  moved-agent runtime authority, and keep ask submission reachable for moved
+  and new agents. Unit coverage includes existing-target and new-target
+  namespace plans/apply plus combined moved-and-mounted runtime updates; source
+  wrapper smoke
+  `/home/bfly/yunwei/test_ccb2/dynamic-layout-mixed-move-add-latest.json`
+  passed for `mixed-move-add`.
 
 ## In Progress
 
@@ -163,33 +173,25 @@ Date: 2026-06-28
   add-agent/add-window, idle remove-agent, runtime dynamic add, runtime dynamic
   release, busy retain, empty dynamic-window cleanup, config-only park/resume
   dispatch toggling, compact-startup pane identity preservation, batch release,
-  and batch move into explicit review/loop/node windows. The next hardening
-  target is a mixed reload transaction that both moves existing panes and
-  creates new agent panes in the same target window. Full live `codex`/`claude`
-  provider smoke, daemon-pushed sidebar refresh, replacement, arbitrary layout
-  reshapes, and background config watching remain deferred.
+  batch move into explicit review/loop/node windows, and mixed move-plus-add
+  explicit `[windows]` reload. Full live `codex`/`claude` provider smoke,
+  daemon-pushed sidebar refresh, replacement, arbitrary layout reshapes, and
+  background config watching remain deferred.
 
 ## Next
 
-1. Add focused tests for mixed move-plus-add transactions in both existing and
-   newly-created target windows, then unblock only the safe namespace patch
-   shape: moved panes first, new panes appended after stable moved anchors, and
-   evacuated source-window cleanup when all source agents moved.
-2. Extend the source-wrapper fake-provider smoke from
-   `/home/bfly/yunwei/test_ccb2` to cover the mixed transaction after the unit
-   plan is safe, including ask reachability for both moved and newly-created
-   agents.
-3. Run full live-provider smoke for pane-backed `codex`/`claude` dynamic add,
+1. Run full live-provider smoke for pane-backed `codex`/`claude` dynamic add,
    move, release, hide/park/resume after confirming account/auth boundaries for
    the test project.
-4. Run or update the automatic and manual additive reload matrix in
+2. Run or update the automatic and manual additive reload matrix in
    [topics/test-matrix.md](topics/test-matrix.md), including `test_ccb2`
    evidence for unchanged old panes, newly-mounted agents, released dynamic
-   panes, moved panes, and empty-window cleanup.
-5. Add a lightweight daemon-pushed sidebar refresh signal if needed after manual
+   panes, moved panes, mixed move-plus-add transactions, and empty-window
+   cleanup.
+3. Add a lightweight daemon-pushed sidebar refresh signal if needed after manual
    validation; avoid polling or steady-state scans.
-6. Add bounded draining follow-up for busy unload instead of stable rejection.
-7. Expose replacement only after unload semantics are safe; busy replacement
+4. Add bounded draining follow-up for busy unload instead of stable rejection.
+5. Expose replacement only after unload semantics are safe; busy replacement
    remains pending with explicit bounds.
 
 ## Deferred

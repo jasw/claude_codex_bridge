@@ -25,6 +25,7 @@ FLOW_NAMES = (
     "single-agent-window",
     "move-agent",
     "move-shared-source",
+    "mixed-move-add",
     "batch-move-window-class",
     "batch-move-execution-node",
     "window-class",
@@ -101,6 +102,44 @@ def build_window_class_config(*, provider: str = "fake") -> str:
             "[windows]",
             f'main = "frontdesk:{provider}"',
             f'plan-orchestrate = "planner:{provider}"',
+            "",
+        ]
+    )
+
+
+def build_mixed_move_add_initial_config(*, provider: str = "fake") -> str:
+    return "\n".join(
+        [
+            "version = 2",
+            'entry_window = "main"',
+            "",
+            "[windows]",
+            f'main = "main:{provider}"',
+            f'review = "zeta:{provider}, alpha:{provider}"',
+            "",
+            "[ui.sidebar]",
+            'mode = "every_window"',
+            'width = "15%"',
+            "bottom_height = 20",
+            "",
+        ]
+    )
+
+
+def build_mixed_move_add_target_config(*, provider: str = "fake") -> str:
+    return "\n".join(
+        [
+            "version = 2",
+            'entry_window = "main"',
+            "",
+            "[windows]",
+            f'main = "main:{provider}"',
+            f'archive = "zeta:{provider}, alpha:{provider}, beta:{provider}"',
+            "",
+            "[ui.sidebar]",
+            'mode = "every_window"',
+            'width = "15%"',
+            "bottom_height = 20",
             "",
         ]
     )
@@ -204,6 +243,17 @@ def prepare_window_class_project(*, test_root: Path, project_name: str, provider
         shutil.rmtree(project_root)
     (project_root / ".ccb").mkdir(parents=True, exist_ok=True)
     (project_root / ".ccb" / "ccb.config").write_text(build_window_class_config(provider=provider), encoding="utf-8")
+    role_store = project_root / "roles"
+    _write_minimal_role(role_store, "agentroles.general", default_agent_name="general")
+    return {"project_root": str(project_root), "role_store": str(role_store)}
+
+
+def prepare_mixed_move_add_project(*, test_root: Path, project_name: str, provider: str = "fake", reset: bool = False) -> dict[str, str]:
+    project_root = _project_root(test_root, project_name)
+    if reset and project_root.exists():
+        shutil.rmtree(project_root)
+    (project_root / ".ccb").mkdir(parents=True, exist_ok=True)
+    (project_root / ".ccb" / "ccb.config").write_text(build_mixed_move_add_initial_config(provider=provider), encoding="utf-8")
     role_store = project_root / "roles"
     _write_minimal_role(role_store, "agentroles.general", default_agent_name="general")
     return {"project_root": str(project_root), "role_store": str(role_store)}
@@ -380,6 +430,19 @@ def run_dynamic_layout_smoke(
             _run_move_shared_source_flow(
                 test_root=test_root,
                 project_name=f"{project_prefix}-move-shared-source",
+                provider=provider,
+                ccb_test=ccb_test,
+                provider_home=provider_home,
+                command_timeout_s=command_timeout_s,
+                reset=reset,
+                keep_running=keep_running,
+            )
+        )
+    if "mixed-move-add" in flow_names:
+        results.append(
+            _run_mixed_move_add_flow(
+                test_root=test_root,
+                project_name=f"{project_prefix}-mixed-move-add",
                 provider=provider,
                 ccb_test=ccb_test,
                 provider_home=provider_home,
@@ -1586,6 +1649,103 @@ def _run_move_shared_source_flow(
             commands.append(_run("kill", [str(ccb_test), "--project", str(project_root), "kill", "-f"], cwd=test_root, env=env, timeout=command_timeout_s))
 
 
+def _run_mixed_move_add_flow(
+    *,
+    test_root: Path,
+    project_name: str,
+    provider: str,
+    ccb_test: Path,
+    provider_home: Path,
+    command_timeout_s: int,
+    reset: bool,
+    keep_running: bool,
+) -> dict[str, Any]:
+    prepared = prepare_mixed_move_add_project(test_root=test_root, project_name=project_name, provider=provider, reset=reset)
+    project_root = Path(prepared["project_root"])
+    env = _env(provider_home=provider_home, role_store=Path(prepared["role_store"]))
+    commands: list[dict[str, Any]] = []
+    try:
+        commands.append(_run("config_validate", [str(ccb_test), "--project", str(project_root), "config", "validate"], cwd=test_root, env=env, timeout=command_timeout_s))
+        commands.append(_run("start", [str(ccb_test), "--project", str(project_root)], cwd=test_root, env=env, timeout=command_timeout_s))
+        before_reload = _run_json("layout_before_mixed_move_add_reload", [str(ccb_test), "--project", str(project_root), "layout", "status", "--json"], cwd=test_root, env=env, timeout=command_timeout_s)
+        commands.append(before_reload)
+        (project_root / ".ccb" / "ccb.config").write_text(build_mixed_move_add_target_config(provider=provider), encoding="utf-8")
+        commands.append(
+            {
+                "name": "write_mixed_move_add_target_config",
+                "command": ["write", str(project_root / ".ccb" / "ccb.config")],
+                "returncode": 0,
+                "stdout": "",
+                "stderr": "",
+                "timeout": False,
+            }
+        )
+        reload_result = _run("reload_mixed_move_add_config", [str(ccb_test), "--project", str(project_root), "reload"], cwd=test_root, env=env, timeout=command_timeout_s)
+        commands.append(reload_result)
+        after_reload = _run_json("layout_after_mixed_move_add_reload", [str(ccb_test), "--project", str(project_root), "layout", "status", "--json"], cwd=test_root, env=env, timeout=command_timeout_s)
+        commands.append(after_reload)
+        zeta_ask = _run(
+            "ask_zeta_after_mixed_move_add",
+            [str(ccb_test), "--project", str(project_root), "ask", "zeta"],
+            cwd=test_root,
+            env=env,
+            input_text="mixed-move-add smoke ping zeta\n",
+            timeout=command_timeout_s,
+        )
+        alpha_ask = _run(
+            "ask_alpha_after_mixed_move_add",
+            [str(ccb_test), "--project", str(project_root), "ask", "alpha"],
+            cwd=test_root,
+            env=env,
+            input_text="mixed-move-add smoke ping alpha\n",
+            timeout=command_timeout_s,
+        )
+        beta_ask = _run(
+            "ask_beta_after_mixed_move_add",
+            [str(ccb_test), "--project", str(project_root), "ask", "beta"],
+            cwd=test_root,
+            env=env,
+            input_text="mixed-move-add smoke ping beta\n",
+            timeout=command_timeout_s,
+        )
+        commands.extend([zeta_ask, alpha_ask, beta_ask])
+        commands.extend(
+            _watch_submitted_jobs(
+                ccb_test=ccb_test,
+                project_root=project_root,
+                test_root=test_root,
+                env=env,
+                asks=(zeta_ask, alpha_ask, beta_ask),
+                timeout=command_timeout_s,
+            )
+        )
+        before_panes = _agent_panes(before_reload)
+        after_panes = _agent_panes(after_reload)
+        reload_stdout = str(reload_result.get("stdout") or "")
+        checks = {
+            "before_windows": _window_agents(before_reload) == {"main": ["main"], "review": ["zeta", "alpha"]},
+            "reload_published": "reload_status: published" in reload_stdout,
+            "reload_move_plan": "plan_class: move_agent" in reload_stdout,
+            "reload_namespace_planned_mixed_steps": "action=create_agent_pane window=archive agent=beta" in reload_stdout
+            and reload_stdout.count("action=move_agent_pane window=review") == 2
+            and "action=kill_window window=review" in reload_stdout,
+            "after_windows": _window_agents(after_reload) == {"main": ["main"], "archive": ["zeta", "alpha", "beta"]},
+            "moved_panes_preserved": after_panes.get("zeta") == before_panes.get("zeta")
+            and after_panes.get("alpha") == before_panes.get("alpha"),
+            "new_beta_pane_created": bool(after_panes.get("beta")) and after_panes.get("beta") not in set(before_panes.values()),
+            "review_window_removed": "review" not in _window_agents(after_reload),
+            "zeta_ask_accepted": _accepted(zeta_ask),
+            "alpha_ask_accepted": _accepted(alpha_ask),
+            "beta_ask_accepted": _accepted(beta_ask),
+            "asks_terminal": _watch_commands_terminal(commands),
+        }
+        status = "ok" if all(checks.values()) and _all_success(commands) else "failed"
+        return {"flow": "mixed_move_add_explicit_windows", "flow_status": status, "checks": checks, "commands": commands}
+    finally:
+        if not keep_running:
+            commands.append(_run("kill", [str(ccb_test), "--project", str(project_root), "kill", "-f"], cwd=test_root, env=env, timeout=command_timeout_s))
+
+
 def _run_batch_move_window_class_flow(
     *,
     test_root: Path,
@@ -2546,6 +2706,15 @@ def _prepare_selected_projects(
             prepare_same_window_project(
                 test_root=test_root,
                 project_name=f"{project_prefix}-move-shared-source",
+                provider=provider,
+                reset=reset,
+            )
+        )
+    if "mixed-move-add" in flows:
+        prepared.append(
+            prepare_mixed_move_add_project(
+                test_root=test_root,
+                project_name=f"{project_prefix}-mixed-move-add",
                 provider=provider,
                 reset=reset,
             )

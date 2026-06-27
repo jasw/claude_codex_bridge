@@ -140,8 +140,13 @@ def _moved_target_anchor(target_window: str, prior_moved: tuple[str, ...], moved
 
 def _new_window_anchor(agent_name: str, target_window: str, new_target, *, moved_target_agents: tuple[str, ...], result) -> str:
     target_agents = window_agent_names(new_target)
-    if target_agents != moved_target_agents or not target_agents or target_agents[0] != agent_name:
-        raise RuntimeError(f'new target window must contain only moved agents starting with {agent_name!r}')
+    moved_count = len(moved_target_agents)
+    if (
+        not moved_count
+        or tuple(target_agents[:moved_count]) != moved_target_agents
+        or target_agents[0] != agent_name
+    ):
+        raise RuntimeError(f'new target window must start with moved agents starting with {agent_name!r}')
     panes = dict(getattr(result, 'move_anchor_panes', {}) or {})
     pane_id = str(panes.get(target_window) or '').strip()
     if not pane_id:

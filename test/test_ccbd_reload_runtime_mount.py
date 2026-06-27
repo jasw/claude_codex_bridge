@@ -16,6 +16,7 @@ from ccbd.models import CcbdStartupAgentResult
 from ccbd.project_view import ProjectViewStateStore
 from ccbd.reload_runtime_move import run_moved_agent_runtime_updates
 from ccbd.reload_runtime_mount import run_additive_agent_mounts
+from ccbd.reload_apply_runtime import run_runtime_mount
 from ccbd.services import CcbdLifecycleStore, MountManager, OwnershipGuard, SnapshotWriter
 from ccbd.services.project_namespace import ProjectNamespaceController
 from ccbd.services.project_namespace_state import ProjectNamespaceStateStore
@@ -315,6 +316,82 @@ def test_move_runtime_updates_existing_authority_window_without_remount(
     assert moved.active_pane_id == '%2'
     assert moved.tmux_window_name == 'review'
     assert app.service_graph.version == 1
+
+
+def test_runtime_mount_combines_moved_agents_and_new_agent_mount(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    project_root = _project(tmp_path / 'repo-runtime-move-and-mount', ADD_AGENT_CONFIG)
+    app = CcbdApp(project_root, clock=lambda: NOW, pid=4242)
+    graph = _build_graph(app, ADD_AGENT_CONFIG, version=2)
+    _seed_runtime(graph.runtime_service, 'agent1', pane_id='%1')
+    _seed_runtime(graph.runtime_service, 'agent2', pane_id='%2')
+    _forbid_transaction_side_effects(app, monkeypatch)
+    _forbid_namespace_recreate_paths(app, monkeypatch)
+    calls: list[dict[str, object]] = []
+
+    def _fake_start_flow(**kwargs):
+        calls.append(kwargs)
+        assert kwargs['requested_agents'] == ('agent3',)
+        assert kwargs['namespace_agent_panes'] == {'agent3': '%3'}
+        kwargs['runtime_service'].attach(
+            agent_name='agent3',
+            workspace_path=str(app.paths.workspace_path('agent3')),
+            backend_type='pane-backed',
+            runtime_ref='tmux:%3',
+            session_ref='session-agent3',
+            health='healthy',
+            provider='codex',
+            terminal_backend='tmux',
+            pane_id='%3',
+            active_pane_id='%3',
+            pane_state='alive',
+            tmux_socket_path=str(app.paths.ccbd_tmux_socket_path),
+            tmux_window_name='main',
+            slot_key='agent3',
+            lifecycle_state='idle',
+            managed_by='ccbd',
+            binding_source='provider-session',
+        )
+        return StartFlowSummary(
+            project_root=str(project_root),
+            project_id=app.project_id,
+            started=('agent3',),
+            socket_path=str(app.paths.ccbd_socket_path),
+        )
+
+    result = run_runtime_mount(
+        app,
+        graph,
+        namespace=_namespace(app),
+        namespace_patch=SimpleNamespace(
+            status='applied',
+            agent_panes={'agent3': '%3'},
+            moved_agents={'agent2': '%2'},
+            moved_agent_windows={'agent2': 'review'},
+            preserved_before={'agent1': '%1', 'agent2': '%2'},
+            removed_agents={},
+        ),
+        run_runtime_mount_fn=None,
+        run_start_flow_fn=_fake_start_flow,
+    )
+
+    assert result.status == 'mounted'
+    assert result.requested_agents == ('agent2', 'agent3')
+    assert result.mounted_agents == ('agent3',)
+    assert result.runtime_authority_written_agents == ('agent3',)
+    assert result.moved_agents == ('agent2',)
+    assert result.runtime_authority_moved_agents == ('agent2',)
+    assert result.diagnostics['runtime_authority_scope'] == 'moved_and_new_agents'
+    assert calls and calls[0]['namespace_agent_panes'] == {'agent3': '%3'}
+    mounted = graph.registry.get('agent3')
+    assert mounted is not None
+    assert mounted.pane_id == '%3'
+    moved = graph.registry.get('agent2')
+    assert moved.pane_id == '%2'
+    assert moved.active_pane_id == '%2'
+    assert moved.tmux_window_name == 'review'
 
 
 def test_additive_runtime_mount_reuses_retired_same_name_runtime_residue(tmp_path: Path) -> None:

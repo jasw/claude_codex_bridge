@@ -68,10 +68,15 @@ def _move_agent_step(
         }
     if old_target is None:
         target_agents = window_agent_names(new_target)
-        if target_agents != moved_target_agents or agent_name not in target_agents:
+        moved_count = len(moved_target_agents)
+        if (
+            not moved_count
+            or tuple(target_agents[:moved_count]) != moved_target_agents
+            or agent_name not in moved_target_agents
+        ):
             return {
                 'steps': [],
-                'blocked': [_blocked_move(agent_name, source_window, target_window, 'new target window must contain only moved agents')],
+                'blocked': [_blocked_move(agent_name, source_window, target_window, 'new target window must start with moved agents')],
             }
         return _move_step(agent_name, source_window, target_window, step_factory=step_factory)
     append_plan = append_agent_plan_for_window(old_target, new_target)

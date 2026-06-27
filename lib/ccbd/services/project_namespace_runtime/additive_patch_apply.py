@@ -145,6 +145,16 @@ def _apply_mutations(
             excluded_agents=moved_agents,
             timeout_s=timeout_s,
         )
+        move_agent_panes(
+            controller,
+            backend,
+            old_topology=old_topology,
+            new_topology=new_topology,
+            existing_agent_panes=preserved_before,
+            current=current,
+            result=state,
+            timeout_s=timeout_s,
+        )
         state.agent_panes.update(
             append_agent_panes(
                 controller,
@@ -159,16 +169,6 @@ def _apply_mutations(
                 timeout_s=timeout_s,
                 excluded_agents=moved_agents,
             )
-        )
-        move_agent_panes(
-            controller,
-            backend,
-            old_topology=old_topology,
-            new_topology=new_topology,
-            existing_agent_panes=preserved_before,
-            current=current,
-            result=state,
-            timeout_s=timeout_s,
         )
         remove_agent_panes(
             controller,
