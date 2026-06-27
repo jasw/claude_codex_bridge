@@ -213,6 +213,16 @@ Date: 2026-06-24
   with `108 passed`; source-wrapper CLI smoke in
   `/home/bfly/yunwei/test_ccb2/source-move-smoke-20260628034710` proved
   unmounted add/add/move projection and valid config.
+- Landed the first move-to-new-window transaction slice in the current
+  worktree. A dynamic agent can now move from an existing window into a newly
+  materialized target window without provider restart: the reload planner
+  admits the guarded `add_window + move_agent` combination, the namespace patch
+  creates the target window, moves the existing pane into it, removes the
+  placeholder pane, restamps placement evidence, and reflows source/target
+  windows. Focused tests passed with `110 passed`; source-wrapper CLI smoke in
+  `/home/bfly/yunwei/test_ccb2/source-move-new-window-smoke-20260628035809`
+  proved unmounted dynamic add, move to `review`, `placement_sequence=1`,
+  deferred apply until start, and valid projected config.
 
 ## In Progress
 
@@ -818,10 +828,10 @@ Date: 2026-06-24
    single-agent-window, multi-window add/remove, and explicit-window-class
    middle-removal cases, especially cases that require manual move planning or
    dynamic visibility changes rather than pure reflow.
-2. Extend `ccb agent move` beyond the first existing-window slice: support
-   move-to-new-window transactions, repeated move cycles in a mounted project,
-   and a repeatable fake-provider smoke that proves ask reachability before
-   and after movement.
+2. Extend `ccb agent move` beyond the first existing-window and
+   move-to-new-window slices: add repeatable mounted fake-provider movement
+   smoke that proves ask reachability before and after movement, then support
+   repeated move cycles and removal of now-empty source windows when allowed.
 3. Extend the shrink/release proof from fake-provider source-wrapper smokes to
    opt-in real-provider tolerance where useful, especially `layout arrange`
    after a real pane has been manually disturbed.

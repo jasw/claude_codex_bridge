@@ -27,14 +27,22 @@ def move_agent_panes(
     for agent_name, source_window, target_window in moved:
         old_target = old_windows.get(target_window)
         new_target = new_windows.get(target_window)
-        if old_target is None or new_target is None:
+        if new_target is None:
             raise RuntimeError(f'target window missing for moved agent {agent_name!r}: {target_window!r}')
         source_pane = existing_agent_panes.get(agent_name)
         if not source_pane:
             raise RuntimeError(f'pane missing for moved agent {agent_name!r}')
-        anchor = _target_anchor(agent_name, target_window, old_target, moved_by_target, existing_agent_panes, result.moved_agents)
-        direction = _move_direction(agent_name, old_target, new_target)
+        if old_target is None:
+            anchor = _new_window_anchor(agent_name, target_window, new_target, result)
+            direction = 'right'
+            placeholder_pane = anchor
+        else:
+            anchor = _target_anchor(agent_name, target_window, old_target, moved_by_target, existing_agent_panes, result.moved_agents)
+            direction = _move_direction(agent_name, old_target, new_target)
+            placeholder_pane = None
         _move_pane(backend, source_pane=source_pane, anchor_pane=anchor, direction=direction, timeout_s=timeout_s)
+        if placeholder_pane:
+            _kill_placeholder_pane(backend, placeholder_pane, result=result, timeout_s=timeout_s)
         order_index = _agent_order_index(new_target, agent_name)
         apply_ccb_pane_identity(
             backend,
@@ -108,6 +116,17 @@ def _target_anchor(
     return pane_id
 
 
+def _new_window_anchor(agent_name: str, target_window: str, new_target, result) -> str:
+    target_agents = window_agent_names(new_target)
+    if target_agents != (agent_name,):
+        raise RuntimeError(f'new target window must contain exactly moved agent {agent_name!r}')
+    panes = dict(getattr(result, 'move_anchor_panes', {}) or {})
+    pane_id = str(panes.get(target_window) or '').strip()
+    if not pane_id:
+        raise RuntimeError(f'placeholder anchor missing for moved agent {agent_name!r}: {target_window!r}')
+    return pane_id
+
+
 def _move_direction(agent_name: str, old_target, new_target) -> str:
     append_plan = append_agent_plan_for_window(old_target, new_target)
     if append_plan is None:
@@ -139,6 +158,27 @@ def _move_pane(backend, *, source_pane: str, anchor_pane: str, direction: str, t
     if int(getattr(completed, 'returncode', 1) or 0) != 0:
         detail = str(getattr(completed, 'stderr', '') or getattr(completed, 'stdout', '') or '').strip()
         raise RuntimeError(f'failed to move tmux pane {source_pane!r}: {detail}')
+
+
+def _kill_placeholder_pane(backend, pane_id: str, *, result, timeout_s: float | None) -> None:
+    killer = getattr(backend, 'kill_pane', None)
+    if callable(killer):
+        try:
+            killer(pane_id)
+        except TypeError:
+            killer(pane_id, timeout_s=timeout_s)
+    else:
+        runner = getattr(backend, '_tmux_run', None)
+        if not callable(runner):
+            raise RuntimeError('tmux backend does not support placeholder pane cleanup')
+        completed = runner(['kill-pane', '-t', pane_id], check=False, capture=True, timeout=timeout_s)
+        if int(getattr(completed, 'returncode', 1) or 0) != 0:
+            detail = str(getattr(completed, 'stderr', '') or getattr(completed, 'stdout', '') or '').strip()
+            raise RuntimeError(f'failed to clean moved target placeholder pane {pane_id!r}: {detail}')
+    try:
+        result.created_panes.remove(pane_id)
+    except ValueError:
+        pass
 
 
 __all__ = ['move_agent_panes']

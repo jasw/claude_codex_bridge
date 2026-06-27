@@ -39,7 +39,7 @@ def plan_blocker(plan: dict[str, object]) -> tuple[str, str] | None:
         return (
             'unsupported_plan_class',
             'additive reload apply only accepts view_only_change, '
-            'maintenance_change, no_change, add_agent, add_window, idle remove_agent, existing-window move_agent, '
+            'maintenance_change, no_change, add_agent, add_window, idle remove_agent, guarded move_agent, '
             'add_tool_window, and remove_tool_window',
         )
     operation_blocker = _operation_blocker(plan)

@@ -365,7 +365,27 @@ def _remove_agent_operations_are_safe(operations: list[dict[str, object]]) -> bo
 def _move_agent_operations_are_safe(operations: list[dict[str, object]]) -> bool:
     if not operations:
         return False
-    return all(str(item.get('op') or '') == 'move_agent' for item in operations)
+    moved_targets = {
+        str(item.get('agent') or ''): str(item.get('to_window') or '')
+        for item in operations
+        if str(item.get('op') or '') == 'move_agent' and str(item.get('agent') or '')
+    }
+    if not moved_targets:
+        return False
+    for item in operations:
+        op = str(item.get('op') or '')
+        if op == 'move_agent':
+            continue
+        if op == 'add_window':
+            window = str(item.get('window') or '')
+            agents = {str(agent) for agent in tuple(item.get('agents') or ())}
+            if not agents:
+                return False
+            if any(moved_targets.get(agent) != window for agent in agents):
+                return False
+            continue
+        return False
+    return True
 
 
 def _tool_window_operations(

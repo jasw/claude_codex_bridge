@@ -437,6 +437,65 @@ def test_agent_move_dynamic_agent_uses_move_agent_reload_plan(
     ]
 
 
+def test_agent_move_dynamic_agent_to_new_window_uses_add_window_move_plan(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = _project_with_agent_profiles(tmp_path, monkeypatch)
+    result, _helper, stderr = _run_phase2(
+        ['agent', 'add', 'helper:codex', '--role', 'agentroles.general', '--window', 'main', '--hidden', '--json'],
+        cwd=project_root,
+    )
+    assert result == 0, stderr
+    before_move = load_project_config(project_root).config
+
+    result, moved, stderr = _run_phase2(
+        ['agent', 'move', 'helper', '--window', 'review', '--reason', 'new review window', '--json'],
+        cwd=project_root,
+    )
+
+    assert result == 0, stderr
+    assert moved['previous_window_name'] == 'main'
+    assert moved['resolved_window_name'] == 'review'
+    assert moved['placement']['window_name'] == 'review'
+    assert moved['placement']['placement_sequence'] == 1
+    after_move = load_project_config(project_root).config
+    assert [(window.name, window.agent_names, window.layout_spec) for window in after_move.windows] == [
+        ('main', ('main',), 'main:codex'),
+        ('review', ('helper',), 'helper:codex'),
+    ]
+    plan = build_reload_dry_run_plan(before_move, after_move, project_id='proj-1', current_namespace=_namespace('proj-1'))
+    assert plan['plan_class'] == 'move_agent'
+    assert plan['future_safe_to_apply'] is True
+    assert [item['op'] for item in plan['operations']] == ['add_window', 'move_agent']
+    assert plan['namespace_patch_plan']['steps'] == [
+        {
+            'action': 'create_window',
+            'window': 'review',
+            'managed_by': 'ccbd',
+            'reason': 'window exists only in new config',
+        },
+        {
+            'action': 'create_sidebar_pane',
+            'window': 'review',
+            'role': 'sidebar',
+            'slot_key': 'sidebar:review',
+            'managed_by': 'ccbd',
+            'reason': 'new managed window needs a sidebar pane',
+        },
+        {
+            'action': 'move_agent_pane',
+            'window': 'main',
+            'target_window': 'review',
+            'agent': 'helper',
+            'role': 'agent',
+            'slot_key': 'helper',
+            'managed_by': 'ccbd',
+            'reason': 'existing dynamic agent window membership changed',
+        },
+    ]
+
+
 def test_agent_add_with_loop_node_places_agent_in_node_window(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

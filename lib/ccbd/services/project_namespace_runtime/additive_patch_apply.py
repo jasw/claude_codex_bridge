@@ -142,6 +142,7 @@ def _apply_mutations(
             old_topology=old_topology,
             new_topology=new_topology,
             result=state,
+            excluded_agents=moved_agents,
             timeout_s=timeout_s,
         )
         state.agent_panes.update(

@@ -1043,6 +1043,12 @@ Current evidence:
   reload tests and controlled mounted tmux smoke;
 - existing-window and new-window dynamic hot unload are proven through
   controlled mounted tmux smoke, including busy retain and empty-window removal;
+- guarded dynamic movement now covers two bounded cases: moving a dynamic agent
+  into an existing managed window, and moving one dynamic agent into a newly
+  materialized target window. The new-window case is intentionally restricted
+  to a target window that contains exactly the moved agent; the namespace patch
+  creates the target window, moves the preserved pane, kills the placeholder
+  pane, restamps window evidence, and reflows only the source/target windows;
 - same-window middle dynamic release is proven: removing the middle helper pane
   deletes only the target pane, preserves the remaining dynamic pane ids, keeps
   their ask targets reachable, and avoids `layout_change`;
@@ -1093,4 +1099,7 @@ Deferred:
 - visual rich panel for window topology;
 - automatic screenshot/archive of completed node windows;
 - cross-session restoration of exact pane geometry;
+- arbitrary cross-window move cycles that require removing the now-empty source
+  window or mixing moved panes with newly materialized panes in the same target
+  transaction;
 - user-defined arbitrary window classes.

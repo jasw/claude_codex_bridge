@@ -80,9 +80,9 @@ def build_namespace_patch_plan(
 
     if not blocked:
         steps.extend(_view_refresh_steps(op_records))
-        steps.extend(_additive_window_steps(old_topology, new_topology))
         move_result = move_agent_steps(old_topology, new_topology, step_factory=NamespacePatchStep)
         moved_agents = tuple(move_result.get('moved_agents') or ())
+        steps.extend(_additive_window_steps(old_topology, new_topology, excluded_agents=moved_agents))
         steps.extend(move_result['steps'])
         blocked.extend(move_result['blocked'])
         additive_result = additive_agent_steps(old_topology, new_topology, step_factory=NamespacePatchStep, excluded_agents=moved_agents)
@@ -144,7 +144,7 @@ def _blocked_unsupported_operations(operations: tuple[dict[str, object], ...]) -
                     'op': op,
                     'agent': operation.get('agent'),
                     'window': operation.get('window'),
-                    'reason': 'namespace patch planner supports config-only, additive, idle remove_agent, and existing-window move_agent operations',
+                    'reason': 'namespace patch planner supports config-only, additive, idle remove_agent, and guarded move_agent operations',
                 }
             )
     return blocked
@@ -207,8 +207,9 @@ def _view_refresh_steps(operations: tuple[dict[str, object], ...]) -> list[Names
     ]
 
 
-def _additive_window_steps(old_topology, new_topology) -> list[NamespacePatchStep]:
+def _additive_window_steps(old_topology, new_topology, *, excluded_agents: tuple[str, ...] = ()) -> list[NamespacePatchStep]:
     old_windows = _window_map(old_topology)
+    excluded = {str(agent) for agent in tuple(excluded_agents or ())}
     steps: list[NamespacePatchStep] = []
     for window in tuple(getattr(new_topology, 'windows', ()) or ()):
         window_name = str(window.name)
@@ -232,6 +233,8 @@ def _additive_window_steps(old_topology, new_topology) -> list[NamespacePatchSte
                 )
             )
         for agent_name in tuple(getattr(window, 'agent_names', ()) or ()):
+            if str(agent_name) in excluded:
+                continue
             steps.append(
                 NamespacePatchStep(
                     action='create_agent_pane',
@@ -389,7 +392,7 @@ def _preserved_agents(old_topology, new_topology) -> list[str]:
 
 def _warnings_for_status(status: str) -> list[str]:
     if status == 'planned':
-        return ['Namespace patch apply is explicit and only supports additive, idle remove_agent, or existing-window move_agent operations.']
+        return ['Namespace patch apply is explicit and only supports additive, idle remove_agent, or guarded move_agent operations.']
     if status == 'blocked':
         return ['Namespace patch plan is blocked; reload must remain dry-run/rejected.']
     return []
