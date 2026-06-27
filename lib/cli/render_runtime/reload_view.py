@@ -99,6 +99,8 @@ def _reload_residue_line(residue: Mapping[str, object]) -> str:
         'removed_windows',
         'removed_panes',
         'removed_agents',
+        'reflowed_windows',
+        'reflow_errors',
         'rollback_actions',
         'requested_agents',
         'mounted_agents',

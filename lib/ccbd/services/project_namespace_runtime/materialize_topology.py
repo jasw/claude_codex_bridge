@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import shlex
+from types import SimpleNamespace
 from typing import Any
 
 from cli.services.tmux_ui import apply_project_tmux_ui
@@ -45,6 +46,18 @@ def refresh_topology_ui_for_project(
         tmux_session_name=context.desired_session_name,
         backend=context.backend,
     )
+    _sync_topology_sidebar_widths(controller, context, topology_plan=topology_plan, timeout_s=timeout_s)
+
+
+def sync_topology_sidebar_widths(
+    controller,
+    backend,
+    *,
+    session_name: str,
+    topology_plan,
+    timeout_s: float | None = None,
+) -> None:
+    context = SimpleNamespace(backend=backend, desired_session_name=session_name)
     _sync_topology_sidebar_widths(controller, context, topology_plan=topology_plan, timeout_s=timeout_s)
 
 
@@ -822,6 +835,7 @@ __all__ = [
     'materialize_topology',
     'refresh_topology_ui',
     'refresh_topology_ui_for_project',
+    'sync_topology_sidebar_widths',
     'topology_active_panes',
     'topology_recreate_reason',
 ]

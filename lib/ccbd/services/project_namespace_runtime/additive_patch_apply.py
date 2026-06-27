@@ -23,6 +23,8 @@ class NamespacePatchApplyResult:
     removed_windows: tuple[str, ...] = ()
     removed_panes: tuple[str, ...] = ()
     removed_agents: dict[str, str] = field(default_factory=dict)
+    reflowed_windows: tuple[str, ...] = ()
+    reflow_errors: dict[str, str] = field(default_factory=dict)
     tool_panes: dict[str, str] = field(default_factory=dict)
     preserved_before: dict[str, str] = field(default_factory=dict)
     preserved_after: dict[str, str] = field(default_factory=dict)
@@ -40,6 +42,8 @@ class NamespacePatchApplyResult:
             'removed_windows': list(self.removed_windows),
             'removed_panes': list(self.removed_panes),
             'removed_agents': dict(self.removed_agents),
+            'reflowed_windows': list(self.reflowed_windows),
+            'reflow_errors': dict(self.reflow_errors),
             'tool_panes': dict(self.tool_panes),
             'preserved_before': dict(self.preserved_before),
             'preserved_after': dict(self.preserved_after),
@@ -196,6 +200,8 @@ def _failure_result(
         removed_windows=tuple(state.removed_windows),
         removed_panes=tuple(state.removed_panes),
         removed_agents=state.removed_agents,
+        reflowed_windows=tuple(state.reflowed_windows),
+        reflow_errors=state.reflow_errors,
         tool_panes=state.tool_panes,
         preserved_before=preserved_before,
         preserved_after=preserved_after,
@@ -230,6 +236,8 @@ def _applied_result(
         removed_windows=tuple(state.removed_windows),
         removed_panes=tuple(state.removed_panes),
         removed_agents=state.removed_agents,
+        reflowed_windows=tuple(state.reflowed_windows),
+        reflow_errors=state.reflow_errors,
         tool_panes=state.tool_panes,
         preserved_before=preserved_before,
         preserved_after=preserved_after,

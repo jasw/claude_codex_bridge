@@ -21,6 +21,8 @@ class WindowPatchResult:
     removed_windows: list[str] = field(default_factory=list)
     removed_panes: list[str] = field(default_factory=list)
     removed_agents: dict[str, str] = field(default_factory=dict)
+    reflowed_windows: list[str] = field(default_factory=list)
+    reflow_errors: dict[str, str] = field(default_factory=dict)
     tool_panes: dict[str, str] = field(default_factory=dict)
 
 

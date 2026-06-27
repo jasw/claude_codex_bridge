@@ -288,6 +288,7 @@ def _run_same_window_flow(
             "before_order": _window_agents(before).get("main") == ["main", "helper1", "helper2", "helper3"],
             "remove_agent_plan": _payload(release).get("apply", {}).get("plan_class") == "remove_agent",
             "removed_middle_pane": _payload(release).get("applied", {}).get("removed_pane_id") == before_panes.get("helper2"),
+            "reflowed_main_window": _payload(release).get("apply", {}).get("namespace_reflowed_windows") == ["main"],
             "survivor_panes_preserved": after_panes.get("helper1") == before_panes.get("helper1") and after_panes.get("helper3") == before_panes.get("helper3"),
             "after_order": _window_agents(after).get("main") == ["main", "helper1", "helper3"],
             "asks_accepted": _accepted(commands[-2]) and _accepted(commands[-1]),
@@ -431,6 +432,10 @@ def _compact_payload_summary(payload: dict[str, Any]) -> dict[str, Any]:
             for key in ("plan_class", "apply_status", "reload_status")
             if key in apply_payload
         }
+        if apply_payload.get("namespace_reflowed_windows"):
+            summary["apply"]["namespace_reflowed_windows"] = list(apply_payload.get("namespace_reflowed_windows") or ())
+        if apply_payload.get("namespace_reflow_errors"):
+            summary["apply"]["namespace_reflow_errors"] = dict(apply_payload.get("namespace_reflow_errors") or {})
     windows = payload.get("windows")
     if isinstance(windows, list):
         summary["windows"] = [

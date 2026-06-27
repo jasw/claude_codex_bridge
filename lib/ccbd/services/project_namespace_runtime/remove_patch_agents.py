@@ -3,6 +3,7 @@ from __future__ import annotations
 from ccbd.reload_additive_agents import window_agent_names, window_map
 
 from .backend import kill_window, session_window_target
+from .materialize_topology import sync_topology_sidebar_widths
 
 
 def remove_agent_panes(
@@ -48,6 +49,16 @@ def remove_agent_panes(
             result=result,
             timeout_s=timeout_s,
         )
+        if removed_agents:
+            _reflow_window_after_remove(
+                controller,
+                backend,
+                current=current,
+                topology_plan=new_topology,
+                window_name=window_name,
+                result=result,
+                timeout_s=timeout_s,
+            )
 
 
 def _remove_window_agents(
@@ -77,6 +88,48 @@ def _kill_window(backend, *, current, window_name: str, result, timeout_s: float
         timeout_s=timeout_s,
     )
     _append_unique(result.removed_windows, window_name)
+
+
+def _reflow_window_after_remove(
+    controller,
+    backend,
+    *,
+    current,
+    topology_plan,
+    window_name: str,
+    result,
+    timeout_s: float | None,
+) -> None:
+    target = session_window_target(current.tmux_session_name, window_name)
+    runner = getattr(backend, '_tmux_run', None)
+    if not callable(runner):
+        result.reflow_errors[window_name] = 'tmux backend does not support select-layout'
+        return
+    try:
+        completed = runner(
+            ['select-layout', '-E', '-t', target],
+            check=False,
+            capture=True,
+            timeout=timeout_s,
+        )
+    except Exception as exc:
+        result.reflow_errors[window_name] = str(exc)
+        return
+    if int(getattr(completed, 'returncode', 1) or 0) != 0:
+        detail = str(getattr(completed, 'stderr', '') or getattr(completed, 'stdout', '') or '').strip()
+        result.reflow_errors[window_name] = detail or 'select-layout failed'
+        return
+    _append_unique(result.reflowed_windows, window_name)
+    try:
+        sync_topology_sidebar_widths(
+            controller,
+            backend,
+            session_name=current.tmux_session_name,
+            topology_plan=topology_plan,
+            timeout_s=timeout_s,
+        )
+    except Exception as exc:
+        result.reflow_errors[window_name] = f'sidebar_width_sync_failed: {exc}'
 
 
 def _kill_pane(backend, pane_id: str, *, timeout_s: float | None) -> None:

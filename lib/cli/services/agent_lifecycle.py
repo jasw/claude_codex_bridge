@@ -636,6 +636,8 @@ def _apply_reload_if_mounted(context, *, action: str) -> dict[str, object]:
         'namespace_removed_agents': dict(namespace_patch.get('removed_agents') or {}),
         'namespace_removed_panes': list(namespace_patch.get('removed_panes') or ()),
         'namespace_removed_windows': list(namespace_patch.get('removed_windows') or ()),
+        'namespace_reflowed_windows': list(namespace_patch.get('reflowed_windows') or ()),
+        'namespace_reflow_errors': dict(namespace_patch.get('reflow_errors') or {}),
         'runtime_mount_status': runtime_mount.get('status'),
         'mounted_agents': list(runtime_mount.get('mounted_agents') or ()),
         'unloaded_agents': list(runtime_mount.get('unloaded_agents') or ()),

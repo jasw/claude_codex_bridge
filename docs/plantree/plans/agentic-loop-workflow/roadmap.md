@@ -430,6 +430,15 @@ Date: 2026-06-24
   live append-only hot load to panes `%2/%3/%4`, middle release removing only
   `%3`, preserved helper panes `%2` and `%4` staying alive, and accepted asks
   to both surviving dynamic agents after release.
+- Landed the first real remove-path reflow slice. `remove_agent` now records
+  `reflowed_windows` / `reflow_errors`, runs best-effort `select-layout -E`
+  after successful same-window pane removal, and reapplies topology sidebar
+  widths so visual compaction does not permanently flatten CCB sidebars.
+  Focused tests prove pane-only removal, reflow diagnostics, and sidebar width
+  restoration; the repeatable source-wrapper smoke in
+  `/home/bfly/yunwei/test_ccb2/dynamic-layout-reflow-1782570-same-window`
+  proved middle `helper2` removal reports `namespace_reflowed_windows=["main"]`
+  while preserving `helper1` and `helper3` and keeping survivor asks reachable.
 
 ## Next
 

@@ -581,6 +581,17 @@ Evidence:
   middle `helper2` used `plan_class=remove_agent`, preserved `helper1` and
   `helper3` pane ids, accepted asks to both survivors, and cleaned up with
   `kill_status: ok`.
+- Real `remove_agent` namespace patch apply now performs best-effort visual
+  reflow after same-window pane removal and then reapplies configured sidebar
+  widths. `NamespacePatchApplyResult` records `reflowed_windows` and
+  `reflow_errors`, and `agent remove --json` exposes them as
+  `namespace_reflowed_windows` / `namespace_reflow_errors`. Focused tests cover
+  reflow after pane-only removal and sidebar width restoration. The
+  source-wrapper smoke in
+  `/home/bfly/yunwei/test_ccb2/dynamic-layout-reflow-1782570-same-window`
+  proved `main, helper1, helper2, helper3 -> main, helper1, helper3` reports
+  `namespace_reflowed_windows=["main"]`, preserves survivor panes, accepts
+  asks to both survivors, and cleans up with `kill_status: ok`.
 - Focused regression after connecting loop capacity to layout placement passed
   with `187 passed` across loop capacity, agent lifecycle, layout status, pane
   growth, layout runtime, reload patch/runtime mount, and config loader tests.
