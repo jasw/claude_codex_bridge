@@ -370,6 +370,11 @@ def _move_agent_operations_are_safe(operations: list[dict[str, object]]) -> bool
         for item in operations
         if str(item.get('op') or '') == 'move_agent' and str(item.get('agent') or '')
     }
+    moved_source_windows = {
+        str(item.get('from_window') or '')
+        for item in operations
+        if str(item.get('op') or '') == 'move_agent' and str(item.get('from_window') or '')
+    }
     if not moved_targets:
         return False
     for item in operations:
@@ -382,6 +387,11 @@ def _move_agent_operations_are_safe(operations: list[dict[str, object]]) -> bool
             if not agents:
                 return False
             if any(moved_targets.get(agent) != window for agent in agents):
+                return False
+            continue
+        if op == 'layout_change' and str(item.get('change') or '') == 'remove_window':
+            window = str(item.get('window') or '')
+            if window not in moved_source_windows:
                 return False
             continue
         return False

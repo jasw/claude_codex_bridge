@@ -613,6 +613,13 @@ def test_move_agent_flow_moves_helper_to_new_window_and_cleans_up(
                 "stdout": "accepted job=job_after target=helper\n[CCB_ASYNC_SUBMITTED job=job_after target=helper]\n",
                 "stderr": "",
             }
+        if name == "ask_helper_after_return":
+            return {
+                "name": name,
+                "returncode": 0,
+                "stdout": "accepted job=job_return target=helper\n[CCB_ASYNC_SUBMITTED job=job_return target=helper]\n",
+                "stderr": "",
+            }
         if name.startswith("watch_job_"):
             return {
                 "name": name,
@@ -693,6 +700,44 @@ def test_move_agent_flow_moves_helper_to_new_window_and_cleans_up(
                     ],
                 },
             }
+        if name == "move_helper_back_to_main":
+            return {
+                "name": name,
+                "returncode": 0,
+                "stdout": "{}\n",
+                "stderr": "",
+                "payload": {
+                    "apply": {
+                        "plan_class": "move_agent",
+                        "apply_status": "applied",
+                        "namespace_moved_agents": {"helper": "%2"},
+                        "namespace_moved_agent_windows": {"helper": "main"},
+                        "namespace_removed_windows": ["review"],
+                        "namespace_reflowed_windows": ["main"],
+                    }
+                },
+            }
+        if name == "layout_after_move_agent_return":
+            return {
+                "name": name,
+                "returncode": 0,
+                "stdout": "{}\n",
+                "stderr": "",
+                "payload": {
+                    "dynamic_agent_count": 1,
+                    "windows": [
+                        {
+                            "name": "main",
+                            "agent_names": ["main", "helper"],
+                            "observed": _observed_window(["%1", "%2"], ["main", "helper"]),
+                            "agents": [
+                                {"agent": "main", "pane_id": "%1"},
+                                {"agent": "helper", "pane_id": "%2"},
+                            ],
+                        }
+                    ],
+                },
+            }
         if name == "remove_moved_helper":
             return {
                 "name": name,
@@ -703,7 +748,7 @@ def test_move_agent_flow_moves_helper_to_new_window_and_cleans_up(
                     "apply": {
                         "plan_class": "remove_agent",
                         "namespace_removed_agents": {"helper": "%2"},
-                        "namespace_removed_windows": ["review"],
+                        "namespace_removed_windows": [],
                     }
                 },
             }
@@ -746,9 +791,16 @@ def test_move_agent_flow_moves_helper_to_new_window_and_cleans_up(
     assert payload["checks"]["post_move_ask_accepted"] is True
     assert payload["checks"]["move_preserved_helper_pane"] is True
     assert payload["checks"]["move_window_evidence"] is True
-    assert payload["checks"]["release_removed_review_window"] is True
+    assert payload["checks"]["return_ask_accepted"] is True
+    assert payload["checks"]["return_preserved_helper_pane"] is True
+    assert payload["checks"]["return_removed_review_window"] is True
+    assert payload["checks"]["release_kept_main_window"] is True
     assert payload["checks"]["dynamic_agents_cleaned"] is True
-    assert [name for name, _command in calls if name.startswith("watch_job_")] == ["watch_job_before", "watch_job_after"]
+    assert [name for name, _command in calls if name.startswith("watch_job_")] == [
+        "watch_job_before",
+        "watch_job_after",
+        "watch_job_return",
+    ]
 
 
 def test_arrange_window_flow_disturbs_and_restores_layout(
@@ -1395,7 +1447,9 @@ def test_tests_workflow_runs_same_window_continuous_fake_smoke() -> None:
     assert 'checks["observed_shrunk_to_one_pane"] is True' in text
     assert 'checks["observed_shrink_geometry"] is True' in text
     assert 'move["move_preserved_helper_pane"] is True' in text
-    assert 'move["release_removed_review_window"] is True' in text
+    assert 'move["return_preserved_helper_pane"] is True' in text
+    assert 'move["return_removed_review_window"] is True' in text
+    assert 'move["release_kept_main_window"] is True' in text
     assert 'window_class["page1_order"] is True' in text
     assert 'window_class["page2_order"] is True' in text
     assert 'window_class["page2_removed_when_empty"] is True' in text

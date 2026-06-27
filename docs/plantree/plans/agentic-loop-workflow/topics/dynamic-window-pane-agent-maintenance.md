@@ -1055,6 +1055,11 @@ Current evidence:
   and unload removes the empty target window. This smoke also guards the
   transaction invariant that runtime `status=moved` is publish-ready, so tmux
   namespace movement and runtime authority publication do not split;
+- bounded movement cycles are now proven for one dynamic agent in an otherwise
+  empty dynamic source window: moving `helper` from `review` back to `main`
+  removes the empty `review` window in the same guarded transaction, preserves
+  the helper pane id, reflows `main`, keeps ask reachability after return, and
+  leaves final unload as a normal same-window `remove_agent` operation;
 - same-window middle dynamic release is proven: removing the middle helper pane
   deletes only the target pane, preserves the remaining dynamic pane ids, keeps
   their ask targets reachable, and avoids `layout_change`;
@@ -1105,7 +1110,6 @@ Deferred:
 - visual rich panel for window topology;
 - automatic screenshot/archive of completed node windows;
 - cross-session restoration of exact pane geometry;
-- repeated cross-window move cycles that require removing the now-empty source
-  window, and transactions that mix moved panes with newly materialized panes
-  in the same target window;
+- multi-agent source-window movement, and transactions that mix moved panes
+  with newly materialized panes in the same target window;
 - user-defined arbitrary window classes.

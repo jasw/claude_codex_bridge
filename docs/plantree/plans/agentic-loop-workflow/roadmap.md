@@ -834,6 +834,18 @@ Date: 2026-06-24
   bundle in `/home/bfly/yunwei/test_ccb2/dynamic-layout-ci-move-latest.json`
   passed `same-window-continuous`, `move-agent`,
   `window-class-continuous`, and `arrange-window`.
+- Extended dynamic movement from one-way movement to a full bounded move
+  cycle. `move-agent` now proves `main -> review -> main -> unload`: the
+  helper keeps the same pane id across both moves, remains ask-reachable before
+  movement, after movement, and after return, the return transaction removes
+  the now-empty `review` window, and final unload returns the project to one
+  static `main` window. Focused regression passed with `135 passed`; external
+  source-wrapper evidence in
+  `/home/bfly/yunwei/test_ccb2/dynamic-layout-move-cycle-latest.json` passed
+  the cycle checks; the CI-equivalent fake flow bundle in
+  `/home/bfly/yunwei/test_ccb2/dynamic-layout-ci-cycle-latest.json` passed
+  `same-window-continuous`, `move-agent`, `window-class-continuous`, and
+  `arrange-window`.
 
 ## Next
 
@@ -841,10 +853,10 @@ Date: 2026-06-24
    single-agent-window, multi-window add/remove, and explicit-window-class
    middle-removal cases, especially cases that require manual move planning or
    dynamic visibility changes rather than pure reflow.
-2. Extend `ccb agent move` beyond the first existing-window and
-   move-to-new-window slices: support repeated move cycles, removal of
-   now-empty source windows when allowed, and opt-in real-provider movement
-   smokes after the fake mounted path remains stable.
+2. Extend `ccb agent move` beyond the bounded single-agent cycle: add opt-in
+   real-provider movement smokes after the fake mounted path remains stable,
+   then evaluate whether multi-agent source windows or mixed moved/new target
+   transactions are worth supporting.
 3. Extend the shrink/release proof from fake-provider source-wrapper smokes to
    opt-in real-provider tolerance where useful, especially `layout arrange`
    after a real pane has been manually disturbed.

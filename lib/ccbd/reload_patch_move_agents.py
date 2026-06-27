@@ -8,6 +8,7 @@ def move_agent_steps(old_topology, new_topology, *, step_factory) -> dict[str, o
     new_windows = window_map(new_topology)
     moved = _moved_agents(old_topology, new_topology)
     moved_by_target = _moved_by_target(moved)
+    moved_by_source = _moved_by_source(moved)
     steps = []
     blocked: list[dict[str, object]] = []
     for agent_name, source_window, target_window in moved:
@@ -17,6 +18,7 @@ def move_agent_steps(old_topology, new_topology, *, step_factory) -> dict[str, o
             target_window,
             old_windows=old_windows,
             new_windows=new_windows,
+            moved_source_agents=moved_by_source.get(source_window, ()),
             moved_target_agents=moved_by_target.get(target_window, ()),
             step_factory=step_factory,
         )
@@ -32,6 +34,7 @@ def _move_agent_step(
     *,
     old_windows: dict[str, object],
     new_windows: dict[str, object],
+    moved_source_agents: tuple[str, ...],
     moved_target_agents: tuple[str, ...],
     step_factory,
 ) -> dict[str, object]:
@@ -39,11 +42,25 @@ def _move_agent_step(
     new_source = new_windows.get(source_window)
     old_target = old_windows.get(target_window)
     new_target = new_windows.get(target_window)
-    if old_source is None or new_source is None:
+    if old_source is None:
         return {'steps': [], 'blocked': [_blocked_move(agent_name, source_window, target_window, 'source window must remain present')]}
+    if new_source is None:
+        source_agents = window_agent_names(old_source)
+        if source_agents != (agent_name,) or moved_source_agents != (agent_name,):
+            return {
+                'steps': [],
+                'blocked': [
+                    _blocked_move(
+                        agent_name,
+                        source_window,
+                        target_window,
+                        'source window can be removed only when it contains exactly the moved agent',
+                    )
+                ],
+            }
     if new_target is None:
         return {'steps': [], 'blocked': [_blocked_move(agent_name, source_window, target_window, 'target window must exist in new topology')]}
-    if tuple(item for item in window_agent_names(old_source) if item != agent_name) != window_agent_names(new_source):
+    if new_source is not None and tuple(item for item in window_agent_names(old_source) if item != agent_name) != window_agent_names(new_source):
         return {
             'steps': [],
             'blocked': [_blocked_move(agent_name, source_window, target_window, 'source window order must be preserved after move')],
@@ -90,6 +107,13 @@ def _moved_by_target(moved: tuple[tuple[str, str, str], ...]) -> dict[str, tuple
     for agent_name, _source_window, target_window in moved:
         collected.setdefault(target_window, []).append(agent_name)
     return {target_window: tuple(agent_names) for target_window, agent_names in collected.items()}
+
+
+def _moved_by_source(moved: tuple[tuple[str, str, str], ...]) -> dict[str, tuple[str, ...]]:
+    collected: dict[str, list[str]] = {}
+    for agent_name, source_window, _target_window in moved:
+        collected.setdefault(source_window, []).append(agent_name)
+    return {source_window: tuple(agent_names) for source_window, agent_names in collected.items()}
 
 
 def _moved_agents(old_topology, new_topology) -> tuple[tuple[str, str, str], ...]:

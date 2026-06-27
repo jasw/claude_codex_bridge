@@ -1046,6 +1046,47 @@ def _run_move_agent_flow(
                 timeout=command_timeout_s,
             )
         )
+        move_back = _run_json(
+            "move_helper_back_to_main",
+            [
+                str(ccb_test),
+                "--project",
+                str(project_root),
+                "agent",
+                "move",
+                "helper",
+                "--window",
+                "main",
+                "--reason",
+                "dynamic layout move smoke return",
+                "--json",
+            ],
+            cwd=test_root,
+            env=env,
+            timeout=command_timeout_s,
+        )
+        commands.append(move_back)
+        after_return = _run_json("layout_after_move_agent_return", [str(ccb_test), "--project", str(project_root), "layout", "status", "--json"], cwd=test_root, env=env, timeout=command_timeout_s)
+        commands.append(after_return)
+        return_ask = _run(
+            "ask_helper_after_return",
+            [str(ccb_test), "--project", str(project_root), "ask", "helper"],
+            cwd=test_root,
+            env=env,
+            input_text="move-agent smoke ping after return\n",
+            timeout=command_timeout_s,
+        )
+        commands.append(return_ask)
+        commands.extend(
+            _watch_submitted_jobs(
+                ccb_test=ccb_test,
+                project_root=project_root,
+                test_root=test_root,
+                env=env,
+                asks=(return_ask,),
+                timeout=command_timeout_s,
+            )
+        )
         release = _run_json(
             "remove_moved_helper",
             [
@@ -1069,8 +1110,10 @@ def _run_move_agent_flow(
         commands.append(after_release)
         before_panes = _agent_panes(before_move)
         after_panes = _agent_panes(after_move)
+        after_return_panes = _agent_panes(after_return)
         helper_pane = before_panes.get("helper")
         move_apply = dict(_payload(move).get("apply") or {})
+        move_back_apply = dict(_payload(move_back).get("apply") or {})
         release_apply = dict(_payload(release).get("apply") or {})
         checks = {
             "add_agent_plan": _payload(add).get("apply", {}).get("plan_class") == "add_agent",
@@ -1087,9 +1130,19 @@ def _run_move_agent_flow(
             "after_move_order": _window_agents(after_move) == {"main": ["main"], "review": ["helper"]},
             "post_move_ask_accepted": _accepted(post_move_ask),
             "post_move_ask_terminal": _watch_commands_terminal(commands),
+            "return_move_plan_class": move_back_apply.get("plan_class") == "move_agent",
+            "return_move_apply_status": move_back_apply.get("apply_status") == "applied",
+            "return_preserved_helper_pane": move_back_apply.get("namespace_moved_agents", {}).get("helper") == helper_pane
+            and after_return_panes.get("helper") == helper_pane,
+            "return_window_evidence": move_back_apply.get("namespace_moved_agent_windows", {}).get("helper") == "main",
+            "return_removed_review_window": move_back_apply.get("namespace_removed_windows") == ["review"],
+            "return_reflowed_main": move_back_apply.get("namespace_reflowed_windows") == ["main"],
+            "after_return_order": _window_agents(after_return) == {"main": ["main", "helper"]},
+            "return_ask_accepted": _accepted(return_ask),
+            "return_ask_terminal": _watch_commands_terminal(commands),
             "release_remove_agent_plan": release_apply.get("plan_class") == "remove_agent",
             "release_removed_helper_pane": release_apply.get("namespace_removed_agents", {}).get("helper") == helper_pane,
-            "release_removed_review_window": release_apply.get("namespace_removed_windows") == ["review"],
+            "release_kept_main_window": release_apply.get("namespace_removed_windows") == [],
             "after_release_only_main": _window_agents(after_release) == {"main": ["main"]},
             "dynamic_agents_cleaned": _payload(after_release).get("dynamic_agent_count") == 0,
         }

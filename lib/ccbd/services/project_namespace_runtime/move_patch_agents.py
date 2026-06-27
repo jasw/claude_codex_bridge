@@ -62,6 +62,8 @@ def move_agent_panes(
         moved_by_target.setdefault(target_window, []).append(agent_name)
         touched_windows.update({source_window, target_window})
     for window_name in sorted(touched_windows):
+        if window_name not in new_windows:
+            continue
         reflow_window_after_agent_change(
             controller,
             backend,

@@ -128,7 +128,11 @@ jobs:
           assert move["move_window_evidence"] is True
           assert move["post_move_ask_accepted"] is True
           assert move["post_move_ask_terminal"] is True
-          assert move["release_removed_review_window"] is True
+          assert move["return_preserved_helper_pane"] is True
+          assert move["return_removed_review_window"] is True
+          assert move["return_ask_accepted"] is True
+          assert move["return_ask_terminal"] is True
+          assert move["release_kept_main_window"] is True
           assert move["dynamic_agents_cleaned"] is True
           window_class = results["window_class_continuous_1_to_8_to_1"]["checks"]
           assert window_class["add_plan_sequence"] is True

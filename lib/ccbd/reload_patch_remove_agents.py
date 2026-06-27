@@ -14,7 +14,13 @@ def remove_agent_steps(old_topology, new_topology, *, step_factory, excluded_age
         if window_name in removed_windows:
             if str(getattr(old_window, 'kind', '') or '') == 'tool':
                 continue
-            if set(window_agent_names(old_window)) & excluded:
+            agents = window_agent_names(old_window)
+            if agents and set(agents).issubset(excluded):
+                result = _remove_window_after_move_steps(window_name, step_factory=step_factory)
+                steps.extend(result['steps'])
+                blocked.extend(result['blocked'])
+                continue
+            if set(agents) & excluded:
                 result = {
                     'steps': [],
                     'blocked': [
@@ -90,6 +96,19 @@ def _remove_window_steps(window_name: str, old_window, *, step_factory) -> dict[
         )
     )
     return {'steps': steps, 'blocked': []}
+
+
+def _remove_window_after_move_steps(window_name: str, *, step_factory) -> dict[str, object]:
+    return {
+        'steps': [
+            step_factory(
+                action='kill_window',
+                window=window_name,
+                reason='window emptied by moved agents',
+            )
+        ],
+        'blocked': [],
+    }
 
 
 def _blocked_remove(window_name: str, reason: str) -> dict[str, object]:
