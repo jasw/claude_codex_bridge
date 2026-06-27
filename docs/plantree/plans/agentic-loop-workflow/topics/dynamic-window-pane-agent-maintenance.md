@@ -1118,6 +1118,17 @@ Current evidence:
   `main=[main,helper1]`, and ask acceptance for both `helper1` and `main`.
   Latest evidence:
   `/home/bfly/yunwei/test_ccb2/dynamic-layout-batch-release-latest.json`;
+- `ccb agent park --agents a,b --json` and
+  `ccb agent resume --agents a,b --hidden|--visible --json` now expose the
+  first user-facing batch transition command for long-lived dynamic agents.
+  The lifecycle layer validates all selected agents up front, writes one batch
+  of lifecycle state, applies one guarded config-only reload transaction, and
+  restores all touched lifecycle records on failure. Source-wrapper
+  fake-provider evidence is preserved in
+  `/home/bfly/yunwei/test_ccb2/batch-park-resume-smoke-evidence/summary.json`;
+  it proves batch `park` sets dispatch disabled for both helpers and rejects
+  ask, batch `resume --hidden` re-enables dispatch without changing pane ids,
+  and ask is accepted after resume;
 - same-window middle dynamic release is proven: removing the middle helper pane
   deletes only the target pane, preserves the remaining dynamic pane ids, keeps
   their ask targets reachable, and avoids `layout_change`;
@@ -1171,6 +1182,4 @@ Deferred:
 - batch movement for `--window-class` and execution-node placement, and
   transactions that mix moved panes with newly materialized panes in the same
   target window;
-- batch park/resume status ergonomics for long-lived frontend/planner/
-  orchestrator groups;
 - user-defined arbitrary window classes.

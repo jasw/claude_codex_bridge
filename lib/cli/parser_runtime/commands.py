@@ -219,7 +219,8 @@ def parse_agent(tokens: list[str], *, project: str | None, error_type) -> Parsed
         )
     if action in {'hide', 'park', 'resume'}:
         parser = argparse.ArgumentParser(prog=f'ccb agent {action}', add_help=False)
-        parser.add_argument('agent_name')
+        parser.add_argument('agent_name', nargs='?')
+        parser.add_argument('--agents', dest='agent_names', default=None)
         if action == 'resume':
             visibility = parser.add_mutually_exclusive_group()
             visibility.add_argument('--visible', dest='visibility', action='store_const', const='visible')
@@ -227,10 +228,15 @@ def parse_agent(tokens: list[str], *, project: str | None, error_type) -> Parsed
         parser.add_argument('--reason', default=None)
         parser.add_argument('--json', dest='json_output', action='store_true')
         namespace = parse_args(parser, rest, error_message=f'invalid agent {action} command', error_type=error_type)
+        batch_agents = _parse_csv_values(str(namespace.agent_names)) if namespace.agent_names is not None else ()
+        positional_agent = str(namespace.agent_name).strip() if namespace.agent_name is not None else ''
+        if bool(batch_agents) == bool(positional_agent):
+            raise error_type(f'agent {action} requires exactly one <agent_name> or --agents a,b')
         return ParsedAgentCommand(
             project=project,
             action=action,
-            agent_name=str(namespace.agent_name),
+            agent_name=positional_agent or None,
+            agent_names=batch_agents,
             visibility=(
                 str(getattr(namespace, 'visibility'))
                 if getattr(namespace, 'visibility', None) is not None

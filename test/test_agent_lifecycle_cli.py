@@ -216,11 +216,24 @@ def test_agent_parser_supports_add_and_remove_commands() -> None:
         agent_name='planner2',
         json_output=True,
     )
+    assert parser.parse(['agent', 'park', '--agents', 'planner2,broker1', '--json']) == ParsedAgentCommand(
+        project=None,
+        action='park',
+        agent_names=('planner2', 'broker1'),
+        json_output=True,
+    )
     assert parser.parse(['agent', 'resume', 'planner2', '--hidden', '--json']) == ParsedAgentCommand(
         project=None,
         action='resume',
         agent_name='planner2',
         visibility='hidden',
+        json_output=True,
+    )
+    assert parser.parse(['agent', 'resume', '--agents', 'planner2,broker1', '--visible', '--json']) == ParsedAgentCommand(
+        project=None,
+        action='resume',
+        agent_names=('planner2', 'broker1'),
+        visibility='visible',
         json_output=True,
     )
 
@@ -1509,6 +1522,88 @@ def test_agent_park_while_mounted_publishes_config_only_change_without_losing_pa
     assert parked['applied']['status'] == 'transitioned'
     assert parked['applied']['pane_id'] == '%3'
     assert parked['applied']['dispatch_disabled'] is True
+    assert reload_results == []
+
+
+def test_agent_batch_park_resume_while_mounted_preserves_panes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = _project_with_agent_profiles(tmp_path, monkeypatch)
+    for name in ('planner2', 'broker1'):
+        result, _payload, stderr = _run_phase2(
+            ['agent', 'add', f'{name}:codex', '--role', 'agentroles.general', '--window', 'main', '--hidden', '--json'],
+            cwd=project_root,
+        )
+        assert result == 0, stderr
+    reload_results = [
+        {
+            'status': 'published',
+            'stage': 'publish_transaction',
+            'plan_class': 'view_only_change',
+            'published_graph_version': 4,
+            'namespace_patch': {'status': 'applied'},
+            'runtime_mount': {'status': 'noop'},
+        },
+        {
+            'status': 'published',
+            'stage': 'publish_transaction',
+            'plan_class': 'view_only_change',
+            'published_graph_version': 5,
+            'namespace_patch': {'status': 'applied'},
+            'runtime_mount': {'status': 'noop'},
+        },
+    ]
+    monkeypatch.setattr(
+        'cli.services.agent_lifecycle.ping_local_state',
+        lambda _context: SimpleNamespace(mount_state='mounted', socket_connectable=True, reason=None),
+    )
+    monkeypatch.setattr(
+        'cli.services.agent_lifecycle.reload_config',
+        lambda _context, _command: reload_results.pop(0),
+    )
+
+    result, parked, stderr = _run_phase2(
+        ['agent', 'park', '--agents', 'planner2,broker1', '--reason', 'quiet long-lived group', '--json'],
+        cwd=project_root,
+    )
+
+    assert result == 0, stderr
+    assert parked['action'] == 'park'
+    assert parked['transitioned_agents'] == ['planner2', 'broker1']
+    assert parked['lifecycle_state'] == 'parked'
+    assert parked['dispatch_disabled'] is True
+    assert parked['apply']['apply_status'] == 'applied'
+    assert parked['apply']['plan_class'] == 'view_only_change'
+    assert {item['agent']: item['lifecycle_state'] for item in parked['agents']} == {
+        'planner2': 'parked',
+        'broker1': 'parked',
+    }
+    assert all(item['dispatch_disabled'] is True for item in parked['agents'])
+    loaded = load_project_config(project_root).config
+    assert loaded.agents['planner2'].dispatch_disabled is True
+    assert loaded.agents['broker1'].dispatch_disabled is True
+
+    result, resumed, stderr = _run_phase2(
+        ['agent', 'resume', '--agents', 'planner2,broker1', '--hidden', '--json'],
+        cwd=project_root,
+    )
+
+    assert result == 0, stderr
+    assert resumed['action'] == 'resume'
+    assert resumed['transitioned_agents'] == ['planner2', 'broker1']
+    assert resumed['lifecycle_state'] == 'hidden'
+    assert resumed['dispatch_disabled'] is False
+    assert resumed['apply']['apply_status'] == 'applied'
+    assert resumed['apply']['plan_class'] == 'view_only_change'
+    assert {item['agent']: item['lifecycle_state'] for item in resumed['agents']} == {
+        'planner2': 'hidden',
+        'broker1': 'hidden',
+    }
+    assert all(item['dispatch_disabled'] is False for item in resumed['agents'])
+    loaded = load_project_config(project_root).config
+    assert loaded.agents['planner2'].dispatch_disabled is False
+    assert loaded.agents['broker1'].dispatch_disabled is False
     assert reload_results == []
 
 

@@ -556,6 +556,9 @@ def _move_many(context, command, names: tuple[str, ...]) -> dict[str, object]:
 
 def _transition(context, command) -> dict[str, object]:
     action = str(getattr(command, 'action', '') or '').strip().lower()
+    batch_names = tuple(str(item) for item in tuple(getattr(command, 'agent_names', ()) or ()))
+    if batch_names:
+        return _transition_many(context, command, batch_names)
     name = _normalize_name(getattr(command, 'agent_name', None), field_name='agent')
     state_path = _state_path(context, name)
     previous = _load_record(state_path)
@@ -564,14 +567,7 @@ def _transition(context, command) -> dict[str, object]:
     previous_state = str(previous.get('lifecycle_state') or '')
     if previous_state not in ACTIVE_STATES:
         raise ValueError(f'agent {name!r} is not active; current lifecycle_state={previous_state or "<empty>"}')
-    if action == 'hide':
-        next_state = 'hidden'
-    elif action == 'park':
-        next_state = 'parked'
-    elif action == 'resume':
-        next_state = _normalize_resume_visibility(getattr(command, 'visibility', None))
-    else:
-        raise ValueError(f'unsupported agent lifecycle transition: {action}')
+    next_state = _transition_next_state(action, command)
     payload = dict(previous)
     payload.update(
         {
@@ -598,6 +594,80 @@ def _transition(context, command) -> dict[str, object]:
         raise
     _write_state(context, name, payload)
     return dict(payload, action=action)
+
+
+def _transition_many(context, command, names: tuple[str, ...]) -> dict[str, object]:
+    action = str(getattr(command, 'action', '') or '').strip().lower()
+    normalized = _normalize_agent_names(names, command=f'agent {action} --agents')
+    next_state = _transition_next_state(action, command)
+    previous_by_name: dict[str, dict[str, object]] = {}
+    payloads: dict[str, dict[str, object]] = {}
+    for name in normalized:
+        previous = _load_record(_state_path(context, name))
+        if previous is None:
+            raise ValueError(f'agent {name!r} is not a dynamic agent')
+        previous_state = str(previous.get('lifecycle_state') or '')
+        if previous_state not in ACTIVE_STATES:
+            raise ValueError(f'agent {name!r} is not active; current lifecycle_state={previous_state or "<empty>"}')
+        previous_by_name[name] = previous
+    try:
+        for name in normalized:
+            previous = previous_by_name[name]
+            state_path = _state_path(context, name)
+            previous_state = str(previous.get('lifecycle_state') or '')
+            payload = dict(previous)
+            payload.update(
+                {
+                    'agent_lifecycle_status': 'active',
+                    'requested_action': action,
+                    'previous_state': previous_state,
+                    'lifecycle_state': next_state,
+                    'visibility_state': 'visible' if next_state == 'visible' else 'hidden',
+                    'dispatch_disabled': next_state == 'parked',
+                    'reason': _optional_text(getattr(command, 'reason', None)),
+                    'updated_at': _utc_now(),
+                    'last_reason': _optional_text(getattr(command, 'reason', None)) or f'agent {action} batch',
+                    'state_path': str(state_path),
+                    'events_path': str(_events_path(context)),
+                }
+            )
+            _write_state(context, name, payload)
+            payloads[name] = payload
+        for name in normalized:
+            _append_event(
+                context,
+                {
+                    'event': action,
+                    'agent': name,
+                    'previous_state': previous_by_name[name].get('lifecycle_state'),
+                    'next_state': next_state,
+                    'batch_agents': list(normalized),
+                },
+            )
+        apply = _apply_reload_if_mounted(context, action=f'agent-{action}-batch')
+        for name in normalized:
+            payload = payloads[name]
+            payload['apply'] = apply
+            _update_transition_apply_evidence(context, payload)
+            _write_state(context, name, payload)
+    except Exception:
+        for name, previous in previous_by_name.items():
+            _restore_state(context, name, previous)
+        raise
+    records = [_status_record(payloads[name], source='dynamic') for name in normalized]
+    return {
+        'agent_lifecycle_status': 'active',
+        'action': action,
+        'project_id': context.project.project_id,
+        'project_root': str(context.project.project_root),
+        'agent_count': len(records),
+        'transitioned_agents': list(normalized),
+        'lifecycle_state': next_state,
+        'dispatch_disabled': next_state == 'parked',
+        'apply': apply,
+        'agents': records,
+        'runtime_agents_root': str(_agents_root(context)),
+    }
 
 
 def _status_record(record: dict[str, object], *, source: str) -> dict[str, object]:
@@ -865,6 +935,16 @@ def _normalize_resume_visibility(value: object) -> str:
     if text not in {'visible', 'hidden'}:
         raise ValueError('agent resume visibility must be one of: hidden, visible')
     return text
+
+
+def _transition_next_state(action: str, command) -> str:
+    if action == 'hide':
+        return 'hidden'
+    if action == 'park':
+        return 'parked'
+    if action == 'resume':
+        return _normalize_resume_visibility(getattr(command, 'visibility', None))
+    raise ValueError(f'unsupported agent lifecycle transition: {action}')
 
 
 def _normalize_name(value: object, *, field_name: str) -> str:

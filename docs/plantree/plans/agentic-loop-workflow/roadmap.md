@@ -924,6 +924,17 @@ Date: 2026-06-24
   `39 passed`; source-wrapper evidence in
   `/home/bfly/yunwei/test_ccb2/dynamic-layout-batch-release-latest.json`
   returned `dynamic_layout_smoke_status=ok`.
+- Exposed the first user-facing batch park/resume command:
+  `ccb agent park --agents a,b --json` and
+  `ccb agent resume --agents a,b --hidden|--visible --json`. The command
+  validates every selected dynamic agent first, writes one lifecycle batch,
+  applies one config-only reload transaction, and restores all touched records
+  if reload fails. Focused regression passed with `64 passed`; source-wrapper
+  evidence in
+  `/home/bfly/yunwei/test_ccb2/batch-park-resume-smoke-evidence/summary.json`
+  proved mounted batch park sets dispatch disabled for both helpers, rejects
+  ask while parked, batch resume re-enables dispatch without changing pane ids,
+  accepts ask after resume, and cleans up with `kill_status: ok`.
 
 ## Next
 

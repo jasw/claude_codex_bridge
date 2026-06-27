@@ -78,10 +78,10 @@ def print_start_help(*, file=None) -> None:
                                     Hot-load one runtime dynamic agent without rewriting ccb.config.
               ccb agent remove NAME|--agents a,b --policy park|unload --json
                                     Park or unload runtime dynamic agents.
-              ccb agent park NAME --json
-                                    Disable dispatch for a dynamic agent while preserving its pane.
-              ccb agent resume NAME --json
-                                    Re-enable dispatch for a parked dynamic agent.
+              ccb agent park NAME|--agents a,b --json
+                                    Disable dispatch for dynamic agents while preserving panes.
+              ccb agent resume NAME|--agents a,b --json
+                                    Re-enable dispatch for parked dynamic agents.
               ccb agent release NAME --idle-only --json
                                     Safely release one dynamic agent through role policy.
               ccb loop capacity ensure --loop-id ID --profile worker=1 --profile code_reviewer=1 --json
@@ -243,9 +243,9 @@ _COMMAND_HELP = {
           ccb agent add <name[:provider]> (--profile PROFILE | --role ROLE) [--window NAME|--window-class CLASS] [--hidden|--visible|--parked] [--json]
           ccb agent move <agent> (--window NAME|--window-class CLASS|--loop-id LOOP --node-id NODE) [--json]
           ccb agent move --agents a,b --window NAME [--json]
-          ccb agent hide <agent> [--json]
-          ccb agent park <agent> [--json]
-          ccb agent resume <agent> [--visible|--hidden] [--json]
+          ccb agent hide <agent>|--agents a,b [--json]
+          ccb agent park <agent>|--agents a,b [--json]
+          ccb agent resume <agent>|--agents a,b [--visible|--hidden] [--json]
           ccb agent remove <agent>|--agents a,b [--policy auto|hide|park|unload|kill] [--idle-only] [--force --reason TEXT] [--json]
           ccb agent release <agent>|--agents a,b [--policy auto|hide|park|unload] [--idle-only] [--reason TEXT] [--json]
 
@@ -264,8 +264,12 @@ _COMMAND_HELP = {
               Move multiple dynamic session agents through one reload transaction.
           ccb agent park planner2 --json
               Keep the pane and context but reject new dispatches until resumed.
+          ccb agent park --agents planner2,broker1 --json
+              Park a long-lived group through one config-only reload transaction.
           ccb agent resume planner2 --hidden --json
               Re-enable dispatch without changing pane ownership.
+          ccb agent resume --agents planner2,broker1 --hidden --json
+              Resume a parked group while preserving pane ownership.
           ccb agent remove helper --policy park --json
               Keep long-lived context discoverable while removing it from visible active work.
           ccb agent remove helper --policy unload --idle-only --json
