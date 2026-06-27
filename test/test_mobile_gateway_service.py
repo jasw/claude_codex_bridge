@@ -606,6 +606,75 @@ def test_agent_conversation_includes_completed_comms_reply_preview(tmp_path: Pat
     assert 'wrong target' not in json.dumps(payload)
 
 
+def test_agent_conversation_prefers_terminal_scrollback_over_comms(tmp_path: Path) -> None:
+    project_root = tmp_path / 'repo'
+    snapshot_dir = project_root / '.ccb' / 'ccbd' / 'snapshots'
+    snapshot_dir.mkdir(parents=True)
+    (snapshot_dir / 'job_mobile_reply.json').write_text(
+        json.dumps({'latest_decision': {'reply': 'stale CCB_REPLY answer'}}),
+        encoding='utf-8',
+    )
+
+    def history_factory(target) -> dict[str, object]:
+        assert target.agent == 'mobile'
+        assert target.namespace_epoch == 4
+        return {
+            'agent': 'mobile',
+            'history_scope': 'tmux_scrollback',
+            'source_pane_id': '%2',
+            'blocks': [
+                {
+                    'id': 'pane-1',
+                    'type': 'log',
+                    'title': 'Log',
+                    'text': 'real pane assistant response',
+                },
+                {
+                    'id': 'pane-2',
+                    'type': 'command',
+                    'title': 'Command',
+                    'text': '› real pane input',
+                },
+            ],
+        }
+
+    service = _service(
+        _FakeCcbdClientWithConversationComms(),
+        project_root=project_root,
+        mobile_dir=tmp_path / 'mobile',
+        terminal_history_factory=history_factory,
+    )
+    pairing = service.create_pairing_payload(
+        gateway_url='http://127.0.0.1:8787',
+        scopes=('view',),
+    )
+    _, claim = service.dispatch_post(
+        '/v1/pairing/claim',
+        {'pairing_code': str(pairing['pairing_code'])},
+    )
+
+    status, payload = service.dispatch_get(
+        '/v1/projects/proj-demo/agents/mobile/conversation?namespace_epoch=4&limit=20',
+        {'Authorization': f'Bearer {claim["device_token"]}'},
+    )
+
+    assert status == 200
+    items = payload['conversation']['items']
+    assert [item['id'] for item in items] == [
+        'terminal-history-pane-1',
+        'terminal-history-pane-2',
+    ]
+    assert items[0]['kind'] == 'agent_reply'
+    assert items[0]['body'] == 'real pane assistant response'
+    assert items[0]['source'] == 'tmux output / tmux_scrollback / %2'
+    assert items[1]['kind'] == 'user_message'
+    assert items[1]['body'] == '$ › real pane input'
+    assert items[1]['source'] == 'terminal input / tmux_scrollback / %2'
+    public_json = json.dumps(payload)
+    assert 'stale CCB_REPLY answer' not in public_json
+    assert 'question from phone' not in public_json
+
+
 def test_agent_conversation_pages_latest_then_older_items(tmp_path: Path) -> None:
     project_root = tmp_path / 'repo'
     snapshot_dir = project_root / '.ccb' / 'ccbd' / 'snapshots'

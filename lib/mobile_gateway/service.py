@@ -281,14 +281,22 @@ class MobileGatewayService:
             namespace_epoch=_query_int(query, 'namespace_epoch'),
         )
         limit = min(200, max(1, _query_int(query, 'limit') or 50))
-        page = _agent_conversation_page(
-            _agent_conversation_items(
+        items = self._agent_terminal_conversation_items(
+            project_id=project.project_id,
+            view_payload=view_payload,
+            agent=target['agent'],
+            namespace_epoch=int(target['namespace_epoch']),
+        )
+        if not items:
+            items = _agent_conversation_items(
                 view_payload,
                 project_id=project.project_id,
                 agent=target['agent'],
                 namespace_epoch=int(target['namespace_epoch']),
                 project_root=project.project_root,
-            ),
+            )
+        page = _agent_conversation_page(
+            items,
             limit=limit,
             cursor=_query_text(query, 'cursor'),
         )
@@ -306,6 +314,32 @@ class MobileGatewayService:
             'status': 'ok',
             'conversation': conversation,
         }
+
+    def _agent_terminal_conversation_items(
+        self,
+        *,
+        project_id: str,
+        view_payload: dict[str, object],
+        agent: str,
+        namespace_epoch: int,
+    ) -> list[dict[str, object]]:
+        try:
+            target = _terminal_history_target(
+                project_id=project_id,
+                view_payload=view_payload,
+                agent=agent,
+                namespace_epoch=namespace_epoch,
+                max_lines=200,
+            )
+            history = dict(self._terminal_history_factory(target) or {})
+        except Exception:
+            return []
+        history.setdefault('agent', target.agent)
+        history.setdefault('history_scope', 'tmux_scrollback')
+        history.setdefault('source_pane_id', target.pane_id)
+        history.setdefault('generated_at', self._clock())
+        history.setdefault('stale', False)
+        return _terminal_history_conversation_items(history, agent=target.agent)
 
     def file_upload_target_from_path(self, path: str) -> tuple[str, str] | None:
         parsed = urlparse(path)
@@ -1483,6 +1517,65 @@ def _agent_conversation_items(
         )
         seen_item_ids.add(item_id)
     return items
+
+
+def _terminal_history_conversation_items(
+    history: dict[str, object],
+    *,
+    agent: str,
+) -> list[dict[str, object]]:
+    history_scope = _optional_text(history.get('history_scope')) or 'tmux_scrollback'
+    source_pane_id = _optional_text(history.get('source_pane_id'))
+    items: list[dict[str, object]] = []
+    for block in _iterable(history.get('blocks')):
+        block_record = _map(block)
+        text = _optional_text(block_record.get('text')) or ''
+        if not text:
+            continue
+        block_id = _optional_text(block_record.get('id')) or f'history-{len(items) + 1}'
+        block_type = _optional_text(block_record.get('type')) or 'log'
+        is_input = block_type == 'command'
+        items.append(
+            {
+                'id': f'terminal-history-{block_id}',
+                'agent': agent,
+                'kind': 'user_message' if is_input else 'agent_reply',
+                'title': 'Terminal input'
+                if is_input
+                else (_optional_text(block_record.get('title')) or 'Terminal output'),
+                'body': _terminal_history_body(text, is_input=is_input),
+                'format': 'plain',
+                'source': _terminal_conversation_source(
+                    history_scope,
+                    source_pane_id=source_pane_id,
+                    is_input=is_input,
+                ),
+                'attachments': [],
+            }
+        )
+    return items
+
+
+def _terminal_history_body(text: str, *, is_input: bool) -> str:
+    body = text.strip()
+    if not is_input or body.startswith('$ '):
+        return body
+    return '$ ' + body
+
+
+def _terminal_conversation_source(
+    history_scope: str,
+    *,
+    source_pane_id: str | None,
+    is_input: bool,
+) -> str:
+    parts = [
+        'terminal input' if is_input else 'tmux output',
+        history_scope,
+    ]
+    if source_pane_id:
+        parts.append(source_pane_id)
+    return ' / '.join(parts)
 
 
 def _agent_history_conversation_items(
