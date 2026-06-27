@@ -502,6 +502,100 @@ bottom_height = 20
     ]
 
 
+def test_namespace_patch_plan_moves_multiple_agents_to_new_target_window(tmp_path: Path) -> None:
+    current = _load_config(
+        tmp_path / 'current-move-new-target',
+        """version = 2
+entry_window = "main"
+
+[windows]
+main = "main:codex"
+review = "zeta:codex, alpha:claude"
+
+[ui.sidebar]
+mode = "every_window"
+width = "15%"
+bottom_height = 20
+""",
+    )
+    new = _load_config(
+        tmp_path / 'new-move-new-target',
+        """version = 2
+entry_window = "main"
+
+[windows]
+main = "main:codex"
+archive = "zeta:codex, alpha:claude"
+
+[ui.sidebar]
+mode = "every_window"
+width = "15%"
+bottom_height = 20
+""",
+    )
+
+    plan = build_reload_dry_run_plan(
+        current,
+        new,
+        project_id='proj-1',
+        current_namespace=_namespace('proj-1'),
+    )
+    patch = plan['namespace_patch_plan']
+
+    assert plan['plan_class'] == 'move_agent'
+    assert plan['future_safe_to_apply'] is True
+    assert [item['op'] for item in plan['operations']] == [
+        'add_window',
+        'move_agent',
+        'move_agent',
+        'layout_change',
+    ]
+    assert patch['status'] == 'planned'
+    assert patch['blocked_operations'] == []
+    assert patch['steps'] == [
+        {
+            'action': 'create_window',
+            'window': 'archive',
+            'managed_by': 'ccbd',
+            'reason': 'window exists only in new config',
+        },
+        {
+            'action': 'create_sidebar_pane',
+            'window': 'archive',
+            'role': 'sidebar',
+            'slot_key': 'sidebar:archive',
+            'managed_by': 'ccbd',
+            'reason': 'new managed window needs a sidebar pane',
+        },
+        {
+            'action': 'move_agent_pane',
+            'window': 'review',
+            'target_window': 'archive',
+            'agent': 'zeta',
+            'role': 'agent',
+            'slot_key': 'zeta',
+            'managed_by': 'ccbd',
+            'reason': 'existing dynamic agent window membership changed',
+        },
+        {
+            'action': 'move_agent_pane',
+            'window': 'review',
+            'target_window': 'archive',
+            'agent': 'alpha',
+            'role': 'agent',
+            'slot_key': 'alpha',
+            'managed_by': 'ccbd',
+            'reason': 'existing dynamic agent window membership changed',
+        },
+        {
+            'action': 'kill_window',
+            'window': 'review',
+            'managed_by': 'ccbd',
+            'reason': 'window emptied by moved agents',
+        },
+    ]
+
+
 def test_namespace_patch_plan_blocks_additive_when_namespace_scope_unverified(tmp_path: Path) -> None:
     current = _load_config(tmp_path / 'current-no-scope', BASE_CONFIG)
     new = _load_config(

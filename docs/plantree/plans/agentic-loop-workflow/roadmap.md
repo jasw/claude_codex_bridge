@@ -893,6 +893,16 @@ Date: 2026-06-24
   regression passed with `70 passed` across reload planning, namespace patch
   apply, and lifecycle CLI tests. This still remains below the user-facing
   command layer.
+- Exposed the first user-facing batch move command:
+  `ccb agent move --agents a,b --window NAME --json`. The command writes all
+  selected dynamic lifecycle records first, applies one guarded reload
+  transaction, and restores all touched records if reload fails. The same
+  slice also allows multiple moved panes to enter a newly materialized target
+  window. Focused regression passed with `106 passed`, and source-wrapper
+  fake-provider evidence in `/home/bfly/yunwei/test_ccb2/batch-move-*-latest.json`
+  proved mounted `review=[zeta,alpha] -> archive=[zeta,alpha]`, preserved pane
+  ids `%3/%4`, removed the empty `review` window, and kept both moved ask
+  targets accepted.
 
 ## Next
 
@@ -903,9 +913,10 @@ Date: 2026-06-24
 2. Extend `ccb agent move` beyond the bounded single-agent cycle: Codex and
    Claude opt-in real-provider movement are proven, and shared-source
    single-agent movement is proven with fake providers; the low-level kernel
-   can now move multiple source-window agents in one transaction and remove
-   an emptied source window, so next evaluate whether to expose a batch command
-   and whether mixed moved/new target transactions are worth supporting.
+   and user-facing command now move multiple source-window agents in one
+   transaction, including newly materialized target windows and emptied source
+   window removal. Next evaluate batch `--window-class` / node placement and
+   transactions that mix moved panes with newly created agents in one target.
 3. Extend the shrink/release proof from fake-provider source-wrapper smokes to
    opt-in real-provider tolerance where useful, especially `layout arrange`
    after a real pane has been manually disturbed.

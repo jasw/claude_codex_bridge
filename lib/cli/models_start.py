@@ -58,6 +58,7 @@ class ParsedAgentCommand:
     project: str | None
     action: str
     agent_name: str | None = None
+    agent_names: tuple[str, ...] = ()
     provider: str | None = None
     profile: str | None = None
     role: str | None = None

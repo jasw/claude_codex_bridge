@@ -120,6 +120,26 @@ def test_agent_parser_supports_add_and_remove_commands() -> None:
     assert parser.parse(
         [
             'agent',
+            'move',
+            '--agents',
+            'helper1,helper2',
+            '--window',
+            'review',
+            '--reason',
+            'batch layout',
+            '--json',
+        ]
+    ) == ParsedAgentCommand(
+        project=None,
+        action='move',
+        agent_names=('helper1', 'helper2'),
+        window_name='review',
+        reason='batch layout',
+        json_output=True,
+    )
+    assert parser.parse(
+        [
+            'agent',
             'remove',
             'helper',
             '--policy',
@@ -597,6 +617,111 @@ def test_agent_move_dynamic_agent_from_shared_source_keeps_source_window(
             'managed_by': 'ccbd',
             'reason': 'existing dynamic agent window membership changed',
         }
+    ]
+
+
+def test_agent_move_batch_moves_dynamic_agents_to_new_window(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = _project_with_agent_profiles(tmp_path, monkeypatch)
+    for helper in ('zeta', 'alpha'):
+        result, _payload, stderr = _run_phase2(
+            [
+                'agent',
+                'add',
+                f'{helper}:codex',
+                '--role',
+                'agentroles.general',
+                '--window',
+                'review',
+                '--hidden',
+                '--json',
+            ],
+            cwd=project_root,
+        )
+        assert result == 0, stderr
+    before_move = load_project_config(project_root).config
+
+    result, moved, stderr = _run_phase2(
+        [
+            'agent',
+            'move',
+            '--agents',
+            'zeta,alpha',
+            '--window',
+            'archive',
+            '--reason',
+            'batch archive',
+            '--json',
+        ],
+        cwd=project_root,
+    )
+
+    assert result == 0, stderr
+    assert moved['agent_lifecycle_status'] == 'active'
+    assert moved['moved_agents'] == ['zeta', 'alpha']
+    assert moved['target_window_name'] == 'archive'
+    assert moved['apply']['apply_status'] == 'deferred_until_start'
+    assert [(agent['agent'], agent['resolved_window_name']) for agent in moved['agents']] == [
+        ('zeta', 'archive'),
+        ('alpha', 'archive'),
+    ]
+    after_move = load_project_config(project_root).config
+    assert [(window.name, window.agent_names, window.layout_spec) for window in after_move.windows] == [
+        ('main', ('main',), 'main:codex'),
+        ('archive', ('zeta', 'alpha'), 'zeta:codex; alpha:codex'),
+    ]
+    plan = build_reload_dry_run_plan(before_move, after_move, project_id='proj-1', current_namespace=_namespace('proj-1'))
+    assert plan['plan_class'] == 'move_agent'
+    assert plan['future_safe_to_apply'] is True
+    assert [item['op'] for item in plan['operations']] == [
+        'add_window',
+        'move_agent',
+        'move_agent',
+        'layout_change',
+    ]
+    assert plan['namespace_patch_plan']['steps'] == [
+        {
+            'action': 'create_window',
+            'window': 'archive',
+            'managed_by': 'ccbd',
+            'reason': 'window exists only in new config',
+        },
+        {
+            'action': 'create_sidebar_pane',
+            'window': 'archive',
+            'role': 'sidebar',
+            'slot_key': 'sidebar:archive',
+            'managed_by': 'ccbd',
+            'reason': 'new managed window needs a sidebar pane',
+        },
+        {
+            'action': 'move_agent_pane',
+            'window': 'review',
+            'target_window': 'archive',
+            'agent': 'zeta',
+            'role': 'agent',
+            'slot_key': 'zeta',
+            'managed_by': 'ccbd',
+            'reason': 'existing dynamic agent window membership changed',
+        },
+        {
+            'action': 'move_agent_pane',
+            'window': 'review',
+            'target_window': 'archive',
+            'agent': 'alpha',
+            'role': 'agent',
+            'slot_key': 'alpha',
+            'managed_by': 'ccbd',
+            'reason': 'existing dynamic agent window membership changed',
+        },
+        {
+            'action': 'kill_window',
+            'window': 'review',
+            'managed_by': 'ccbd',
+            'reason': 'window emptied by moved agents',
+        },
     ]
 
 

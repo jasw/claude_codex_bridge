@@ -184,7 +184,8 @@ def parse_agent(tokens: list[str], *, project: str | None, error_type) -> Parsed
         )
     if action == 'move':
         parser = argparse.ArgumentParser(prog='ccb agent move', add_help=False)
-        parser.add_argument('agent_name')
+        parser.add_argument('agent_name', nargs='?')
+        parser.add_argument('--agents', dest='agent_names', default=None)
         parser.add_argument('--window', dest='window_name', default=None)
         parser.add_argument('--window-class', default=None)
         parser.add_argument('--loop-id', default=None)
@@ -198,10 +199,17 @@ def parse_agent(tokens: list[str], *, project: str | None, error_type) -> Parsed
         )
         if not has_target:
             raise error_type('agent move requires --window, --window-class, --loop-id, or --node-id')
+        batch_agents = _parse_csv_values(str(namespace.agent_names)) if namespace.agent_names is not None else ()
+        positional_agent = str(namespace.agent_name).strip() if namespace.agent_name is not None else ''
+        if bool(batch_agents) == bool(positional_agent):
+            raise error_type('agent move requires exactly one <agent_name> or --agents a,b')
+        if batch_agents and namespace.window_name is None:
+            raise error_type('agent move --agents currently requires --window')
         return ParsedAgentCommand(
             project=project,
             action=action,
-            agent_name=str(namespace.agent_name),
+            agent_name=positional_agent or None,
+            agent_names=batch_agents,
             window_name=str(namespace.window_name) if namespace.window_name is not None else None,
             window_class=str(namespace.window_class) if namespace.window_class is not None else None,
             loop_id=str(namespace.loop_id) if namespace.loop_id is not None else None,
@@ -852,6 +860,11 @@ def parse_reload(tokens: list[str], *, project: str | None, error_type) -> Parse
     parser.add_argument('--dry-run', dest='dry_run', action='store_true')
     namespace = parse_args(parser, tokens, error_message='invalid reload command', error_type=error_type)
     return ParsedReloadCommand(project=project, dry_run=bool(namespace.dry_run))
+
+
+def _parse_csv_values(text: str) -> tuple[str, ...]:
+    values = tuple(item.strip() for item in str(text or '').split(',') if item.strip())
+    return values
 
 
 __all__ = [

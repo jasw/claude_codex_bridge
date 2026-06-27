@@ -1085,7 +1085,16 @@ Current evidence:
   emits the moved panes in new target topology order, then kills the emptied
   source window in the same transaction. This closes the low-level
   `6->1`/page-collapse style invariant for moved panes without respawning
-  providers, but still does not expose a user-facing batch move command;
+  providers;
+- `ccb agent move --agents a,b --window NAME --json` now exposes the first
+  user-facing batch move command for dynamic session agents. It writes all
+  selected lifecycle placement records, applies one reload transaction, and
+  rolls back all touched lifecycle records if the transaction fails. The same
+  implementation proves multiple moved panes can enter a newly materialized
+  target window, with the placeholder pane cleaned only once and subsequent
+  moved panes anchored after the prior moved pane. Source-wrapper fake-provider
+  evidence is preserved in
+  `/home/bfly/yunwei/test_ccb2/batch-move-*-latest.json`;
 - same-window middle dynamic release is proven: removing the middle helper pane
   deletes only the target pane, preserves the remaining dynamic pane ids, keeps
   their ask targets reachable, and avoids `layout_change`;
@@ -1136,7 +1145,7 @@ Deferred:
 - visual rich panel for window topology;
 - automatic screenshot/archive of completed node windows;
 - cross-session restoration of exact pane geometry;
-- user-facing batch movement commands, simultaneous all-agents source-window
-  removal as a command surface, and transactions that mix moved panes with
-  newly materialized panes in the same target window;
+- batch movement for `--window-class` and execution-node placement, and
+  transactions that mix moved panes with newly materialized panes in the same
+  target window;
 - user-defined arbitrary window classes.

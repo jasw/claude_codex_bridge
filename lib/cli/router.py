@@ -242,6 +242,7 @@ _COMMAND_HELP = {
           ccb agent show <agent> [--json]
           ccb agent add <name[:provider]> (--profile PROFILE | --role ROLE) [--window NAME|--window-class CLASS] [--hidden|--visible|--parked] [--json]
           ccb agent move <agent> (--window NAME|--window-class CLASS|--loop-id LOOP --node-id NODE) [--json]
+          ccb agent move --agents a,b --window NAME [--json]
           ccb agent hide <agent> [--json]
           ccb agent park <agent> [--json]
           ccb agent resume <agent> [--visible|--hidden] [--json]
@@ -259,6 +260,8 @@ _COMMAND_HELP = {
               Place execution agents in node-<loop-id>-<node-id> windows.
           ccb agent move planner2 --window review --json
               Move a dynamic session agent to an existing target window when mounted.
+          ccb agent move --agents worker1,checker1 --window archive --json
+              Move multiple dynamic session agents through one reload transaction.
           ccb agent park planner2 --json
               Keep the pane and context but reject new dispatches until resumed.
           ccb agent resume planner2 --hidden --json

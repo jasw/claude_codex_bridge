@@ -270,6 +270,9 @@ def _remove(context, command) -> dict[str, object]:
 
 
 def _move(context, command) -> dict[str, object]:
+    batch_names = tuple(str(item) for item in tuple(getattr(command, 'agent_names', ()) or ()))
+    if batch_names:
+        return _move_many(context, command, batch_names)
     name = _normalize_name(getattr(command, 'agent_name', None), field_name='agent')
     state_path = _state_path(context, name)
     previous = _load_record(state_path)
@@ -328,6 +331,90 @@ def _move(context, command) -> dict[str, object]:
         raise
     _write_state(context, name, payload)
     return dict(payload, action='move')
+
+
+def _move_many(context, command, names: tuple[str, ...]) -> dict[str, object]:
+    normalized = _normalize_agent_names(names)
+    target_window = _optional_text(getattr(command, 'window_name', None))
+    if target_window is None:
+        raise ValueError('agent move --agents currently requires --window')
+    placement = _placement_record(command)
+    if str(placement.get('mode') or '') != 'window':
+        raise ValueError('agent move --agents currently requires --window')
+    previous_by_name: dict[str, dict[str, object]] = {}
+    payloads: dict[str, dict[str, object]] = {}
+    for name in normalized:
+        previous = _load_record(_state_path(context, name))
+        if previous is None:
+            raise ValueError(f'agent {name!r} is not a dynamic agent')
+        previous_state = str(previous.get('lifecycle_state') or '')
+        if previous_state not in ACTIVE_STATES:
+            raise ValueError(f'agent {name!r} is not active; current lifecycle_state={previous_state or "<empty>"}')
+        previous_by_name[name] = previous
+    base_sequence = _next_placement_sequence_for_agents(context, target_window=target_window, exclude_agents=set(normalized))
+    try:
+        for index, name in enumerate(normalized):
+            previous = previous_by_name[name]
+            payload = dict(previous)
+            placement_with_sequence = dict(placement)
+            placement_sequence = base_sequence + index
+            placement_with_sequence['placement_sequence'] = placement_sequence
+            payload.update(
+                {
+                    'requested_action': 'move',
+                    'previous_window_name': _optional_text(dict(previous.get('placement') or {}).get('window_name'))
+                    or _optional_text(previous.get('resolved_window_name'))
+                    or _optional_text(previous.get('window_name')),
+                    'window_name': target_window,
+                    'window_class': placement.get('window_class'),
+                    'loop_id': placement.get('loop_id'),
+                    'node_id': placement.get('node_id'),
+                    'placement': placement_with_sequence,
+                    'placement_sequence': placement_sequence,
+                    'resolved_window_name': target_window,
+                    'reason': _optional_text(getattr(command, 'reason', None)),
+                    'updated_at': _utc_now(),
+                    'last_reason': _optional_text(getattr(command, 'reason', None)) or 'agent move batch',
+                    'state_path': str(_state_path(context, name)),
+                    'events_path': str(_events_path(context)),
+                }
+            )
+            _write_state(context, name, payload)
+            payloads[name] = payload
+        for name, payload in payloads.items():
+            _append_event(
+                context,
+                {
+                    'event': 'move',
+                    'agent': name,
+                    'previous_window_name': payload.get('previous_window_name'),
+                    'target_window_name': target_window,
+                    'batch_agents': list(normalized),
+                },
+            )
+        apply = _apply_reload_if_mounted(context, action='agent-move-batch')
+        for name in normalized:
+            payload = payloads[name]
+            payload['apply'] = apply
+            _update_move_apply_evidence(context, payload)
+            _write_state(context, name, payload)
+    except Exception:
+        for name, previous in previous_by_name.items():
+            _restore_state(context, name, previous)
+        raise
+    records = [_status_record(payloads[name], source='dynamic') for name in normalized]
+    return {
+        'agent_lifecycle_status': 'active',
+        'action': 'move',
+        'project_id': context.project.project_id,
+        'project_root': str(context.project.project_root),
+        'agent_count': len(records),
+        'moved_agents': list(normalized),
+        'target_window_name': target_window,
+        'apply': apply,
+        'agents': records,
+        'runtime_agents_root': str(_agents_root(context)),
+    }
 
 
 def _transition(context, command) -> dict[str, object]:
@@ -582,9 +669,13 @@ def _created_sequence(context, previous: dict[str, object] | None) -> int:
 
 
 def _next_placement_sequence(context, *, target_window: str | None, exclude_agent: str) -> int:
+    return _next_placement_sequence_for_agents(context, target_window=target_window, exclude_agents={exclude_agent})
+
+
+def _next_placement_sequence_for_agents(context, *, target_window: str | None, exclude_agents: set[str]) -> int:
     highest = 0
     for record in _load_dynamic_records(context):
-        if str(record.get('agent') or '') == exclude_agent:
+        if str(record.get('agent') or '') in exclude_agents:
             continue
         if target_window is not None and _record_window_name(record) != target_window:
             continue
@@ -644,6 +735,16 @@ def _normalize_name(value: object, *, field_name: str) -> str:
         return normalize_agent_name(str(value or ''))
     except AgentValidationError as exc:
         raise ValueError(f'{field_name} is invalid: {exc}') from exc
+
+
+def _normalize_agent_names(values: tuple[str, ...]) -> tuple[str, ...]:
+    names = tuple(_normalize_name(value, field_name='agent') for value in values)
+    deduped = tuple(dict.fromkeys(names))
+    if not deduped:
+        raise ValueError('agent move --agents requires at least one agent')
+    if len(deduped) != len(names):
+        raise ValueError('agent move --agents cannot contain duplicate agent names')
+    return deduped
 
 
 def _optional_text(value: object | None) -> str | None:

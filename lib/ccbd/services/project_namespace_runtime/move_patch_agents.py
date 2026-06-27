@@ -22,6 +22,7 @@ def move_agent_panes(
     moved = _moved_agents(old_topology, new_topology)
     if not moved:
         return
+    expected_moved_by_target = _expected_moved_by_target(moved)
     moved_by_target: dict[str, list[str]] = {}
     touched_windows: set[str] = set()
     for agent_name, source_window, target_window in moved:
@@ -33,9 +34,21 @@ def move_agent_panes(
         if not source_pane:
             raise RuntimeError(f'pane missing for moved agent {agent_name!r}')
         if old_target is None:
-            anchor = _new_window_anchor(agent_name, target_window, new_target, result)
-            direction = 'right'
-            placeholder_pane = anchor
+            prior_moved = tuple(moved_by_target.get(target_window) or ())
+            if prior_moved:
+                anchor = _moved_target_anchor(target_window, prior_moved, result.moved_agents)
+                direction = 'bottom'
+                placeholder_pane = None
+            else:
+                anchor = _new_window_anchor(
+                    agent_name,
+                    target_window,
+                    new_target,
+                    moved_target_agents=expected_moved_by_target.get(target_window, ()),
+                    result=result,
+                )
+                direction = 'right'
+                placeholder_pane = anchor
         else:
             anchor = _target_anchor(agent_name, target_window, old_target, moved_by_target, existing_agent_panes, result.moved_agents)
             direction = _move_direction(agent_name, old_target, new_target)
@@ -118,10 +131,17 @@ def _target_anchor(
     return pane_id
 
 
-def _new_window_anchor(agent_name: str, target_window: str, new_target, result) -> str:
+def _moved_target_anchor(target_window: str, prior_moved: tuple[str, ...], moved_agent_panes: dict[str, str]) -> str:
+    pane_id = moved_agent_panes.get(prior_moved[-1])
+    if not pane_id:
+        raise RuntimeError(f'anchor pane missing for moved agent target window {target_window!r}: {prior_moved[-1]!r}')
+    return pane_id
+
+
+def _new_window_anchor(agent_name: str, target_window: str, new_target, *, moved_target_agents: tuple[str, ...], result) -> str:
     target_agents = window_agent_names(new_target)
-    if target_agents != (agent_name,):
-        raise RuntimeError(f'new target window must contain exactly moved agent {agent_name!r}')
+    if target_agents != moved_target_agents or not target_agents or target_agents[0] != agent_name:
+        raise RuntimeError(f'new target window must contain only moved agents starting with {agent_name!r}')
     panes = dict(getattr(result, 'move_anchor_panes', {}) or {})
     pane_id = str(panes.get(target_window) or '').strip()
     if not pane_id:
@@ -181,6 +201,13 @@ def _kill_placeholder_pane(backend, pane_id: str, *, result, timeout_s: float | 
         result.created_panes.remove(pane_id)
     except ValueError:
         pass
+
+
+def _expected_moved_by_target(moved: tuple[tuple[str, str, str], ...]) -> dict[str, tuple[str, ...]]:
+    collected: dict[str, list[str]] = {}
+    for agent_name, _source_window, target_window in moved:
+        collected.setdefault(target_window, []).append(agent_name)
+    return {target_window: tuple(agent_names) for target_window, agent_names in collected.items()}
 
 
 __all__ = ['move_agent_panes']
