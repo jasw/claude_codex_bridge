@@ -616,46 +616,52 @@ Date: 2026-06-24
   removed the overflow window, execution-node resolve predicted
   `node-round3-node1`, loop capacity created and released Codex worker/checker
   panes, and final `kill -f` returned `state: unmounted`.
+- Ran the matching opt-in Claude real-provider `resolve-preflight` proof for
+  the lighter variant in
+  `/home/bfly/yunwei/test_ccb2/guarded-light-claude-real-1782574-claude-resolve-preflight`.
+  The flow passed `dynamic_layout_smoke_status=ok` with the same critical
+  checks: dynamic Claude reviewer add/release used `add_window` then
+  `remove_agent`, execution-node capacity created and released Claude
+  worker/checker panes in `node-round3-node1`, layout status returned to
+  `dynamic_agent_count=0` and `loop_agent_count=0`, and final `kill -f`
+  returned `state: unmounted`.
 
 ## Next
 
-1. Run the matching guarded Claude real-provider opt-in variant for the new
-   lightweight `resolve-preflight` flow when real provider usage is
-   intentionally allowed.
-2. Wire the repeatable workflow closure smoke and autonomous layout-cleanup
+1. Wire the repeatable workflow closure smoke and autonomous layout-cleanup
    smoke into the chosen release/CI guarded regression path.
-3. Implement richer live reflow beyond the proven same-window and
+2. Implement richer live reflow beyond the proven same-window and
    explicit-window-class middle-removal cases.
-4. Wire the verified deterministic layout planner and dynamic smoke behavior
+3. Wire the verified deterministic layout planner and dynamic smoke behavior
    into live dynamic capacity only after `layout status` can read current pane
    metadata and release can distinguish idle from busy agents.
-5. Land live dynamic pane shrink/release from
+4. Land live dynamic pane shrink/release from
    [goals/dynamic-pane-shrink-release-goal.md](goals/dynamic-pane-shrink-release-goal.md):
    busy-retain behavior, idle target release, same-window compaction, and
    overflow-window collapse without respawning surviving provider panes.
-6. Define the minimum `ccb loop`, `ccb plan`, and `ccb question` command
+5. Define the minimum `ccb loop`, `ccb plan`, and `ccb question` command
    surface for creating tasks, transitioning phases, recording artifacts,
    blocking, finishing, and syncing to plan-tree.
-7. Continue the V1 `ccb loop capacity` path selected in
+6. Continue the V1 `ccb loop capacity` path selected in
    [goals/orchestrator-dynamic-capacity-goal.md](goals/orchestrator-dynamic-capacity-goal.md):
    run the guarded real-provider semantic smoke for
    `agentroles.ccb_orchestrator` when real provider usage is intentionally
    allowed; daemon-side transient capacity ownership remains deferred.
-8. Define the v1 team spec format for planner group, orchestrator, execution
+7. Define the v1 team spec format for planner group, orchestrator, execution
    node, recovery node, and monitor behavior.
-9. Define context-purity budgets for each role, including what may enter
+8. Define context-purity budgets for each role, including what may enter
    `frontdesk`, planner group, orchestrator, execution nodes, monitor, runtime
    artifacts, and long-term plan-tree.
-10. Define the v1 clarification command surface and artifact schema for
+9. Define the v1 clarification command surface and artifact schema for
    candidate questions, broker review, user display, raw answers, normalized
    answers, deferred questions, and planner wakeup.
-11. Define the v1 execution-node and round-verification artifact schemas,
+10. Define the v1 execution-node and round-verification artifact schemas,
    including node check plans, non-convergence reports, branch freeze records,
    partial loop reports, verification contracts, and round verification plans.
-12. Map the design to existing CCB communication primitives: `ask`,
+11. Map the design to existing CCB communication primitives: `ask`,
    `--callback`, `--silence`, message bureau records, dispatcher jobs,
    completion state, and queue/trace diagnostics.
-13. Identify the first implementation slice that can run with one planner, one
+12. Identify the first implementation slice that can run with one planner, one
    orchestrator, one execution node, and deterministic monitoring before
    enabling dynamic multi-node fanout.
 

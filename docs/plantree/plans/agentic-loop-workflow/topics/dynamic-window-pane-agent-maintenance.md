@@ -957,6 +957,10 @@ Current evidence:
   `resolve-preflight` variant passed in `/home/bfly/yunwei/test_ccb2`, proving
   real dynamic reviewer add/release and real loop worker/checker
   create/release while static overflow panes remained `fake`;
+- the matching opt-in Claude real-provider run of the lighter
+  `resolve-preflight` variant also passed in `/home/bfly/yunwei/test_ccb2`,
+  proving the same real dynamic reviewer and loop worker/checker lifecycle
+  path for Claude;
 - live provider release remains gated on busy/idle checks.
 
 Deferred:
