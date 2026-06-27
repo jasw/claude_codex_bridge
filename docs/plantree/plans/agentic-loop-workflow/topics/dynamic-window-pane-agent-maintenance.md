@@ -552,6 +552,15 @@ slice:
 - `agent release --policy unload --idle-only` exposes the same safe non-kill
   release path for workflow roles and scripts.
 - Busy dynamic agents are retained instead of being killed or removed.
+- `ccb agent move <agent> --window NAME` now covers the first true
+  cross-window movement slice for dynamic session agents when the target
+  managed window already exists. The reload plan uses `move_agent`, applies a
+  tmux `move-pane`, restamps the pane's `@ccb_window`, reflows source and target
+  windows, and updates runtime authority without provider restart.
+- Dynamic move records write a separate `placement_sequence`, so moving an
+  older agent into a target window appends after existing target agents instead
+  of reusing the original creation order and accidentally becoming a
+  non-additive reorder.
 - `ccb layout status` and `ccb layout status --json` expose the effective
   runtime layout view for explicit `[windows]`: configured/static vs dynamic
   agents, lifecycle state, dispatch state, runtime state, pane ids, namespace
@@ -573,6 +582,9 @@ Evidence:
 
 - Parser and dry-run plan tests cover explicit window, window class, and
   loop/node placement in `test/test_agent_lifecycle_cli.py`.
+- Agent move tests cover unmounted `move_agent` planning, mounted apply
+  evidence, namespace `move-pane` application, runtime authority window
+  mutation, and move-aware append/remove exclusion.
 - Reload apply tests cover both `add_agent` and `add_window` dynamic overlays:
   `test_additive_reload_apply_dynamic_agent_overlay_materializes_tmux_pane_before_mount`
   and
@@ -813,6 +825,13 @@ Evidence:
   `/home/bfly/yunwei/test_ccb2/move-plan-smoke` proved `helper1` can be
   planned from `plan-orchestrate` to a new `review` window while `frontdesk`
   is blocked from cross-window runtime movement.
+- Focused regression after landing existing-window `agent move` passed with
+  `108 passed` across agent lifecycle, namespace patch apply, runtime move,
+  runtime attach, reload patch/drain, and layout CLI tests. Source-wrapper CLI
+  smoke in
+  `/home/bfly/yunwei/test_ccb2/source-move-smoke-20260628034710` proved
+  unmounted `agent add helper`, `agent add reviewer`, `agent move helper
+  --window review`, `placement_sequence=3`, and valid projected config.
 - Focused regression after connecting loop capacity to layout placement passed
   with `187 passed` across loop capacity, agent lifecycle, layout status, pane
   growth, layout runtime, reload patch/runtime mount, and config loader tests.

@@ -114,7 +114,7 @@ def parse_mobile(tokens: list[str], *, project: str | None, error_type) -> Parse
 
 def parse_agent(tokens: list[str], *, project: str | None, error_type) -> ParsedAgentCommand:
     if not tokens:
-        raise error_type('agent requires one of: status, show, add, hide, park, resume, remove, release')
+        raise error_type('agent requires one of: status, show, add, move, hide, park, resume, remove, release')
     action = str(tokens[0] or '').strip().lower()
     rest = tokens[1:]
     if action == 'status':
@@ -182,6 +182,33 @@ def parse_agent(tokens: list[str], *, project: str | None, error_type) -> Parsed
             visibility=str(namespace.visibility) if namespace.visibility is not None else None,
             json_output=bool(namespace.json_output),
         )
+    if action == 'move':
+        parser = argparse.ArgumentParser(prog='ccb agent move', add_help=False)
+        parser.add_argument('agent_name')
+        parser.add_argument('--window', dest='window_name', default=None)
+        parser.add_argument('--window-class', default=None)
+        parser.add_argument('--loop-id', default=None)
+        parser.add_argument('--node-id', default=None)
+        parser.add_argument('--reason', default=None)
+        parser.add_argument('--json', dest='json_output', action='store_true')
+        namespace = parse_args(parser, rest, error_message='invalid agent move command', error_type=error_type)
+        has_target = any(
+            getattr(namespace, field, None) is not None
+            for field in ('window_name', 'window_class', 'loop_id', 'node_id')
+        )
+        if not has_target:
+            raise error_type('agent move requires --window, --window-class, --loop-id, or --node-id')
+        return ParsedAgentCommand(
+            project=project,
+            action=action,
+            agent_name=str(namespace.agent_name),
+            window_name=str(namespace.window_name) if namespace.window_name is not None else None,
+            window_class=str(namespace.window_class) if namespace.window_class is not None else None,
+            loop_id=str(namespace.loop_id) if namespace.loop_id is not None else None,
+            node_id=str(namespace.node_id) if namespace.node_id is not None else None,
+            reason=str(namespace.reason) if namespace.reason is not None else None,
+            json_output=bool(namespace.json_output),
+        )
     if action in {'hide', 'park', 'resume'}:
         parser = argparse.ArgumentParser(prog=f'ccb agent {action}', add_help=False)
         parser.add_argument('agent_name')
@@ -244,7 +271,7 @@ def parse_agent(tokens: list[str], *, project: str | None, error_type) -> Parsed
             reason=str(namespace.reason) if namespace.reason is not None else None,
             json_output=bool(namespace.json_output),
         )
-    raise error_type('agent only supports: status, show, add, hide, park, resume, remove, release')
+    raise error_type('agent only supports: status, show, add, move, hide, park, resume, remove, release')
 
 
 def parse_layout(tokens: list[str], *, project: str | None, error_type) -> ParsedLayoutCommand:

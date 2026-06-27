@@ -14,6 +14,7 @@ _ALLOWED_PLAN_CLASSES = frozenset({
     'add_agent',
     'add_window',
     'remove_agent',
+    'move_agent',
     'add_tool_window',
     'remove_tool_window',
 })
@@ -23,6 +24,7 @@ _ALLOWED_OPERATIONS = frozenset({
     'add_agent',
     'add_window',
     'remove_agent',
+    'move_agent',
     'add_tool_window',
     'remove_tool_window',
     'layout_change',
@@ -37,7 +39,7 @@ def plan_blocker(plan: dict[str, object]) -> tuple[str, str] | None:
         return (
             'unsupported_plan_class',
             'additive reload apply only accepts view_only_change, '
-            'maintenance_change, no_change, add_agent, add_window, idle remove_agent, '
+            'maintenance_change, no_change, add_agent, add_window, idle remove_agent, existing-window move_agent, '
             'add_tool_window, and remove_tool_window',
         )
     operation_blocker = _operation_blocker(plan)
@@ -48,7 +50,7 @@ def plan_blocker(plan: dict[str, object]) -> tuple[str, str] | None:
             'plan_not_future_safe',
             'dry-run plan is not future-safe for additive apply',
         )
-    if plan_class in {'add_agent', 'add_window', 'remove_agent', 'add_tool_window', 'remove_tool_window'}:
+    if plan_class in {'add_agent', 'add_window', 'remove_agent', 'move_agent', 'add_tool_window', 'remove_tool_window'}:
         return _namespace_patch_blocker(plan)
     return None
 

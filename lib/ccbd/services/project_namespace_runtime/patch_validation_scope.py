@@ -7,6 +7,7 @@ _SUPPORTED_ACTIONS = {
     'create_sidebar_pane',
     'create_agent_pane',
     'create_tool_pane',
+    'move_agent_pane',
     'kill_agent_pane',
     'kill_tool_window',
     'kill_window',
@@ -21,6 +22,7 @@ def step_proof_reason(
     append_windows: dict[str, object],
     expected_new_agents: set[tuple[str, str]],
     expected_removed_agents: set[tuple[str, str]],
+    expected_moved_agents: set[tuple[str, str, str]],
 ) -> tuple[str, str] | None:
     for step in steps:
         reason = single_step_reason(
@@ -30,6 +32,7 @@ def step_proof_reason(
             append_windows=append_windows,
             expected_new_agents=expected_new_agents,
             expected_removed_agents=expected_removed_agents,
+            expected_moved_agents=expected_moved_agents,
         )
         if reason is not None:
             return reason
@@ -44,6 +47,7 @@ def single_step_reason(
     append_windows: dict[str, object],
     expected_new_agents: set[tuple[str, str]],
     expected_removed_agents: set[tuple[str, str]],
+    expected_moved_agents: set[tuple[str, str, str]],
 ) -> tuple[str, str] | None:
     if not isinstance(step, Mapping):
         return ('invalid_patch_step', 'namespace patch plan step must be an object')
@@ -61,6 +65,7 @@ def single_step_reason(
         append_windows=append_windows,
         expected_new_agents=expected_new_agents,
         expected_removed_agents=expected_removed_agents,
+        expected_moved_agents=expected_moved_agents,
     )
     if reason is not None:
         return reason
@@ -77,6 +82,7 @@ def _step_scope_reason(
     append_windows: dict[str, object],
     expected_new_agents: set[tuple[str, str]],
     expected_removed_agents: set[tuple[str, str]],
+    expected_moved_agents: set[tuple[str, str, str]],
 ) -> tuple[str, str] | None:
     if action in {'create_window', 'create_sidebar_pane'} and window not in added_windows:
         return ('unsupported_patch_step', 'window/sidebar patch steps are only supported for newly-added windows')
@@ -85,6 +91,11 @@ def _step_scope_reason(
     if action == 'kill_agent_pane':
         if (window, str(step.get('agent') or '')) not in expected_removed_agents:
             return ('patch_plan_mismatch', 'agent pane removal step does not match a removed topology agent')
+        return None
+    if action == 'move_agent_pane':
+        target_window = str(step.get('target_window') or '')
+        if (window, target_window, str(step.get('agent') or '')) not in expected_moved_agents:
+            return ('patch_plan_mismatch', 'agent pane move step does not match a moved topology agent')
         return None
     if action == 'create_tool_pane':
         if window not in added_windows:
@@ -102,7 +113,7 @@ def _step_scope_reason(
 def _step_identity_reason(action: str, step: Mapping[str, object]) -> tuple[str, str] | None:
     if str(step.get('managed_by') or '') != 'ccbd':
         return ('scope_proof_missing', 'namespace patch step is missing managed_by=ccbd proof')
-    if action not in {'create_sidebar_pane', 'create_agent_pane', 'create_tool_pane', 'kill_agent_pane', 'kill_tool_window'}:
+    if action not in {'create_sidebar_pane', 'create_agent_pane', 'create_tool_pane', 'move_agent_pane', 'kill_agent_pane', 'kill_tool_window'}:
         return None
     role = str(step.get('role') or '')
     slot_key = str(step.get('slot_key') or '')

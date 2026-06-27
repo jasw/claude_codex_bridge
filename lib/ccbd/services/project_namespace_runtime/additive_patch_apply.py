@@ -9,6 +9,8 @@ from .additive_patch_namespace import ready_namespace_or_blocked
 from .additive_patch_preservation import assert_preserved_agent_panes, snapshot_preserved_agent_panes
 from .additive_patch_validation import unsupported_additive_patch_reason
 from .additive_patch_windows import WindowPatchResult, create_new_windows
+from .move_patch_agents import move_agent_panes
+from .patch_validation_targets import moved_agent_targets
 from .remove_patch_agents import remove_agent_panes
 from .remove_patch_tools import remove_tool_windows
 
@@ -23,6 +25,8 @@ class NamespacePatchApplyResult:
     removed_windows: tuple[str, ...] = ()
     removed_panes: tuple[str, ...] = ()
     removed_agents: dict[str, str] = field(default_factory=dict)
+    moved_agents: dict[str, str] = field(default_factory=dict)
+    moved_agent_windows: dict[str, str] = field(default_factory=dict)
     reflowed_windows: tuple[str, ...] = ()
     reflow_errors: dict[str, str] = field(default_factory=dict)
     tool_panes: dict[str, str] = field(default_factory=dict)
@@ -42,6 +46,8 @@ class NamespacePatchApplyResult:
             'removed_windows': list(self.removed_windows),
             'removed_panes': list(self.removed_panes),
             'removed_agents': dict(self.removed_agents),
+            'moved_agents': dict(self.moved_agents),
+            'moved_agent_windows': dict(self.moved_agent_windows),
             'reflowed_windows': list(self.reflowed_windows),
             'reflow_errors': dict(self.reflow_errors),
             'tool_panes': dict(self.tool_panes),
@@ -107,7 +113,7 @@ def apply_reload_patch(
         state=state,
         timeout_s=timeout_s,
     )
-    preserved_after = snapshot_preserved_agent_panes(controller, context, topology_plan=old_topology, agents=preserved_agents)
+    preserved_after = snapshot_preserved_agent_panes(controller, context, topology_plan=new_topology, agents=preserved_agents)
     if mutation_error is not None:
         return _failure_result('namespace_patch_failed', mutation_error, state, preserved_before, preserved_after)
     preservation_error = _preservation_error(preserved_before, preserved_after, preserved_agents)
@@ -128,6 +134,7 @@ def _apply_mutations(
     timeout_s: float | None,
 ) -> Exception | None:
     try:
+        moved_agents = tuple(sorted(agent for _source, _target, agent in moved_agent_targets(old_topology, new_topology)))
         create_new_windows(
             controller,
             backend,
@@ -149,7 +156,18 @@ def _apply_mutations(
                 namespace_epoch=current.namespace_epoch,
                 created_panes=state.created_panes,
                 timeout_s=timeout_s,
+                excluded_agents=moved_agents,
             )
+        )
+        move_agent_panes(
+            controller,
+            backend,
+            old_topology=old_topology,
+            new_topology=new_topology,
+            existing_agent_panes=preserved_before,
+            current=current,
+            result=state,
+            timeout_s=timeout_s,
         )
         remove_agent_panes(
             controller,
@@ -160,6 +178,7 @@ def _apply_mutations(
             current=current,
             result=state,
             timeout_s=timeout_s,
+            excluded_agents=moved_agents,
         )
         remove_tool_windows(
             backend,
@@ -202,16 +221,25 @@ def _failure_result(
         removed_windows=tuple(state.removed_windows),
         removed_panes=tuple(state.removed_panes),
         removed_agents=state.removed_agents,
+        moved_agents=state.moved_agents,
+        moved_agent_windows=state.moved_agent_windows,
         reflowed_windows=tuple(state.reflowed_windows),
         reflow_errors=state.reflow_errors,
         tool_panes=state.tool_panes,
         preserved_before=preserved_before,
         preserved_after=preserved_after,
-        partial=bool(state.created_windows or state.created_panes or state.removed_windows or state.removed_panes),
+        partial=bool(
+            state.created_windows
+            or state.created_panes
+            or state.removed_windows
+            or state.removed_panes
+            or state.moved_agents
+        ),
         rollback_actions=(
             tuple(f'created_pane:{pane}' for pane in state.created_panes)
             + tuple(f'removed_pane:{pane}' for pane in state.removed_panes)
             + tuple(f'removed_window:{window}' for window in state.removed_windows)
+            + tuple(f'moved_agent:{agent}' for agent in state.moved_agents)
         ),
         diagnostics={
             'reason': reason,
@@ -238,6 +266,8 @@ def _applied_result(
         removed_windows=tuple(state.removed_windows),
         removed_panes=tuple(state.removed_panes),
         removed_agents=state.removed_agents,
+        moved_agents=state.moved_agents,
+        moved_agent_windows=state.moved_agent_windows,
         reflowed_windows=tuple(state.reflowed_windows),
         reflow_errors=state.reflow_errors,
         tool_panes=state.tool_panes,
@@ -245,7 +275,7 @@ def _applied_result(
         preserved_after=preserved_after,
         partial=False,
         diagnostics={
-            'supported_operations': ['add_window', 'add_agent', 'remove_agent', 'add_tool_window', 'remove_tool_window'],
+            'supported_operations': ['add_window', 'add_agent', 'remove_agent', 'move_agent', 'add_tool_window', 'remove_tool_window'],
             'namespace_state_written': False,
             'graph_published': False,
             'runtime_authority_written': False,

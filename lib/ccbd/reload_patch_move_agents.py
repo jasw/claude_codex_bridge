@@ -1,0 +1,103 @@
+from __future__ import annotations
+
+from ccbd.reload_additive_agents import append_agent_plan_for_window, window_agent_names, window_map
+
+
+def move_agent_steps(old_topology, new_topology, *, step_factory) -> dict[str, object]:
+    old_windows = window_map(old_topology)
+    new_windows = window_map(new_topology)
+    moved = _moved_agents(old_topology, new_topology)
+    steps = []
+    blocked: list[dict[str, object]] = []
+    for agent_name, source_window, target_window in moved:
+        result = _move_agent_step(
+            agent_name,
+            source_window,
+            target_window,
+            old_windows=old_windows,
+            new_windows=new_windows,
+            step_factory=step_factory,
+        )
+        steps.extend(result['steps'])
+        blocked.extend(result['blocked'])
+    return {'steps': steps, 'blocked': blocked, 'moved_agents': tuple(agent for agent, _source, _target in moved)}
+
+
+def _move_agent_step(
+    agent_name: str,
+    source_window: str,
+    target_window: str,
+    *,
+    old_windows: dict[str, object],
+    new_windows: dict[str, object],
+    step_factory,
+) -> dict[str, object]:
+    old_source = old_windows.get(source_window)
+    new_source = new_windows.get(source_window)
+    old_target = old_windows.get(target_window)
+    new_target = new_windows.get(target_window)
+    if old_source is None or new_source is None:
+        return {'steps': [], 'blocked': [_blocked_move(agent_name, source_window, target_window, 'source window must remain present')]}
+    if old_target is None or new_target is None:
+        return {'steps': [], 'blocked': [_blocked_move(agent_name, source_window, target_window, 'target window must already exist')]}
+    if tuple(item for item in window_agent_names(old_source) if item != agent_name) != window_agent_names(new_source):
+        return {
+            'steps': [],
+            'blocked': [_blocked_move(agent_name, source_window, target_window, 'source window order must be preserved after move')],
+        }
+    append_plan = append_agent_plan_for_window(old_target, new_target)
+    if append_plan is None:
+        return {
+            'steps': [],
+            'blocked': [_blocked_move(agent_name, source_window, target_window, 'target window must append moved agents at the end')],
+        }
+    appended = tuple(item.agent for item in append_plan)
+    if agent_name not in appended:
+        return {'steps': [], 'blocked': [_blocked_move(agent_name, source_window, target_window, 'target append plan does not include moved agent')]}
+    return {
+        'steps': [
+            step_factory(
+                action='move_agent_pane',
+                window=source_window,
+                target_window=target_window,
+                agent=agent_name,
+                role='agent',
+                slot_key=agent_name,
+                reason='existing dynamic agent window membership changed',
+            )
+        ],
+        'blocked': [],
+    }
+
+
+def _moved_agents(old_topology, new_topology) -> tuple[tuple[str, str, str], ...]:
+    old_by_agent = _agent_window_map(old_topology)
+    new_by_agent = _agent_window_map(new_topology)
+    moved = []
+    for agent_name in sorted(set(old_by_agent) & set(new_by_agent)):
+        old_window = old_by_agent[agent_name]
+        new_window = new_by_agent[agent_name]
+        if old_window != new_window:
+            moved.append((agent_name, old_window, new_window))
+    return tuple(moved)
+
+
+def _agent_window_map(topology) -> dict[str, str]:
+    return {
+        str(agent_name): str(window.name)
+        for window in tuple(getattr(topology, 'windows', ()) or ())
+        for agent_name in window_agent_names(window)
+    }
+
+
+def _blocked_move(agent: str, source_window: str, target_window: str, reason: str) -> dict[str, object]:
+    return {
+        'op': 'move_agent',
+        'agent': agent,
+        'from_window': source_window,
+        'to_window': target_window,
+        'reason': reason,
+    }
+
+
+__all__ = ['move_agent_steps']

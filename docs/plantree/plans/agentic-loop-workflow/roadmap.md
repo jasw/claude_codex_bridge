@@ -204,6 +204,15 @@ Date: 2026-06-24
   source-wrapper smoke in `/home/bfly/yunwei/test_ccb2/move-plan-smoke` proved
   dynamic `helper1` can be planned from `plan-orchestrate` to a new `review`
   window while static `frontdesk` is blocked.
+- Landed the first true existing-window cross-window move slice in the current
+  worktree: `ccb agent move <agent> --window NAME --json` updates dynamic
+  lifecycle placement, writes `placement_sequence` so moved agents append after
+  existing target agents, applies a `move_agent` namespace patch with tmux
+  `move-pane`, restamps `@ccb_window`, reflows source and target windows, and
+  updates runtime authority without provider restart. Focused regression passed
+  with `108 passed`; source-wrapper CLI smoke in
+  `/home/bfly/yunwei/test_ccb2/source-move-smoke-20260628034710` proved
+  unmounted add/add/move projection and valid config.
 
 ## In Progress
 
@@ -809,9 +818,10 @@ Date: 2026-06-24
    single-agent-window, multi-window add/remove, and explicit-window-class
    middle-removal cases, especially cases that require manual move planning or
    dynamic visibility changes rather than pure reflow.
-2. Decide the next public CLI surface for dynamic rearrangement beyond
-   `layout arrange`: manual move/park/hide workflows still need separate
-   commands and safety contracts.
+2. Extend `ccb agent move` beyond the first existing-window slice: support
+   move-to-new-window transactions, repeated move cycles in a mounted project,
+   and a repeatable fake-provider smoke that proves ask reachability before
+   and after movement.
 3. Extend the shrink/release proof from fake-provider source-wrapper smokes to
    opt-in real-provider tolerance where useful, especially `layout arrange`
    after a real pane has been manually disturbed.

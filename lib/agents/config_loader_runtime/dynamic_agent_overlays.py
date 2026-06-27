@@ -281,7 +281,9 @@ def _active_dynamic_agent_states(project_root: Path) -> tuple[tuple[Path, dict[s
 
 def _dynamic_state_sort_key(item: tuple[Path, dict[str, object]]) -> tuple[int, str, int, str]:
     path, state = item
-    sequence = _optional_int(state.get('created_sequence'))
+    sequence = _optional_int(state.get('placement_sequence'))
+    if sequence is None:
+        sequence = _optional_int(state.get('created_sequence'))
     if sequence is not None:
         return (0, '', sequence, str(path))
     timestamp = _optional_string(state.get('created_at')) or _optional_string(state.get('updated_at')) or ''

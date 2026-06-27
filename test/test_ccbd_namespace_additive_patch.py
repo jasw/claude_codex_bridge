@@ -141,6 +141,25 @@ class _PatchFakeBackend:
     def _tmux_run(self, args: list[str], *, check=False, capture=False, input_bytes=None, timeout=None):
         del check, capture, input_bytes, timeout
         self.tmux_calls.append(tuple(args))
+        if args and args[0] == 'move-pane':
+            source_pane = args[args.index('-s') + 1]
+            target_pane = args[args.index('-t') + 1]
+            source_record = None
+            target_record = None
+            for windows in self.sessions.values():
+                for record in windows:
+                    panes = record['panes']
+                    if source_pane in panes:
+                        source_record = record
+                    if target_pane in panes:
+                        target_record = record
+            if source_record is None or target_record is None:
+                return SimpleNamespace(returncode=1, stdout='', stderr='pane not found')
+            source_record['panes'].remove(source_pane)
+            target_panes = target_record['panes']
+            target_index = target_panes.index(target_pane)
+            target_panes.insert(target_index + 1, source_pane)
+            return SimpleNamespace(returncode=0, stdout='', stderr='')
         if args[:2] == ['has-session', '-t']:
             return SimpleNamespace(returncode=0 if args[2] in self.sessions else 1, stdout='', stderr='')
         if len(args) >= 7 and args[:2] == ['new-window', '-d']:
@@ -641,6 +660,79 @@ def test_apply_trailing_add_agent_creates_new_agent_pane(tmp_path: Path, monkeyp
     assert ('select-layout', '-E', '-t', f'{layout.ccbd_tmux_session_name}:main') in backend.tmux_calls
     assert backend.pane_options['%3']['@ccb_slot'] == 'agent3'
     assert backend.pane_options['%3']['@ccb_window'] == 'main'
+
+
+def test_apply_move_agent_reuses_existing_pane_between_existing_windows(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    current_text = """version = 2
+entry_window = "main"
+
+[windows]
+main = "agent1:codex, agent2:claude"
+review = "agent3:codex"
+
+[ui.sidebar]
+mode = "every_window"
+width = "15%"
+bottom_height = 20
+"""
+    new_text = """version = 2
+entry_window = "main"
+
+[windows]
+main = "agent1:codex"
+review = "agent3:codex, agent2:claude"
+
+[ui.sidebar]
+mode = "every_window"
+width = "15%"
+bottom_height = 20
+"""
+    current = _load_config(tmp_path / 'current-move-agent', current_text)
+    new = _load_config(tmp_path / 'new-move-agent', new_text)
+    layout = PathLayout(_project(tmp_path / 'repo-move-agent', current_text))
+    backend = _PatchFakeBackend(socket_path=str(layout.ccbd_tmux_socket_path))
+    backend.add_window(layout.ccbd_tmux_session_name, 'main')
+    backend.sessions[layout.ccbd_tmux_session_name][0]['panes'].append('%2')
+    backend.pane_counter = 2
+    review_pane = backend.add_window(layout.ccbd_tmux_session_name, 'review')
+    _seed_agent_pane(backend, '%1', project_id='proj-1', window='main', agent='agent1')
+    _seed_agent_pane(backend, '%2', project_id='proj-1', window='main', agent='agent2')
+    _seed_agent_pane(backend, review_pane, project_id='proj-1', window='review', agent='agent3')
+    _store_namespace(layout, project_id='proj-1')
+    controller = ProjectNamespaceController(layout, 'proj-1', backend_factory=lambda socket_path=None: backend)
+    _forbid_recreate_paths(monkeypatch)
+    plan = build_reload_dry_run_plan(current, new, project_id='proj-1', current_namespace=controller.load())
+
+    result = controller.apply_reload_patch(
+        patch_plan=plan['namespace_patch_plan'],
+        old_topology=build_namespace_topology_plan(current),
+        new_topology=build_namespace_topology_plan(new),
+        timeout_s=0.0,
+    )
+
+    assert result.status == 'applied'
+    assert result.created_windows == ()
+    assert result.created_panes == ()
+    assert result.agent_panes == {}
+    assert result.removed_agents == {}
+    assert result.removed_panes == ()
+    assert result.moved_agents == {'agent2': '%2'}
+    assert result.moved_agent_windows == {'agent2': 'review'}
+    assert result.reflowed_windows == ('main', 'review')
+    assert result.reflow_errors == {}
+    assert result.preserved_before == {'agent1': '%1', 'agent2': '%2', 'agent3': review_pane}
+    assert result.preserved_after == {'agent1': '%1', 'agent2': '%2', 'agent3': review_pane}
+    assert ('move-pane', '-v', '-s', '%2', '-t', review_pane) in backend.tmux_calls
+    assert ('select-layout', '-E', '-t', f'{layout.ccbd_tmux_session_name}:main') in backend.tmux_calls
+    assert ('select-layout', '-E', '-t', f'{layout.ccbd_tmux_session_name}:review') in backend.tmux_calls
+    assert backend.sessions[layout.ccbd_tmux_session_name][0]['panes'] == ['%1']
+    assert backend.sessions[layout.ccbd_tmux_session_name][1]['panes'] == [review_pane, '%2']
+    assert backend.pane_options['%2']['@ccb_slot'] == 'agent2'
+    assert backend.pane_options['%2']['@ccb_window'] == 'review'
+    assert backend.pane_options['%2']['@ccb_namespace_epoch'] == '3'
 
 
 def test_apply_add_tool_window_creates_tool_window_sidebar_and_tool_pane(

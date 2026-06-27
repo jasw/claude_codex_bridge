@@ -101,6 +101,25 @@ def test_agent_parser_supports_add_and_remove_commands() -> None:
     assert parser.parse(
         [
             'agent',
+            'move',
+            'helper',
+            '--window',
+            'review',
+            '--reason',
+            'operator layout',
+            '--json',
+        ]
+    ) == ParsedAgentCommand(
+        project=None,
+        action='move',
+        agent_name='helper',
+        window_name='review',
+        reason='operator layout',
+        json_output=True,
+    )
+    assert parser.parse(
+        [
+            'agent',
             'remove',
             'helper',
             '--policy',
@@ -367,6 +386,55 @@ def test_agent_add_to_new_window_projects_add_window_reload_plan(
     ]
     assert plan['namespace_patch_plan']['steps'][-1]['window'] == 'review'
     assert plan['namespace_patch_plan']['steps'][-1]['agent'] == 'helper'
+
+
+def test_agent_move_dynamic_agent_uses_move_agent_reload_plan(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = _project_with_agent_profiles(tmp_path, monkeypatch)
+    result, _helper, stderr = _run_phase2(
+        ['agent', 'add', 'helper:codex', '--role', 'agentroles.general', '--window', 'main', '--hidden', '--json'],
+        cwd=project_root,
+    )
+    assert result == 0, stderr
+    result, _reviewer, stderr = _run_phase2(
+        ['agent', 'add', 'reviewer:codex', '--role', 'agentroles.general', '--window', 'review', '--hidden', '--json'],
+        cwd=project_root,
+    )
+    assert result == 0, stderr
+    before_move = load_project_config(project_root).config
+
+    result, moved, stderr = _run_phase2(
+        ['agent', 'move', 'helper', '--window', 'review', '--reason', 'group review node', '--json'],
+        cwd=project_root,
+    )
+
+    assert result == 0, stderr
+    assert moved['previous_window_name'] == 'main'
+    assert moved['resolved_window_name'] == 'review'
+    assert moved['placement']['window_name'] == 'review'
+    assert moved['apply']['apply_status'] == 'deferred_until_start'
+    after_move = load_project_config(project_root).config
+    assert [(window.name, window.agent_names, window.layout_spec) for window in after_move.windows] == [
+        ('main', ('main',), 'main:codex'),
+        ('review', ('reviewer', 'helper'), 'reviewer:codex; helper:codex'),
+    ]
+    plan = build_reload_dry_run_plan(before_move, after_move, project_id='proj-1', current_namespace=_namespace('proj-1'))
+    assert plan['plan_class'] == 'move_agent'
+    assert plan['future_safe_to_apply'] is True
+    assert plan['namespace_patch_plan']['steps'] == [
+        {
+            'action': 'move_agent_pane',
+            'window': 'main',
+            'target_window': 'review',
+            'agent': 'helper',
+            'role': 'agent',
+            'slot_key': 'helper',
+            'managed_by': 'ccbd',
+            'reason': 'existing dynamic agent window membership changed',
+        }
+    ]
 
 
 def test_agent_add_with_loop_node_places_agent_in_node_window(
@@ -877,6 +945,83 @@ def test_agent_remove_while_mounted_unloads_and_reports_runtime_details(
     assert removed['applied']['unloaded_agents'] == ['helper']
     assert 'helper' not in load_project_config(project_root).config.agents
     assert reload_results == []
+
+
+def test_agent_move_while_mounted_reports_move_apply_evidence(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = _project_with_agent_profiles(tmp_path, monkeypatch)
+    result, _helper, stderr = _run_phase2(
+        ['agent', 'add', 'helper:codex', '--role', 'agentroles.general', '--window', 'main', '--hidden', '--json'],
+        cwd=project_root,
+    )
+    assert result == 0, stderr
+    result, _reviewer, stderr = _run_phase2(
+        ['agent', 'add', 'reviewer:codex', '--role', 'agentroles.general', '--window', 'review', '--hidden', '--json'],
+        cwd=project_root,
+    )
+    assert result == 0, stderr
+    monkeypatch.setattr(
+        'cli.services.agent_lifecycle.ping_local_state',
+        lambda _context: SimpleNamespace(mount_state='mounted', socket_connectable=True, reason=None),
+    )
+    monkeypatch.setattr(
+        'cli.services.agent_lifecycle.reload_config',
+        lambda _context, _command: {
+            'status': 'published',
+            'stage': 'publish_transaction',
+            'plan_class': 'move_agent',
+            'published_graph_version': 4,
+            'namespace_patch': {
+                'status': 'applied',
+                'moved_agents': {'helper': '%3'},
+                'moved_agent_windows': {'helper': 'review'},
+                'preserved_before': {'main': '%1', 'reviewer': '%4'},
+                'preserved_after': {'main': '%1', 'reviewer': '%4', 'helper': '%3'},
+                'reflowed_windows': ['main', 'review'],
+            },
+            'runtime_mount': {
+                'status': 'moved',
+                'moved_agents': ['helper'],
+                'runtime_authority_moved_agents': ['helper'],
+            },
+        },
+    )
+
+    result, moved, stderr = _run_phase2(
+        ['agent', 'move', 'helper', '--window', 'review', '--reason', 'mounted move', '--json'],
+        cwd=project_root,
+    )
+
+    assert result == 0, stderr
+    assert moved['apply']['apply_status'] == 'applied'
+    assert moved['apply']['plan_class'] == 'move_agent'
+    assert moved['apply']['namespace_moved_agents'] == {'helper': '%3'}
+    assert moved['apply']['namespace_moved_agent_windows'] == {'helper': 'review'}
+    assert moved['apply']['namespace_reflowed_windows'] == ['main', 'review']
+    assert moved['apply']['runtime_mount_status'] == 'moved'
+    assert moved['apply']['moved_agents'] == ['helper']
+    assert moved['apply']['runtime_authority_moved_agents'] == ['helper']
+    assert moved['apply']['pane_identity_report']['moved_agents'] == [
+        {
+            'agent': 'helper',
+            'pane_id': '%3',
+            'window_name': 'review',
+            'pane_identity_source': 'namespace_moved_agents',
+        }
+    ]
+    assert moved['apply']['pane_identity_report']['moved_agents_runtime'] == ['helper']
+    assert moved['previous_window_name'] == 'main'
+    assert moved['resolved_window_name'] == 'review'
+    assert moved['pane_id'] == '%3'
+    assert moved['placement']['window_name'] == 'review'
+    assert moved['placement']['pane_id'] == '%3'
+    assert moved['applied']['status'] == 'moved'
+    assert moved['applied']['previous_window_name'] == 'main'
+    assert moved['applied']['window_name'] == 'review'
+    assert moved['applied']['pane_id'] == '%3'
+    assert moved['applied']['runtime_authority_moved_agents'] == ['helper']
 
 
 def test_agent_park_while_mounted_publishes_config_only_change_without_losing_pane(

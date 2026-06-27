@@ -17,10 +17,12 @@ def remove_agent_panes(
     current,
     result,
     timeout_s: float | None,
+    excluded_agents: tuple[str, ...] | set[str] = (),
 ) -> None:
     old_windows = window_map(old_topology)
     new_windows = window_map(new_topology)
     removed_windows = set(old_windows) - set(new_windows)
+    excluded = {str(agent) for agent in tuple(excluded_agents or ())}
     for window_name, old_window in old_windows.items():
         if window_name in removed_windows:
             if str(getattr(old_window, 'kind', '') or '') == 'tool':
@@ -28,7 +30,7 @@ def remove_agent_panes(
             _remove_window_agents(
                 backend,
                 window_name=window_name,
-                agents=window_agent_names(old_window),
+                agents=tuple(agent for agent in window_agent_names(old_window) if agent not in excluded),
                 existing_agent_panes=existing_agent_panes,
                 current=current,
                 result=result,
@@ -40,7 +42,7 @@ def remove_agent_panes(
         if new_window is None:
             continue
         new_agents = set(window_agent_names(new_window))
-        removed_agents = tuple(agent for agent in window_agent_names(old_window) if agent not in new_agents)
+        removed_agents = tuple(agent for agent in window_agent_names(old_window) if agent not in new_agents and agent not in excluded)
         _remove_window_agents(
             backend,
             window_name=window_name,

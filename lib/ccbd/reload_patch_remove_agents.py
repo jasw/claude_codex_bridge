@@ -3,31 +3,42 @@ from __future__ import annotations
 from ccbd.reload_additive_agents import window_agent_names, window_map
 
 
-def remove_agent_steps(old_topology, new_topology, *, step_factory) -> dict[str, object]:
+def remove_agent_steps(old_topology, new_topology, *, step_factory, excluded_agents: tuple[str, ...] = ()) -> dict[str, object]:
     old_windows = window_map(old_topology)
     new_windows = window_map(new_topology)
     removed_windows = set(old_windows) - set(new_windows)
+    excluded = {str(agent) for agent in tuple(excluded_agents or ())}
     steps = []
     blocked: list[dict[str, object]] = []
     for window_name, old_window in old_windows.items():
         if window_name in removed_windows:
             if str(getattr(old_window, 'kind', '') or '') == 'tool':
                 continue
+            if set(window_agent_names(old_window)) & excluded:
+                result = {
+                    'steps': [],
+                    'blocked': [
+                        _blocked_remove(window_name, 'move_agent does not support removing the source window in the same transaction')
+                    ],
+                }
+                steps.extend(result['steps'])
+                blocked.extend(result['blocked'])
+                continue
             result = _remove_window_steps(window_name, old_window, step_factory=step_factory)
         else:
             new_window = new_windows.get(window_name)
             if new_window is None:
                 continue
-            result = _remove_agent_steps(window_name, old_window, new_window, step_factory=step_factory)
+            result = _remove_agent_steps(window_name, old_window, new_window, step_factory=step_factory, excluded_agents=excluded)
         steps.extend(result['steps'])
         blocked.extend(result['blocked'])
     return {'steps': steps, 'blocked': blocked}
 
 
-def _remove_agent_steps(window_name: str, old_window, new_window, *, step_factory) -> dict[str, object]:
+def _remove_agent_steps(window_name: str, old_window, new_window, *, step_factory, excluded_agents: set[str]) -> dict[str, object]:
     old_agents = window_agent_names(old_window)
     new_agents = window_agent_names(new_window)
-    removed = tuple(agent for agent in old_agents if agent not in set(new_agents))
+    removed = tuple(agent for agent in old_agents if agent not in set(new_agents) and agent not in excluded_agents)
     if not removed:
         return {'steps': [], 'blocked': []}
     if tuple(agent for agent in old_agents if agent in set(new_agents)) != new_agents:

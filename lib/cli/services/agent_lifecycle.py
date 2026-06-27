@@ -35,6 +35,8 @@ def agent_lifecycle(context, command) -> dict[str, object]:
         return _show(context, command)
     if action == 'add':
         return _add(context, command)
+    if action == 'move':
+        return _move(context, command)
     if action in {'hide', 'park', 'resume'}:
         return _transition(context, command)
     if action in {'remove', 'release'}:
@@ -265,6 +267,67 @@ def _remove(context, command) -> dict[str, object]:
         raise
     _write_state(context, name, payload)
     return dict(payload, action=requested_action)
+
+
+def _move(context, command) -> dict[str, object]:
+    name = _normalize_name(getattr(command, 'agent_name', None), field_name='agent')
+    state_path = _state_path(context, name)
+    previous = _load_record(state_path)
+    if previous is None:
+        raise ValueError(f'agent {name!r} is not a dynamic agent')
+    previous_state = str(previous.get('lifecycle_state') or '')
+    if previous_state not in ACTIVE_STATES:
+        raise ValueError(f'agent {name!r} is not active; current lifecycle_state={previous_state or "<empty>"}')
+    placement = _placement_record(command)
+    if str(placement.get('mode') or '') == 'auto':
+        raise ValueError('agent move requires --window, --window-class, --loop-id, or --node-id')
+    payload = dict(previous)
+    payload.update(
+        {
+            'requested_action': 'move',
+            'previous_window_name': _optional_text(dict(previous.get('placement') or {}).get('window_name'))
+            or _optional_text(previous.get('resolved_window_name'))
+            or _optional_text(previous.get('window_name')),
+            'window_name': placement.get('window_name'),
+            'window_class': placement.get('window_class'),
+            'loop_id': placement.get('loop_id'),
+            'node_id': placement.get('node_id'),
+            'placement': placement,
+            'reason': _optional_text(getattr(command, 'reason', None)),
+            'updated_at': _utc_now(),
+            'last_reason': _optional_text(getattr(command, 'reason', None)) or 'agent move',
+            'state_path': str(state_path),
+            'events_path': str(_events_path(context)),
+        }
+    )
+    _write_state(context, name, payload)
+    _update_resolved_placement(context, payload)
+    target_window = _optional_text(payload.get('resolved_window_name')) or _optional_text(
+        dict(payload.get('placement') or {}).get('window_name')
+    )
+    placement_sequence = _next_placement_sequence(context, target_window=target_window, exclude_agent=name)
+    payload['placement_sequence'] = placement_sequence
+    placement_with_sequence = dict(payload.get('placement') or {})
+    placement_with_sequence['placement_sequence'] = placement_sequence
+    payload['placement'] = placement_with_sequence
+    _write_state(context, name, payload)
+    _append_event(
+        context,
+        {
+            'event': 'move',
+            'agent': name,
+            'previous_window_name': payload.get('previous_window_name'),
+            'target_window_name': payload.get('resolved_window_name') or dict(payload.get('placement') or {}).get('window_name'),
+        },
+    )
+    try:
+        payload['apply'] = _apply_reload_if_mounted(context, action='agent-move')
+        _update_move_apply_evidence(context, payload)
+    except Exception:
+        _restore_state(context, name, previous)
+        raise
+    _write_state(context, name, payload)
+    return dict(payload, action='move')
 
 
 def _transition(context, command) -> dict[str, object]:
@@ -516,6 +579,30 @@ def _created_sequence(context, previous: dict[str, object] | None) -> int:
         if sequence is not None:
             highest = max(highest, sequence)
     return highest + 1
+
+
+def _next_placement_sequence(context, *, target_window: str | None, exclude_agent: str) -> int:
+    highest = 0
+    for record in _load_dynamic_records(context):
+        if str(record.get('agent') or '') == exclude_agent:
+            continue
+        if target_window is not None and _record_window_name(record) != target_window:
+            continue
+        sequence = _optional_int(record.get('placement_sequence'))
+        if sequence is None:
+            sequence = _optional_int(record.get('created_sequence'))
+        if sequence is not None:
+            highest = max(highest, sequence)
+    return highest + 1
+
+
+def _record_window_name(record: dict[str, object]) -> str | None:
+    placement = record.get('placement') if isinstance(record.get('placement'), dict) else {}
+    return (
+        _optional_text(record.get('resolved_window_name'))
+        or _optional_text(record.get('window_name'))
+        or _optional_text(dict(placement).get('window_name'))
+    )
 
 
 def _optional_int(value: object) -> int | None:
@@ -785,6 +872,40 @@ def _update_transition_apply_evidence(context, payload: dict[str, object]) -> No
         'dispatch_disabled': bool(payload.get('dispatch_disabled')),
         'published_graph_version': apply.get('published_graph_version'),
         'runtime_mount_status': apply.get('runtime_mount_status'),
+    }
+    placement = dict(payload.get('placement') or {})
+    if window_name is not None:
+        placement['window_name'] = window_name
+    if pane_id is not None:
+        placement['pane_id'] = pane_id
+    payload['placement'] = placement
+    if window_name is not None:
+        payload['resolved_window_name'] = window_name
+
+
+def _update_move_apply_evidence(context, payload: dict[str, object]) -> None:
+    apply = dict(payload.get('apply') or {})
+    if str(apply.get('apply_status') or '') != 'applied':
+        return
+    agent = str(payload.get('agent') or '')
+    moved = dict(apply.get('namespace_moved_agents') or {})
+    moved_windows = dict(apply.get('namespace_moved_agent_windows') or {})
+    preserved_after = dict(apply.get('namespace_preserved_after') or {})
+    pane_id = _optional_text(moved.get(agent)) or _optional_text(preserved_after.get(agent)) or _optional_text(payload.get('pane_id'))
+    window_name = _optional_text(moved_windows.get(agent)) or _window_for_agent(context, agent) or _optional_text(
+        dict(payload.get('placement') or {}).get('window_name')
+    )
+    payload['pane_id'] = pane_id
+    payload['applied'] = {
+        'status': 'moved' if str(apply.get('plan_class') or '') == 'move_agent' else 'transitioned',
+        'action': apply.get('action'),
+        'plan_class': apply.get('plan_class'),
+        'previous_window_name': payload.get('previous_window_name'),
+        'window_name': window_name,
+        'pane_id': pane_id,
+        'published_graph_version': apply.get('published_graph_version'),
+        'runtime_mount_status': apply.get('runtime_mount_status'),
+        'runtime_authority_moved_agents': list(apply.get('runtime_authority_moved_agents') or ()),
     }
     placement = dict(payload.get('placement') or {})
     if window_name is not None:

@@ -9,6 +9,8 @@ class AdditiveRuntimeMountResult:
     requested_agents: tuple[str, ...] = ()
     mounted_agents: tuple[str, ...] = ()
     runtime_authority_written_agents: tuple[str, ...] = ()
+    moved_agents: tuple[str, ...] = ()
+    runtime_authority_moved_agents: tuple[str, ...] = ()
     unloaded_agents: tuple[str, ...] = ()
     runtime_authority_stopped_agents: tuple[str, ...] = ()
     helper_terminated_agents: tuple[str, ...] = ()
@@ -24,6 +26,10 @@ class AdditiveRuntimeMountResult:
             'mounted_agents': list(self.mounted_agents),
             'runtime_authority_written_agents': list(
                 self.runtime_authority_written_agents
+            ),
+            'moved_agents': list(self.moved_agents),
+            'runtime_authority_moved_agents': list(
+                self.runtime_authority_moved_agents
             ),
             'unloaded_agents': list(self.unloaded_agents),
             'runtime_authority_stopped_agents': list(
@@ -150,6 +156,28 @@ def unloaded_result(
     )
 
 
+def moved_result(
+    *,
+    requested_agents: tuple[str, ...],
+    moved_agents: tuple[str, ...],
+    written_agents: tuple[str, ...],
+    preserved_agents: tuple[str, ...],
+) -> AdditiveRuntimeMountResult:
+    return AdditiveRuntimeMountResult(
+        status='moved',
+        requested_agents=requested_agents,
+        moved_agents=moved_agents,
+        runtime_authority_moved_agents=written_agents,
+        preserved_runtime_unchanged_agents=preserved_agents,
+        partial=False,
+        diagnostics={
+            'reason': None,
+            'runtime_authority_scope': 'moved_agents_only',
+            **_no_publish_diagnostics(),
+        },
+    )
+
+
 def _no_publish_diagnostics() -> dict[str, object]:
     return {
         'graph_published': False,
@@ -164,6 +192,7 @@ __all__ = [
     'blocked_mount_result',
     'failed_mount_result',
     'mounted_result',
+    'moved_result',
     'noop_mount_result',
     'unloaded_result',
 ]

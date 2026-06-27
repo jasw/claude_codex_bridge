@@ -341,6 +341,8 @@ def _future_safe_to_apply(plan_class: str, operations: list[dict[str, object]]) 
         return not any(str(item.get('op') or '') in unsafe_tool_ops | unsafe_agent_ops for item in operations)
     if plan_class == 'remove_agent':
         return _remove_agent_operations_are_safe(operations)
+    if plan_class == 'move_agent':
+        return _move_agent_operations_are_safe(operations)
     unsafe_ops = {'replace_agent', 'move_agent', 'layout_change', 'change_tool_window'}
     if any(str(item.get('op') or '') in unsafe_ops for item in operations):
         return False
@@ -358,6 +360,12 @@ def _remove_agent_operations_are_safe(operations: list[dict[str, object]]) -> bo
             continue
         return False
     return any(str(item.get('op') or '') == 'remove_agent' for item in operations)
+
+
+def _move_agent_operations_are_safe(operations: list[dict[str, object]]) -> bool:
+    if not operations:
+        return False
+    return all(str(item.get('op') or '') == 'move_agent' for item in operations)
 
 
 def _tool_window_operations(

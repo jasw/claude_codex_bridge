@@ -4,6 +4,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 
 from ccbd.reload_patch_additive_agents import additive_agent_steps
+from ccbd.reload_patch_move_agents import move_agent_steps
 from ccbd.reload_patch_remove_agents import remove_agent_steps
 from ccbd.services.project_namespace_runtime import build_namespace_topology_plan
 
@@ -15,10 +16,11 @@ _SUPPORTED_OPS = {
     'add_agent',
     'add_window',
     'remove_agent',
+    'move_agent',
     'add_tool_window',
     'remove_tool_window',
 }
-_MUTATING_OPS = {'add_agent', 'add_window', 'remove_agent', 'add_tool_window', 'remove_tool_window'}
+_MUTATING_OPS = {'add_agent', 'add_window', 'remove_agent', 'move_agent', 'add_tool_window', 'remove_tool_window'}
 _REQUIRED_PROOFS = (
     'project_id',
     'tmux_socket_path',
@@ -36,6 +38,7 @@ _MANAGED_BY = 'ccbd'
 class NamespacePatchStep:
     action: str
     window: str | None = None
+    target_window: str | None = None
     agent: str | None = None
     role: str | None = None
     slot_key: str | None = None
@@ -45,7 +48,7 @@ class NamespacePatchStep:
 
     def to_record(self) -> dict[str, object]:
         payload = {'action': self.action}
-        for key in ('window', 'agent', 'role', 'slot_key', 'managed_by', 'anchor_agent', 'reason'):
+        for key in ('window', 'target_window', 'agent', 'role', 'slot_key', 'managed_by', 'anchor_agent', 'reason'):
             value = getattr(self, key)
             if value not in (None, ''):
                 payload[key] = value
@@ -78,15 +81,20 @@ def build_namespace_patch_plan(
     if not blocked:
         steps.extend(_view_refresh_steps(op_records))
         steps.extend(_additive_window_steps(old_topology, new_topology))
-        additive_result = additive_agent_steps(old_topology, new_topology, step_factory=NamespacePatchStep)
+        move_result = move_agent_steps(old_topology, new_topology, step_factory=NamespacePatchStep)
+        moved_agents = tuple(move_result.get('moved_agents') or ())
+        steps.extend(move_result['steps'])
+        blocked.extend(move_result['blocked'])
+        additive_result = additive_agent_steps(old_topology, new_topology, step_factory=NamespacePatchStep, excluded_agents=moved_agents)
         steps.extend(additive_result['steps'])
         blocked.extend(additive_result['blocked'])
-        remove_result = remove_agent_steps(old_topology, new_topology, step_factory=NamespacePatchStep)
+        remove_result = remove_agent_steps(old_topology, new_topology, step_factory=NamespacePatchStep, excluded_agents=moved_agents)
         steps.extend(remove_result['steps'])
         blocked.extend(remove_result['blocked'])
         steps.extend(_remove_tool_window_steps(old_topology, new_topology))
         blocked.extend(_missing_additive_agent_steps(op_records, steps))
         blocked.extend(_missing_remove_agent_steps(op_records, steps))
+        blocked.extend(_missing_move_agent_steps(op_records, steps))
         blocked.extend(_missing_tool_window_steps(op_records, steps))
 
     status = 'blocked' if blocked else ('no_op' if not steps else 'planned')
@@ -136,7 +144,7 @@ def _blocked_unsupported_operations(operations: tuple[dict[str, object], ...]) -
                     'op': op,
                     'agent': operation.get('agent'),
                     'window': operation.get('window'),
-                    'reason': 'namespace patch planner supports config-only, additive, and idle remove_agent operations',
+                    'reason': 'namespace patch planner supports config-only, additive, idle remove_agent, and existing-window move_agent operations',
                 }
             )
     return blocked
@@ -308,6 +316,26 @@ def _missing_remove_agent_steps(
     ]
 
 
+def _missing_move_agent_steps(
+    operations: tuple[dict[str, object], ...],
+    steps: list[NamespacePatchStep],
+) -> list[dict[str, object]]:
+    expected = {
+        str(item.get('agent') or '').strip()
+        for item in operations
+        if str(item.get('op') or '') == 'move_agent' and str(item.get('agent') or '').strip()
+    }
+    planned = {str(step.agent) for step in steps if step.action == 'move_agent_pane' and step.agent}
+    return [
+        {
+            'op': 'move_agent',
+            'agent': agent_name,
+            'reason': 'move_agent operation was not covered by a namespace pane move step',
+        }
+        for agent_name in sorted(expected - planned)
+    ]
+
+
 def _missing_tool_window_steps(
     operations: tuple[dict[str, object], ...],
     steps: list[NamespacePatchStep],
@@ -361,7 +389,7 @@ def _preserved_agents(old_topology, new_topology) -> list[str]:
 
 def _warnings_for_status(status: str) -> list[str]:
     if status == 'planned':
-        return ['Namespace patch apply is explicit and only supports additive or idle remove_agent operations.']
+        return ['Namespace patch apply is explicit and only supports additive, idle remove_agent, or existing-window move_agent operations.']
     if status == 'blocked':
         return ['Namespace patch plan is blocked; reload must remain dry-run/rejected.']
     return []

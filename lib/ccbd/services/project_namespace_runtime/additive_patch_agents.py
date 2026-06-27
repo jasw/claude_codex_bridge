@@ -19,12 +19,17 @@ def append_agent_panes(
     namespace_epoch: int,
     created_panes: list[str],
     timeout_s: float | None,
+    excluded_agents: tuple[str, ...] | set[str] = (),
 ) -> dict[str, str]:
     append_windows = append_agent_windows(old_topology, new_topology) or {}
     old_windows = window_map(old_topology)
     new_windows = window_map(new_topology)
+    excluded = {str(agent) for agent in tuple(excluded_agents or ())}
     agent_panes: dict[str, str] = {}
     for window_name, appended_agents in append_windows.items():
+        active_appended = tuple(item for item in tuple(appended_agents or ()) if str(item.agent) not in excluded)
+        if not active_appended:
+            continue
         agent_panes.update(
             _append_window_agent_panes(
                 controller,
@@ -32,7 +37,7 @@ def append_agent_panes(
                 window_name=window_name,
                 old_window=old_windows[window_name],
                 new_window=new_windows[window_name],
-                appended_agents=appended_agents,
+                appended_agents=active_appended,
                 existing_agent_panes=existing_agent_panes,
                 namespace_epoch=namespace_epoch,
                 created_panes=created_panes,

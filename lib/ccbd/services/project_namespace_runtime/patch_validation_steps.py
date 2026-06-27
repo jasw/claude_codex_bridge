@@ -23,6 +23,14 @@ def planned_removed_agent_targets(steps: tuple[Mapping[str, object] | object, ..
     return _planned_agent_targets_for_action(steps, 'kill_agent_pane')
 
 
+def planned_moved_agent_targets(steps: tuple[Mapping[str, object] | object, ...]) -> set[tuple[str, str, str]]:
+    return {
+        (str(step.get('window') or ''), str(step.get('target_window') or ''), str(step.get('agent') or ''))
+        for step in steps
+        if isinstance(step, Mapping) and step.get('action') == 'move_agent_pane'
+    }
+
+
 def planned_tool_windows(steps: tuple[Mapping[str, object] | object, ...]) -> set[str]:
     return _planned_windows_for_action(steps, 'create_tool_pane')
 
@@ -66,6 +74,7 @@ __all__ = [
     'planned_agent_targets',
     'planned_create_windows',
     'planned_kill_windows',
+    'planned_moved_agent_targets',
     'planned_removed_tool_windows',
     'planned_removed_agent_targets',
     'planned_tool_windows',

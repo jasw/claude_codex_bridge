@@ -1,0 +1,144 @@
+from __future__ import annotations
+
+from ccbd.reload_additive_agents import append_agent_plan_for_window, window_agent_names, window_map
+from terminal_runtime.tmux_identity import apply_ccb_pane_identity
+
+from .remove_patch_agents import reflow_window_after_agent_change
+
+
+def move_agent_panes(
+    controller,
+    backend,
+    *,
+    old_topology,
+    new_topology,
+    existing_agent_panes: dict[str, str],
+    current,
+    result,
+    timeout_s: float | None,
+) -> None:
+    old_windows = window_map(old_topology)
+    new_windows = window_map(new_topology)
+    moved = _moved_agents(old_topology, new_topology)
+    if not moved:
+        return
+    moved_by_target: dict[str, list[str]] = {}
+    touched_windows: set[str] = set()
+    for agent_name, source_window, target_window in moved:
+        old_target = old_windows.get(target_window)
+        new_target = new_windows.get(target_window)
+        if old_target is None or new_target is None:
+            raise RuntimeError(f'target window missing for moved agent {agent_name!r}: {target_window!r}')
+        source_pane = existing_agent_panes.get(agent_name)
+        if not source_pane:
+            raise RuntimeError(f'pane missing for moved agent {agent_name!r}')
+        anchor = _target_anchor(agent_name, target_window, old_target, moved_by_target, existing_agent_panes, result.moved_agents)
+        direction = _move_direction(agent_name, old_target, new_target)
+        _move_pane(backend, source_pane=source_pane, anchor_pane=anchor, direction=direction, timeout_s=timeout_s)
+        order_index = _agent_order_index(new_target, agent_name)
+        apply_ccb_pane_identity(
+            backend,
+            source_pane,
+            title=agent_name,
+            agent_label=agent_name,
+            project_id=controller._project_id,
+            order_index=order_index,
+            role='agent',
+            slot_key=agent_name,
+            window_name=target_window,
+            namespace_epoch=current.namespace_epoch,
+            managed_by='ccbd',
+        )
+        result.moved_agents[agent_name] = source_pane
+        result.moved_agent_windows[agent_name] = target_window
+        moved_by_target.setdefault(target_window, []).append(agent_name)
+        touched_windows.update({source_window, target_window})
+    for window_name in sorted(touched_windows):
+        reflow_window_after_agent_change(
+            controller,
+            backend,
+            current=current,
+            topology_plan=new_topology,
+            window_name=window_name,
+            result=result,
+            timeout_s=timeout_s,
+        )
+
+
+def _moved_agents(old_topology, new_topology) -> tuple[tuple[str, str, str], ...]:
+    old_by_agent = _agent_window_map(old_topology)
+    new_by_agent = _agent_window_map(new_topology)
+    moved = []
+    for agent_name in sorted(set(old_by_agent) & set(new_by_agent)):
+        source = old_by_agent[agent_name]
+        target = new_by_agent[agent_name]
+        if source != target:
+            moved.append((agent_name, source, target))
+    return tuple(moved)
+
+
+def _agent_window_map(topology) -> dict[str, str]:
+    return {
+        str(agent_name): str(window.name)
+        for window in tuple(getattr(topology, 'windows', ()) or ())
+        for agent_name in window_agent_names(window)
+    }
+
+
+def _target_anchor(
+    agent_name: str,
+    target_window: str,
+    old_target,
+    moved_by_target: dict[str, list[str]],
+    existing_agent_panes: dict[str, str],
+    moved_agent_panes: dict[str, str],
+) -> str:
+    prior_moved = tuple(moved_by_target.get(target_window) or ())
+    if prior_moved:
+        pane_id = moved_agent_panes.get(prior_moved[-1])
+        if pane_id:
+            return pane_id
+    old_agents = window_agent_names(old_target)
+    if not old_agents:
+        raise RuntimeError(f'cannot move {agent_name!r} into empty existing target window {target_window!r}')
+    anchor_agent = old_agents[-1]
+    pane_id = existing_agent_panes.get(anchor_agent)
+    if not pane_id:
+        raise RuntimeError(f'anchor pane missing for moved agent {agent_name!r}: {anchor_agent!r}')
+    return pane_id
+
+
+def _move_direction(agent_name: str, old_target, new_target) -> str:
+    append_plan = append_agent_plan_for_window(old_target, new_target)
+    if append_plan is None:
+        raise RuntimeError(f'target window does not append moved agent {agent_name!r}')
+    for item in append_plan:
+        if item.agent == agent_name:
+            return item.direction
+    raise RuntimeError(f'target append plan does not include moved agent {agent_name!r}')
+
+
+def _agent_order_index(window, agent_name: str) -> int | None:
+    try:
+        return window_agent_names(window).index(agent_name)
+    except ValueError:
+        return None
+
+
+def _move_pane(backend, *, source_pane: str, anchor_pane: str, direction: str, timeout_s: float | None) -> None:
+    runner = getattr(backend, '_tmux_run', None)
+    if not callable(runner):
+        raise RuntimeError('tmux backend does not support move-pane')
+    flag = '-h' if direction == 'right' else '-v'
+    completed = runner(
+        ['move-pane', flag, '-s', source_pane, '-t', anchor_pane],
+        check=False,
+        capture=True,
+        timeout=timeout_s,
+    )
+    if int(getattr(completed, 'returncode', 1) or 0) != 0:
+        detail = str(getattr(completed, 'stderr', '') or getattr(completed, 'stdout', '') or '').strip()
+        raise RuntimeError(f'failed to move tmux pane {source_pane!r}: {detail}')
+
+
+__all__ = ['move_agent_panes']

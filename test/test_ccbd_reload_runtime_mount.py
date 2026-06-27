@@ -14,6 +14,7 @@ from ccbd.lifecycle_report_store import CcbdShutdownReportStore, CcbdStartupRepo
 from ccbd.metrics import ControlPlaneMetrics
 from ccbd.models import CcbdStartupAgentResult
 from ccbd.project_view import ProjectViewStateStore
+from ccbd.reload_runtime_move import run_moved_agent_runtime_updates
 from ccbd.reload_runtime_mount import run_additive_agent_mounts
 from ccbd.services import CcbdLifecycleStore, MountManager, OwnershipGuard, SnapshotWriter
 from ccbd.services.project_namespace import ProjectNamespaceController
@@ -274,6 +275,46 @@ def test_additive_runtime_mount_blocks_agent_with_existing_runtime_authority(tmp
     assert result.diagnostics['graph_published'] is False
     assert result.diagnostics['lease_or_lifecycle_written'] is False
     assert graph.registry.get('agent3').pane_id == '%old'
+
+
+def test_move_runtime_updates_existing_authority_window_without_remount(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    project_root = _project(tmp_path / 'repo-runtime-move', BASE_CONFIG)
+    app = CcbdApp(project_root, clock=lambda: NOW, pid=4242)
+    graph = _build_graph(app, BASE_CONFIG, version=2)
+    _seed_runtime(graph.runtime_service, 'agent1', pane_id='%1')
+    _seed_runtime(graph.runtime_service, 'agent2', pane_id='%2')
+    _forbid_transaction_side_effects(app, monkeypatch)
+    _forbid_namespace_recreate_paths(app, monkeypatch)
+    before_agent1 = graph.registry.get('agent1').to_record()
+
+    result = run_moved_agent_runtime_updates(
+        app,
+        graph,
+        patch_result=SimpleNamespace(
+            status='applied',
+            moved_agents={'agent2': '%2'},
+            moved_agent_windows={'agent2': 'review'},
+            preserved_before={'agent1': '%1', 'agent2': '%2'},
+        ),
+    )
+
+    assert result.status == 'moved'
+    assert result.requested_agents == ('agent2',)
+    assert result.moved_agents == ('agent2',)
+    assert result.runtime_authority_moved_agents == ('agent2',)
+    assert result.preserved_runtime_unchanged_agents == ('agent1',)
+    assert result.diagnostics['runtime_authority_scope'] == 'moved_agents_only'
+    assert result.diagnostics['graph_published'] is False
+    assert result.diagnostics['lease_or_lifecycle_written'] is False
+    assert graph.registry.get('agent1').to_record() == before_agent1
+    moved = graph.registry.get('agent2')
+    assert moved.pane_id == '%2'
+    assert moved.active_pane_id == '%2'
+    assert moved.tmux_window_name == 'review'
+    assert app.service_graph.version == 1
 
 
 def test_additive_runtime_mount_reuses_retired_same_name_runtime_residue(tmp_path: Path) -> None:

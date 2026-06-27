@@ -5,10 +5,11 @@ from ccbd.reload_runtime_mount import (
     AdditiveRuntimeMountResult,
     run_additive_agent_mounts,
 )
+from ccbd.reload_runtime_move import run_moved_agent_runtime_updates
 from ccbd.reload_runtime_unload import run_removed_agent_unloads
 
 
-PUBLISH_READY_RUNTIME_STATUSES = frozenset({'mounted', 'noop', 'unloaded'})
+PUBLISH_READY_RUNTIME_STATUSES = frozenset({'mounted', 'noop', 'unloaded', 'moved'})
 
 
 def run_runtime_mount(
@@ -42,6 +43,12 @@ def run_runtime_mount(
             return run_removed_agent_unloads(
                 app,
                 old_graph or app.current_service_graph(),
+                patch_result=namespace_patch,
+            )
+        if getattr(namespace_patch, 'moved_agents', None):
+            return run_moved_agent_runtime_updates(
+                app,
+                target_graph,
                 patch_result=namespace_patch,
             )
         return run_additive_agent_mounts(app, target_graph, **kwargs)
