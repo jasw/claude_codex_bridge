@@ -18,6 +18,7 @@ def render_reload(payload: Mapping[str, object]) -> tuple[str, ...]:
     lines.extend(_reload_apply_lines(payload))
     lines.extend(_reload_operation_lines(payload))
     lines.extend(_reload_drain_intent_lines(payload))
+    lines.extend(_reload_active_drain_lines(payload))
     patch_plan = payload.get('namespace_patch_plan')
     if isinstance(patch_plan, Mapping):
         lines.extend(_namespace_patch_lines(patch_plan))
@@ -61,6 +62,20 @@ def _reload_drain_intent_lines(payload: Mapping[str, object]) -> list[str]:
             lines.append(f'reload_drain_intent: {_drain_intent_line(intent)}')
         else:
             lines.append(f'reload_drain_intent: {intent}')
+    return lines
+
+
+def _reload_active_drain_lines(payload: Mapping[str, object]) -> list[str]:
+    drains = payload.get('reload_drains')
+    if not isinstance(drains, Mapping):
+        return []
+    lines = [f'reload_drain_active_count: {int(drains.get("active_count") or 0)}']
+    for record in tuple(drains.get('active_records') or ()):
+        if isinstance(record, Mapping):
+            lines.append(f'reload_drain_active: {_active_drain_line(record)}')
+    retry_command = drains.get('retry_command')
+    if retry_command:
+        lines.append(f'reload_drain_retry: {retry_command}')
     return lines
 
 
@@ -132,6 +147,15 @@ def _drain_intent_line(intent: Mapping[str, object]) -> str:
     reason = intent.get('reason')
     if reason:
         fields.append(f'reason={reason}')
+    return ' '.join(fields)
+
+
+def _active_drain_line(record: Mapping[str, object]) -> str:
+    fields = []
+    fields.extend(_present_fields(record, ('agent', 'intent_kind', 'phase', 'status')))
+    if record.get('busy') is not None:
+        fields.append(f'busy={str(bool(record.get("busy"))).lower()}')
+    fields.extend(_present_fields(record, ('age_s', 'deadline_in_s', 'reason')))
     return ' '.join(fields)
 
 

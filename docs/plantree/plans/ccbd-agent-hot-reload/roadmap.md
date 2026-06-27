@@ -206,6 +206,15 @@ Date: 2026-06-28
   Focused verification passed with
   `pytest -q test/test_ccbd_reload_drain.py test/test_ccbd_reload_apply.py test/test_v2_ccbd_dispatcher.py`
   (`78 passed`).
+- Exposed active busy-unload drain status through `project_reload_config` /
+  `ccb reload --dry-run` / `ccb reload`: reload payloads now include
+  `reload_drains.active_records`, the CLI renders active drain count, agent,
+  phase/status, bounded deadlines, and the explicit retry command (`ccb
+  reload`). Focused verification passed with
+  `pytest -q test/test_ccbd_reload_drain.py test/test_ccbd_reload_apply.py test/test_v2_cli_render.py`
+  (`76 passed`) and
+  `pytest -q test/test_ccbd_reload_dry_run.py test/test_ccbd_reload_patch.py`
+  (`42 passed`).
 
 ## In Progress
 
@@ -214,11 +223,11 @@ Date: 2026-06-28
   add-agent/add-window, idle remove-agent, runtime dynamic add, runtime dynamic
   release, busy retain, empty dynamic-window cleanup, config-only park/resume
   dispatch toggling, compact-startup pane identity preservation, bounded
-  busy-unload drain recording, batch release, batch move into explicit
+  busy-unload drain recording/status surfacing, batch release, batch move into explicit
   review/loop/node windows, and mixed move-plus-add explicit `[windows]`
   reload. Live `codex` and `claude` move, same-window `1->6->1`, and lifecycle
   park/resume smokes have passed; broader provider lifecycle matrix coverage,
-  daemon-pushed sidebar refresh, automatic drain retry, replacement, arbitrary
+  daemon-pushed sidebar refresh, automatic background drain retry, replacement, arbitrary
   layout reshapes, and background config watching remain deferred.
 
 ## Next
@@ -236,9 +245,10 @@ Date: 2026-06-28
    cleanup.
 3. Add a lightweight daemon-pushed sidebar refresh signal if needed after manual
    validation; avoid polling or steady-state scans.
-4. Add automatic drain retry/status surfacing for busy unload records; the
-   first bridge records bounded drains and blocks new work, but does not yet
-   auto-apply the unload when the agent becomes idle.
+4. Add automatic drain retry only after explicit retry remains stable; the
+   first bridge records bounded drains, blocks new work, surfaces status, and
+   lets `ccb reload` retry when the agent becomes idle, but does not yet run a
+   background idle watcher.
 5. Expose replacement only after unload semantics are safe; busy replacement
    remains pending with explicit bounds.
 

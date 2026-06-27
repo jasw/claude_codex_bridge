@@ -24,6 +24,9 @@ Date: 2026-05-29
   - Phase 4 dry-run payloads may include bounded `drain_intents` suggestions
     for `remove_agent` and `replace_agent`, but they remain no-mutation plans
     with `safe_to_apply=false`.
+  - dry-run payloads surface active `reload_drains` from the bounded drain
+    store when a prior busy unload is waiting, including retry guidance without
+    mutating tmux/runtime/lifecycle/service graph.
   - Phase 5 dry-run payloads include `namespace_patch_plan` for view-only and
     additive classes; the plan is `apply_deferred=true` /
     `mutation_enabled=false` and does not call tmux or publish a graph.
@@ -141,6 +144,9 @@ Date: 2026-05-29
   - non-dry-run busy `remove_agent` persists an unload drain before returning
     blocked, dispatcher rejects active-drain targets, and a later successful
     idle retry retires the record.
+  - `project_reload_config` and CLI reload rendering expose active drain count,
+    agent, phase/status, busy state, bounded deadlines, and `ccb reload` as the
+    explicit retry path.
 - Handler graph routing:
   - after graph replacement, `submit`, `project_view`, `ping`, and focus
     handlers resolve the new graph;
@@ -171,6 +177,8 @@ Date: 2026-05-29
   - idle unload retires runtime and removes only the target pane;
   - busy unload returns a stable rejection before pane kill, records an active
     bounded unload drain, and exposes the drain record in blocked diagnostics;
+  - subsequent `ccb reload --dry-run` / `ccb reload` payloads show the active
+    drain status until a successful idle retry clears it;
   - active unload drains reject new dispatcher work for the draining agent and
     remove draining agents from broadcast target resolution;
   - after the runtime becomes idle, a later successful unload retries the same

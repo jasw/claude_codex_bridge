@@ -1077,9 +1077,19 @@ def test_project_reload_non_dry_run_busy_remove_blocks_without_namespace_mutatio
     assert payload['diagnostics']['drain_action'] == 'enqueued'
     assert payload['diagnostics']['drain_accepted'] is True
     assert payload['diagnostics']['drain_record']['status'] == 'waiting'
+    assert payload['reload_drains']['active_count'] == 1
+    assert payload['reload_drains']['retry_command'] == 'ccb reload'
+    assert payload['reload_drains']['active_records'][0]['agent'] == 'agent2'
+    assert payload['reload_drains']['active_records'][0]['status'] == 'waiting'
     assert app.reload_drain_store.load().active_records_for('agent2')
     assert payload['diagnostics']['graph_published'] is False
     assert app.service_graph is old_graph
+
+    dry_run_payload = app.socket_server._handlers['project_reload_config']({'dry_run': True})
+    assert dry_run_payload['status'] == 'ok'
+    assert dry_run_payload['dry_run'] is True
+    assert dry_run_payload['reload_drains']['active_count'] == 1
+    assert dry_run_payload['reload_drains']['active_records'][0]['agent'] == 'agent2'
 
 
 def test_project_reload_non_dry_run_namespace_failure_reports_residue_without_publish(

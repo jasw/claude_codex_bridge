@@ -267,6 +267,22 @@ def test_render_reload_non_dry_run_apply_diagnostics() -> None:
             'new_config_signature': 'new',
             'operations': [{'op': 'add_window', 'window': 'review', 'reason': 'new'}],
             'drain_intents': [],
+            'reload_drains': {
+                'active_count': 1,
+                'retry_command': 'ccb reload',
+                'active_records': [
+                    {
+                        'agent': 'agent2',
+                        'intent_kind': 'unload',
+                        'phase': 'draining',
+                        'status': 'waiting',
+                        'busy': True,
+                        'age_s': 12.0,
+                        'deadline_in_s': 288.0,
+                        'reason': 'agent is busy; drain remains bounded and pending',
+                    }
+                ],
+            },
             'namespace_patch_plan': {'status': 'planned', 'apply_deferred': True, 'steps': [], 'blocked_operations': []},
             'diagnostics': {
                 'reason': 'runtime_mount_failed',
@@ -303,6 +319,13 @@ def test_render_reload_non_dry_run_apply_diagnostics() -> None:
     assert 'reload_diagnostic: reason=runtime_mount_failed' in lines
     assert 'reload_diagnostic: graph_published=false' in lines
     assert 'reload_diagnostic: config_watch_started=false' in lines
+    assert 'reload_drain_active_count: 1' in lines
+    assert (
+        'reload_drain_active: agent=agent2 intent_kind=unload phase=draining '
+        'status=waiting busy=true age_s=12.0 deadline_in_s=288.0 '
+        'reason=agent is busy; drain remains bounded and pending'
+    ) in lines
+    assert 'reload_drain_retry: ccb reload' in lines
     assert (
         'reload_namespace_residue: partial=false created_windows=review '
         'created_panes=%3,%4 agent_panes=agent3:%4 sidebar_panes=review:%3'
