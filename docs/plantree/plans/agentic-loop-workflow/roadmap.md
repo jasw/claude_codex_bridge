@@ -560,16 +560,27 @@ Date: 2026-06-24
   passed with `40 passed`, the broader dynamic layout regression set passed
   with `163 passed`, and an external source-wrapper fake-provider
   `window-class` smoke in `/home/bfly/yunwei/test_ccb2` remained green.
+- Landed the first read-only dynamic placement resolver. `ccb layout resolve
+  <agent> --json` reports the effective target surface before lifecycle
+  mutation, using the same placement precedence as dynamic overlays:
+  `--window`, then execution node `--loop-id/--node-id`, then `--window-class`,
+  then entry/default layout. Focused layout tests passed with `11 passed`;
+  lifecycle/capacity/RolePack regression passed with `49 passed`; touched
+  files passed `py_compile`; and the external source-wrapper smoke in
+  `/home/bfly/yunwei/test_ccb2/layout-resolve-smoke-1782572776` proved
+  `plan-orchestrate` overflow resolves to `plan-orchestrate-2`, execution-node
+  placement resolves to `node-round1-node1`, and no dynamic lifecycle state is
+  created.
 
 ## Next
 
 1. Wire the repeatable workflow closure smoke and autonomous layout-cleanup
    smoke into the chosen release/CI guarded regression path.
-2. Define the V1 runtime layout manager command/state surface from
+2. Finish the V1 runtime layout manager script/skill surface from
    [topics/dynamic-window-pane-agent-maintenance.md](topics/dynamic-window-pane-agent-maintenance.md):
-   expose a script-friendly placement command/skill wrapper for generic
-   non-loop dynamic agents while keeping loop execution capacity behind
-   `ccb loop capacity`.
+   package the new `ccb layout resolve --json` command behind a stable
+   role-facing skill wrapper for generic non-loop dynamic agents while keeping
+   loop execution capacity behind `ccb loop capacity`.
 3. Implement richer live reflow beyond the proven same-window and
    explicit-window-class middle-removal cases.
 4. Wire the verified deterministic layout planner and dynamic smoke behavior

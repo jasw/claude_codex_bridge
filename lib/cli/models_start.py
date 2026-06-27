@@ -84,8 +84,13 @@ class ParsedAgentCommand:
 class ParsedLayoutCommand:
     project: str | None
     action: str
+    agent_name: str | None = None
     panes: int = 0
     window_prefix: str = 'layout'
+    window_name: str | None = None
+    window_class: str | None = None
+    loop_id: str | None = None
+    node_id: str | None = None
     session_name: str | None = None
     cleanup: bool = True
     json_output: bool = False

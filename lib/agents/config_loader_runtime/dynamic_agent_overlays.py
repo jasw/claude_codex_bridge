@@ -104,6 +104,16 @@ def _initial_window_counts(config: ProjectConfig) -> dict[str, int]:
     }
 
 
+def resolve_dynamic_placement_window(
+    config: ProjectConfig,
+    state: dict[str, object],
+    *,
+    window_counts: dict[str, int] | None = None,
+) -> str | None:
+    counts = dict(window_counts) if window_counts is not None else _initial_window_counts(config)
+    return _placement_window_name(config, state, window_counts=counts)
+
+
 def _placement_window_name(
     config: ProjectConfig,
     state: dict[str, object],
@@ -423,4 +433,9 @@ def _copy_config(
     )
 
 
-__all__ = ['ACTIVE_DYNAMIC_AGENT_STATES', 'apply_dynamic_agent_overlays']
+__all__ = [
+    'ACTIVE_DYNAMIC_AGENT_STATES',
+    'DEFAULT_MAX_PANES_PER_DYNAMIC_WINDOW',
+    'apply_dynamic_agent_overlays',
+    'resolve_dynamic_placement_window',
+]

@@ -36,6 +36,103 @@ def test_layout_parser_supports_status_without_pane_count() -> None:
     )
 
 
+def test_layout_resolve_reports_window_class_overflow_without_mutating(tmp_path: Path) -> None:
+    project_root = tmp_path / 'repo-layout-resolve-overflow'
+    _write(
+        project_root / '.ccb' / 'ccb.config',
+        """version = 2
+entry_window = "main"
+
+[windows]
+main = "frontdesk:fake"
+plan-orchestrate = "p1:fake, p2:fake, p3:fake, p4:fake, p5:fake, p6:fake"
+""",
+    )
+
+    result, payload, stderr = _run_phase2(
+        ['layout', 'resolve', 'planner2', '--window-class', 'plan-orchestrate', '--json'],
+        cwd=project_root,
+    )
+
+    assert result == 0, stderr
+    assert payload['layout_status'] == 'ok'
+    assert payload['action'] == 'resolve'
+    assert payload['agent'] == 'planner2'
+    assert payload['placement_mode'] == 'window_class'
+    assert payload['placement']['window_name'] == 'plan-orchestrate-2'
+    assert payload['resolved_window_name'] == 'plan-orchestrate-2'
+    assert payload['target_surface'] == 'window'
+    assert payload['target_window_exists'] is False
+    assert payload['will_create_window'] is True
+    assert payload['target_window_pane_count'] == 0
+    assert payload['target_window_capacity'] == 6
+    assert payload['target_window_agent_names'] == ['planner2']
+    assert payload['window_count'] == 2
+    assert payload['pane_count'] == 7
+    assert not (PathLayout(project_root).runtime_state_root / 'runtime' / 'agents' / 'planner2').exists()
+
+
+def test_layout_resolve_reports_execution_node_window(tmp_path: Path) -> None:
+    project_root = tmp_path / 'repo-layout-resolve-node'
+    _write(
+        project_root / '.ccb' / 'ccb.config',
+        """version = 2
+entry_window = "main"
+
+[windows]
+main = "orchestrator:fake"
+""",
+    )
+
+    result, payload, stderr = _run_phase2(
+        [
+            'layout',
+            'resolve',
+            'worker1',
+            '--window-class',
+            'plan-orchestrate',
+            '--loop-id',
+            'round1',
+            '--node-id',
+            'node1',
+            '--json',
+        ],
+        cwd=project_root,
+    )
+
+    assert result == 0, stderr
+    assert payload['placement_mode'] == 'execution_node'
+    assert payload['placement']['window_class'] == 'plan-orchestrate'
+    assert payload['placement']['window_name'] == 'node-round1-node1'
+    assert payload['resolved_window_name'] == 'node-round1-node1'
+    assert payload['target_window_exists'] is False
+    assert payload['will_create_window'] is True
+    assert payload['target_window_agent_names'] == ['worker1']
+
+
+def test_layout_resolve_defaults_to_entry_window_for_explicit_windows(tmp_path: Path) -> None:
+    project_root = tmp_path / 'repo-layout-resolve-entry'
+    _write(
+        project_root / '.ccb' / 'ccb.config',
+        """version = 2
+entry_window = "main"
+
+[windows]
+main = "frontdesk:fake"
+""",
+    )
+
+    result, payload, stderr = _run_phase2(['layout', 'resolve', 'helper', '--json'], cwd=project_root)
+
+    assert result == 0, stderr
+    assert payload['placement_mode'] == 'auto'
+    assert payload['resolved_window_name'] == 'main'
+    assert payload['target_surface'] == 'entry_window'
+    assert payload['target_window_exists'] is True
+    assert payload['will_create_window'] is False
+    assert payload['target_window_agent_names'] == ['frontdesk', 'helper']
+
+
 def test_layout_status_reports_effective_windows_and_dynamic_agent_overlay(tmp_path: Path) -> None:
     project_root = tmp_path / 'repo-layout-status'
     _write(

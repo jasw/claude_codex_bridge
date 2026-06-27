@@ -36,6 +36,28 @@ def test_layout_parser_supports_plan_and_smoke() -> None:
         window_prefix='frontdesk',
         json_output=True,
     )
+    assert parser.parse(
+        [
+            'layout',
+            'resolve',
+            'planner2',
+            '--window-class',
+            'plan-orchestrate',
+            '--loop-id',
+            'round1',
+            '--node-id',
+            'node1',
+            '--json',
+        ]
+    ) == ParsedLayoutCommand(
+        project=None,
+        action='resolve',
+        agent_name='planner2',
+        window_class='plan-orchestrate',
+        loop_id='round1',
+        node_id='node1',
+        json_output=True,
+    )
 
 
 def test_layout_plan_json_reports_one_to_six_and_overflow(tmp_path: Path) -> None:

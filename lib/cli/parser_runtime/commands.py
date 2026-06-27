@@ -249,10 +249,10 @@ def parse_agent(tokens: list[str], *, project: str | None, error_type) -> Parsed
 
 def parse_layout(tokens: list[str], *, project: str | None, error_type) -> ParsedLayoutCommand:
     if not tokens:
-        raise error_type('layout requires one of: plan, smoke, dynamic-smoke, status')
+        raise error_type('layout requires one of: plan, smoke, dynamic-smoke, status, resolve')
     action = str(tokens[0] or '').strip().lower()
-    if action not in {'plan', 'smoke', 'dynamic-smoke', 'status'}:
-        raise error_type('layout only supports: plan, smoke, dynamic-smoke, status')
+    if action not in {'plan', 'smoke', 'dynamic-smoke', 'status', 'resolve'}:
+        raise error_type('layout only supports: plan, smoke, dynamic-smoke, status, resolve')
     if action == 'status':
         parser = argparse.ArgumentParser(prog='ccb layout status', add_help=False)
         parser.add_argument('--json', dest='json_output', action='store_true')
@@ -260,6 +260,25 @@ def parse_layout(tokens: list[str], *, project: str | None, error_type) -> Parse
         return ParsedLayoutCommand(
             project=project,
             action=action,
+            json_output=bool(namespace.json_output),
+        )
+    if action == 'resolve':
+        parser = argparse.ArgumentParser(prog='ccb layout resolve', add_help=False)
+        parser.add_argument('agent_name')
+        parser.add_argument('--window', dest='window_name', default=None)
+        parser.add_argument('--window-class', dest='window_class', default=None)
+        parser.add_argument('--loop-id', default=None)
+        parser.add_argument('--node-id', default=None)
+        parser.add_argument('--json', dest='json_output', action='store_true')
+        namespace = parse_args(parser, tokens[1:], error_message='invalid layout resolve command', error_type=error_type)
+        return ParsedLayoutCommand(
+            project=project,
+            action=action,
+            agent_name=str(namespace.agent_name),
+            window_name=str(namespace.window_name) if namespace.window_name is not None else None,
+            window_class=str(namespace.window_class) if namespace.window_class is not None else None,
+            loop_id=str(namespace.loop_id) if namespace.loop_id is not None else None,
+            node_id=str(namespace.node_id) if namespace.node_id is not None else None,
             json_output=bool(namespace.json_output),
         )
     parser = argparse.ArgumentParser(prog=f'ccb layout {action}', add_help=False)

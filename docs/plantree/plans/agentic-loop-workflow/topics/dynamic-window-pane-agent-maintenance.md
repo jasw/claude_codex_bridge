@@ -214,6 +214,37 @@ agent kind monitor/recovery/system
 
 The pane limit is a readability constraint, not a workflow authority rule.
 
+## Read-Only Placement Resolution
+
+Workflow roles and skills should be able to ask CCB where a dynamic agent would
+land before they request lifecycle changes. The command surface is read-only:
+
+```bash
+ccb layout resolve <agent> --window-class plan-orchestrate --json
+ccb layout resolve <agent> --loop-id <loop-id> --node-id <node-id> --json
+```
+
+The resolver uses the same effective config and placement precedence as
+dynamic agent overlays:
+
+```text
+--window
+  -> exact window name
+
+--loop-id/--node-id
+  -> node-<loop-id>-<node-id>
+
+--window-class
+  -> first matching class window with fewer than six panes, else class-N
+
+no explicit placement
+  -> entry window for explicit [windows], else default layout surface
+```
+
+It must not write `.ccb/ccb.config`, create runtime lifecycle records, start a
+provider, or mutate tmux. Its output is evidence for scripts and agents, not
+workflow authority.
+
 ## Lifecycle Rules
 
 These rules are layout effects of lifecycle decisions. The policy authority is

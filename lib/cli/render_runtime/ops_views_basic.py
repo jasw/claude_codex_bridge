@@ -289,6 +289,19 @@ def render_layout(summary) -> tuple[str, ...]:
         f'pane_count: {payload.get("pane_count", 0)}',
         f'window_count: {payload.get("window_count", 0)}',
     ]
+    if str(payload.get('action') or '') == 'resolve':
+        lines.extend(
+            [
+                f'agent: {payload.get("agent", "")}',
+                f'placement_mode: {payload.get("placement_mode", "")}',
+                f'resolved_window_name: {payload.get("resolved_window_name", "")}',
+                f'target_surface: {payload.get("target_surface", "")}',
+                f'target_window_exists: {payload.get("target_window_exists", "")}',
+                f'will_create_window: {payload.get("will_create_window", "")}',
+                f'target_window_pane_count: {payload.get("target_window_pane_count", 0)}',
+                f'addable: {payload.get("addable", "")}',
+            ]
+        )
     if str(payload.get('action') or '') == 'status':
         lines.extend(
             [

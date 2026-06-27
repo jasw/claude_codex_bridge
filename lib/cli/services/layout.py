@@ -5,7 +5,12 @@ from pathlib import Path
 import shutil
 import tempfile
 
-from agents.models import build_pane_growth_windows
+from agents.config_loader import load_project_config
+from agents.config_loader_runtime.dynamic_agent_overlays import (
+    DEFAULT_MAX_PANES_PER_DYNAMIC_WINDOW,
+    resolve_dynamic_placement_window,
+)
+from agents.models import AgentValidationError, build_pane_growth_windows, normalize_agent_name
 from ccbd.services.project_namespace_runtime.backend import (
     create_session,
     create_window,
@@ -24,8 +29,11 @@ from .layout_status import layout_status
 
 
 def layout_command(context, command) -> dict[str, object]:
-    if str(command.action or '').strip().lower() == 'status':
+    action = str(command.action or '').strip().lower()
+    if action == 'status':
         return layout_status(context)
+    if action == 'resolve':
+        return _resolve_layout_placement(context, command)
     names = tuple(f'p{index}' for index in range(1, int(command.panes) + 1))
     windows = build_pane_growth_windows(
         names,
@@ -47,6 +55,125 @@ def layout_command(context, command) -> dict[str, object]:
     smoke = _run_layout_smoke(context, command, windows)
     payload.update(smoke)
     return payload
+
+
+def _resolve_layout_placement(context, command) -> dict[str, object]:
+    loaded = load_project_config(context.project.project_root, include_loop_overlays=True)
+    config = loaded.config
+    agent_name = _normalize_agent_name(getattr(command, 'agent_name', None))
+    window_counts = _window_counts(config)
+    placement = _placement_request(command)
+    state = {
+        'agent': agent_name,
+        'window_name': placement.get('window_name'),
+        'window_class': placement.get('window_class'),
+        'loop_id': placement.get('loop_id'),
+        'node_id': placement.get('node_id'),
+        'placement': placement,
+    }
+    resolved_window = resolve_dynamic_placement_window(config, state, window_counts=window_counts)
+    target_surface = 'window'
+    if resolved_window is None:
+        if getattr(config, 'windows_explicit', False):
+            resolved_window = str(config.entry_window or 'main')
+            target_surface = 'entry_window'
+        else:
+            target_surface = 'layout_spec'
+    target_window = _window_record(config, resolved_window)
+    target_pane_count = int(window_counts.get(resolved_window, 0)) if resolved_window is not None else 0
+    agent_exists = agent_name in config.agents
+    would_append = not agent_exists
+    placement = dict(placement)
+    if resolved_window is not None:
+        placement['window_name'] = resolved_window
+    target_agent_names = tuple(target_window.get('agent_names') or ()) if target_window else ()
+    if would_append:
+        target_agent_names = (*target_agent_names, agent_name)
+    return {
+        'layout_status': 'ok',
+        'action': 'resolve',
+        'project_id': context.project.project_id,
+        'project_root': str(context.project.project_root),
+        'config_source_kind': loaded.source_kind,
+        'config_source': str(loaded.source_path or '<builtin>'),
+        'agent': agent_name,
+        'agent_exists': agent_exists,
+        'addable': not agent_exists,
+        'would_append_agent': would_append,
+        'placement': placement,
+        'placement_mode': placement.get('mode'),
+        'target_surface': target_surface,
+        'resolved_window_name': resolved_window,
+        'target_window_exists': target_window is not None,
+        'will_create_window': resolved_window is not None and target_window is None,
+        'target_window_pane_count': target_pane_count,
+        'target_window_capacity': (
+            DEFAULT_MAX_PANES_PER_DYNAMIC_WINDOW
+            if str(placement.get('mode') or '') == 'window_class'
+            else None
+        ),
+        'target_window_agent_names': list(target_agent_names),
+        'windows_explicit': bool(getattr(config, 'windows_explicit', False)),
+        'entry_window': str(config.entry_window or 'main'),
+        'pane_count': sum(window_counts.values()),
+        'window_count': len(tuple(config.windows or ())),
+    }
+
+
+def _placement_request(command) -> dict[str, object]:
+    window_name = _optional_text(getattr(command, 'window_name', None))
+    window_class = _optional_text(getattr(command, 'window_class', None))
+    loop_id = _optional_text(getattr(command, 'loop_id', None))
+    node_id = _optional_text(getattr(command, 'node_id', None))
+    mode = 'auto'
+    if window_name is not None:
+        mode = 'window'
+    elif loop_id is not None or node_id is not None:
+        mode = 'execution_node'
+    elif window_class is not None:
+        mode = 'window_class'
+    return {
+        'mode': mode,
+        'window_name': window_name,
+        'window_class': window_class,
+        'loop_id': loop_id,
+        'node_id': node_id,
+        'layout_policy': 'append-or-create-window',
+    }
+
+
+def _normalize_agent_name(value: object) -> str:
+    try:
+        return normalize_agent_name(str(value or ''))
+    except AgentValidationError as exc:
+        raise ValueError(f'agent name is invalid: {exc}') from exc
+
+
+def _optional_text(value: object | None) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def _window_counts(config) -> dict[str, int]:
+    return {
+        str(window.name): len(tuple(window.agent_names or ()))
+        for window in tuple(config.windows or ())
+    }
+
+
+def _window_record(config, name: str | None) -> dict[str, object] | None:
+    if name is None:
+        return None
+    for window in tuple(config.windows or ()):
+        if str(window.name) == name:
+            return {
+                'name': str(window.name),
+                'agent_names': list(tuple(window.agent_names or ())),
+                'layout_spec': str(window.layout_spec or ''),
+            }
+    return None
 
 
 def _run_layout_smoke(context, command, windows) -> dict[str, object]:
