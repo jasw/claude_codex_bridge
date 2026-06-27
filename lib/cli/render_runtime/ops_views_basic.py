@@ -302,6 +302,22 @@ def render_layout(summary) -> tuple[str, ...]:
                 f'addable: {payload.get("addable", "")}',
             ]
         )
+    if str(payload.get('action') or '') == 'move-plan':
+        lines.extend(
+            [
+                f'move_plan_status: {payload.get("move_plan_status", "")}',
+                f'agent: {payload.get("agent", "")}',
+                f'agent_source: {payload.get("agent_source", "")}',
+                f'placement_mode: {payload.get("placement_mode", "")}',
+                f'source_window_name: {payload.get("source_window_name", "")}',
+                f'target_window_name: {payload.get("target_window_name", "")}',
+                f'same_window: {payload.get("same_window", "")}',
+                f'will_create_window: {payload.get("will_create_window", "")}',
+                f'read_only: {payload.get("read_only", "")}',
+                f'mutation_performed: {payload.get("mutation_performed", "")}',
+                f'apply_command_supported: {payload.get("apply_command_supported", "")}',
+            ]
+        )
     if str(payload.get('action') or '') == 'arrange':
         lines.extend(
             [

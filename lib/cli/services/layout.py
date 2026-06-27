@@ -41,6 +41,8 @@ def layout_command(context, command) -> dict[str, object]:
         return layout_status(context)
     if action == 'resolve':
         return _resolve_layout_placement(context, command)
+    if action == 'move-plan':
+        return _move_plan_layout_agent(context, command)
     if action == 'arrange':
         return _arrange_layout_window(context, command)
     names = tuple(f'p{index}' for index in range(1, int(command.panes) + 1))
@@ -171,6 +173,206 @@ def _arrange_blocked(context, *, window_name: str, reason: str, message: str, lo
     }
 
 
+def _move_plan_layout_agent(context, command) -> dict[str, object]:
+    loaded = load_project_config(context.project.project_root, include_loop_overlays=True)
+    config = loaded.config
+    agent_name = _normalize_agent_name(getattr(command, 'agent_name', None))
+    source_window = _agent_window_record(config, agent_name)
+    if source_window is None:
+        return _move_plan_blocked(
+            context,
+            loaded=loaded,
+            config=config,
+            agent_name=agent_name,
+            placement=_placement_request(command),
+            reason='agent_not_in_effective_layout',
+            message=f'agent {agent_name!r} is not present in the effective layout',
+        )
+    placement = _placement_request(command)
+    if str(placement.get('mode') or '') == 'auto':
+        return _move_plan_blocked(
+            context,
+            loaded=loaded,
+            config=config,
+            agent_name=agent_name,
+            placement=placement,
+            source_window=source_window,
+            reason='target_required',
+            message='layout move-plan requires a target window, window class, or execution-node placement',
+        )
+    window_counts = _window_counts(config)
+    source_window_name = str(source_window.get('name') or '')
+    if source_window_name:
+        window_counts[source_window_name] = max(0, int(window_counts.get(source_window_name, 0)) - 1)
+    state = {
+        'agent': agent_name,
+        'window_name': placement.get('window_name'),
+        'window_class': placement.get('window_class'),
+        'loop_id': placement.get('loop_id'),
+        'node_id': placement.get('node_id'),
+        'placement': placement,
+    }
+    target_window_name = resolve_dynamic_placement_window(config, state, window_counts=window_counts)
+    if target_window_name is None:
+        return _move_plan_blocked(
+            context,
+            loaded=loaded,
+            config=config,
+            agent_name=agent_name,
+            placement=placement,
+            source_window=source_window,
+            reason='target_window_unresolved',
+            message='target placement did not resolve to a concrete window',
+        )
+    target_window = _window_record(config, target_window_name)
+    status = layout_status(context)
+    agent_record = _layout_status_agent_record(status, agent_name)
+    source = _agent_source(agent_record)
+    same_window = source_window_name == target_window_name
+    target_agent_names = _target_agent_names(target_window, agent_name=agent_name, same_window=same_window)
+    base = _move_plan_payload(
+        context,
+        loaded=loaded,
+        config=config,
+        agent_name=agent_name,
+        placement=placement,
+        source_window=source_window,
+        target_window_name=target_window_name,
+        target_window=target_window,
+        target_agent_names=target_agent_names,
+        source=source,
+        agent_record=agent_record,
+    )
+    if same_window:
+        base.update(
+            {
+                'layout_status': 'planned',
+                'move_plan_status': 'noop',
+                'plan_class': 'noop',
+                'reason': 'same_window',
+                'message': 'agent is already in the resolved target window',
+            }
+        )
+        return base
+    if source != 'dynamic':
+        base.update(
+            {
+                'layout_status': 'failed',
+                'move_plan_status': 'blocked',
+                'plan_class': 'blocked',
+                'reason': f'{source}_agent_not_movable',
+                'message': 'only dynamic session agents can be moved by a runtime move operation',
+            }
+        )
+        return base
+    base.update(
+        {
+            'layout_status': 'planned',
+            'move_plan_status': 'planned',
+            'plan_class': 'move_dynamic_agent',
+            'reason': '',
+            'message': 'read-only move plan; no runtime mutation was performed',
+        }
+    )
+    return base
+
+
+def _move_plan_payload(
+    context,
+    *,
+    loaded,
+    config,
+    agent_name: str,
+    placement: dict[str, object],
+    source_window: dict[str, object],
+    target_window_name: str,
+    target_window: dict[str, object] | None,
+    target_agent_names: tuple[str, ...],
+    source: str,
+    agent_record: dict[str, object],
+) -> dict[str, object]:
+    source_window_name = str(source_window.get('name') or '')
+    source_agent_names = tuple(str(item) for item in tuple(source_window.get('agent_names') or ()))
+    source_after = tuple(item for item in source_agent_names if item != agent_name)
+    placement = dict(placement)
+    placement['window_name'] = target_window_name
+    target_pane_count = len(tuple(target_window.get('agent_names') or ())) if target_window else 0
+    target_capacity = DEFAULT_MAX_PANES_PER_DYNAMIC_WINDOW if str(placement.get('mode') or '') == 'window_class' else None
+    target_over_capacity = target_capacity is not None and len(target_agent_names) > target_capacity
+    return {
+        'layout_status': 'planned',
+        'move_plan_status': 'planned',
+        'action': 'move-plan',
+        'project_id': context.project.project_id,
+        'project_root': str(context.project.project_root),
+        'config_source_kind': loaded.source_kind,
+        'config_source': str(loaded.source_path or '<builtin>'),
+        'agent': agent_name,
+        'agent_source': source,
+        'agent_kind': agent_record.get('agent_kind') or ('dynamic' if source == 'dynamic' else 'static'),
+        'ownership_class': agent_record.get('ownership_class') or '',
+        'lifecycle_state': agent_record.get('lifecycle_state') or '',
+        'visibility_state': agent_record.get('visibility_state') or '',
+        'placement': placement,
+        'placement_mode': placement.get('mode'),
+        'read_only': True,
+        'mutation_performed': False,
+        'apply_command_supported': False,
+        'source_window_name': source_window_name,
+        'target_window_name': target_window_name,
+        'same_window': source_window_name == target_window_name,
+        'target_window_exists': target_window is not None,
+        'will_create_window': target_window is None,
+        'source_window_agent_names': list(source_agent_names),
+        'source_window_would_be_agent_names': list(source_after),
+        'target_window_agent_names': list(tuple(target_window.get('agent_names') or ())) if target_window else [],
+        'target_window_would_be_agent_names': list(target_agent_names),
+        'target_window_pane_count': target_pane_count,
+        'target_window_capacity': target_capacity,
+        'target_window_over_capacity': target_over_capacity,
+        'windows_explicit': bool(getattr(config, 'windows_explicit', False)),
+        'entry_window': str(config.entry_window or 'main'),
+        'pane_count': sum(_window_counts(config).values()),
+        'window_count': len(tuple(config.windows or ())),
+    }
+
+
+def _move_plan_blocked(
+    context,
+    *,
+    loaded,
+    config,
+    agent_name: str,
+    placement: dict[str, object],
+    reason: str,
+    message: str,
+    source_window: dict[str, object] | None = None,
+) -> dict[str, object]:
+    source_window_name = str(source_window.get('name') or '') if source_window else ''
+    return {
+        'layout_status': 'failed',
+        'move_plan_status': 'blocked',
+        'action': 'move-plan',
+        'project_id': context.project.project_id,
+        'project_root': str(context.project.project_root),
+        'config_source_kind': loaded.source_kind,
+        'config_source': str(loaded.source_path or '<builtin>'),
+        'agent': agent_name,
+        'placement': dict(placement),
+        'placement_mode': placement.get('mode'),
+        'read_only': True,
+        'mutation_performed': False,
+        'apply_command_supported': False,
+        'source_window_name': source_window_name,
+        'target_window_name': '',
+        'same_window': False,
+        'reason': reason,
+        'message': message,
+        'pane_count': sum(_window_counts(config).values()),
+        'window_count': len(tuple(config.windows or ())),
+    }
+
+
 def _resolve_layout_placement(context, command) -> dict[str, object]:
     loaded = load_project_config(context.project.project_root, include_loop_overlays=True)
     config = loaded.config
@@ -277,6 +479,18 @@ def _window_counts(config) -> dict[str, int]:
     }
 
 
+def _agent_window_record(config, agent_name: str) -> dict[str, object] | None:
+    for window in tuple(config.windows or ()):
+        agent_names = tuple(window.agent_names or ())
+        if agent_name in agent_names:
+            return {
+                'name': str(window.name),
+                'agent_names': list(agent_names),
+                'layout_spec': str(window.layout_spec or ''),
+            }
+    return None
+
+
 def _window_record(config, name: str | None) -> dict[str, object] | None:
     if name is None:
         return None
@@ -288,6 +502,28 @@ def _window_record(config, name: str | None) -> dict[str, object] | None:
                 'layout_spec': str(window.layout_spec or ''),
             }
     return None
+
+
+def _layout_status_agent_record(status: dict[str, object], agent_name: str) -> dict[str, object]:
+    for window in tuple(status.get('windows') or ()):
+        if not isinstance(window, dict):
+            continue
+        for agent in tuple(window.get('agents') or ()):
+            if isinstance(agent, dict) and agent.get('agent') == agent_name:
+                return dict(agent)
+    return {}
+
+
+def _agent_source(agent_record: dict[str, object]) -> str:
+    source = _optional_text(agent_record.get('source'))
+    return source or 'configured'
+
+
+def _target_agent_names(target_window: dict[str, object] | None, *, agent_name: str, same_window: bool) -> tuple[str, ...]:
+    current = tuple(str(item) for item in tuple(target_window.get('agent_names') or ())) if target_window else ()
+    if same_window or agent_name in current:
+        return current
+    return (*current, agent_name)
 
 
 def _run_layout_smoke(context, command, windows) -> dict[str, object]:

@@ -20,6 +20,20 @@ def _write_config(project_root: Path, text: str) -> None:
     path.write_text(text, encoding='utf-8')
 
 
+def _write_json(path: Path, payload: dict[str, object]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True), encoding='utf-8')
+
+
+def _run_phase2(args: list[str], *, cwd: Path) -> tuple[int, dict[str, object], str]:
+    stdout = StringIO()
+    stderr = StringIO()
+    result = maybe_handle_phase2(args, cwd=cwd, stdout=stdout, stderr=stderr)
+    text = stdout.getvalue().strip()
+    payload = json.loads(text) if text else {}
+    return result, payload, stderr.getvalue()
+
+
 def test_layout_parser_supports_plan_and_smoke() -> None:
     parser = CliParser()
 
@@ -72,6 +86,13 @@ def test_layout_parser_supports_plan_and_smoke() -> None:
         action='arrange',
         window_name='plan-orchestrate',
         timeout_s=2.5,
+        json_output=True,
+    )
+    assert parser.parse(['layout', 'move-plan', 'helper1', '--window', 'review', '--json']) == ParsedLayoutCommand(
+        project=None,
+        action='move-plan',
+        agent_name='helper1',
+        window_name='review',
         json_output=True,
     )
 
@@ -192,6 +213,115 @@ main = "frontdesk:fake"
     assert payload['arrange_status'] == 'blocked'
     assert payload['reason'] == 'namespace_not_mounted'
     assert payload['window_name'] == 'main'
+
+
+def test_layout_move_plan_reports_dynamic_agent_cross_window_plan(tmp_path: Path) -> None:
+    project_root = tmp_path / 'repo-layout-move-plan'
+    _write_config(
+        project_root,
+        """version = 2
+entry_window = "main"
+
+[windows]
+main = "frontdesk:fake"
+plan-orchestrate = "planner:fake"
+""",
+    )
+    layout = PathLayout(project_root)
+    _write_json(
+        layout.runtime_state_root / 'runtime' / 'agents' / 'helper1' / 'lifecycle.json',
+        {
+            'schema_version': 1,
+            'record_type': 'ccb_dynamic_agent_lifecycle',
+            'agent_lifecycle_status': 'active',
+            'agent': 'helper1',
+            'role': 'agentroles.worker',
+            'provider': 'fake',
+            'workspace_mode': 'inplace',
+            'target': '.',
+            'lifecycle_state': 'visible',
+            'visibility_state': 'visible',
+            'window_name': 'plan-orchestrate',
+            'placement': {
+                'mode': 'window',
+                'window_name': 'plan-orchestrate',
+                'layout_policy': 'append-or-create-window',
+            },
+            'apply': {
+                'apply_status': 'applied',
+                'plan_class': 'add_agent',
+                'stage': 'publish_transaction',
+            },
+        },
+    )
+
+    result, payload, stderr = _run_phase2(['layout', 'move-plan', 'helper1', '--window', 'review', '--json'], cwd=project_root)
+
+    assert result == 0, stderr
+    assert payload['layout_status'] == 'planned'
+    assert payload['move_plan_status'] == 'planned'
+    assert payload['plan_class'] == 'move_dynamic_agent'
+    assert payload['read_only'] is True
+    assert payload['mutation_performed'] is False
+    assert payload['apply_command_supported'] is False
+    assert payload['agent'] == 'helper1'
+    assert payload['agent_source'] == 'dynamic'
+    assert payload['source_window_name'] == 'plan-orchestrate'
+    assert payload['target_window_name'] == 'review'
+    assert payload['target_window_exists'] is False
+    assert payload['will_create_window'] is True
+    assert payload['source_window_agent_names'] == ['planner', 'helper1']
+    assert payload['source_window_would_be_agent_names'] == ['planner']
+    assert payload['target_window_agent_names'] == []
+    assert payload['target_window_would_be_agent_names'] == ['helper1']
+
+
+def test_layout_move_plan_blocks_static_agent_cross_window_move(tmp_path: Path) -> None:
+    project_root = tmp_path / 'repo-layout-move-plan-static'
+    _write_config(
+        project_root,
+        """version = 2
+entry_window = "main"
+
+[windows]
+main = "frontdesk:fake"
+review = "reviewer:fake"
+""",
+    )
+
+    result, payload, stderr = _run_phase2(['layout', 'move-plan', 'frontdesk', '--window', 'review', '--json'], cwd=project_root)
+
+    assert result == 1, stderr
+    assert payload['layout_status'] == 'failed'
+    assert payload['move_plan_status'] == 'blocked'
+    assert payload['reason'] == 'configured_agent_not_movable'
+    assert payload['source_window_name'] == 'main'
+    assert payload['target_window_name'] == 'review'
+    assert payload['target_window_exists'] is True
+    assert payload['target_window_would_be_agent_names'] == ['reviewer', 'frontdesk']
+
+
+def test_layout_move_plan_same_window_is_noop_for_static_agent(tmp_path: Path) -> None:
+    project_root = tmp_path / 'repo-layout-move-plan-noop'
+    _write_config(
+        project_root,
+        """version = 2
+entry_window = "main"
+
+[windows]
+main = "frontdesk:fake"
+""",
+    )
+
+    result, payload, stderr = _run_phase2(['layout', 'move-plan', 'frontdesk', '--window', 'main', '--json'], cwd=project_root)
+
+    assert result == 0, stderr
+    assert payload['layout_status'] == 'planned'
+    assert payload['move_plan_status'] == 'noop'
+    assert payload['reason'] == 'same_window'
+    assert payload['source_window_name'] == 'main'
+    assert payload['target_window_name'] == 'main'
+    assert payload['same_window'] is True
 
 
 def test_layout_plan_json_reports_one_to_six_and_overflow(tmp_path: Path) -> None:

@@ -282,6 +282,39 @@ runtime state so busy agents are retained and cleanup is auditable.
 Moving panes is allowed for visual cleanup, but it must update placement state.
 Moving a pane must not change role authority, task ownership, or loop state.
 
+Move should land in two phases:
+
+```text
+move-plan
+  -> read effective config plus dynamic/loop overlays
+  -> find the agent's current logical window
+  -> resolve the requested target window/class/node
+  -> verify ownership: dynamic session agents can move, static config agents cannot
+  -> report source/target order, created-window need, and blockers
+  -> perform no runtime mutation
+
+move-apply
+  -> consume or recompute a valid move plan
+  -> drain/idle-check the target agent if required
+  -> move the existing pane without restarting the provider
+  -> update lifecycle placement evidence
+  -> reflow source and target windows
+  -> publish runtime authority after tmux and state agree
+```
+
+The first command surface is intentionally read-only:
+
+```bash
+ccb layout move-plan <agent> --window <target-window> --json
+ccb layout move-plan <agent> --window-class <class> --json
+ccb layout move-plan <agent> --loop-id <loop-id> --node-id <node-id> --json
+```
+
+It should block cross-window movement for `source=configured` agents because
+configured panes belong to `.ccb/ccb.config`; moving them is a config-edit and
+reload problem, not a runtime dynamic-agent operation. Same-window resolution is
+a no-op regardless of ownership because it requires no mutation.
+
 ### Archive
 
 Completed node windows can be removed after evidence import. For debugging,
@@ -768,6 +801,18 @@ Evidence:
   `/home/bfly/yunwei/test_ccb2/dynamic-layout-arrange-claude-real-latest.json`
   both prove the same disturbance/arrange/ask/unload chain with real provider
   panes while preserving pane ids and agent order.
+- `ccb layout move-plan <agent> ... --json` now exposes the first read-only
+  cross-window move planner. It reads the effective layout with dynamic
+  overlays, reports source window, resolved target window, source/target
+  would-be agent order, created-window need, ownership class, and explicit
+  `read_only=true` / `mutation_performed=false`. It plans movement for dynamic
+  session agents, reports same-window requests as `noop`, and blocks
+  cross-window movement for static configured agents. Focused tests pass in
+  `test/test_layout_cli.py`, `test/test_layout_status_cli.py`, and
+  `test/test_agent_lifecycle_cli.py`; source-wrapper smoke in
+  `/home/bfly/yunwei/test_ccb2/move-plan-smoke` proved `helper1` can be
+  planned from `plan-orchestrate` to a new `review` window while `frontdesk`
+  is blocked from cross-window runtime movement.
 - Focused regression after connecting loop capacity to layout placement passed
   with `187 passed` across loop capacity, agent lifecycle, layout status, pane
   growth, layout runtime, reload patch/runtime mount, and config loader tests.

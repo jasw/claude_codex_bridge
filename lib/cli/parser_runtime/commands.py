@@ -249,10 +249,10 @@ def parse_agent(tokens: list[str], *, project: str | None, error_type) -> Parsed
 
 def parse_layout(tokens: list[str], *, project: str | None, error_type) -> ParsedLayoutCommand:
     if not tokens:
-        raise error_type('layout requires one of: plan, smoke, dynamic-smoke, status, resolve, arrange')
+        raise error_type('layout requires one of: plan, smoke, dynamic-smoke, status, resolve, move-plan, arrange')
     action = str(tokens[0] or '').strip().lower()
-    if action not in {'plan', 'smoke', 'dynamic-smoke', 'status', 'resolve', 'arrange'}:
-        raise error_type('layout only supports: plan, smoke, dynamic-smoke, status, resolve, arrange')
+    if action not in {'plan', 'smoke', 'dynamic-smoke', 'status', 'resolve', 'move-plan', 'arrange'}:
+        raise error_type('layout only supports: plan, smoke, dynamic-smoke, status, resolve, move-plan, arrange')
     if action == 'status':
         parser = argparse.ArgumentParser(prog='ccb layout status', add_help=False)
         parser.add_argument('--json', dest='json_output', action='store_true')
@@ -271,6 +271,31 @@ def parse_layout(tokens: list[str], *, project: str | None, error_type) -> Parse
         parser.add_argument('--node-id', default=None)
         parser.add_argument('--json', dest='json_output', action='store_true')
         namespace = parse_args(parser, tokens[1:], error_message='invalid layout resolve command', error_type=error_type)
+        return ParsedLayoutCommand(
+            project=project,
+            action=action,
+            agent_name=str(namespace.agent_name),
+            window_name=str(namespace.window_name) if namespace.window_name is not None else None,
+            window_class=str(namespace.window_class) if namespace.window_class is not None else None,
+            loop_id=str(namespace.loop_id) if namespace.loop_id is not None else None,
+            node_id=str(namespace.node_id) if namespace.node_id is not None else None,
+            json_output=bool(namespace.json_output),
+        )
+    if action == 'move-plan':
+        parser = argparse.ArgumentParser(prog='ccb layout move-plan', add_help=False)
+        parser.add_argument('agent_name')
+        parser.add_argument('--window', dest='window_name', default=None)
+        parser.add_argument('--window-class', dest='window_class', default=None)
+        parser.add_argument('--loop-id', default=None)
+        parser.add_argument('--node-id', default=None)
+        parser.add_argument('--json', dest='json_output', action='store_true')
+        namespace = parse_args(parser, tokens[1:], error_message='invalid layout move-plan command', error_type=error_type)
+        has_target = any(
+            getattr(namespace, field, None) is not None
+            for field in ('window_name', 'window_class', 'loop_id', 'node_id')
+        )
+        if not has_target:
+            raise error_type('layout move-plan requires --window, --window-class, --loop-id, or --node-id')
         return ParsedLayoutCommand(
             project=project,
             action=action,

@@ -194,6 +194,16 @@ Date: 2026-06-24
   `window-class` smoke in `/home/bfly/yunwei/test_ccb2` preserved hot-load,
   middle unload, `plan-orchestrate` reflow, survivor pane IDs, askability, and
   cleanup.
+- Landed the first read-only cross-window move planner in the current
+  worktree: `ccb layout move-plan <agent> ... --json` reports source window,
+  resolved target window, created-window need, ownership class, source/target
+  would-be agent order, and explicit no-mutation fields. It plans movement for
+  dynamic session agents, returns `noop` for same-window requests, and blocks
+  cross-window runtime moves for static configured agents. Focused tests passed
+  with `37 passed`, touched modules passed `py_compile`, and an external
+  source-wrapper smoke in `/home/bfly/yunwei/test_ccb2/move-plan-smoke` proved
+  dynamic `helper1` can be planned from `plan-orchestrate` to a new `review`
+  window while static `frontdesk` is blocked.
 
 ## In Progress
 
