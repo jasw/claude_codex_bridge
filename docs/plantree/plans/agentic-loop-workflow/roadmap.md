@@ -592,46 +592,56 @@ Date: 2026-06-24
   script/guarded tests passed with `19 passed`; layout tests passed with
   `30 passed`; lifecycle/capacity/RolePack regression passed with `49 passed`;
   touched script tests passed `py_compile`; and `git diff --check` passed.
+- Reconciled the dynamic layout line with remote `origin/main` / `v8.0.0`
+  release workflow fixes. Post-merge focused verification passed for dynamic
+  layout smoke/resolver/status tests (`30 passed`), lifecycle/capacity/
+  RolePack tests (`49 passed`), and the merged mobile/sidebar release-fix
+  tests (`54 passed`); `git diff --check` passed.
 
 ## Next
 
-1. Wire the repeatable workflow closure smoke and autonomous layout-cleanup
-   smoke into the chosen release/CI guarded regression path.
+1. Add a lighter guarded real-provider variant for `resolve-preflight` before
+   running it against Codex/Claude: keep static overflow filler panes fake, but
+   use the real provider for the dynamic reviewer and loop worker/checker
+   agents. This preserves hot-load/release proof while avoiding a large
+   multi-pane real-provider startup.
 2. Run the guarded real-provider opt-in variant for the new
    `resolve-preflight` flow when real provider usage is intentionally allowed,
    matching the existing Codex/Claude `window-class` evidence.
-3. Implement richer live reflow beyond the proven same-window and
+3. Wire the repeatable workflow closure smoke and autonomous layout-cleanup
+   smoke into the chosen release/CI guarded regression path.
+4. Implement richer live reflow beyond the proven same-window and
    explicit-window-class middle-removal cases.
-4. Wire the verified deterministic layout planner and dynamic smoke behavior
+5. Wire the verified deterministic layout planner and dynamic smoke behavior
    into live dynamic capacity only after `layout status` can read current pane
    metadata and release can distinguish idle from busy agents.
-5. Land live dynamic pane shrink/release from
+6. Land live dynamic pane shrink/release from
    [goals/dynamic-pane-shrink-release-goal.md](goals/dynamic-pane-shrink-release-goal.md):
    busy-retain behavior, idle target release, same-window compaction, and
    overflow-window collapse without respawning surviving provider panes.
-6. Define the minimum `ccb loop`, `ccb plan`, and `ccb question` command
+7. Define the minimum `ccb loop`, `ccb plan`, and `ccb question` command
    surface for creating tasks, transitioning phases, recording artifacts,
    blocking, finishing, and syncing to plan-tree.
-7. Continue the V1 `ccb loop capacity` path selected in
+8. Continue the V1 `ccb loop capacity` path selected in
    [goals/orchestrator-dynamic-capacity-goal.md](goals/orchestrator-dynamic-capacity-goal.md):
    run the guarded real-provider semantic smoke for
    `agentroles.ccb_orchestrator` when real provider usage is intentionally
    allowed; daemon-side transient capacity ownership remains deferred.
-8. Define the v1 team spec format for planner group, orchestrator, execution
+9. Define the v1 team spec format for planner group, orchestrator, execution
    node, recovery node, and monitor behavior.
-9. Define context-purity budgets for each role, including what may enter
+10. Define context-purity budgets for each role, including what may enter
    `frontdesk`, planner group, orchestrator, execution nodes, monitor, runtime
    artifacts, and long-term plan-tree.
-10. Define the v1 clarification command surface and artifact schema for
+11. Define the v1 clarification command surface and artifact schema for
    candidate questions, broker review, user display, raw answers, normalized
    answers, deferred questions, and planner wakeup.
-11. Define the v1 execution-node and round-verification artifact schemas,
+12. Define the v1 execution-node and round-verification artifact schemas,
    including node check plans, non-convergence reports, branch freeze records,
    partial loop reports, verification contracts, and round verification plans.
-12. Map the design to existing CCB communication primitives: `ask`,
+13. Map the design to existing CCB communication primitives: `ask`,
    `--callback`, `--silence`, message bureau records, dispatcher jobs,
    completion state, and queue/trace diagnostics.
-13. Identify the first implementation slice that can run with one planner, one
+14. Identify the first implementation slice that can run with one planner, one
    orchestrator, one execution node, and deterministic monitoring before
    enabling dynamic multi-node fanout.
 
