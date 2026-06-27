@@ -2020,6 +2020,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--reset", action="store_true")
     parser.add_argument("--keep-running", action="store_true")
     parser.add_argument("--full-output", action="store_true", help="Print complete command stdout and JSON payloads.")
+    parser.add_argument("--output", type=Path, help="Write the printed JSON payload to this path.")
     args = parser.parse_args(argv)
 
     providers = _normalize_providers(tuple(args.providers or ()))
@@ -2052,7 +2053,11 @@ def main(argv: list[str] | None = None) -> int:
             keep_running=args.keep_running,
         )
     printable = payload if args.full_output else compact_smoke_payload(payload)
-    print(json.dumps(printable, ensure_ascii=False, indent=2, sort_keys=True))
+    text = json.dumps(printable, ensure_ascii=False, indent=2, sort_keys=True)
+    if args.output is not None:
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        args.output.write_text(text + "\n", encoding="utf-8")
+    print(text)
     return 0 if payload.get("dynamic_layout_smoke_status") in {"ok", "prepared"} else 1
 
 

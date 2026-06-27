@@ -741,6 +741,14 @@ Evidence:
   `/home/bfly/yunwei/test_ccb2/layout-arrange-smoke.json` proved a disturbed
   horizontal `plan-orchestrate` window returns to the managed two-column
   layout while preserving agent order.
+- `scripts/dynamic_layout_smoke.py` now supports `--output <path>` for direct
+  JSON evidence artifacts. The latest source-wrapper fake-provider closure in
+  `/home/bfly/yunwei/test_ccb2/dynamic-layout-output-latest.json` passed
+  `same-window-continuous`, `multi-window-continuous`, and
+  `window-class-continuous`: a single window grew `1->6->1`, separate dynamic
+  review windows were created and removed back to `main`, and
+  `plan-orchestrate` overflowed into `plan-orchestrate-2` before reverse
+  unload removed the empty overflow page.
 - Focused regression after connecting loop capacity to layout placement passed
   with `187 passed` across loop capacity, agent lifecycle, layout status, pane
   growth, layout runtime, reload patch/runtime mount, and config loader tests.

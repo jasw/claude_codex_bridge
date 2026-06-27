@@ -757,6 +757,17 @@ Date: 2026-06-24
   a horizontal tmux layout, restored by `layout arrange` into the managed
   two-column layout, and kept the agent order
   `planner, helper1, helper2, helper3, helper4`.
+- Added direct JSON artifact output to the dynamic layout smoke harness and
+  reran the current source-wrapper fake-provider closure for explicit-window
+  dynamic maintenance. `scripts/dynamic_layout_smoke.py --output <path>` now
+  writes the same compact/full JSON that it prints, making local and CI smoke
+  evidence directly reusable. The run at
+  `/home/bfly/yunwei/test_ccb2/dynamic-layout-output-latest.json` passed
+  `same-window-continuous`, `multi-window-continuous`, and
+  `window-class-continuous`: same-window panes grew `1->6->1` with fixed
+  columns and preserved `main`, separate review windows were created and
+  removed back to one `main` window, and `plan-orchestrate-2` overflow was
+  created, used, then removed after reverse unload.
 
 ## Next
 
@@ -767,10 +778,9 @@ Date: 2026-06-24
 2. Decide the next public CLI surface for dynamic rearrangement beyond
    `layout arrange`: manual move/park/hide workflows still need separate
    commands and safety contracts.
-3. Land live dynamic pane shrink/release from
-   [goals/dynamic-pane-shrink-release-goal.md](goals/dynamic-pane-shrink-release-goal.md):
-   busy-retain behavior, idle target release, same-window compaction, and
-   overflow-window collapse without respawning surviving provider panes.
+3. Extend the shrink/release proof from fake-provider source-wrapper smokes to
+   opt-in real-provider tolerance where useful, especially `layout arrange`
+   after a real pane has been manually disturbed.
 4. Define the minimum `ccb loop`, `ccb plan`, and `ccb question` command
    surface for creating tasks, transitioning phases, recording artifacts,
    blocking, finishing, and syncing to plan-tree.

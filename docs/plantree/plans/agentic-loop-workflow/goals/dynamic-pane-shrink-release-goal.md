@@ -190,3 +190,10 @@ pane IDs, provider sessions, and CCB slot metadata must remain valid.
   page is removed. `/home/bfly/yunwei/test_ccb2/ci-combined-layout-smoke.json`
   proves the same guard can run with same-window `1->6->1` in one CI-style
   pass.
+- The source-wrapper combined shrink/release proof now has direct artifact
+  output. `/home/bfly/yunwei/test_ccb2/dynamic-layout-output-latest.json`
+  was written by `scripts/dynamic_layout_smoke.py --output` and passed
+  `same-window-continuous`, `multi-window-continuous`, and
+  `window-class-continuous` together. It proves same-window `1->6->1`,
+  explicit review-window add/remove back to a single `main` window, and
+  `plan-orchestrate-2` overflow cleanup in one reusable JSON artifact.

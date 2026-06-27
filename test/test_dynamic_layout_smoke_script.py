@@ -774,6 +774,24 @@ def test_main_passes_command_timeout_to_runner(monkeypatch: pytest.MonkeyPatch) 
     assert captured["resolve_preflight_static_provider"] == "fake"
 
 
+def test_main_writes_output_payload(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    module = _load_module()
+    output_path = tmp_path / "artifacts" / "dynamic-layout.json"
+
+    def fake_runner(**_kwargs):
+        return {
+            "dynamic_layout_smoke_status": "ok",
+            "checks": {"same_window_continuous_1_to_6_to_1": True},
+            "results": [],
+        }
+
+    monkeypatch.setattr(module, "run_dynamic_layout_smoke", fake_runner)
+
+    assert module.main(["--flow", "same-window-continuous", "--output", str(output_path)]) == 0
+    assert output_path.is_file()
+    assert '"dynamic_layout_smoke_status": "ok"' in output_path.read_text(encoding="utf-8")
+
+
 def test_main_runs_repeated_providers_as_matrix(monkeypatch: pytest.MonkeyPatch) -> None:
     module = _load_module()
     calls = []
