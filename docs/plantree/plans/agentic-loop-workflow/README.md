@@ -58,6 +58,11 @@ recoverable workflow loops.
   next implementation goal for adding the V1 `ccb question` artifact surface,
   broker/frontdesk clarification loop, normalized answers, planner artifact
   import, plan-reviewer gate, and script-owned transition to `ready`.
+- [goals/workflow-rolepack-external-spec-handoff-goal.md](goals/workflow-rolepack-external-spec-handoff-goal.md):
+  external handoff goal for promoting the workflow Role drafts into
+  `/home/bfly/yunwei/agent-roles-spec`, installing them through CCB's Role
+  store, and proving planner/broker/frontdesk/reviewer/orchestrator artifact
+  collaboration.
 - [topics/architecture.md](topics/architecture.md): proposed role topology,
   loop lifecycle, handoff rules, and failure escalation model.
 - [topics/complete-workflow-design.md](topics/complete-workflow-design.md):

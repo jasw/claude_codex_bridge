@@ -327,64 +327,72 @@ Date: 2026-06-24
   execution bridge. The final task status was `blocked` with
   `round_result_source=missing_round_checker_result`, preserving the invariant
   that scripts do not infer `pass` from fake provider text.
+- Completed Workflow RolePack External Spec Handoff V1. The workflow role
+  drafts were promoted into `/home/bfly/yunwei/agent-roles-spec` as installable
+  catalog Roles for `frontdesk`, `planner`, `clarification_broker`,
+  `plan_reviewer`, `orchestrator`, `worker`, `ccb_checker`, and
+  `round_checker`. External tests passed with `69 passed`; CCB targeted tests
+  passed with `37 passed`; source-wrapper smoke in
+  `/home/bfly/yunwei/test_ccb2/workflow-rolepack-handoff-smoke` installed all
+  eight Roles, validated the five-role foreground config, planned dynamic
+  worker/checker capacity, projected Codex `ask` plus role skills, and imported
+  planner/broker/reviewer artifacts through `ccb plan` and `ccb question` until
+  task `role-handoff-001` reached `ready`. The smoke also found and fixed the
+  invalid `normalized-answers.jsonl` placeholder enum in both external Roles
+  and local draft templates. CCB source now carries provider-local `ask` assets
+  for the full workflow provider set, including Gemini, Qwen, and Z.ai.
 
 ## Next
 
-1. Prepare the external Agent Roles spec handoff for the workflow RolePack
-   drafts when working in the Agent Roles spec repository.
-2. Extend generic dynamic agent lifecycle beyond the landed V1:
+1. Extend generic dynamic agent lifecycle beyond the landed V1:
    full live-provider smoke for pane-backed `codex`/`claude` and richer status
    diagnostics that distinguish configured/static, dynamic, loop-generated,
    parked, dispatch-disabled, and failed-apply records.
-3. Define the first mutation slice for short-lived execution roles:
+2. Define the first mutation slice for short-lived execution roles:
    wire `ccb loop capacity release --policy auto` to the verified dynamic
    lifecycle busy-retain and release behavior.
-4. Package the `dynamic-agent-lifecycle` skill and update
+3. Package the `dynamic-agent-lifecycle` skill and update
    `orchestrator-capacity` to share the same lifecycle semantics.
-5. Define the V1 runtime layout manager command/state surface from
+4. Define the V1 runtime layout manager command/state surface from
    [topics/dynamic-window-pane-agent-maintenance.md](topics/dynamic-window-pane-agent-maintenance.md):
    expose `layout status`, enforce six-pane dialog/planning windows, allocate
    one window per execution node, and release/retain panes through runtime
    state.
-6. Implement the next true hot-load slices:
+5. Implement the next true hot-load slices:
     full live-provider smoke for pane-backed providers, better pane-identity
     diagnostics at startup, and only later live reflow/1->6 pane rearrangement.
-7. Wire the verified deterministic layout planner and dynamic smoke behavior
+6. Wire the verified deterministic layout planner and dynamic smoke behavior
    into live dynamic capacity only after `layout status` can read current pane
    metadata and release can distinguish idle from busy agents.
-8. Land live dynamic pane shrink/release from
+7. Land live dynamic pane shrink/release from
    [goals/dynamic-pane-shrink-release-goal.md](goals/dynamic-pane-shrink-release-goal.md):
    busy-retain behavior, idle target release, same-window compaction, and
    overflow-window collapse without respawning surviving provider panes.
-9. Define the minimum `ccb loop`, `ccb plan`, and `ccb question` command
+8. Define the minimum `ccb loop`, `ccb plan`, and `ccb question` command
    surface for creating tasks, transitioning phases, recording artifacts,
    blocking, finishing, and syncing to plan-tree.
-10. Continue the V1 `ccb loop capacity` path selected in
+9. Continue the V1 `ccb loop capacity` path selected in
    [goals/orchestrator-dynamic-capacity-goal.md](goals/orchestrator-dynamic-capacity-goal.md):
    run the guarded real-provider semantic smoke for
    `agentroles.ccb_orchestrator` when real provider usage is intentionally
    allowed; daemon-side transient capacity ownership remains deferred.
-11. Define the v1 team spec format for planner group, orchestrator, execution
+10. Define the v1 team spec format for planner group, orchestrator, execution
    node, recovery node, and monitor behavior.
-12. Define context-purity budgets for each role, including what may enter
+11. Define context-purity budgets for each role, including what may enter
    `frontdesk`, planner group, orchestrator, execution nodes, monitor, runtime
    artifacts, and long-term plan-tree.
-13. Define the v1 clarification command surface and artifact schema for
+12. Define the v1 clarification command surface and artifact schema for
    candidate questions, broker review, user display, raw answers, normalized
    answers, deferred questions, and planner wakeup.
-14. Define the v1 execution-node and round-verification artifact schemas,
+13. Define the v1 execution-node and round-verification artifact schemas,
    including node check plans, non-convergence reports, branch freeze records,
    partial loop reports, verification contracts, and round verification plans.
-15. Map the design to existing CCB communication primitives: `ask`,
+14. Map the design to existing CCB communication primitives: `ask`,
    `--callback`, `--silence`, message bureau records, dispatcher jobs,
    completion state, and queue/trace diagnostics.
-16. Identify the first implementation slice that can run with one planner, one
+15. Identify the first implementation slice that can run with one planner, one
    orchestrator, one execution node, and deterministic monitoring before
    enabling dynamic multi-node fanout.
-17. Promote the `agentroles.ccb_orchestrator` draft from
-    [topics/orchestrator-rolepack-blueprint.md](topics/orchestrator-rolepack-blueprint.md)
-    into the external Agent Roles catalog after negative prompts, content
-    boundary checks, and real-provider skill-use smoke pass.
 
 ## V1 Readiness Blockers
 
