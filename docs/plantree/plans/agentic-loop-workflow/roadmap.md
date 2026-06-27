@@ -857,9 +857,11 @@ Date: 2026-06-24
   `/home/bfly/yunwei/test_ccb2/guarded-dynamic-layout-move-prepare-latest.json`
   reached `prepared` for Codex+Claude; opt-in Codex real-provider evidence in
   `/home/bfly/yunwei/test_ccb2/guarded-dynamic-layout-codex-move-real-latest.json`
-  returned `dynamic_layout_smoke_status=ok` with all move-cycle ask terminal,
-  pane-preservation, empty-window removal, and cleanup checks true; the
-  source-wrapper fake CI-equivalent regression in
+  and opt-in Claude real-provider evidence in
+  `/home/bfly/yunwei/test_ccb2/guarded-dynamic-layout-claude-move-real-latest.json`
+  both returned `dynamic_layout_smoke_status=ok` with all move-cycle ask
+  terminal, pane-preservation, empty-window removal, and cleanup checks true;
+  the source-wrapper fake CI-equivalent regression in
   `/home/bfly/yunwei/test_ccb2/dynamic-layout-watch-regression-latest.json`
   passed `same-window-continuous`, `move-agent`,
   `window-class-continuous`, and `arrange-window`.
@@ -870,10 +872,10 @@ Date: 2026-06-24
    single-agent-window, multi-window add/remove, and explicit-window-class
    middle-removal cases, especially cases that require manual move planning or
    dynamic visibility changes rather than pure reflow.
-2. Extend `ccb agent move` beyond the bounded single-agent cycle: Codex
-   opt-in real-provider movement is proven; next evaluate Claude opt-in
-   movement and whether multi-agent source windows or mixed moved/new target
-   transactions are worth supporting.
+2. Extend `ccb agent move` beyond the bounded single-agent cycle: Codex and
+   Claude opt-in real-provider movement are proven; next evaluate whether
+   multi-agent source windows or mixed moved/new target transactions are worth
+   supporting.
 3. Extend the shrink/release proof from fake-provider source-wrapper smokes to
    opt-in real-provider tolerance where useful, especially `layout arrange`
    after a real pane has been manually disturbed.

@@ -1063,10 +1063,10 @@ Current evidence:
   leaves final unload as a normal same-window `remove_agent` operation;
 - guarded provider movement coverage now includes the bounded move cycle:
   prepare-only Codex+Claude matrix projects cover `window-class`, `move-agent`,
-  and `resolve-preflight`, while the opt-in Codex real-provider `move-agent`
-  run proves `main -> review -> main -> unload` with terminal asks before
-  move, after move, and after return. The smoke harness uses `ccb pend --watch`
-  with an explicit watch timeout for these job observations;
+  and `resolve-preflight`, while opt-in Codex and Claude real-provider
+  `move-agent` runs prove `main -> review -> main -> unload` with terminal asks
+  before move, after move, and after return. The smoke harness uses
+  `ccb pend --watch` with an explicit watch timeout for these job observations;
 - same-window middle dynamic release is proven: removing the middle helper pane
   deletes only the target pane, preserves the remaining dynamic pane ids, keeps
   their ask targets reachable, and avoids `layout_change`;
