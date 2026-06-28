@@ -272,7 +272,7 @@ def test_onboarding_logged_out_prints_login_and_can_open_url() -> None:
     assert "Login/register" in text
     assert "Next: run `ccb update mobile` again" in text
     assert "starts the gateway and prints the QR" in text
-    assert "Open CCB Mobile, tap Scan computer QR" in text
+    assert "After the next `ccb update mobile` prints a QR" in text
 
 
 def test_onboarding_prints_configured_mobile_app_download_url() -> None:
@@ -413,3 +413,49 @@ def test_onboarding_logged_in_serve_failure_closes_gateway() -> None:
     assert code == 23
     assert handle.closed is True
     assert "Could not start Tailscale Serve: exit 23: serve failed" in "\n".join(output)
+
+
+def test_onboarding_logged_in_serve_enable_prompt_is_actionable() -> None:
+    output: list[str] = []
+    opened: list[str] = []
+    handle = _FakeGatewayHandle()
+    enable_url = "https://login.tailscale.com/f/serve?node=node123"
+
+    def _run(command, **_kwargs):
+        raise subprocess.TimeoutExpired(
+            command,
+            timeout=15,
+            output=(
+                "Serve is not enabled on your tailnet.\n"
+                "To enable, visit:\n\n"
+                f"         {enable_url}\n"
+            ),
+        )
+
+    code = mobile_update.run_mobile_update_onboarding(
+        detect_tailscale_fn=lambda: mobile_update.TailscaleStatus(
+            installed=True,
+            path="/usr/bin/tailscale",
+            logged_in=True,
+            hostname="desktop.tailnet.ts.net.",
+        ),
+        prepare_gateway_fn=lambda _command: handle,
+        run_fn=_run,
+        open_url_fn=lambda url: opened.append(url) or True,
+        print_fn=output.append,
+        serve_forever=False,
+        qr_ansi=False,
+    )
+
+    text = "\n".join(output)
+    assert code == 0
+    assert handle.closed is True
+    assert opened == [enable_url]
+    assert "Step 2/3: enable Tailscale Serve for this computer" in text
+    assert "Tailscale requires one-time approval" in text
+    assert f"Open: {enable_url}" in text
+    assert "After approving, run `ccb update mobile` again" in text
+    assert "Download APK:" in text
+    assert "Could not start Tailscale Serve" not in text
+    assert "TimeoutExpired" not in text
+    assert "Scan this QR in CCB Mobile" not in text

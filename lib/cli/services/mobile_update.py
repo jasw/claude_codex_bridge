@@ -4,6 +4,7 @@ from dataclasses import dataclass
 import json
 import os
 import platform
+import re
 import shutil
 import subprocess
 import sys
@@ -28,6 +29,7 @@ TAILSCALE_LINUX_INSTALL_COMMAND = (
     "-c",
     "curl -fsSL https://tailscale.com/install.sh | sh",
 )
+TAILSCALE_SERVE_ENABLE_URL_RE = re.compile(r"https://login\.tailscale\.com/\S+")
 
 
 @dataclass(frozen=True)
@@ -94,7 +96,7 @@ def run_mobile_update_onboarding(
         print_fn("Next: run `tailscale up`, then run `ccb update mobile` again.")
         print_fn("The QR appears after this computer is signed in to Tailscale.")
         print_fn("")
-        _print_mobile_app_steps(print_fn, environ=env)
+        _print_mobile_app_steps(print_fn, environ=env, qr_ready=False)
         return 0
 
     print_fn(f"Tailscale: {status.path or 'tailscale'}")
@@ -108,7 +110,7 @@ def run_mobile_update_onboarding(
             open_url_fn(TAILSCALE_LOGIN_URL)
             print_fn("Opened the Tailscale login/register page.")
         print_fn("")
-        _print_mobile_app_steps(print_fn, environ=env)
+        _print_mobile_app_steps(print_fn, environ=env, qr_ready=False)
         return 0
 
     print_fn("Tailscale: logged in")
@@ -134,6 +136,23 @@ def run_mobile_update_onboarding(
         return 1
     if serve_result.returncode != 0:
         _close_handle(handle)
+        serve_enable_url = _tailscale_serve_enable_url(
+            _completed_process_text(serve_result)
+        )
+        if serve_enable_url:
+            print_fn("Step 2/3: enable Tailscale Serve for this computer.")
+            print_fn(
+                "Tailscale requires one-time approval before CCB Mobile can use your tailnet URL."
+            )
+            print_fn(f"Open: {serve_enable_url}")
+            opened = open_url_fn(serve_enable_url)
+            if opened:
+                print_fn("Opened the Tailscale Serve enable page.")
+            print_fn("After approving, run `ccb update mobile` again.")
+            print_fn("The next run starts the gateway and prints the pairing QR.")
+            print_fn("")
+            _print_mobile_app_steps(print_fn, environ=env, qr_ready=False)
+            return 0
         detail = _completed_process_detail(serve_result)
         print_fn(
             f"Could not start Tailscale Serve: exit {serve_result.returncode}{detail}"
@@ -151,7 +170,7 @@ def run_mobile_update_onboarding(
     print_fn("CCB Mobile is ready.")
     _print_ready_summary(handle.summary, print_fn=print_fn)
     print_fn("")
-    _print_mobile_app_steps(print_fn, environ=env)
+    _print_mobile_app_steps(print_fn, environ=env, qr_ready=True)
     print_fn("")
     print_fn("Scan this QR in CCB Mobile:")
     use_ansi = (
@@ -298,19 +317,53 @@ def _run_tailscale_serve(
     *,
     run_fn: Callable[..., subprocess.CompletedProcess[object]],
 ) -> subprocess.CompletedProcess[object]:
-    return run_fn(
-        command,
-        capture_output=True,
-        text=True,
-        timeout=15,
-    )
+    try:
+        return run_fn(
+            command,
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+    except subprocess.TimeoutExpired as exc:
+        text = _timeout_expired_text(exc)
+        if _tailscale_serve_enable_url(text):
+            return subprocess.CompletedProcess(command, 1, stdout=text, stderr="")
+        raise
 
 
 def _completed_process_detail(result: subprocess.CompletedProcess[object]) -> str:
-    text = str(
-        getattr(result, "stderr", "") or getattr(result, "stdout", "") or ""
-    ).strip()
+    text = _completed_process_text(result).strip()
     return f": {text}" if text else ""
+
+
+def _completed_process_text(result: subprocess.CompletedProcess[object]) -> str:
+    return str(getattr(result, "stderr", "") or getattr(result, "stdout", "") or "")
+
+
+def _timeout_expired_text(exc: subprocess.TimeoutExpired) -> str:
+    values: list[str] = []
+    for value in (
+        getattr(exc, "stderr", None),
+        getattr(exc, "stdout", None),
+        getattr(exc, "output", None),
+    ):
+        text = _process_output_text(value)
+        if text and text not in values:
+            values.append(text)
+    return "\n".join(values)
+
+
+def _process_output_text(value: object) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, bytes):
+        return value.decode(errors="replace")
+    return str(value)
+
+
+def _tailscale_serve_enable_url(text: str) -> str | None:
+    match = TAILSCALE_SERVE_ENABLE_URL_RE.search(text)
+    return match.group(0).rstrip(".,)") if match else None
 
 
 def _close_handle(handle: object) -> None:
@@ -466,7 +519,7 @@ def _print_install_confirmation_hint(print_fn: Callable[[str], None]) -> None:
 
 
 def _print_mobile_app_steps(
-    print_fn: Callable[[str], None], *, environ: Mapping[str, str]
+    print_fn: Callable[[str], None], *, environ: Mapping[str, str], qr_ready: bool
 ) -> None:
     app_download_url = (
         _clean_text(environ.get(CCB_MOBILE_APP_DOWNLOAD_URL_ENV))
@@ -480,7 +533,12 @@ def _print_mobile_app_steps(
         f"      Override this link with {CCB_MOBILE_APP_DOWNLOAD_URL_ENV} if your team mirrors the APK."
     )
     print_fn("   3. Turn on the Tailscale VPN.")
-    print_fn("   4. Open CCB Mobile, tap Scan computer QR, and scan the QR below.")
+    if qr_ready:
+        print_fn("   4. Open CCB Mobile, tap Scan computer QR, and scan the QR below.")
+    else:
+        print_fn(
+            "   4. After the next `ccb update mobile` prints a QR, open CCB Mobile and scan it."
+        )
 
 
 def _should_open_login(environ: Mapping[str, str]) -> bool:
