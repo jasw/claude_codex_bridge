@@ -342,6 +342,19 @@ Date: 2026-06-28
   reload-busy-drain-sidebar-visibility --reset` from
   `/home/bfly/yunwei/test_ccb2`, which proved active drain recording, ask
   rejection while draining, retry publish, and final drain cleanup.
+- Added a repeatable true tmux sidebar pane capture to the busy-drain smoke:
+  `scripts/reload_busy_drain_smoke.py --check-sidebar-render` widens the test
+  sidebar, waits for a blocked active drain, captures the live sidebar pane, and
+  requires the rendered `drain:waiting` marker before allowing the smoke to
+  pass. Verification passed with `pytest -q
+  test/test_reload_busy_drain_smoke_script.py` (`9 passed`), `python -m
+  py_compile scripts/reload_busy_drain_smoke.py`, `cargo build --release
+  --manifest-path tools/ccb-agent-sidebar/Cargo.toml` so the source wrapper
+  used the updated helper, and external source-wrapper fake smoke
+  `scripts/reload_busy_drain_smoke.py --provider fake --project-name
+  reload-busy-drain-sidebar-render --busy-latency-ms 15000
+  --check-sidebar-render --reset` from `/home/bfly/yunwei/test_ccb2`, which
+  passed all checks including `sidebar_renders_active_drain`.
 
 ## In Progress
 
@@ -358,7 +371,8 @@ Date: 2026-06-28
   mixed move-plus-add, batch window-class move, arrange-window, and
   shared-source move, plus resolve/preflight loop-capacity smokes have passed;
   the core fake-provider dynamic layout bundle is now a CI gate. Sidebar helper
-  now renders active drain status from `project_view`. Daemon-pushed sidebar
+  now renders active drain status from `project_view`, and a true tmux pane
+  capture smoke verifies the marker in a running sidebar. Daemon-pushed sidebar
   refresh, replacement, arbitrary layout reshapes, and background config
   watching remain deferred.
 

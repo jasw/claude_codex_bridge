@@ -157,7 +157,10 @@ Date: 2026-05-29
     invalidated when `reload-drain.json` appears or changes.
   - the Rust sidebar helper parses those row-level drain fields and renders a
     compact `drain:<status>` marker so a user can see why a draining agent is
-    temporarily dispatch-blocked.
+    temporarily dispatch-blocked;
+  - `scripts/reload_busy_drain_smoke.py --check-sidebar-render` captures the
+    live tmux sidebar pane during the blocked reload and requires
+    `drain:waiting`, proving the marker is visible outside Rust unit tests.
 - Handler graph routing:
   - after graph replacement, `submit`, `project_view`, `ping`, and focus
     handlers resolve the new graph;
@@ -227,7 +230,8 @@ Date: 2026-05-29
     file changes;
   - sidebar helper rendering includes row-level active drain status from
     `project_view`, currently covered by the sidebar crate unit test plus the
-    external fake busy-drain smoke evidence;
+    external fake busy-drain smoke evidence, with `--check-sidebar-render`
+    available for true tmux pane capture validation;
   - sidebar refresh control and `r` shortcut submit non-dry-run reload and then
     refresh project view;
   - daemon-pushed sidebar refresh remains deferred unless later manual
