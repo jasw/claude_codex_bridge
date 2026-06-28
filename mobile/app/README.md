@@ -4,7 +4,7 @@ This is the Flutter source for the CCB Mobile controller.
 
 Current status:
 
-- Android Alpha app published with CCB v8.0.1;
+- Android Alpha app published with CCB v8.0.2;
 - server-wide real-project discovery through the CCB mobile gateway;
 - pane-native text input and native transcript rendering for selected agents;
 - terminal view, route diagnostics, notifications, and lifecycle actions;

@@ -6,7 +6,7 @@
 **可见、可控的多 Agent 合作TUI工作台**
 
 <p>
-  <img src="https://img.shields.io/badge/version-8.0.1-orange.svg" alt="version">
+  <img src="https://img.shields.io/badge/version-8.0.2-orange.svg" alt="version">
   <img src="https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20WSL-lightgrey.svg" alt="platform">
   <img src="https://img.shields.io/badge/providers-15%20CLI%20families-0B7285.svg" alt="providers">
 </p>
@@ -210,10 +210,10 @@ ccb
 
 ### Mobile App（Android Alpha）
 
-CCB 8.0.1 已把 Flutter 版 CCB Mobile 源码放入 [`mobile/`](mobile/)，
+CCB 8.0.2 已把 Flutter 版 CCB Mobile 源码放入 [`mobile/`](mobile/)，
 并在 GitHub Release 中发布 Android APK：
 
-- [下载 CCB Mobile v8.0.1 APK](https://github.com/bfly123/claude_code_bridge/releases/download/v8.0.1/ccb-mobile-v8.0.1.apk)
+- [下载 CCB Mobile v8.0.2 APK](https://github.com/bfly123/claude_code_bridge/releases/download/v8.0.2/ccb-mobile-v8.0.2.apk)
 - App 源码：[`mobile/app`](mobile/app)
 - 服务端 gateway 源码：[`lib/mobile_gateway`](lib/mobile_gateway)
 
@@ -742,6 +742,17 @@ v7 线重点：
 - 加固 tmux、Ghostty、release helper、Codex trust 和 provider 会话恢复路径。
 
 <details open>
+<summary><b>v8.0.2</b> - Mobile Tailnet Onboarding 修复</summary>
+
+- 正确识别 Tailscale Serve 一次性授权链接，不再把原始 timeout 暴露给用户。
+- 如果 `:8787` 的 Tailscale Serve 代理已经正确指向 loopback mobile gateway，
+  `ccb update mobile` 会直接复用并进入配对二维码流程。
+- 修复 source worktree 安装时误复制 `.git` worktree 标记的问题，避免安装版
+  `ccb` 被误判为源码 checkout。
+
+</details>
+
+<details>
 <summary><b>v8.0.1</b> - CCB Mobile 极简配对</summary>
 
 - 将 `ccb update mobile` 收敛为唯一面向普通用户的设置入口：检测

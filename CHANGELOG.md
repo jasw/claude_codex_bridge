@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+## v8.0.2 (2026-06-28)
+
+### CCB Mobile Tailnet Onboarding Fixes
+
+- **Tailscale Serve Approval Flow Fixed**: `ccb update mobile` now recognizes
+  the one-time Tailscale Serve enable URL and prints actionable next steps
+  instead of surfacing a raw timeout.
+- **Existing Serve Config Reused**: if the correct tailnet HTTPS proxy already
+  points to the loopback mobile gateway, `ccb update mobile` reuses it and
+  proceeds directly to the pairing QR instead of requiring operator privileges
+  on every run.
+- **Worktree Install Guard Fixed**: source worktree installs no longer copy the
+  `.git` worktree marker into the release install prefix, preventing installed
+  `ccb` from being mistaken for a source checkout.
+- **Release Surface Synchronized**: VERSION, package metadata, mobile app
+  version metadata, README links, workflow defaults, and APK download URLs are
+  aligned for 8.0.2.
+
 ## v8.0.1 (2026-06-28)
 
 ### Simplified CCB Mobile Onboarding
