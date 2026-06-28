@@ -1519,6 +1519,7 @@ copy_project() {
 
   if command -v rsync >/dev/null 2>&1; then
     rsync -a \
+      --exclude '.git' \
       --exclude '.git/' \
       --exclude '__pycache__/' \
       --exclude '.pytest_cache/' \

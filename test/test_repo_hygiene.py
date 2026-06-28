@@ -133,6 +133,14 @@ def test_install_scripts_current_skill_lists_are_minimal() -> None:
     assert '$droidSkills = @("ask")' in install_ps1
 
 
+def test_install_sh_excludes_git_worktree_file() -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    install_sh = (repo_root / "install.sh").read_text(encoding="utf-8")
+
+    assert "--exclude '.git'" in install_sh
+    assert "--exclude '.git/'" in install_sh
+
+
 def test_inherited_codex_skill_names_are_valid_and_match_directories() -> None:
     repo_root = Path(__file__).resolve().parents[1]
     skill_root = repo_root / "inherit_skills" / "codex_skills"
