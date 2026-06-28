@@ -51,6 +51,58 @@ def test_submit_ask_rejects_unknown_target(tmp_path: Path) -> None:
     assert str(exc_info.value) == 'unknown agent: agent9'
 
 
+def test_submit_ask_allows_removed_target_when_reload_drain_active(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    project_root = tmp_path / 'repo-ask-reload-drain-target'
+    project_root.mkdir()
+    context = _build_context(project_root)
+    captured: dict[str, object] = {}
+
+    class _FakeClient:
+        def project_view(self, *, schema_version: int = 1) -> dict:
+            captured['project_view_schema_version'] = schema_version
+            return {
+                'view': {
+                    'reload_drains': {
+                        'active_count': 1,
+                        'active_records': [{'agent': 'agent2', 'intent_kind': 'unload'}],
+                    },
+                    'agents': [
+                        {'name': 'agent1', 'dispatch_blocked_by_reload_drain': False},
+                        {'name': 'agent2', 'dispatch_blocked_by_reload_drain': True},
+                    ],
+                }
+            }
+
+        def submit(self, envelope) -> dict:
+            captured['to_agent'] = envelope.to_agent
+            return {
+                'job_id': 'job_2',
+                'agent_name': envelope.to_agent,
+                'target_name': envelope.to_agent,
+                'status': 'accepted',
+            }
+
+    monkeypatch.setattr(
+        ask_service,
+        'load_project_config',
+        lambda project_root: SimpleNamespace(config=SimpleNamespace(agents={'agent1': object()})),
+    )
+    monkeypatch.setattr(ask_service, 'resolve_ask_sender', lambda context, sender: 'user')
+    monkeypatch.setattr(
+        ask_service,
+        'invoke_mounted_daemon',
+        lambda context, allow_restart_stale, request_fn: request_fn(_FakeClient()),
+    )
+
+    summary = ask_service.submit_ask(
+        context,
+        ParsedAskCommand(project=None, target='agent2', sender=None, message='hello'),
+    )
+
+    assert captured == {'project_view_schema_version': 1, 'to_agent': 'agent2'}
+    assert summary.jobs[0]['agent_name'] == 'agent2'
+
+
 def test_submit_ask_resolves_unique_role_id_alias(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     project_root = tmp_path / 'repo-ask-role-alias'
     project_root.mkdir()

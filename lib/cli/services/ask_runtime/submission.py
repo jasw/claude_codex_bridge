@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Collection
+from collections.abc import Callable, Collection, Mapping
 
 from agents.config_loader_runtime.role_lookup import looks_like_role_id, normalize_role_id
 from agents.models import AgentValidationError
@@ -68,8 +68,14 @@ def submit_ask(
     invoke_mounted_daemon_fn: Callable,
 ) -> AskSummary:
     config = load_project_config_fn(context.project.project_root).config
-    normalized_target = _resolve_target(command.target, config.agents)
-    _validate_target(normalized_target, config.agents)
+    try:
+        normalized_target = _resolve_target(command.target, config.agents)
+        _validate_target(normalized_target, config.agents)
+    except ValueError:
+        reload_drain_target = _resolve_active_reload_drain_target(context, command.target, invoke_mounted_daemon_fn)
+        if reload_drain_target is None:
+            raise
+        normalized_target = reload_drain_target
     sender = resolve_ask_sender_fn(context, command.sender)
     normalized_sender = _normalize_sender(sender)
     _validate_sender(normalized_sender, config.agents)
@@ -215,6 +221,45 @@ def _resolve_target(value: str | None, configured_agents: Collection[str]) -> st
             'target one agent name explicitly'
         )
     return normalized
+
+
+def _resolve_active_reload_drain_target(context, value: str | None, invoke_mounted_daemon_fn: Callable) -> str | None:
+    try:
+        normalized = _normalize_target(value)
+    except ValueError:
+        return None
+    if normalized == 'all' or looks_like_role_id(normalized):
+        return None
+    try:
+        payload = invoke_mounted_daemon_fn(
+            context,
+            allow_restart_stale=True,
+            request_fn=lambda client: client.project_view(schema_version=1),
+        )
+    except Exception:
+        return None
+    return normalized if _project_view_has_active_reload_drain_target(payload, normalized) else None
+
+
+def _project_view_has_active_reload_drain_target(payload: object, target: str) -> bool:
+    if not isinstance(payload, Mapping):
+        return False
+    view = payload.get('view')
+    if not isinstance(view, Mapping):
+        return False
+    drains = view.get('reload_drains')
+    if isinstance(drains, Mapping):
+        for record in tuple(drains.get('active_records') or ()):
+            if isinstance(record, Mapping) and str(record.get('agent') or '') == target:
+                return True
+    for agent in tuple(view.get('agents') or ()):
+        if (
+            isinstance(agent, Mapping)
+            and str(agent.get('name') or '') == target
+            and bool(agent.get('dispatch_blocked_by_reload_drain'))
+        ):
+            return True
+    return False
 
 
 def _validate_sender(sender: str, configured_agents: Collection[str]) -> None:

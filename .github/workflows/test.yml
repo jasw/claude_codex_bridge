@@ -236,6 +236,55 @@ jobs:
           )
           PY
 
+      - name: Guard reload busy drain smoke
+        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.11'
+        shell: bash
+        run: |
+          set -euo pipefail
+          export TERM=xterm-256color
+          smoke_root="${RUNNER_TEMP}/ccb-reload-busy-drain-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          python scripts/reload_busy_drain_smoke.py \
+            --test-root "$smoke_root" \
+            --project-name ci-reload-busy-drain \
+            --ccb-test "$GITHUB_WORKSPACE/ccb_test" \
+            --provider fake \
+            --command-timeout 180 \
+            --busy-latency-ms 5000 \
+            --reset > "$RUNNER_TEMP/reload-busy-drain-smoke.json"
+          python - "$RUNNER_TEMP/reload-busy-drain-smoke.json" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          payload = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+          checks = payload["checks"]
+          assert payload["reload_busy_drain_smoke_status"] == "ok"
+          assert checks["busy_ask_accepted"] is True
+          assert checks["blocked_reload_reports_active_drain"] is True
+          assert checks["project_view_records_active_drain"] is True
+          assert checks["new_ask_rejected_while_draining"] is True
+          assert checks["busy_job_terminal"] is True
+          assert checks["retry_reload_published"] is True
+          assert checks["project_view_drain_cleared"] is True
+          assert checks["agent2_removed_from_view"] is True
+          print(
+              json.dumps(
+                  {
+                      "reload_busy_drain_smoke_status": payload["reload_busy_drain_smoke_status"],
+                      "provider": payload["provider"],
+                      "selected_checks": {
+                          "blocked_reload_reports_active_drain": checks["blocked_reload_reports_active_drain"],
+                          "project_view_records_active_drain": checks["project_view_records_active_drain"],
+                          "new_ask_rejected_while_draining": checks["new_ask_rejected_while_draining"],
+                          "retry_reload_published": checks["retry_reload_published"],
+                          "agent2_removed_from_view": checks["agent2_removed_from_view"],
+                      },
+                  },
+                  sort_keys=True,
+              )
+          )
+          PY
+
       - name: Guard workflow closure layout cleanup smoke
         if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.11'
         shell: bash

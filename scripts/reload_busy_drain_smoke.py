@@ -1,0 +1,360 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import argparse
+import json
+import os
+from pathlib import Path
+import shutil
+import sys
+from typing import Any
+
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
+
+import dynamic_layout_smoke as layout_smoke  # noqa: E402
+
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+LIB_DIR = REPO_ROOT / "lib"
+if str(LIB_DIR) not in sys.path:
+    sys.path.insert(0, str(LIB_DIR))
+
+from ccbd.socket_client import CcbdClient  # noqa: E402
+from storage.paths import PathLayout  # noqa: E402
+
+
+DEFAULT_TEST_ROOT = Path(os.environ.get("CCB_RELOAD_BUSY_DRAIN_SMOKE_TEST_ROOT", "/home/bfly/yunwei/test_ccb2"))
+DEFAULT_CCB_TEST = REPO_ROOT / "ccb_test"
+DEFAULT_COMMAND_TIMEOUT_S = int(os.environ.get("CCB_RELOAD_BUSY_DRAIN_SMOKE_COMMAND_TIMEOUT_S", "90"))
+REAL_RUN_ENV = "CCB_RELOAD_BUSY_DRAIN_SMOKE_RUN_REAL"
+
+
+def build_busy_remove_config(*, provider: str = "fake", include_agent2: bool = True) -> str:
+    agents = f"agent1:{provider}, agent2:{provider}" if include_agent2 else f"agent1:{provider}"
+    return "\n".join(
+        [
+            "version = 2",
+            'entry_window = "main"',
+            "",
+            "[windows]",
+            f'main = "{agents}"',
+            "",
+        ]
+    )
+
+
+def prepare_busy_remove_project(
+    *,
+    test_root: Path,
+    project_name: str,
+    provider: str = "fake",
+    reset: bool = False,
+) -> dict[str, str]:
+    project_root = layout_smoke._project_root(test_root, project_name)
+    if reset and project_root.exists():
+        shutil.rmtree(project_root)
+    _write_project_config(project_root, build_busy_remove_config(provider=provider, include_agent2=True))
+    role_store = project_root / "roles"
+    role_store.mkdir(parents=True, exist_ok=True)
+    return {"project_root": str(project_root), "role_store": str(role_store)}
+
+
+def run_busy_remove_drain_smoke(
+    *,
+    test_root: Path,
+    project_name: str,
+    ccb_test: Path,
+    provider: str = "fake",
+    provider_home_mode: str = "source-home",
+    command_timeout_s: int = DEFAULT_COMMAND_TIMEOUT_S,
+    reset: bool = False,
+    keep_running: bool = False,
+    busy_latency_ms: int = 5000,
+) -> dict[str, Any]:
+    test_root = test_root.expanduser().resolve(strict=False)
+    test_root.mkdir(parents=True, exist_ok=True)
+    preflight_payload = layout_smoke.preflight(
+        test_root=test_root,
+        provider=provider,
+        ccb_test=ccb_test,
+        provider_home_mode=provider_home_mode,
+    )
+    preflight_payload["checks"]["busy_drain_real_run_opt_in"] = os.environ.get(REAL_RUN_ENV) == "1"
+    if provider != "fake" and os.environ.get(REAL_RUN_ENV) != "1":
+        raise RuntimeError(f"real provider busy reload drain smoke requires {REAL_RUN_ENV}=1")
+
+    prepared = prepare_busy_remove_project(test_root=test_root, project_name=project_name, provider=provider, reset=reset)
+    project_root = Path(prepared["project_root"])
+    provider_home = layout_smoke._provider_home(test_root=test_root, mode=provider_home_mode)
+    provider_home.mkdir(parents=True, exist_ok=True)
+    env = layout_smoke._env(provider_home=provider_home, role_store=Path(prepared["role_store"]))
+    commands: list[dict[str, Any]] = []
+    expected_failure_commands: list[dict[str, Any]] = []
+
+    try:
+        commands.append(
+            layout_smoke._run(
+                "config_validate_initial",
+                [str(ccb_test), "--project", str(project_root), "config", "validate"],
+                cwd=test_root,
+                env=env,
+                timeout=command_timeout_s,
+            )
+        )
+        commands.append(
+            layout_smoke._run(
+                "start",
+                [str(ccb_test), "--project", str(project_root)],
+                cwd=test_root,
+                env=env,
+                timeout=command_timeout_s,
+            )
+        )
+        busy_ask = layout_smoke._run(
+            "ask_agent2_busy",
+            [
+                str(ccb_test),
+                "--project",
+                str(project_root),
+                "ask",
+                "--task-id",
+                f"fake;latency_ms={max(1000, int(busy_latency_ms))}",
+                "agent2",
+            ],
+            cwd=test_root,
+            env=env,
+            input_text="busy reload drain smoke holds agent2 while config removes it\n",
+            timeout=command_timeout_s,
+        )
+        commands.append(busy_ask)
+
+        _write_project_config(project_root, build_busy_remove_config(provider=provider, include_agent2=False))
+        blocked_reload = layout_smoke._run(
+            "reload_remove_agent2_while_busy",
+            [str(ccb_test), "--project", str(project_root), "reload"],
+            cwd=test_root,
+            env=env,
+            timeout=command_timeout_s,
+        )
+        commands.append(blocked_reload)
+        expected_failure_commands.append(blocked_reload)
+
+        blocked_view = _project_view_result("project_view_after_blocked_reload", project_root, timeout_s=5.0)
+        commands.append(blocked_view)
+
+        rejected_ask = layout_smoke._run(
+            "ask_agent2_during_reload_drain",
+            [str(ccb_test), "--project", str(project_root), "ask", "agent2"],
+            cwd=test_root,
+            env=env,
+            input_text="this should be rejected while agent2 is draining\n",
+            timeout=command_timeout_s,
+        )
+        commands.append(rejected_ask)
+        expected_failure_commands.append(rejected_ask)
+
+        commands.extend(
+            layout_smoke._watch_submitted_jobs(
+                ccb_test=ccb_test,
+                project_root=project_root,
+                test_root=test_root,
+                env=env,
+                asks=(busy_ask,),
+                timeout=max(command_timeout_s, int(busy_latency_ms / 1000) + 10),
+            )
+        )
+
+        retry_reload = layout_smoke._run(
+            "reload_remove_agent2_after_drain",
+            [str(ccb_test), "--project", str(project_root), "reload"],
+            cwd=test_root,
+            env=env,
+            timeout=command_timeout_s,
+        )
+        commands.append(retry_reload)
+
+        final_view = _project_view_result("project_view_after_retry_reload", project_root, timeout_s=5.0)
+        commands.append(final_view)
+
+        blocked_view_payload = layout_smoke._payload(blocked_view)
+        final_view_payload = layout_smoke._payload(final_view)
+        successful_commands = [item for item in commands if item not in expected_failure_commands]
+        checks = {
+            "initial_config_valid": _command_ok(commands, "config_validate_initial"),
+            "busy_ask_accepted": layout_smoke._accepted(busy_ask),
+            "blocked_reload_returned_blocked": int(blocked_reload.get("returncode") or 0) != 0
+            and "reload_status: blocked" in _combined_output(blocked_reload),
+            "blocked_reload_is_remove_agent": "plan_class: remove_agent" in _combined_output(blocked_reload),
+            "blocked_reload_reports_active_drain": "reload_drain_active_count: 1" in _combined_output(blocked_reload)
+            and "reload_drain_active: agent=agent2" in _combined_output(blocked_reload)
+            and "reload_drain_retry: ccb reload" in _combined_output(blocked_reload),
+            "project_view_records_active_drain": _active_drain_count(blocked_view_payload) == 1
+            and _agent_dispatch_blocked_by_drain(blocked_view_payload, "agent2"),
+            "new_ask_rejected_while_draining": int(rejected_ask.get("returncode") or 0) != 0
+            and "draining" in _combined_output(rejected_ask),
+            "busy_job_terminal": layout_smoke._watch_commands_terminal(commands),
+            "retry_reload_published": _returncode(retry_reload, default=1) == 0
+            and "reload_status: published" in _combined_output(retry_reload),
+            "project_view_drain_cleared": _active_drain_count(final_view_payload) == 0,
+            "agent2_removed_from_view": not _view_has_agent(final_view_payload, "agent2")
+            and not _view_windows_include_agent(final_view_payload, "agent2"),
+        }
+        status = "ok" if all(checks.values()) and layout_smoke._all_success(successful_commands) else "failed"
+        return {
+            "reload_busy_drain_smoke_status": status,
+            "provider": provider,
+            "provider_home_mode": provider_home_mode,
+            "preflight": preflight_payload,
+            "project_root": str(project_root),
+            "checks": checks,
+            "commands": commands,
+        }
+    finally:
+        if not keep_running:
+            commands.append(
+                layout_smoke._run(
+                    "kill",
+                    [str(ccb_test), "--project", str(project_root), "kill", "-f"],
+                    cwd=test_root,
+                    env=env,
+                    timeout=command_timeout_s,
+                )
+            )
+
+
+def compact_busy_drain_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "reload_busy_drain_smoke_status": payload.get("reload_busy_drain_smoke_status"),
+        "provider": payload.get("provider"),
+        "provider_home_mode": payload.get("provider_home_mode"),
+        "preflight": payload.get("preflight"),
+        "project_root": payload.get("project_root"),
+        "checks": payload.get("checks"),
+        "commands": [
+            layout_smoke._compact_command(item)
+            for item in payload.get("commands", [])
+            if isinstance(item, dict)
+        ],
+    }
+
+
+def _write_project_config(project_root: Path, text: str) -> None:
+    config_path = project_root / ".ccb" / "ccb.config"
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(text, encoding="utf-8")
+
+
+def _project_view_result(name: str, project_root: Path, *, timeout_s: float) -> dict[str, Any]:
+    try:
+        payload = CcbdClient(PathLayout(project_root).ccbd_socket_path, timeout_s=timeout_s).project_view(schema_version=1)
+    except Exception as exc:  # pragma: no cover - exercised by real smoke diagnostics.
+        return {
+            "name": name,
+            "returncode": 1,
+            "stdout": "",
+            "stderr": str(exc),
+            "timeout": False,
+        }
+    return {
+        "name": name,
+        "returncode": 0,
+        "stdout": json.dumps(payload, sort_keys=True),
+        "stderr": "",
+        "timeout": False,
+        "payload": payload,
+    }
+
+
+def _command_ok(commands: list[dict[str, Any]], name: str) -> bool:
+    return any(str(item.get("name") or "") == name and int(item.get("returncode") or 0) == 0 for item in commands)
+
+
+def _returncode(command: dict[str, Any], *, default: int) -> int:
+    value = command.get("returncode")
+    if value is None:
+        return default
+    try:
+        return int(value)
+    except Exception:
+        return default
+
+
+def _combined_output(command: dict[str, Any]) -> str:
+    return f"{command.get('stdout') or ''}\n{command.get('stderr') or ''}"
+
+
+def _view(payload: dict[str, Any]) -> dict[str, Any]:
+    view = payload.get("view")
+    return view if isinstance(view, dict) else {}
+
+
+def _active_drain_count(payload: dict[str, Any]) -> int:
+    drains = _view(payload).get("reload_drains")
+    if not isinstance(drains, dict):
+        return 0
+    try:
+        return int(drains.get("active_count") or 0)
+    except Exception:
+        return 0
+
+
+def _agent_dispatch_blocked_by_drain(payload: dict[str, Any], agent_name: str) -> bool:
+    agent = _view_agent(payload, agent_name)
+    return bool(agent.get("dispatch_blocked_by_reload_drain")) if agent else False
+
+
+def _view_has_agent(payload: dict[str, Any], agent_name: str) -> bool:
+    return _view_agent(payload, agent_name) is not None
+
+
+def _view_agent(payload: dict[str, Any], agent_name: str) -> dict[str, Any] | None:
+    for agent in tuple(_view(payload).get("agents") or ()):
+        if isinstance(agent, dict) and agent.get("name") == agent_name:
+            return agent
+    return None
+
+
+def _view_windows_include_agent(payload: dict[str, Any], agent_name: str) -> bool:
+    for window in tuple(_view(payload).get("windows") or ()):
+        if not isinstance(window, dict):
+            continue
+        if agent_name in tuple(window.get("agents") or ()):
+            return True
+    return False
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="Run CCB busy reload drain smoke tests.")
+    parser.add_argument("--test-root", type=Path, default=DEFAULT_TEST_ROOT)
+    parser.add_argument("--project-name", default="reload-busy-drain-smoke")
+    parser.add_argument("--ccb-test", type=Path, default=DEFAULT_CCB_TEST)
+    parser.add_argument("--provider", default="fake")
+    parser.add_argument("--provider-home-mode", choices=("source-home", "real-home"), default="source-home")
+    parser.add_argument("--command-timeout", type=int, default=DEFAULT_COMMAND_TIMEOUT_S)
+    parser.add_argument("--busy-latency-ms", type=int, default=5000)
+    parser.add_argument("--reset", action="store_true")
+    parser.add_argument("--keep-running", action="store_true")
+    parser.add_argument("--full-output", action="store_true", help="Print complete command stdout and JSON payloads.")
+    args = parser.parse_args(argv)
+
+    payload = run_busy_remove_drain_smoke(
+        test_root=args.test_root,
+        project_name=args.project_name,
+        ccb_test=args.ccb_test,
+        provider=args.provider,
+        provider_home_mode=args.provider_home_mode,
+        command_timeout_s=args.command_timeout,
+        reset=args.reset,
+        keep_running=args.keep_running,
+        busy_latency_ms=args.busy_latency_ms,
+    )
+    output = payload if args.full_output else compact_busy_drain_payload(payload)
+    print(json.dumps(output, indent=2, sort_keys=True))
+    return 0 if payload.get("reload_busy_drain_smoke_status") == "ok" else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

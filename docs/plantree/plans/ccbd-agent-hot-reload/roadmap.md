@@ -231,6 +231,23 @@ Date: 2026-06-28
   (`67 passed`) plus the reload/drain/dispatcher slice
   `pytest -q test/test_ccbd_reload_drain.py test/test_ccbd_reload_apply.py test/test_v2_cli_render.py test/test_v2_ccbd_dispatcher.py::test_dispatcher_rejects_targets_with_active_reload_drain`
   (`77 passed`).
+- Added a fake-provider external smoke for the explicit `[windows]`
+  busy-remove path: `scripts/reload_busy_drain_smoke.py` starts a two-agent
+  project, submits a long-running fake job to `agent2`, edits `.ccb/ccb.config`
+  to remove `agent2`, proves `ccb reload` blocks and records an active drain,
+  proves `project_view` exposes the same drain, proves new `ask agent2` work is
+  rejected while draining, waits for the original job to finish, retries
+  `ccb reload`, and proves `agent2` disappears from project view. The smoke is
+  promoted to the Ubuntu/Python 3.11 CI gate as `Guard reload busy drain smoke`.
+  The same slice fixed CLI `ask` target resolution so a target removed from the
+  disk config but still present as an active reload drain is submitted to the
+  mounted daemon and rejected with the precise draining diagnostic instead of
+  the misleading local `unknown agent` error. Verification passed with
+  `pytest -q test/test_v2_ask_service.py test/test_reload_busy_drain_smoke_script.py`
+  (`36 passed`), the reload/project-view focused slice (`67 passed` +
+  `77 passed`), and external source-wrapper fake smoke
+  `scripts/reload_busy_drain_smoke.py --provider fake --project-name
+  reload-busy-drain-smoke --reset` from `/home/bfly/yunwei/test_ccb2`.
 
 ## In Progress
 
@@ -244,8 +261,9 @@ Date: 2026-06-28
   review/loop/node windows, and mixed move-plus-add explicit `[windows]`
   reload. Live `codex` and `claude` move, same-window `1->6->1`, and lifecycle
   park/resume smokes have passed; broader provider lifecycle matrix coverage,
-  daemon-pushed sidebar refresh, automatic background drain retry, replacement, arbitrary
-  layout reshapes, and background config watching remain deferred.
+  daemon-pushed sidebar refresh, automatic background drain retry,
+  replacement, arbitrary layout reshapes, and background config watching remain
+  deferred.
 
 ## Next
 
@@ -259,7 +277,9 @@ Date: 2026-06-28
    [topics/test-matrix.md](topics/test-matrix.md), including `test_ccb2`
    evidence for unchanged old panes, newly-mounted agents, released dynamic
    panes, moved panes, mixed move-plus-add transactions, and empty-window
-   cleanup.
+   cleanup. The fake busy-remove drain path now has a dedicated CI smoke; the
+   next matrix expansion should decide whether a guarded real-provider variant
+   is useful or too slow for routine gates.
 3. Validate whether sidebar's existing project-view polling/refresh path is
    enough for drain status visibility; add a lightweight daemon-pushed sidebar
    refresh signal only if manual validation proves it is needed.
