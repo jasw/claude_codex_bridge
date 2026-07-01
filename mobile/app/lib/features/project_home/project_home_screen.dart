@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart' show SynchronousFuture;
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart' show ScrollDirection;
 
@@ -135,6 +136,7 @@ class _ProjectHomeView extends StatefulWidget {
 
 class _ProjectHomeViewState extends State<_ProjectHomeView> {
   static const _defaultProjectId = 'proj-demo';
+  static const _activeProjectStatusRefreshInterval = Duration(seconds: 2);
 
   final _pairingForm = ProjectHomePairingFormController();
 
@@ -165,6 +167,8 @@ class _ProjectHomeViewState extends State<_ProjectHomeView> {
   WideSidebarState _wideSidebarDragStartState = WideSidebarState.expanded;
   double _wideSidebarDragDelta = 0;
   bool _mobileAgentsCollapsed = false;
+  Timer? _activeProjectStatusRefreshTimer;
+  bool _activeProjectStatusRefreshInFlight = false;
 
   late final ProjectHomeProfileBootstrapper _profileBootstrapper =
       ProjectHomeProfileBootstrapper(store: widget.profileStore);
@@ -201,6 +205,7 @@ class _ProjectHomeViewState extends State<_ProjectHomeView> {
 
   @override
   void dispose() {
+    _stopActiveProjectStatusRefresh();
     _pairingForm.dispose();
     unawaited(_taskNotifications.dispose());
     _lifecycleResultNotifier.dispose();
@@ -417,6 +422,7 @@ class _ProjectHomeViewState extends State<_ProjectHomeView> {
   }
 
   void _returnToServerProjectList() {
+    _stopActiveProjectStatusRefresh();
     setState(() {
       _activeProjectId = '';
       _openedProjectId = null;
@@ -648,6 +654,7 @@ class _ProjectHomeViewState extends State<_ProjectHomeView> {
     setState(() {
       _openedProjectId = outcome.openedProjectId;
     });
+    _restartActiveProjectStatusRefresh();
   }
 
   void _openServerProject(CcbProject project) {
@@ -657,6 +664,7 @@ class _ProjectHomeViewState extends State<_ProjectHomeView> {
       _selectedAgentName = null;
       _viewFuture = _loadActiveProjectView();
     });
+    _restartActiveProjectStatusRefresh();
   }
 
   void _closeProject() {
@@ -745,6 +753,7 @@ class _ProjectHomeViewState extends State<_ProjectHomeView> {
   void _setRuntimeMode(AppRuntimeMode mode) {
     switch (mode) {
       case AppRuntimeMode.fake:
+        _stopActiveProjectStatusRefresh();
         final reset = resetProjectHomeFakeRuntime(
           defaultProjectId: _defaultProjectId,
         );
@@ -802,6 +811,7 @@ class _ProjectHomeViewState extends State<_ProjectHomeView> {
       session.projectsFuture.catchError((Object _) => const <CcbProject>[]),
     );
     final profile = session.activation.profile;
+    _stopActiveProjectStatusRefresh();
     setState(() {
       _mode = AppRuntimeMode.pairedGateway;
       _showPairingSetup = false;
@@ -819,6 +829,7 @@ class _ProjectHomeViewState extends State<_ProjectHomeView> {
   }
 
   void _returnToPairingSetup() {
+    _stopActiveProjectStatusRefresh();
     unawaited(_taskNotifications.stop());
     setState(() {
       _mode = AppRuntimeMode.fake;
@@ -1012,7 +1023,7 @@ class _ProjectHomeViewState extends State<_ProjectHomeView> {
       }
       final refreshed = outcome.refreshedView!;
       setState(() {
-        _viewFuture = Future<CcbProjectView>.value(refreshed);
+        _viewFuture = SynchronousFuture(refreshed);
         _selectedAgentName = outcome.selectedAgentName;
       });
       return refreshed;
@@ -1021,6 +1032,64 @@ class _ProjectHomeViewState extends State<_ProjectHomeView> {
       _showSnack(outcome.snackMessage!);
     }
     return null;
+  }
+
+  bool get _shouldRefreshActiveProjectStatus =>
+      _mode == AppRuntimeMode.pairedGateway &&
+      !_showPairingSetup &&
+      _activeProjectId.isNotEmpty &&
+      _openedProjectId == _activeProjectId;
+
+  void _restartActiveProjectStatusRefresh() {
+    _stopActiveProjectStatusRefresh();
+    if (!_shouldRefreshActiveProjectStatus) {
+      return;
+    }
+    _activeProjectStatusRefreshTimer = Timer.periodic(
+      _activeProjectStatusRefreshInterval,
+      (_) {
+        unawaited(_refreshActiveProjectStatus());
+      },
+    );
+  }
+
+  void _stopActiveProjectStatusRefresh() {
+    _activeProjectStatusRefreshTimer?.cancel();
+    _activeProjectStatusRefreshTimer = null;
+    _activeProjectStatusRefreshInFlight = false;
+  }
+
+  Future<void> _refreshActiveProjectStatus() async {
+    if (!_shouldRefreshActiveProjectStatus ||
+        _activeProjectStatusRefreshInFlight) {
+      return;
+    }
+    _activeProjectStatusRefreshInFlight = true;
+    final projectId = _activeProjectId;
+    try {
+      final current = await _viewFuture;
+      final refreshed = await _activeRepository
+          .getProjectView(projectId)
+          .timeout(projectHomeRuntimeViewLoadTimeout);
+      if (!mounted ||
+          projectId != _activeProjectId ||
+          !_shouldRefreshActiveProjectStatus ||
+          _sameProjectViewActivity(current, refreshed)) {
+        return;
+      }
+      setState(() {
+        _viewFuture = SynchronousFuture(
+          _projectViewWithRefreshedActivity(
+            current: current,
+            refreshed: refreshed,
+          ),
+        );
+      });
+    } catch (_) {
+      // Status polling is best-effort; explicit refresh still surfaces errors.
+    } finally {
+      _activeProjectStatusRefreshInFlight = false;
+    }
   }
 
   Future<CcbProjectView?> _focusAgent(
@@ -1239,9 +1308,11 @@ class _ProjectHomeViewState extends State<_ProjectHomeView> {
           _openedProjectId = route.projectId;
           _selectedAgentName = route.agentName;
           _serverProjectsFuture = null;
-          _viewFuture = Future<CcbProjectView>.value(route.view!);
+          _viewFuture = SynchronousFuture(route.view!);
         });
+        _restartActiveProjectStatusRefresh();
       case ProjectHomeTaskCompletionNotificationRouteKind.projectList:
+        _stopActiveProjectStatusRefresh();
         setState(() {
           _activeProjectId = '';
           _openedProjectId = null;
@@ -1256,4 +1327,76 @@ class _ProjectHomeViewState extends State<_ProjectHomeView> {
     messenger.clearSnackBars();
     messenger.showSnackBar(SnackBar(content: Text(message)));
   }
+}
+
+CcbProjectView _projectViewWithRefreshedActivity({
+  required CcbProjectView current,
+  required CcbProjectView refreshed,
+}) {
+  return CcbProjectView(
+    project: refreshed.project,
+    namespaceEpoch: refreshed.namespaceEpoch,
+    tmuxSocketPath: refreshed.tmuxSocketPath,
+    tmuxSessionName: refreshed.tmuxSessionName,
+    activeWindow: refreshed.activeWindow,
+    activePaneId: refreshed.activePaneId,
+    windows: refreshed.windows,
+    agents: refreshed.agents,
+    contentItems: current.contentItems,
+    notifications: current.notifications,
+    terminalHistories: current.terminalHistories,
+  );
+}
+
+bool _sameProjectViewActivity(
+  CcbProjectView current,
+  CcbProjectView refreshed,
+) {
+  return _projectViewActivitySignature(current) ==
+      _projectViewActivitySignature(refreshed);
+}
+
+String _projectViewActivitySignature(CcbProjectView view) {
+  final buffer =
+      StringBuffer()
+        ..write(view.namespaceEpoch)
+        ..write('|')
+        ..write(view.activeWindow)
+        ..write('|')
+        ..write(view.activePaneId);
+  for (final window in view.windows) {
+    buffer
+      ..write('|w:')
+      ..write(window.name)
+      ..write(',')
+      ..write(window.active)
+      ..write(',')
+      ..write(window.order)
+      ..write(',')
+      ..write(window.agents.join(','));
+  }
+  for (final agent in view.agents) {
+    buffer
+      ..write('|a:')
+      ..write(agent.name)
+      ..write(',')
+      ..write(agent.active)
+      ..write(',')
+      ..write(agent.queueDepth)
+      ..write(',')
+      ..write(agent.runtimeHealth)
+      ..write(',')
+      ..write(agent.activityState)
+      ..write(',')
+      ..write(agent.activitySource)
+      ..write(',')
+      ..write(agent.activityReason)
+      ..write(',')
+      ..write(agent.activitySymbol)
+      ..write(',')
+      ..write(agent.activityColor)
+      ..write(',')
+      ..write(agent.lastProgressAt);
+  }
+  return buffer.toString();
 }

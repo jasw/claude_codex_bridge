@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../agent_chat/agent_execution_status.dart';
 import '../../models/ccb_agent.dart';
 import '../../models/ccb_window.dart';
 
@@ -31,10 +32,15 @@ class AgentSwitcher extends StatelessWidget {
         itemBuilder: (context, index) {
           final agent = agents[index];
           final selected = agent.name == selectedAgentName;
+          final working = agentHasSourceWorkingActivity(agent);
           final emphasized = selected || agent.active;
           return ChoiceChip(
             key: ValueKey('agent-${agent.name}'),
             selected: selected,
+            side:
+                working
+                    ? BorderSide(color: colorScheme.tertiary, width: 1.6)
+                    : null,
             visualDensity: VisualDensity.compact,
             labelPadding: const EdgeInsets.symmetric(horizontal: 4),
             materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
@@ -44,7 +50,9 @@ class AgentSwitcher extends StatelessWidget {
                   : Icons.auto_awesome_outlined,
               size: emphasized ? 18 : 17,
               color:
-                  selected
+                  working
+                      ? colorScheme.tertiary
+                      : selected
                       ? colorScheme.primary
                       : agent.active
                       ? colorScheme.tertiary

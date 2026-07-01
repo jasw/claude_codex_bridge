@@ -6,7 +6,7 @@
 **可见、可控的多 Agent 交互 TUI 工作台**
 
 <p>
-  <img src="https://img.shields.io/badge/version-8.0.0-orange.svg" alt="version">
+  <img src="https://img.shields.io/badge/version-8.0.8-orange.svg" alt="version">
   <img src="https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20WSL-lightgrey.svg" alt="platform">
   <img src="https://img.shields.io/badge/providers-15%20CLI%20families-0B7285.svg" alt="providers">
 </p>
@@ -120,10 +120,10 @@ ccb update mobile
 <details>
 <summary><b>Mobile App 详情、安全边界和源码</b></summary>
 
-CCB 8.0.0 已把 Flutter 版 CCB Mobile 源码放入 [`mobile/`](mobile/)，
+CCB 8.0.8 已把 Flutter 版 CCB Mobile 源码放入 [`mobile/`](mobile/)，
 并在 GitHub Release 中发布 Android APK：
 
-- [下载 CCB Mobile v8.0.0 APK](https://github.com/SeemSeam/claude_codex_bridge/releases/download/v8.0.0/ccb-mobile-v8.0.0.apk)
+- [下载 CCB Mobile v8.0.8 APK](https://github.com/bfly123/claude_code_bridge/releases/download/v8.0.8/ccb-mobile-v8.0.8.apk)
 - App 源码：[`mobile/app`](mobile/app)
 - 服务端 gateway 源码：[`lib/mobile_gateway`](lib/mobile_gateway)
 

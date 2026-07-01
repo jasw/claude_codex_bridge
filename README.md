@@ -6,7 +6,7 @@
 **Visible, controllable multi-agent cooperative TUI workspace**
 
 <p>
-  <img src="https://img.shields.io/badge/version-8.0.7-orange.svg" alt="version">
+  <img src="https://img.shields.io/badge/version-8.0.8-orange.svg" alt="version">
   <img src="https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20WSL-lightgrey.svg" alt="platform">
   <img src="https://img.shields.io/badge/providers-15%20CLI%20families-0B7285.svg" alt="providers">
 </p>
@@ -126,7 +126,7 @@ After rich is enabled, plain `ccb` opens the rich WezTerm launcher unless it is 
 <details>
 <summary><b>GitHub release package and source install fallbacks</b></summary>
 
-If npm is not available in your environment, download the matching package from [Releases](https://github.com/bfly123/claude_code_bridge/releases):
+If npm is not available in your environment, download the matching package from [Releases](https://github.com/SeemSeam/claude_codex_bridge/releases):
 
 ```bash
 tar -xzf ccb-*.tar.gz
@@ -137,8 +137,8 @@ cd ccb-*
 Source install is for development or temporary fallback use:
 
 ```bash
-git clone https://github.com/bfly123/claude_code_bridge.git
-cd claude_code_bridge
+git clone https://github.com/SeemSeam/claude_codex_bridge.git
+cd claude_codex_bridge
 ./install.sh install
 ```
 
@@ -227,10 +227,10 @@ The command walks through local setup and pairing.
 <details>
 <summary><b>Mobile App details, security boundaries, and source</b></summary>
 
-CCB 8.0.7 includes the Flutter CCB Mobile source under [`mobile/`](mobile/)
+CCB 8.0.8 includes the Flutter CCB Mobile source under [`mobile/`](mobile/)
 and publishes an Android APK as a GitHub Release asset:
 
-- [Download CCB Mobile v8.0.7 APK](https://github.com/bfly123/claude_code_bridge/releases/download/v8.0.7/ccb-mobile-v8.0.7.apk)
+- [Download CCB Mobile v8.0.8 APK](https://github.com/bfly123/claude_code_bridge/releases/download/v8.0.8/ccb-mobile-v8.0.8.apk)
 - App source: [`mobile/app`](mobile/app)
 - Server/gateway source: [`lib/mobile_gateway`](lib/mobile_gateway)
 
@@ -249,9 +249,10 @@ ccb update mobile
 Then follow the printed steps:
 
 1. Install and sign in to Tailscale on the desktop/server and the phone.
-2. Install the APK on Android.
-3. Run `ccb update mobile` on the desktop/server.
-4. Open CCB Mobile and scan the QR printed by the terminal.
+2. Start the loopback-only CCB Mobile gateway and Tailscale Serve command shown
+   by CCB.
+3. Install the APK on Android.
+4. Open CCB Mobile and scan the pairing QR.
 
 Security boundaries:
 
@@ -735,7 +736,7 @@ For later updates:
 ccb update
 ```
 
-[GitHub Releases](https://github.com/bfly123/claude_code_bridge/releases) remain available for environments where npm is unavailable. Source checkout install is for development, fix validation, or temporary fallback.
+[GitHub Releases](https://github.com/SeemSeam/claude_codex_bridge/releases) remain available for environments where npm is unavailable. Source checkout install is for development, fix validation, or temporary fallback.
 
 #### Uninstall
 
@@ -800,78 +801,6 @@ v7 highlights:
 - Hardened tmux, Ghostty, release helper, Codex trust, and provider session restore paths.
 
 <details open>
-<summary><b>v8.0.7</b> - CCB Mobile Notifications And Theme Stabilization</summary>
-
-- Adds server-wide task-completion notification SSE plus Android local notifications with low-sensitive payloads and verified tap routing back to the target project/agent.
-- Carries provider runtime status detection for mobile activity indicators and sidebar state.
-- Updates the mobile app with steel-blue/slate theming, improved readable content styles, height-limited expanded bubbles, and notification group tap handling.
-- Synchronizes VERSION, package metadata, mobile app version metadata, README links, workflow defaults, and APK download URLs for 8.0.7.
-
-</details>
-
-<details>
-<summary><b>v8.0.6</b> - CCB Mobile Real Project Chat Stabilization</summary>
-
-- Improves Android CCB Mobile real-project pane-native chat, status recovery,
-  terminal stream handling, QR/manual pairing, input ergonomics, localization,
-  and noisy timeline filtering.
-- Includes the latest server-wide project listing, native provider transcript,
-  provider runtime status, and mobile terminal pane input fixes from the CCB
-  source line.
-- Uses a compact terminal pairing QR in `ccb update mobile`, keeps the original
-  CCB Mobile bridge icon identity, and makes camera-unavailable scanner fallback
-  actionable instead of showing native plugin errors.
-- Synchronizes VERSION, package metadata, mobile app version metadata, README
-  links, workflow defaults, and APK download URLs for 8.0.6.
-
-</details>
-
-<details>
-<summary><b>v8.0.4</b> - CCB Mobile Project List Stability</summary>
-
-- Accelerates `/v1/projects` for server-wide mobile gateways by checking
-  mounted project health concurrently while preserving registry order.
-- Reduces noisy BrokenPipe/connection-reset tracebacks when a phone disconnects
-  or times out while a response is being written.
-
-</details>
-
-<details>
-<summary><b>v8.0.3</b> - npm Release Metadata Fix</summary>
-
-- Fixes npm provenance metadata so `@seemseam/ccb` publishes from the canonical
-  GitHub repository used by GitHub Actions.
-- Synchronizes VERSION, package metadata, mobile app version metadata, README
-  links, workflow defaults, and APK download URLs for 8.0.3.
-
-</details>
-
-<details>
-<summary><b>v8.0.2</b> - Mobile Tailnet Onboarding Fixes</summary>
-
-- Handles the Tailscale Serve one-time approval flow without exposing raw
-  timeout errors.
-- Reuses an existing correct Tailscale Serve proxy for `:8787`, so users who
-  already approved or started Serve can immediately get the pairing QR.
-- Fixes source worktree installs so installed `ccb` is not mistaken for a source
-  checkout.
-
-</details>
-
-<details>
-<summary><b>v8.0.1</b> - Simplified CCB Mobile Pairing</summary>
-
-- Makes `ccb update mobile` the single user-facing setup command: it checks
-  Tailscale, guides login/install, starts the server-wide loopback gateway plus
-  Tailscale Serve, and prints a pairing QR directly in the terminal.
-- Updates CCB Mobile first launch to show pairing instructions, Tailscale
-  download guidance, and a scan button instead of opening the fake/demo project.
-- Automatically opens the server-wide mounted project list after a stored
-  pairing profile is found, reducing setup friction for normal phone use.
-
-</details>
-
-<details>
 <summary><b>v8.0.0</b> - CCB Mobile Monorepo Release</summary>
 
 - Ships the Flutter CCB Mobile source inside this repository and publishes the
