@@ -309,6 +309,7 @@ class CcbConversationItem {
   }
 
   CcbConversationItem copyWith({
+    String? body,
     CcbConversationDeliveryState? state,
     List<CcbMessageAttachment>? attachments,
     DateTime? sentAt,
@@ -321,7 +322,7 @@ class CcbConversationItem {
       agentName: agentName,
       kind: kind,
       title: title,
-      body: body,
+      body: body ?? this.body,
       format: format,
       state: state ?? this.state,
       contentId: contentId,

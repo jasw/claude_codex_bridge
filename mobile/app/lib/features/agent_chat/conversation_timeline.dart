@@ -11,6 +11,8 @@ import 'content_reader.dart';
 import 'conversation_bubble.dart';
 import 'readable_terminal_history_panel.dart';
 
+const double conversationTimelineExpandedRevealPadding = 96;
+
 class ConversationTimeline extends StatelessWidget {
   const ConversationTimeline({
     required this.repository,
@@ -90,10 +92,9 @@ class ConversationTimeline extends StatelessWidget {
           final expandedReadPadding =
               expandedItemIds.isEmpty
                   ? 0.0
-                  : (constraints.maxHeight - 72).clamp(
-                    0.0,
-                    constraints.maxHeight,
-                  );
+                  : conversationTimelineExpandedRevealPadding
+                      .clamp(0.0, constraints.maxHeight)
+                      .toDouble();
           return ListView.separated(
             key: const ValueKey('agent-chat-timeline'),
             controller: controller,

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:ccb_mobile/features/agent_chat/agent_chat_controller.dart';
 import 'package:ccb_mobile/features/agent_chat/agent_conversation_refresh_coordinator.dart';
 import 'package:ccb_mobile/models/ccb_agent.dart';
@@ -74,6 +76,52 @@ void main() {
 
       expect(chatController.hasNewMessages('lead'), isTrue);
       expect(scrolledAgents, isEmpty);
+    },
+  );
+
+  test(
+    'coalesces overlapping latest loads into a trailing conversation reload',
+    () async {
+      final chatController = AgentChatController();
+      final repository = _BlockingConversationRepository(
+        first: _conversation(id: 'reply-1', body: 'first'),
+        trailing: _conversation(id: 'reply-2', body: 'latest'),
+      );
+      final coordinator = _coordinator(chatController: chatController);
+
+      final firstLoad = coordinator.load(
+        repository: repository,
+        view: _view(epoch: 7),
+        agentName: 'lead',
+      );
+      await Future<void>.delayed(Duration.zero);
+
+      await coordinator.load(
+        repository: repository,
+        view: _view(epoch: 7),
+        agentName: 'lead',
+      );
+      await coordinator.load(
+        repository: repository,
+        view: _view(epoch: 7),
+        agentName: 'lead',
+      );
+
+      expect(repository.conversationCalls, [
+        const _ConversationCall('proj', 'lead', 7),
+      ]);
+
+      repository.completeFirst();
+      await firstLoad;
+
+      expect(repository.conversationCalls, [
+        const _ConversationCall('proj', 'lead', 7),
+        const _ConversationCall('proj', 'lead', 7),
+      ]);
+      expect(
+        chatController.remoteConversationFor('lead')?.items.single.body,
+        'latest',
+      );
     },
   );
 
@@ -350,6 +398,45 @@ class _ConversationRepository implements MobileCcbRepository {
     required String fileId,
   }) async {
     throw UnimplementedError();
+  }
+}
+
+class _BlockingConversationRepository extends _ConversationRepository {
+  _BlockingConversationRepository({required this.first, required this.trailing})
+    : super(responses: const []);
+
+  final CcbAgentConversation first;
+  final CcbAgentConversation trailing;
+  final _firstGate = Completer<void>();
+
+  void completeFirst() {
+    if (!_firstGate.isCompleted) {
+      _firstGate.complete();
+    }
+  }
+
+  @override
+  Future<CcbAgentConversation> getAgentConversation({
+    required String projectId,
+    required String agent,
+    required int namespaceEpoch,
+    int limit = 50,
+    String? cursor,
+  }) async {
+    conversationCalls.add(
+      _ConversationCall(
+        projectId,
+        agent,
+        namespaceEpoch,
+        limit: limit,
+        cursor: cursor,
+      ),
+    );
+    if (conversationCalls.length == 1) {
+      await _firstGate.future;
+      return first;
+    }
+    return trailing;
   }
 }
 

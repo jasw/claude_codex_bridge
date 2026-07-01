@@ -228,6 +228,106 @@ void main() {
       },
     );
 
+    test('prunes local attachment message covered by pane attachment echo', () {
+      final local = CcbConversationItem.userMessage(
+        id: 'local-image',
+        agentName: 'lead',
+        body: 'please inspect',
+        attachments: const [
+          CcbMessageAttachment(
+            fileId: 'mobile-file-1',
+            fileName: 'photo.png',
+            mimeType: 'image/png',
+            sizeBytes: 68,
+          ),
+        ],
+      );
+      final remote = _conversation([
+        _user(
+          id: 'remote-image-echo',
+          body:
+              'please inspect\n'
+              'Attached files:\n'
+              '- photo.png (image/png, 68 bytes, file id: mobile-file-1)',
+          state: CcbConversationDeliveryState.sent,
+        ),
+      ]);
+
+      final next = pruneLocalMessagesCoveredByRemote(
+        localItems: [local],
+        remoteConversation: remote,
+      );
+
+      expect(next, isEmpty);
+      expect(
+        remoteConversationCoversUserMessage(
+          remoteConversation: remote,
+          message: local,
+        ),
+        isTrue,
+      );
+    });
+
+    test('detects jpg pane attachment echo from uploaded mobile file', () {
+      final local = CcbConversationItem.userMessage(
+        id: 'local-image',
+        agentName: 'lead',
+        body: 'please inspect this image',
+        attachments: const [
+          CcbMessageAttachment(
+            fileId: 'uploaded-image-1',
+            fileName: 'camera-roll-image.jpg',
+            mimeType: 'image/jpeg',
+            sizeBytes: 4,
+            kind: CcbMessageAttachmentKind.image,
+            state: CcbMessageAttachmentState.available,
+          ),
+        ],
+        state: CcbConversationDeliveryState.sent,
+      );
+      final remote = _user(
+        id: 'remote-image-echo',
+        body:
+            'please inspect this image\n'
+            'Attached files:\n'
+            '- camera-roll-image.jpg (image/jpeg, 4 bytes, '
+            'file id: uploaded-image-1)',
+        state: CcbConversationDeliveryState.sent,
+      );
+
+      expect(
+        remoteUserMessageIsPaneAttachmentEcho(remote: remote, local: local),
+        isTrue,
+      );
+      expect(
+        remoteUserMessageCoversLocalMessage(remote: remote, local: local),
+        isTrue,
+      );
+    });
+
+    test('normalizes pane attachment echo into structured attachment', () {
+      final normalized = normalizePaneAttachmentEcho(
+        _user(
+          id: 'remote-image-echo',
+          body:
+              'please inspect this image\n'
+              'Attached files:\n'
+              '- camera-roll-image.jpg (image/jpeg, 4 bytes, '
+              'file id: uploaded-image-1)',
+          state: CcbConversationDeliveryState.sent,
+        ),
+      );
+
+      expect(normalized.body, 'please inspect this image');
+      expect(normalized.attachments, hasLength(1));
+      expect(normalized.attachments.single.fileId, 'uploaded-image-1');
+      expect(normalized.attachments.single.fileName, 'camera-roll-image.jpg');
+      expect(
+        normalized.attachments.single.effectiveKind,
+        CcbMessageAttachmentKind.image,
+      );
+    });
+
     test('detects remote coverage for attachment-only user messages', () {
       final local = CcbConversationItem.userMessage(
         id: 'local-1',

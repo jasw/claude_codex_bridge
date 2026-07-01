@@ -16,14 +16,12 @@ import '../../models/ccb_project_view.dart';
 import '../../repository/mobile_ccb_repository.dart';
 import '../../transport/terminal_transport.dart';
 import 'agent_chat_controller.dart';
-import 'agent_chat_state_helpers.dart';
 import 'agent_chat_ui_controller_store.dart';
 import 'agent_conversation_refresh_coordinator.dart';
 import 'agent_local_message_store.dart';
 import 'agent_message_submit_coordinator.dart';
 import 'agent_pane_event_coordinator.dart';
 import 'agent_pane_message_submitter.dart';
-import 'agent_terminal_history_refresh_coordinator.dart';
 import 'conversation_timeline.dart';
 import 'conversation_refresh_scheduler.dart';
 import 'pane_chat_controller.dart';
@@ -36,6 +34,7 @@ const selectedAgentStaleIdleRefreshThreshold = 5;
 const selectedAgentTabKeyBytes = [9];
 const selectedAgentEscapeKeyBytes = [27];
 const selectedAgentExpandScrollDuration = Duration(milliseconds: 220);
+const selectedAgentAwaitingConversationRefreshInterval = Duration(seconds: 2);
 
 class SelectedAgentWorkspace extends StatefulWidget {
   const SelectedAgentWorkspace({
@@ -88,14 +87,6 @@ class _SelectedAgentWorkspaceState extends State<SelectedAgentWorkspace> {
       );
   late final AgentPaneMessageSubmitter _paneMessageSubmitter =
       AgentPaneMessageSubmitter(onEvent: _handlePaneChatEvent);
-  late final AgentTerminalHistoryRefreshCoordinator
-  _terminalHistoryRefreshCoordinator = AgentTerminalHistoryRefreshCoordinator(
-    chatController: _chatController,
-    isMounted: () => mounted,
-    mutateState: _mutateChatState,
-    isTimelineNearEnd: _isTimelineNearEnd,
-    scrollTimelineToEnd: _scrollTimelineToEnd,
-  );
   late final AgentMessageSubmitCoordinator _messageSubmitCoordinator =
       AgentMessageSubmitCoordinator(
         chatController: _chatController,
@@ -122,8 +113,8 @@ class _SelectedAgentWorkspaceState extends State<SelectedAgentWorkspace> {
   final Set<String> _localExceptionStatusAgentNames = {};
   final Map<String, String> _recentPaneOutputText = {};
   final Set<String> _pendingClearNewMessageAgents = {};
+  final Map<String, DateTime> _lastAwaitingConversationRefreshAt = {};
   var _nextDraftAttachmentIndex = 0;
-  var _refreshingTerminalHistory = false;
 
   @override
   void initState() {
@@ -153,6 +144,18 @@ class _SelectedAgentWorkspaceState extends State<SelectedAgentWorkspace> {
         _restoreLocalMessagesForSelectedAgent();
       }
       _loadSelectedAgentConversation();
+    } else if (_selectedAgentActivitySignature(oldWidget.agent) !=
+        _selectedAgentActivitySignature(widget.agent)) {
+      final agent = widget.agent;
+      if (agent != null) {
+        _syncLocalExecutionStateFromView(
+          view: widget.view,
+          agentName: agent.name,
+        );
+        unawaited(
+          _refreshSelectedAgentConversation(agent, viewOverride: widget.view),
+        );
+      }
     }
   }
 
@@ -319,10 +322,10 @@ class _SelectedAgentWorkspaceState extends State<SelectedAgentWorkspace> {
     if (agent == null) {
       return;
     }
-    unawaited(_refreshSelectedAgentConversationAndHistory(agent));
+    unawaited(_refreshSelectedAgentConversation(agent));
   }
 
-  Future<void> _refreshSelectedAgentConversationAndHistory(
+  Future<void> _refreshSelectedAgentConversation(
     CcbAgent agent, {
     CcbProjectView? viewOverride,
   }) async {
@@ -330,35 +333,7 @@ class _SelectedAgentWorkspaceState extends State<SelectedAgentWorkspace> {
       return;
     }
     final view = viewOverride ?? widget.view;
-    final targetAgent = view.agentByName(agent.name) ?? agent;
     await _loadConversation(agent.name, viewOverride: view);
-    if (!mounted || widget.agent?.name != agent.name) {
-      return;
-    }
-    final remoteConversation = _chatController.remoteConversationFor(
-      agent.name,
-    );
-    if (conversationHasTerminalDerivedItems(remoteConversation) ||
-        conversationHasProviderNativeItems(remoteConversation)) {
-      return;
-    }
-    await _refreshTerminalHistory(targetAgent, viewOverride: view);
-  }
-
-  Future<void> _refreshSelectedAgentConversationAndPaneHistory(
-    CcbAgent agent, {
-    CcbProjectView? viewOverride,
-  }) async {
-    if (!mounted || widget.agent?.name != agent.name) {
-      return;
-    }
-    final view = viewOverride ?? widget.view;
-    final targetAgent = view.agentByName(agent.name) ?? agent;
-    await _loadConversation(agent.name, viewOverride: view);
-    if (!mounted || widget.agent?.name != agent.name) {
-      return;
-    }
-    await _refreshTerminalHistory(targetAgent, viewOverride: view);
   }
 
   void _collapseComposer(String agentName) {
@@ -388,25 +363,6 @@ class _SelectedAgentWorkspaceState extends State<SelectedAgentWorkspace> {
       agentName: agentName,
       refreshView: widget.onRefreshView,
     );
-  }
-
-  Future<void> _refreshTerminalHistory(
-    CcbAgent agent, {
-    CcbProjectView? viewOverride,
-  }) async {
-    if (_refreshingTerminalHistory) {
-      return;
-    }
-    _refreshingTerminalHistory = true;
-    try {
-      await _terminalHistoryRefreshCoordinator.refresh(
-        repository: widget.repository,
-        agent: agent,
-        view: viewOverride ?? widget.view,
-      );
-    } finally {
-      _refreshingTerminalHistory = false;
-    }
   }
 
   Future<void> _sendMessage(CcbAgent agent) async {
@@ -543,6 +499,7 @@ class _SelectedAgentWorkspaceState extends State<SelectedAgentWorkspace> {
         );
         final mimeType =
             lookupMimeType(path) ??
+            lookupMimeType(fileName) ??
             _mimeTypeForExtension(extension) ??
             'application/octet-stream';
         if (!_isSupportedAttachment(
@@ -816,10 +773,28 @@ class _SelectedAgentWorkspaceState extends State<SelectedAgentWorkspace> {
     }
     final result = await _refreshExecutionStatusForAgent(agent);
     if (!result.settled || !mounted || widget.agent?.name != agent.name) {
+      if (mounted &&
+          widget.agent?.name == agent.name &&
+          _shouldRefreshConversationWhileAwaiting(agent.name)) {
+        await _refreshSelectedAgentConversation(agent);
+      }
       return;
     }
     _conversationRefreshScheduler.cancelAll();
+    _lastAwaitingConversationRefreshAt.remove(agent.name);
     await _refreshLatestForAgent(agent, refreshViewFirst: false);
+  }
+
+  bool _shouldRefreshConversationWhileAwaiting(String agentName) {
+    final now = DateTime.now().toUtc();
+    final previous = _lastAwaitingConversationRefreshAt[agentName];
+    if (previous != null &&
+        now.difference(previous) <
+            selectedAgentAwaitingConversationRefreshInterval) {
+      return false;
+    }
+    _lastAwaitingConversationRefreshAt[agentName] = now;
+    return true;
   }
 
   void _handleRefreshScheduleChanged() {
@@ -860,15 +835,7 @@ class _SelectedAgentWorkspaceState extends State<SelectedAgentWorkspace> {
         );
       }
     }
-    await (widget.usePaneInputForMessages
-        ? _refreshSelectedAgentConversationAndPaneHistory(
-          agent,
-          viewOverride: view,
-        )
-        : _refreshSelectedAgentConversationAndHistory(
-          agent,
-          viewOverride: view,
-        ));
+    await _refreshSelectedAgentConversation(agent, viewOverride: view);
   }
 
   Future<_ExecutionSyncResult> _refreshExecutionStatusForAgent(
@@ -930,6 +897,7 @@ class _SelectedAgentWorkspaceState extends State<SelectedAgentWorkspace> {
   void _clearAwaitingPaneResponse(String agentName) {
     _awaitingPaneResponseAgentNames.remove(agentName);
     _staleIdleRefreshCounts.remove(agentName);
+    _lastAwaitingConversationRefreshAt.remove(agentName);
   }
 
   bool _recordStaleIdle(String agentName) {
@@ -1119,8 +1087,32 @@ class _SelectedAgentWorkspaceState extends State<SelectedAgentWorkspace> {
   }
 }
 
+String _selectedAgentActivitySignature(CcbAgent? agent) {
+  if (agent == null) {
+    return '';
+  }
+  return [
+    agent.name,
+    agent.active,
+    agent.queueDepth,
+    agent.runtimeHealth,
+    agent.activityState,
+    agent.activitySource,
+    agent.activityReason,
+    agent.activitySymbol,
+    agent.activityColor,
+  ].join('|');
+}
+
 String? _mimeTypeForExtension(String? extension) {
   return switch (extension?.toLowerCase()) {
+    'jpg' || 'jpeg' => 'image/jpeg',
+    'png' => 'image/png',
+    'gif' => 'image/gif',
+    'webp' => 'image/webp',
+    'heic' => 'image/heic',
+    'heif' => 'image/heif',
+    'bmp' => 'image/bmp',
     'pdf' => 'application/pdf',
     'txt' => 'text/plain',
     'md' => 'text/markdown',

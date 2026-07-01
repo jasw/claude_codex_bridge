@@ -453,6 +453,61 @@ void main() {
     );
     expect(gatewayRepository.getProjectViewCalls, ['test_ccb2']);
   });
+
+  testWidgets(
+    'paired system back steps from agent to project list to settings',
+    (tester) async {
+      final profile = _pairedHost(hostId: 'server-host', deviceId: 'phone');
+      final profileStore = await _profileStoreWith([profile]);
+      final gatewayRepository = _ServerProjectsRepository([
+        _projectFixture(
+          id: 'test_ccb2',
+          displayName: 'test_ccb2',
+          root: '/srv/ccb/test_ccb2',
+        ),
+      ]);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: ProjectHomeScreen(
+            repository: FakeMobileCcbRepository.demo(),
+            profileStore: profileStore,
+            gatewayRepositoryFactory: (_) => gatewayRepository,
+            gatewayTerminalTransportFactory:
+                (_) => RecordingTerminalTransport(),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await _activatePairedGatewayListOnly(tester);
+      await tester.tap(find.byKey(const ValueKey('project-open-test_ccb2')));
+      await tester.pumpAndSettle();
+
+      expect(
+        find.byKey(const ValueKey('selected-agent-workspace')),
+        findsOneWidget,
+      );
+
+      await tester.binding.handlePopRoute();
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const ValueKey('project-list')), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('project-open-test_ccb2')),
+        findsOneWidget,
+      );
+
+      await tester.binding.handlePopRoute();
+      await tester.pumpAndSettle();
+
+      expect(
+        find.byKey(const ValueKey('project-home-onboarding')),
+        findsOneWidget,
+      );
+      await expandTile(tester, const ValueKey('gateway-pairing-panel'));
+      expect(find.byKey(const ValueKey('gateway-url-field')), findsOneWidget);
+    },
+  );
 }
 
 Future<void> _activatePairedGatewayListOnly(WidgetTester tester) async {

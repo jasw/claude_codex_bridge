@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import '../../models/ccb_agent_conversation.dart';
 import '../../models/ccb_project_view.dart';
 import '../../repository/mobile_ccb_repository.dart';
@@ -10,7 +12,7 @@ typedef AgentTimelineNearEnd = bool Function(String agentName);
 typedef AgentTimelineScrollToEnd = void Function(String agentName);
 
 class AgentConversationRefreshCoordinator {
-  const AgentConversationRefreshCoordinator({
+  AgentConversationRefreshCoordinator({
     required AgentChatController chatController,
     required AgentChatIsMounted isMounted,
     required AgentChatStateMutation mutateState,
@@ -27,6 +29,7 @@ class AgentConversationRefreshCoordinator {
   final AgentChatStateMutation _mutateState;
   final AgentTimelineNearEnd _isTimelineNearEnd;
   final AgentTimelineScrollToEnd _scrollTimelineToEnd;
+  final Map<String, _PendingConversationLoad> _pendingLoads = {};
 
   Future<void> load({
     required MobileCcbRepository repository,
@@ -34,18 +37,33 @@ class AgentConversationRefreshCoordinator {
     required String agentName,
     AgentViewRefresh? refreshView,
   }) async {
-    if (view.namespaceEpoch == null ||
-        _chatController.isLoadingConversation(agentName)) {
+    if (view.namespaceEpoch == null) {
       return;
     }
+    final request = _PendingConversationLoad(
+      repository: repository,
+      view: view,
+      agentName: agentName,
+      refreshView: refreshView,
+    );
+    if (_chatController.isLoadingConversation(agentName)) {
+      _pendingLoads[agentName] = request;
+      return;
+    }
+    await _loadLatest(request);
+    await _drainPendingLoads(agentName);
+  }
+
+  Future<void> _loadLatest(_PendingConversationLoad request) async {
+    final agentName = request.agentName;
     _mutateState(() {
       _chatController.beginLoadingConversation(agentName);
     });
     try {
       final conversation = await AgentConversationLoader(
-        repository: repository,
-        refreshView: refreshView,
-      ).load(agentName: agentName, view: view);
+        repository: request.repository,
+        refreshView: request.refreshView,
+      ).load(agentName: agentName, view: request.view);
       if (!_isMounted() || conversation == null) {
         return;
       }
@@ -66,6 +84,19 @@ class AgentConversationRefreshCoordinator {
           _chatController.finishLoadingConversation(agentName);
         });
       }
+    }
+  }
+
+  Future<void> _drainPendingLoads(String agentName) async {
+    while (_isMounted()) {
+      final request = _pendingLoads.remove(agentName);
+      if (request == null) {
+        return;
+      }
+      if (request.view.namespaceEpoch == null) {
+        continue;
+      }
+      await _loadLatest(request);
     }
   }
 
@@ -114,6 +145,7 @@ class AgentConversationRefreshCoordinator {
           _chatController.finishLoadingConversation(agentName);
         });
       }
+      await _drainPendingLoads(agentName);
     }
   }
 
@@ -139,4 +171,18 @@ class AgentConversationRefreshCoordinator {
       _scrollTimelineToEnd(agentName);
     }
   }
+}
+
+class _PendingConversationLoad {
+  const _PendingConversationLoad({
+    required this.repository,
+    required this.view,
+    required this.agentName,
+    required this.refreshView,
+  });
+
+  final MobileCcbRepository repository;
+  final CcbProjectView view;
+  final String agentName;
+  final AgentViewRefresh? refreshView;
 }

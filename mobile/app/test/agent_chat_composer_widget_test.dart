@@ -493,6 +493,211 @@ void main() {
     expect(find.text('Attach up to 5 files'), findsOneWidget);
   });
 
+  testWidgets(
+    'image picker accepts extension-only photos and submits uploaded image',
+    (tester) async {
+      final originalPicker = FilePickerPlatform.instance;
+      final tempDir = Directory.systemTemp.createTempSync(
+        'ccb-mobile-picker-image-',
+      );
+      final image = File('${tempDir.path}/picked-image-cache');
+      image.writeAsBytesSync([0xff, 0xd8, 0xff, 0xd9]);
+      addTearDown(() {
+        FilePickerPlatform.instance = originalPicker;
+        tempDir.deleteSync(recursive: true);
+      });
+      FilePickerPlatform.instance = _FakeFilePicker([
+        FilePickerResult([
+          PlatformFile(
+            name: 'camera-roll-image.jpg',
+            path: image.path,
+            size: image.lengthSync(),
+          ),
+        ]),
+      ]);
+      final repository = ImageUploadGatewayRepository();
+      final agent = const CcbAgent(
+        name: 'mobile',
+        provider: 'codex',
+        window: 'main',
+        order: 0,
+        active: true,
+        queueDepth: 0,
+        paneId: '%2',
+      );
+      final view = _workspaceView(agent);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SelectedAgentWorkspace(
+              repository: repository,
+              terminalTransport: null,
+              usePaneInputForMessages: false,
+              view: view,
+              agent: agent,
+              enableComposerCollapse: true,
+              onRefreshView: () async => view,
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const ValueKey('agent-attachment-button')));
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.byKey(const ValueKey('agent-attachment-pick-image')),
+      );
+      await tester.pumpAndSettle();
+
+      expect(
+        find.byKey(
+          const ValueKey('agent-attachment-image-preview-draft-mobile-0'),
+        ),
+        findsOneWidget,
+      );
+      expect(
+        find.text('camera-roll-image.jpg is not a supported attachment type'),
+        findsNothing,
+      );
+
+      await tester.enterText(
+        find.byKey(const ValueKey('agent-message-composer')),
+        'please inspect this image',
+      );
+      await tester.tap(find.byKey(const ValueKey('agent-message-send-button')));
+      for (
+        var attempt = 0;
+        attempt < 20 && repository.pathUploads.isEmpty;
+        attempt += 1
+      ) {
+        await tester.pump(const Duration(milliseconds: 50));
+      }
+
+      expect(repository.pathUploads.single.mimeType, 'image/jpeg');
+      expect(repository.pathUploads.single.fileName, 'camera-roll-image.jpg');
+      for (
+        var attempt = 0;
+        attempt < 20 && repository.submittedMessages.isEmpty;
+        attempt += 1
+      ) {
+        await tester.pump(const Duration(milliseconds: 50));
+      }
+      expect(
+        repository.submittedMessages.single.body,
+        'please inspect this image',
+      );
+      final submittedAttachment =
+          repository.submittedMessages.single.attachments.single;
+      expect(submittedAttachment.fileId, 'uploaded-image-1');
+      expect(submittedAttachment.fileName, 'camera-roll-image.jpg');
+      expect(submittedAttachment.mimeType, 'image/jpeg');
+      expect(submittedAttachment.effectiveKind, CcbMessageAttachmentKind.image);
+      expect(find.text('Failed'), findsNothing);
+    },
+  );
+
+  testWidgets('pane image echo merges into one attachment message', (
+    tester,
+  ) async {
+    final originalPicker = FilePickerPlatform.instance;
+    final tempDir = Directory.systemTemp.createTempSync(
+      'ccb-mobile-pane-image-',
+    );
+    final image = File('${tempDir.path}/picked-image-cache');
+    image.writeAsBytesSync([0xff, 0xd8, 0xff, 0xd9]);
+    addTearDown(() {
+      FilePickerPlatform.instance = originalPicker;
+      tempDir.deleteSync(recursive: true);
+    });
+    FilePickerPlatform.instance = _FakeFilePicker([
+      FilePickerResult([
+        PlatformFile(
+          name: 'camera-roll-image.jpg',
+          path: image.path,
+          size: image.lengthSync(),
+        ),
+      ]),
+    ]);
+    final repository = PaneImageEchoRepository();
+    final terminalTransport = RecordingTerminalTransport();
+    final agent = const CcbAgent(
+      name: 'mobile',
+      provider: 'codex',
+      window: 'main',
+      order: 0,
+      active: true,
+      queueDepth: 0,
+      paneId: '%2',
+    );
+    final view = _workspaceView(agent);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SelectedAgentWorkspace(
+            repository: repository,
+            terminalTransport: terminalTransport,
+            usePaneInputForMessages: true,
+            view: view,
+            agent: agent,
+            enableComposerCollapse: true,
+            onRefreshView: () async => view,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const ValueKey('agent-attachment-button')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('agent-attachment-pick-image')));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(const ValueKey('agent-message-composer')),
+      'please inspect this image',
+    );
+    await tester.tap(find.byKey(const ValueKey('agent-message-send-button')));
+
+    for (
+      var attempt = 0;
+      attempt < 30 &&
+          find
+              .byKey(const ValueKey('conversation-item-remote-image-echo'))
+              .evaluate()
+              .isEmpty;
+      attempt += 1
+    ) {
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+
+    expect(
+      terminalTransport.sessions.single.pasted.single,
+      contains('Attached files:'),
+    );
+    expect(
+      terminalTransport.sessions.single.pasted.single,
+      contains('camera-roll-image.jpg'),
+    );
+    expect(
+      find.byKey(const ValueKey('conversation-item-local-mobile-0')),
+      findsNothing,
+    );
+    expect(
+      find.byKey(const ValueKey('conversation-item-remote-image-echo')),
+      findsOneWidget,
+    );
+    expect(renderedTextContaining('please inspect this image'), findsOneWidget);
+    expect(renderedTextContaining('Attached files:'), findsNothing);
+    expect(
+      find.byKey(
+        const ValueKey('conversation-attachment-list-remote-image-echo'),
+      ),
+      findsOneWidget,
+    );
+  });
+
   testWidgets('oversized file rejection preserves existing attachment draft', (
     tester,
   ) async {
@@ -1093,7 +1298,7 @@ void main() {
     );
   });
 
-  testWidgets('manual refresh updates fallback terminal history', (
+  testWidgets('manual refresh reloads conversation without terminal fallback', (
     tester,
   ) async {
     final repository = FallbackTerminalHistoryRepository();
@@ -1103,9 +1308,14 @@ void main() {
     await tester.pumpAndSettle();
     await openCurrentProject(tester);
 
-    expect(repository.terminalHistoryCalls, isNotEmpty);
+    expect(repository.conversationCalls, isNotEmpty);
     final initialTerminalHistoryCalls = repository.terminalHistoryCalls.length;
-    expect(find.text('Pane sync visible'), findsNothing);
+    final initialConversationCalls = repository.conversationCalls.length;
+    expect(repository.terminalHistoryCalls, isEmpty);
+    expect(
+      find.text('Conversation endpoint has no pane history.'),
+      findsOneWidget,
+    );
 
     repository.terminalHistoryOverride = const ReadableTerminalHistory(
       agentName: 'mobile',
@@ -1133,24 +1343,11 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(
-      repository.terminalHistoryCalls.length,
-      greaterThan(initialTerminalHistoryCalls),
+      repository.conversationCalls.length,
+      greaterThan(initialConversationCalls),
     );
-    await dragUntilVisible(
-      tester,
-      const ValueKey(
-        'conversation-item-terminal-history-output-mobile-sync-output',
-      ),
-      const Offset(0, -700),
-    );
-    final preview = tester.widget<Text>(
-      find.byKey(
-        const ValueKey(
-          'conversation-preview-terminal-history-output-mobile-sync-output',
-        ),
-      ),
-    );
-    expect(preview.data, 'Pane sync visible');
+    expect(repository.terminalHistoryCalls.length, initialTerminalHistoryCalls);
+    expect(find.text('Pane sync visible'), findsNothing);
   });
 
   testWidgets(
@@ -1672,7 +1869,139 @@ void main() {
     },
   );
 
-  testWidgets('paired pane command result can render from terminal history', (
+  testWidgets('scheduled refresh shows new reply while agent remains working', (
+    tester,
+  ) async {
+    final terminalTransport = RecordingTerminalTransport();
+    final repository = WorkingPaneConversationRepository();
+    var view = _workspaceView(
+      _statusAgent(
+        activityState: 'idle',
+        activitySource: 'provider_pane',
+        activityReason: 'provider_prompt_idle',
+      ),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: StatefulBuilder(
+            builder: (context, setState) {
+              final agent = view.agentByName('mobile')!;
+              return SelectedAgentWorkspace(
+                repository: repository,
+                terminalTransport: terminalTransport,
+                usePaneInputForMessages: true,
+                view: view,
+                agent: agent,
+                enableComposerCollapse: true,
+                onRefreshView: () async {
+                  final refreshed = _workspaceView(
+                    _statusAgent(
+                      activityState: 'active',
+                      activitySource: 'codex_runtime',
+                      activityReason: 'codex_working_status_line',
+                    ),
+                  );
+                  setState(() {
+                    view = refreshed;
+                  });
+                  return refreshed;
+                },
+              );
+            },
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(repository.conversationCalls, hasLength(1));
+
+    await tester.enterText(
+      find.byKey(const ValueKey('agent-message-composer')),
+      'show reply while working',
+    );
+    await tester.tap(find.byKey(const ValueKey('agent-message-send-button')));
+    await tester.pump();
+
+    expect(find.text('Working'), findsOneWidget);
+    expect(find.text('reply while still working'), findsNothing);
+
+    await tester.pump(const Duration(milliseconds: 120));
+    await tester.pump();
+
+    expect(repository.conversationCalls.length, greaterThanOrEqualTo(4));
+    expect(find.text('reply while still working'), findsOneWidget);
+    expect(find.text('mobile completed'), findsNothing);
+    expect(find.text('Working'), findsOneWidget);
+  });
+
+  testWidgets(
+    'selected agent activity update refreshes session and marks running reply',
+    (tester) async {
+      final repository = RunningStatusConversationRepository();
+      final viewNotifier = ValueNotifier<CcbProjectView>(
+        _workspaceView(
+          _statusAgent(
+            activityState: 'idle',
+            activitySource: 'provider_pane',
+            activityReason: 'provider_prompt_idle',
+          ),
+        ),
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: ValueListenableBuilder<CcbProjectView>(
+              valueListenable: viewNotifier,
+              builder: (context, view, _) {
+                final agent = view.agentByName('mobile')!;
+                return SelectedAgentWorkspace(
+                  repository: repository,
+                  terminalTransport: null,
+                  usePaneInputForMessages: false,
+                  view: view,
+                  agent: agent,
+                  enableComposerCollapse: true,
+                  onRefreshView: () async => viewNotifier.value,
+                );
+              },
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(repository.conversationCalls, hasLength(1));
+      expect(find.text('completed before update'), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('conversation-working-reply-running')),
+        findsNothing,
+      );
+
+      viewNotifier.value = _workspaceView(
+        _statusAgent(
+          activityState: 'active',
+          activitySource: 'codex_runtime',
+          activityReason: 'codex_working_status_line',
+        ),
+      );
+      await tester.pump();
+      await tester.pumpAndSettle();
+
+      expect(repository.conversationCalls.length, greaterThan(1));
+      expect(find.text('running after activity update'), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('conversation-working-reply-running')),
+        findsOneWidget,
+      );
+      expect(find.text('Working'), findsOneWidget);
+    },
+  );
+
+  testWidgets('paired pane command result refreshes session conversation', (
     tester,
   ) async {
     final secureStore = MemorySecureStore();
@@ -1692,21 +2021,7 @@ void main() {
     );
     await profileStore.save(host);
     final terminalTransport = RecordingTerminalTransport();
-    final repository =
-        RecordingGatewayRepository()
-          ..terminalHistoryOverride = const ReadableTerminalHistory(
-            agentName: 'mobile',
-            historyScope: 'tmux_scrollback',
-            sourcePaneId: '%2',
-            blocks: [
-              ReadableTerminalBlock(
-                id: 'status-output',
-                type: 'log',
-                title: 'Terminal output',
-                text: 'Credits remaining: 42%',
-              ),
-            ],
-          );
+    final repository = StatusConversationRepository();
 
     await tester.pumpWidget(
       MaterialApp(
@@ -1735,7 +2050,8 @@ void main() {
     expect(terminalTransport.sessions.single.written, [
       [13],
     ]);
-    expect(repository.terminalHistoryCalls, isNotEmpty);
+    expect(repository.conversationCalls, isNotEmpty);
+    expect(repository.terminalHistoryCalls, isEmpty);
     expect(find.text('Credits remaining: 42%'), findsOneWidget);
   });
 
@@ -2059,6 +2375,198 @@ class FallbackTerminalHistoryRepository extends RecordingGatewayRepository {
         ),
       ],
       generatedAt: DateTime.utc(2026, 6, 26),
+    );
+  }
+}
+
+class RunningStatusConversationRepository extends RecordingGatewayRepository {
+  var _loads = 0;
+
+  @override
+  Future<CcbAgentConversation> getAgentConversation({
+    required String projectId,
+    required String agent,
+    required int namespaceEpoch,
+    int limit = 50,
+    String? cursor,
+  }) async {
+    conversationCalls.add((projectId, agent, namespaceEpoch));
+    _loads += 1;
+    final now = DateTime.utc(2026, 6, 30, 12);
+    return CcbAgentConversation(
+      projectId: projectId,
+      agentName: agent,
+      namespaceEpoch: namespaceEpoch,
+      items: [
+        _loads == 1
+            ? CcbConversationItem(
+              id: 'reply-completed',
+              agentName: agent,
+              kind: CcbConversationItemKind.agentReply,
+              title: 'Agent reply',
+              body: 'completed before update',
+              source: 'provider_native/codex',
+              startedAt: now.subtract(const Duration(minutes: 2)),
+              completedAt: now.subtract(const Duration(minutes: 1)),
+            )
+            : CcbConversationItem(
+              id: 'reply-running',
+              agentName: agent,
+              kind: CcbConversationItemKind.agentReply,
+              title: 'Agent reply',
+              body: 'running after activity update',
+              source: 'provider_native/codex',
+              startedAt: now,
+            ),
+      ],
+      generatedAt: now,
+    );
+  }
+}
+
+class WorkingPaneConversationRepository extends RecordingGatewayRepository {
+  var _loads = 0;
+
+  @override
+  Future<CcbAgentConversation> getAgentConversation({
+    required String projectId,
+    required String agent,
+    required int namespaceEpoch,
+    int limit = 50,
+    String? cursor,
+  }) async {
+    conversationCalls.add((projectId, agent, namespaceEpoch));
+    _loads += 1;
+    final now = DateTime.utc(2026, 6, 30, 12);
+    return CcbAgentConversation(
+      projectId: projectId,
+      agentName: agent,
+      namespaceEpoch: namespaceEpoch,
+      items:
+          _loads < 4
+              ? const []
+              : [
+                CcbConversationItem(
+                  id: 'reply-working-live',
+                  agentName: agent,
+                  kind: CcbConversationItemKind.agentReply,
+                  title: 'Agent reply',
+                  body: 'reply while still working',
+                  source: 'provider_native/codex',
+                  startedAt: now,
+                ),
+              ],
+      generatedAt: now,
+    );
+  }
+}
+
+class ImageUploadGatewayRepository extends RecordingGatewayRepository
+    implements MobileCcbRepositoryFileUploader {
+  final pathUploads = <_ImagePathUpload>[];
+
+  @override
+  Future<GatewayFileUploadResult> uploadFileFromPath({
+    required String projectId,
+    required String agentName,
+    required String fileName,
+    required String mimeType,
+    required String path,
+  }) async {
+    pathUploads.add(
+      _ImagePathUpload(
+        projectId: projectId,
+        agentName: agentName,
+        fileName: fileName,
+        mimeType: mimeType,
+        path: path,
+      ),
+    );
+    return GatewayFileUploadResult(
+      fileId: 'uploaded-image-${pathUploads.length}',
+      fileName: fileName,
+      mimeType: mimeType,
+      sizeBytes: 4,
+    );
+  }
+}
+
+class PaneImageEchoRepository extends ImageUploadGatewayRepository {
+  @override
+  Future<CcbAgentConversation> getAgentConversation({
+    required String projectId,
+    required String agent,
+    required int namespaceEpoch,
+    int limit = 50,
+    String? cursor,
+  }) async {
+    conversationCalls.add((projectId, agent, namespaceEpoch));
+    return CcbAgentConversation(
+      projectId: projectId,
+      agentName: agent,
+      namespaceEpoch: namespaceEpoch,
+      items:
+          pathUploads.isEmpty
+              ? const []
+              : [
+                CcbConversationItem.userMessage(
+                  id: 'remote-image-echo',
+                  agentName: agent,
+                  body:
+                      'please inspect this image\n'
+                      'Attached files:\n'
+                      '- camera-roll-image.jpg (image/jpeg, 4 bytes, '
+                      'file id: uploaded-image-1)',
+                  state: CcbConversationDeliveryState.sent,
+                ),
+              ],
+      generatedAt: DateTime.utc(2026, 7, 1, 12),
+    );
+  }
+}
+
+class _ImagePathUpload {
+  const _ImagePathUpload({
+    required this.projectId,
+    required this.agentName,
+    required this.fileName,
+    required this.mimeType,
+    required this.path,
+  });
+
+  final String projectId;
+  final String agentName;
+  final String fileName;
+  final String mimeType;
+  final String path;
+}
+
+class StatusConversationRepository extends RecordingGatewayRepository {
+  @override
+  Future<CcbAgentConversation> getAgentConversation({
+    required String projectId,
+    required String agent,
+    required int namespaceEpoch,
+    int limit = 50,
+    String? cursor,
+  }) async {
+    conversationCalls.add((projectId, agent, namespaceEpoch));
+    return CcbAgentConversation(
+      projectId: projectId,
+      agentName: agent,
+      namespaceEpoch: namespaceEpoch,
+      items: [
+        CcbConversationItem(
+          id: 'status-reply-$agent',
+          agentName: agent,
+          kind: CcbConversationItemKind.agentReply,
+          title: 'Agent reply',
+          body: 'Credits remaining: 42%',
+          source: 'provider_native/codex',
+          completedAt: DateTime.utc(2026, 6, 30, 12),
+        ),
+      ],
+      generatedAt: DateTime.utc(2026, 6, 30, 12),
     );
   }
 }

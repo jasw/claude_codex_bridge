@@ -276,15 +276,14 @@ class AgentChatController {
     String agentName,
     CcbAgentConversation conversation,
   ) {
-    final localItems = _localMessages[agentName];
-    if (localItems == null || localItems.isEmpty) {
-      return conversation;
-    }
+    final localItems =
+        _localMessages[agentName] ?? const <CcbConversationItem>[];
     final localById = <String, CcbConversationItem>{};
     final localByBody = <String, List<CcbConversationItem>>{};
+    final localWithAttachments = <CcbConversationItem>[];
     for (final item in localItems) {
       if (item.kind != CcbConversationItemKind.userMessage ||
-          !_hasConversationTiming(item)) {
+          (!_hasConversationTiming(item) && item.attachments.isEmpty)) {
         continue;
       }
       localById[item.id] = item;
@@ -292,35 +291,51 @@ class AgentChatController {
       if (bodyKey.isNotEmpty) {
         localByBody.putIfAbsent(bodyKey, () => []).add(item);
       }
+      if (item.attachments.isNotEmpty) {
+        localWithAttachments.add(item);
+      }
     }
-    if (localById.isEmpty && localByBody.isEmpty) {
-      return conversation;
-    }
+    final hasLocalFallback =
+        localById.isNotEmpty ||
+        localByBody.isNotEmpty ||
+        localWithAttachments.isNotEmpty;
     var changed = false;
     final nextItems = <CcbConversationItem>[];
-    for (final item in conversation.items) {
-      if (item.kind != CcbConversationItemKind.userMessage ||
+    for (final rawItem in conversation.items) {
+      final item = normalizePaneAttachmentEcho(rawItem);
+      if (item.body != rawItem.body ||
+          item.attachments.length != rawItem.attachments.length) {
+        changed = true;
+      }
+      if (!hasLocalFallback ||
+          item.kind != CcbConversationItemKind.userMessage ||
           _hasConversationTiming(item)) {
         nextItems.add(item);
         continue;
       }
       final idFallback = localById[item.id];
       final fallback =
-          idFallback ?? _takeLocalTimingForBody(localByBody, item.body);
+          idFallback ??
+          _takeLocalTimingForBody(localByBody, item.body) ??
+          _takeLocalAttachmentEchoFallback(localWithAttachments, item);
       if (fallback == null) {
         nextItems.add(item);
         continue;
       }
-      if (idFallback != null) {
-        _removeLocalTimingForBody(localByBody, idFallback);
-      }
+      _removeLocalTimingForBody(localByBody, fallback);
+      _removeLocalAttachmentFallback(localWithAttachments, fallback);
+      final useLocalAttachmentPresentation =
+          remoteUserMessageIsPaneAttachmentEcho(remote: item, local: fallback);
       changed = true;
       nextItems.add(
         item.copyWith(
+          body: useLocalAttachmentPresentation ? fallback.body : null,
           sentAt: fallback.sentAt,
           startedAt: fallback.startedAt,
           completedAt: fallback.completedAt,
           durationMs: fallback.durationMs,
+          attachments:
+              useLocalAttachmentPresentation ? fallback.attachments : null,
         ),
       );
     }
@@ -361,6 +376,27 @@ class AgentChatController {
     if (candidates.isEmpty) {
       localByBody.remove(bodyKey);
     }
+  }
+
+  CcbConversationItem? _takeLocalAttachmentEchoFallback(
+    List<CcbConversationItem> localItems,
+    CcbConversationItem remote,
+  ) {
+    final index = localItems.indexWhere(
+      (local) =>
+          remoteUserMessageIsPaneAttachmentEcho(remote: remote, local: local),
+    );
+    if (index < 0) {
+      return null;
+    }
+    return localItems.removeAt(index);
+  }
+
+  void _removeLocalAttachmentFallback(
+    List<CcbConversationItem> localItems,
+    CcbConversationItem item,
+  ) {
+    localItems.removeWhere((local) => local.id == item.id);
   }
 
   bool _hasConversationTiming(CcbConversationItem item) {

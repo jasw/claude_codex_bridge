@@ -36,6 +36,20 @@ String conversationSignature(CcbAgentConversation? conversation) {
   ].join('|');
 }
 
+CcbConversationItem normalizePaneAttachmentEcho(CcbConversationItem item) {
+  if (item.kind != CcbConversationItemKind.userMessage) {
+    return item;
+  }
+  final echo = _parsePaneAttachmentEcho(item.body);
+  if (echo == null) {
+    return item;
+  }
+  return item.copyWith(
+    body: echo.body,
+    attachments: item.attachments.isEmpty ? echo.attachments : null,
+  );
+}
+
 String terminalHistorySignature(ReadableTerminalHistory? history) {
   if (history == null || history.blocks.isEmpty) {
     return '';
@@ -105,55 +119,29 @@ List<CcbConversationItem> pruneLocalMessagesCoveredByRemote({
   if (localItems.isEmpty) {
     return localItems;
   }
-  final remoteUserBodyCounts = <String, int>{};
-  final remoteUserAttachmentCounts = <String, int>{};
-  for (final item in remoteConversation.items) {
-    if (item.kind != CcbConversationItemKind.userMessage) {
-      continue;
-    }
-    final key = messageBodyKey(item.body);
-    if (key.isNotEmpty) {
-      remoteUserBodyCounts.update(key, (value) => value + 1, ifAbsent: () => 1);
-    } else {
-      final attachKey = _attachmentCoverageKey(item.attachments);
-      if (attachKey.isNotEmpty) {
-        remoteUserAttachmentCounts.update(
-          attachKey,
-          (value) => value + 1,
-          ifAbsent: () => 1,
-        );
-      }
-    }
-  }
-  if (remoteUserBodyCounts.isEmpty && remoteUserAttachmentCounts.isEmpty) {
+  final remoteUsers = [
+    for (final item in remoteConversation.items)
+      if (item.kind == CcbConversationItemKind.userMessage) item,
+  ];
+  if (remoteUsers.isEmpty) {
     return localItems;
   }
+  final consumedRemoteIndexes = <int>{};
   final next = <CcbConversationItem>[];
   for (final item in localItems) {
     if (item.state == CcbConversationDeliveryState.failed) {
       next.add(item);
       continue;
     }
-    final bodyKey = messageBodyKey(item.body);
-    if (bodyKey.isNotEmpty) {
-      final coveredCount = remoteUserBodyCounts[bodyKey] ?? 0;
-      if (coveredCount <= 0) {
-        next.add(item);
-      } else {
-        remoteUserBodyCounts[bodyKey] = coveredCount - 1;
-      }
+    final remoteIndex = _firstCoveringRemoteUserIndex(
+      remoteUsers: remoteUsers,
+      consumedRemoteIndexes: consumedRemoteIndexes,
+      local: item,
+    );
+    if (remoteIndex == null) {
+      next.add(item);
     } else {
-      final attachKey = _attachmentCoverageKey(item.attachments);
-      if (attachKey.isNotEmpty) {
-        final coveredCount = remoteUserAttachmentCounts[attachKey] ?? 0;
-        if (coveredCount <= 0) {
-          next.add(item);
-        } else {
-          remoteUserAttachmentCounts[attachKey] = coveredCount - 1;
-        }
-      } else {
-        next.add(item);
-      }
+      consumedRemoteIndexes.add(remoteIndex);
     }
   }
   return next;
@@ -167,24 +155,152 @@ bool remoteConversationCoversUserMessage({
     return false;
   }
   for (final remote in remoteConversation.items) {
-    if (remote.kind != CcbConversationItemKind.userMessage) {
-      continue;
-    }
-    if (remote.id == message.id) {
-      return true;
-    }
-    final bodyKey = messageBodyKey(message.body);
-    if (bodyKey.isNotEmpty && messageBodyKey(remote.body) == bodyKey) {
-      return true;
-    }
-    final attachmentKey = _attachmentCoverageKey(message.attachments);
-    if (bodyKey.isEmpty &&
-        attachmentKey.isNotEmpty &&
-        _attachmentCoverageKey(remote.attachments) == attachmentKey) {
+    if (remoteUserMessageCoversLocalMessage(remote: remote, local: message)) {
       return true;
     }
   }
   return false;
+}
+
+bool remoteUserMessageCoversLocalMessage({
+  required CcbConversationItem remote,
+  required CcbConversationItem local,
+}) {
+  if (remote.kind != CcbConversationItemKind.userMessage ||
+      local.kind != CcbConversationItemKind.userMessage) {
+    return false;
+  }
+  if (remote.id == local.id) {
+    return true;
+  }
+  final bodyKey = messageBodyKey(local.body);
+  if (bodyKey.isNotEmpty && messageBodyKey(remote.body) == bodyKey) {
+    return true;
+  }
+  final attachmentKey = _attachmentCoverageKey(local.attachments);
+  if (attachmentKey.isEmpty) {
+    return false;
+  }
+  if (bodyKey.isEmpty &&
+      _attachmentCoverageKey(remote.attachments) == attachmentKey) {
+    return true;
+  }
+  return remoteUserMessageIsPaneAttachmentEcho(remote: remote, local: local);
+}
+
+bool remoteUserMessageIsPaneAttachmentEcho({
+  required CcbConversationItem remote,
+  required CcbConversationItem local,
+}) {
+  if (remote.kind != CcbConversationItemKind.userMessage ||
+      local.kind != CcbConversationItemKind.userMessage ||
+      local.attachments.isEmpty) {
+    return false;
+  }
+  final remoteBody = _normalizedMultilineBody(remote.body);
+  if (remoteBody.isEmpty) {
+    return false;
+  }
+  final parsed = _parsePaneAttachmentEcho(remoteBody);
+  if (parsed == null || parsed.body != _normalizedMultilineBody(local.body)) {
+    return false;
+  }
+  return local.attachments.every(
+    (attachment) => parsed.attachments.any(
+      (candidate) =>
+          candidate.fileName == attachment.fileName &&
+          candidate.mimeType == attachment.mimeType &&
+          candidate.sizeBytes == attachment.sizeBytes,
+    ),
+  );
+}
+
+int? _firstCoveringRemoteUserIndex({
+  required List<CcbConversationItem> remoteUsers,
+  required Set<int> consumedRemoteIndexes,
+  required CcbConversationItem local,
+}) {
+  for (var index = 0; index < remoteUsers.length; index += 1) {
+    if (consumedRemoteIndexes.contains(index)) {
+      continue;
+    }
+    if (remoteUserMessageCoversLocalMessage(
+      remote: remoteUsers[index],
+      local: local,
+    )) {
+      return index;
+    }
+  }
+  return null;
+}
+
+String _normalizedMultilineBody(String body) {
+  return body.trim().replaceAll('\r\n', '\n').replaceAll('\r', '\n');
+}
+
+_PaneAttachmentEcho? _parsePaneAttachmentEcho(String body) {
+  final lines = _normalizedMultilineBody(body).split('\n');
+  for (var markerIndex = 0; markerIndex < lines.length; markerIndex += 1) {
+    if (lines[markerIndex].trim() != 'Attached files:') {
+      continue;
+    }
+    final attachments = <CcbMessageAttachment>[];
+    var allAttachmentLines = true;
+    for (final rawLine in lines.skip(markerIndex + 1)) {
+      final line = rawLine.trim();
+      if (line.isEmpty) {
+        continue;
+      }
+      final attachment = _parsePaneAttachmentLine(line);
+      if (attachment == null) {
+        allAttachmentLines = false;
+        break;
+      }
+      attachments.add(attachment);
+    }
+    if (!allAttachmentLines || attachments.isEmpty) {
+      continue;
+    }
+    return _PaneAttachmentEcho(
+      body: lines.take(markerIndex).join('\n').trim(),
+      attachments: attachments,
+    );
+  }
+  return null;
+}
+
+CcbMessageAttachment? _parsePaneAttachmentLine(String line) {
+  final match = RegExp(
+    r'^-\s+(.+)\s+\(([^,]+),\s+(\d+)\s+bytes,\s+file id:\s+([^)]+)\)$',
+  ).firstMatch(line);
+  if (match == null) {
+    return null;
+  }
+  final fileName = match.group(1)?.trim() ?? '';
+  final mimeType = match.group(2)?.trim() ?? '';
+  final sizeBytes = int.tryParse(match.group(3) ?? '') ?? 0;
+  final fileId = match.group(4)?.trim() ?? '';
+  if (fileName.isEmpty || mimeType.isEmpty || fileId.isEmpty) {
+    return null;
+  }
+  return CcbMessageAttachment(
+    fileId: fileId,
+    fileName: fileName,
+    mimeType: mimeType,
+    sizeBytes: sizeBytes,
+    kind:
+        mimeType.startsWith('image/')
+            ? CcbMessageAttachmentKind.image
+            : CcbMessageAttachmentKind.document,
+    state: CcbMessageAttachmentState.available,
+  );
+}
+
+class _PaneAttachmentEcho {
+  const _PaneAttachmentEcho({required this.body, required this.attachments});
+
+  final String body;
+  final List<CcbMessageAttachment> attachments;
 }
 
 String _attachmentCoverageKey(List<CcbMessageAttachment> attachments) {

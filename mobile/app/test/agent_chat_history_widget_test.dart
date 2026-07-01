@@ -46,74 +46,22 @@ void main() {
     expect(find.byType(TerminalView), findsNothing);
   });
 
-  testWidgets('tmux history input and output appear as compact chat bubbles', (
-    tester,
-  ) async {
+  testWidgets('tmux history stays out of compact chat bubbles', (tester) async {
     await tester.pumpWidget(const CcbMobileApp(enableProductOnboarding: false));
     await tester.pumpAndSettle();
     await openCurrentProject(tester);
 
     const inputId = 'terminal-history-input-mobile-mobile-command-adb';
-    await dragUntilVisible(
-      tester,
-      const ValueKey('conversation-item-$inputId'),
-      const Offset(0, 700),
-    );
     expect(
       find.byKey(const ValueKey('conversation-item-$inputId')),
-      findsOneWidget,
-    );
-    expect(
-      find.byKey(const ValueKey('conversation-preview-$inputId')),
-      findsOneWidget,
-    );
-    expect(
-      find.byKey(const ValueKey('conversation-expand-$inputId')),
-      findsOneWidget,
-    );
-    expect(
-      find.byKey(const ValueKey('conversation-body-$inputId')),
       findsNothing,
-    );
-    expect(find.text(r'$ adb reverse tcp:8787 tcp:8787'), findsOneWidget);
-
-    await tapVisible(tester, const ValueKey('conversation-expand-$inputId'));
-
-    expect(
-      find.byKey(const ValueKey('conversation-body-$inputId')),
-      findsOneWidget,
     );
 
     const outputId = 'terminal-history-output-mobile-mobile-diff-content';
-    await dragUntilVisible(
-      tester,
-      const ValueKey('conversation-item-$outputId'),
-      const Offset(0, -700),
-    );
     expect(
       find.byKey(const ValueKey('conversation-item-$outputId')),
-      findsOneWidget,
-    );
-    expect(
-      find.byKey(const ValueKey('conversation-preview-$outputId')),
-      findsOneWidget,
-    );
-    expect(
-      find.byKey(const ValueKey('conversation-expand-$outputId')),
-      findsOneWidget,
-    );
-    expect(
-      find.byKey(const ValueKey('conversation-body-$outputId')),
       findsNothing,
     );
-
-    await tapVisible(tester, const ValueKey('conversation-preview-$outputId'));
-
-    expect(
-      find.byKey(const ValueKey('conversation-body-$outputId')),
-      findsOneWidget,
-    );
-    expect(renderedTextContaining('terminal-first default page'), findsWidgets);
     expect(find.byType(TerminalView), findsNothing);
   });
 
@@ -237,6 +185,50 @@ void main() {
       expect(controller.position.pixels, closeTo(beforeExpandOffset, 1));
     },
   );
+
+  testWidgets('expanded bottom bubble cannot scroll into large trailing blank', (
+    tester,
+  ) async {
+    await setTestSurfaceSize(tester, const Size(390, 844));
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ProjectHomeScreen(
+          repository: LongConversationRepository(messageCount: 160),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await openCurrentProject(tester);
+
+    await dragUntilVisible(
+      tester,
+      const ValueKey('conversation-expand-long-159'),
+      const Offset(0, -700),
+    );
+    final timeline = tester.widget<ListView>(
+      find.byKey(const ValueKey('agent-chat-timeline')),
+    );
+    final controller = timeline.controller!;
+
+    await tester.tap(
+      find.byKey(const ValueKey('conversation-expand-long-159')),
+    );
+    await tester.pumpAndSettle();
+
+    controller.jumpTo(controller.position.maxScrollExtent);
+    await tester.pumpAndSettle();
+
+    final itemBottom =
+        tester
+            .getBottomRight(find.byKey(conversationTimelineItemKey('long-159')))
+            .dy;
+    final timelineBottom =
+        tester
+            .getBottomRight(find.byKey(const ValueKey('agent-chat-timeline')))
+            .dy;
+
+    expect(timelineBottom - itemBottom, lessThan(140));
+  });
 
   testWidgets('user send scrolls to latest while reading older history', (
     tester,

@@ -40,7 +40,7 @@ void main() {
     );
 
     test(
-      'adds terminal history after remote conversation without terminal items',
+      'does not supplement terminal history when remote conversation exists',
       () {
         final remote = _conversation([
           _remoteReply(id: 'remote-reply', body: 'remote body'),
@@ -55,40 +55,35 @@ void main() {
           localMessages: [_localMessage()],
         );
 
-        expect(items.map((item) => item.id), [
-          'remote-reply',
-          'terminal-history-input-lead-cmd',
-          'local-1',
-        ]);
+        expect(items.map((item) => item.id), ['remote-reply', 'local-1']);
       },
     );
 
-    test('keeps supplemental terminal history before remote user messages', () {
-      final remote = _conversation([
-        _remoteReply(id: 'remote-reply', body: 'remote body'),
-        CcbConversationItem.userMessage(
-          id: 'remote-user',
-          agentName: 'lead',
-          body: 'sent from composer',
-          state: CcbConversationDeliveryState.sent,
-        ),
-      ]);
+    test(
+      'keeps remote user message order without terminal supplementation',
+      () {
+        final remote = _conversation([
+          _remoteReply(id: 'remote-reply', body: 'remote body'),
+          CcbConversationItem.userMessage(
+            id: 'remote-user',
+            agentName: 'lead',
+            body: 'sent from composer',
+            state: CcbConversationDeliveryState.sent,
+          ),
+        ]);
 
-      final items = selectedAgentTimelineItems(
-        view: _view(),
-        agent: _agent(),
-        contentItems: const [],
-        terminalHistory: _history(),
-        remoteConversation: remote,
-        localMessages: const [],
-      );
+        final items = selectedAgentTimelineItems(
+          view: _view(),
+          agent: _agent(),
+          contentItems: const [],
+          terminalHistory: _history(),
+          remoteConversation: remote,
+          localMessages: const [],
+        );
 
-      expect(items.map((item) => item.id), [
-        'remote-reply',
-        'terminal-history-input-lead-cmd',
-        'remote-user',
-      ]);
-    });
+        expect(items.map((item) => item.id), ['remote-reply', 'remote-user']);
+      },
+    );
 
     test(
       'does not supplement terminal history for provider native transcript',
