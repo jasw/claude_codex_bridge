@@ -296,6 +296,35 @@ def test_run_cli_entrypoint_routes_install_mobile_before_phase2(monkeypatch) -> 
     assert calls[0].listen == "127.0.0.1:0"
 
 
+def test_run_cli_entrypoint_routes_internal_mobile_host_serve_before_phase2(monkeypatch) -> None:
+    stdout = StringIO()
+    stderr = StringIO()
+    calls: list[tuple[list[str], Path]] = []
+
+    def _mobile_host(tokens, *, script_root):
+        calls.append((list(tokens), script_root))
+        return 37
+
+    monkeypatch.setattr(entrypoint_runtime, "maybe_handle_mobile_host_serve_command", _mobile_host)
+    monkeypatch.setattr(
+        entrypoint_runtime,
+        "maybe_handle_phase2",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("phase2 should not run")),
+    )
+
+    result = run_cli_entrypoint(
+        ["__mobile-host-serve", "--listen", "127.0.0.1:8787"],
+        version="5.2.8",
+        script_root=Path("/tmp/ccb"),
+        cwd=Path("/tmp/not-a-project"),
+        stdout=stdout,
+        stderr=stderr,
+    )
+
+    assert result == 37
+    assert calls == [(["__mobile-host-serve", "--listen", "127.0.0.1:8787"], Path("/tmp/ccb"))]
+
+
 def test_run_cli_entrypoint_routes_rich(monkeypatch) -> None:
     stdout = StringIO()
     stderr = StringIO()

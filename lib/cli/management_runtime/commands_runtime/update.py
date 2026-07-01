@@ -11,7 +11,8 @@ import tarfile
 
 from release_artifacts import release_artifact_name
 from cli.roles_runtime.commands import cmd_roles
-from cli.services.mobile_update import run_mobile_update_onboarding
+from cli.services.mobile_host import start_or_replace_mobile_host_service
+from cli.services.mobile_update import DEFAULT_MOBILE_GATEWAY_LISTEN, run_mobile_update_onboarding
 from cli.tools_runtime.workbench import print_workbench_status, update_rich_workbench
 from rolepacks.sources import role_catalog_status
 
@@ -47,7 +48,7 @@ def cmd_update(args, *, script_root: Path) -> int:
     if _update_target_is_rich(args):
         return _update_rich_bundle()
     if _update_target_is_mobile(args):
-        return _update_mobile_bundle()
+        return _update_mobile_bundle(script_root=script_root)
     source_repo_install = is_source_repo_root(script_root)
     install_dir = resolve_managed_install_dir(script_root=script_root)
 
@@ -527,8 +528,31 @@ def _update_rich_bundle() -> int:
     return 0 if result.get("status") in {"ok", "degraded"} else 1
 
 
-def _update_mobile_bundle() -> int:
-    return run_mobile_update_onboarding()
+def _update_mobile_bundle(*, script_root: Path) -> int:
+    def _start_service(commands, _status):
+        mobile_serve = tuple(commands.mobile_serve)
+        listen = _command_option(mobile_serve, '--listen') or DEFAULT_MOBILE_GATEWAY_LISTEN
+        public_url = _command_option(mobile_serve, '--public-url')
+        route_provider = _command_option(mobile_serve, '--route-provider') or 'tailnet'
+        return start_or_replace_mobile_host_service(
+            script_root=script_root,
+            listen=listen,
+            public_url=public_url,
+            route_provider=route_provider,
+        ).to_record()
+
+    return run_mobile_update_onboarding(start_service_fn=_start_service)
+
+
+def _command_option(command: tuple[str, ...], option: str) -> str | None:
+    try:
+        index = command.index(option)
+    except ValueError:
+        return None
+    if index + 1 >= len(command):
+        return None
+    value = str(command[index + 1] or '').strip()
+    return value or None
 
 
 __all__ = ['POST_UPDATE_COMMAND', 'cmd_update', 'maybe_handle_post_update_command']

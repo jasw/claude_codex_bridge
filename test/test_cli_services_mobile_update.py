@@ -278,3 +278,61 @@ def test_onboarding_logged_in_prints_serve_qr_and_smoke_shapes() -> None:
     assert "Funnel and 0.0.0.0 listeners are not used" in text
     command_lines = [line for line in output if line.startswith("   ccb ") or line.startswith("   tailscale ")]
     assert all("0.0.0.0" not in line for line in command_lines)
+
+
+def test_onboarding_logged_in_starts_managed_mobile_service_when_callback_provided() -> None:
+    output: list[str] = []
+    calls: list[tuple[mobile_update.TailnetOnboardingCommands, mobile_update.TailscaleStatus]] = []
+
+    def _start_service(commands, status):
+        calls.append((commands, status))
+        return {
+            'service_status': 'started',
+            'pid': 1234,
+            'listen': '127.0.0.1:8787',
+            'gateway_url': 'https://desktop.tailnet.ts.net:8787',
+            'local_gateway_url': 'http://127.0.0.1:8787',
+            'route_provider': 'tailnet',
+            'mobile_state_dir': '/tmp/mobile-state',
+            'service_log_path': '/tmp/mobile-state/service.log',
+        }
+
+    code = mobile_update.run_mobile_update_onboarding(
+        detect_tailscale_fn=lambda: mobile_update.TailscaleStatus(
+            installed=True,
+            path="/usr/bin/tailscale",
+            logged_in=True,
+            hostname="desktop.tailnet.ts.net.",
+        ),
+        start_service_fn=_start_service,
+        print_fn=output.append,
+    )
+
+    text = "\n".join(output)
+    assert code == 0
+    assert len(calls) == 1
+    assert calls[0][0].mobile_serve[:4] == ('ccb', 'mobile', 'serve', '--listen')
+    assert "Starting or refreshing the loopback-only CCB Mobile gateway" in text
+    assert "status: started" in text
+    assert "pid: 1234" in text
+    assert "service_log: /tmp/mobile-state/service.log" in text
+    assert "Start the loopback-only CCB Mobile gateway in one terminal" not in text
+
+
+def test_onboarding_reports_non_mapping_mobile_service_result() -> None:
+    output: list[str] = []
+
+    code = mobile_update.run_mobile_update_onboarding(
+        detect_tailscale_fn=lambda: mobile_update.TailscaleStatus(
+            installed=True,
+            path="/usr/bin/tailscale",
+            logged_in=True,
+            hostname="desktop.tailnet.ts.net.",
+        ),
+        start_service_fn=lambda _commands, _status: None,  # type: ignore[return-value]
+        print_fn=output.append,
+    )
+
+    text = "\n".join(output)
+    assert code == 1
+    assert "CCB Mobile gateway update failed: TypeError: mobile service starter must return a mapping" in text

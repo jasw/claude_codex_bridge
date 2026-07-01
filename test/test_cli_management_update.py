@@ -845,23 +845,56 @@ def test_cmd_update_rich_updates_workbench_without_release_lookup(monkeypatch, t
 
 
 def test_cmd_update_mobile_runs_onboarding_without_release_lookup(monkeypatch, tmp_path: Path) -> None:
-    calls: list[str] = []
+    calls: list[dict[str, object]] = []
     monkeypatch.setattr(update_runtime.platform, "system", lambda: "Linux")
     monkeypatch.setattr(
         update_runtime,
         "get_available_versions",
         lambda: (_ for _ in ()).throw(AssertionError("mobile update must not resolve CCB releases")),
     )
-    monkeypatch.setattr(
-        update_runtime,
-        "run_mobile_update_onboarding",
-        lambda: calls.append("mobile") or 0,
-    )
+
+    class _Result:
+        def to_record(self):
+            return {'service_status': 'started'}
+
+    def _start_or_replace(**kwargs):
+        calls.append(dict(kwargs))
+        return _Result()
+
+    def _onboarding(*, start_service_fn):
+        service = start_service_fn(
+            SimpleNamespace(
+                mobile_serve=(
+                    'ccb',
+                    'mobile',
+                    'serve',
+                    '--listen',
+                    '127.0.0.1:8787',
+                    '--public-url',
+                    'https://desktop.tailnet.ts.net:8787',
+                    '--route-provider',
+                    'tailnet',
+                )
+            ),
+            SimpleNamespace(),
+        )
+        assert service == {'service_status': 'started'}
+        return 0
+
+    monkeypatch.setattr(update_runtime, "start_or_replace_mobile_host_service", _start_or_replace)
+    monkeypatch.setattr(update_runtime, "run_mobile_update_onboarding", _onboarding)
 
     code = update_runtime.cmd_update(SimpleNamespace(target="mobile"), script_root=tmp_path / "script-root")
 
     assert code == 0
-    assert calls == ["mobile"]
+    assert calls == [
+        {
+            'script_root': tmp_path / 'script-root',
+            'listen': '127.0.0.1:8787',
+            'public_url': 'https://desktop.tailnet.ts.net:8787',
+            'route_provider': 'tailnet',
+        }
+    ]
 
 
 def test_cmd_update_rich_allows_degraded_workbench_status(monkeypatch, tmp_path: Path) -> None:

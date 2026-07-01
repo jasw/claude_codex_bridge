@@ -48,6 +48,7 @@ def run_mobile_update_onboarding(
     install_tailscale_fn: Callable[[], int] | None = None,
     open_url_fn: Callable[[str], object] | None = None,
     prompt_fn: Callable[[str], str] | None = None,
+    start_service_fn: Callable[[TailnetOnboardingCommands, TailscaleStatus], Mapping[str, object]] | None = None,
     environ: Mapping[str, str] | None = None,
     print_fn: Callable[[str], None] = print,
 ) -> int:
@@ -97,6 +98,33 @@ def run_mobile_update_onboarding(
 
     print_fn("✅ Tailscale is logged in.")
     commands = build_tailnet_onboarding_commands(status=status)
+    if start_service_fn is not None:
+        print_fn("")
+        print_fn("Starting or refreshing the loopback-only CCB Mobile gateway:")
+        try:
+            service = start_service_fn(commands, status)
+            if not isinstance(service, Mapping):
+                raise TypeError('mobile service starter must return a mapping')
+            _print_mobile_service_summary(print_fn, service)
+        except Exception as exc:
+            print_fn(f"❌ CCB Mobile gateway update failed: {type(exc).__name__}: {exc}")
+            return 1
+        print_fn("")
+        print_fn("Expose that loopback gateway to your tailnet:")
+        print_fn(f"   {_shell_join(commands.tailscale_serve)}")
+        print_fn("   This uses Tailscale Serve only; it does not enable Funnel.")
+        print_fn("")
+        _print_mobile_app_steps(print_fn, environ=env)
+        print_fn("")
+        print_fn("Open CCB Mobile and scan the pairing QR printed above.")
+        print_fn("")
+        print_fn("Dry-run/simulated smoke command shapes:")
+        print_fn(f"   health:       {_shell_join(commands.health_smoke)}")
+        print_fn(f"   diagnostics:  {_shell_join(commands.route_diagnostics_smoke)}")
+        print_fn(f"   terminal WS:  {_shell_join(commands.terminal_websocket_smoke)}")
+        print_fn(f"   revoke gate:  {_shell_join(commands.revoke_gate_smoke)}")
+        return 0
+
     print_fn("")
     print_fn("Start the loopback-only CCB Mobile gateway in one terminal:")
     print_fn(f"   {_shell_join(commands.mobile_serve)}")
@@ -328,6 +356,26 @@ def _print_mobile_app_steps(print_fn: Callable[[str], None], *, environ: Mapping
     print_fn(f"      Override this link with {CCB_MOBILE_APP_DOWNLOAD_URL_ENV} if your team mirrors the APK.")
     print_fn("   3. Enable the Tailscale VPN on the phone.")
     print_fn("   4. Open CCB Mobile and scan the pairing QR.")
+
+
+def _print_mobile_service_summary(print_fn: Callable[[str], None], service: Mapping[str, object]) -> None:
+    print_fn(f"   status: {service.get('service_status') or service.get('mobile_status') or 'unknown'}")
+    if service.get("pid"):
+        print_fn(f"   pid: {service.get('pid')}")
+    if service.get("listen"):
+        print_fn(f"   listen: {service.get('listen')}")
+    if service.get("gateway_url"):
+        print_fn(f"   gateway_url: {service.get('gateway_url')}")
+    if service.get("local_gateway_url"):
+        print_fn(f"   local_gateway_url: {service.get('local_gateway_url')}")
+    if service.get("route_provider"):
+        print_fn(f"   route_provider: {service.get('route_provider')}")
+    if service.get("mobile_state_dir"):
+        print_fn(f"   mobile_state_dir: {service.get('mobile_state_dir')}")
+    if service.get("service_log_path"):
+        print_fn(f"   service_log: {service.get('service_log_path')}")
+    if service.get("replaced_pid"):
+        print_fn(f"   replaced_pid: {service.get('replaced_pid')}")
 
 
 def _should_open_login(environ: Mapping[str, str]) -> bool:

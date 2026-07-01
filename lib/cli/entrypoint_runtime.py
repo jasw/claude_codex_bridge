@@ -17,6 +17,7 @@ from cli.parser_runtime.constants import SUBCOMMANDS
 from cli.router import dispatch_auxiliary_command, dispatch_management_command, print_command_help, print_kill_help, print_start_help
 from cli.roles_runtime import cmd_roles
 from cli.services.theme import cmd_theme
+from cli.services.mobile_host import maybe_handle_mobile_host_serve_command
 from cli.sidebar_click import maybe_handle_sidebar_click_command
 from cli.sidebar_resize_sync import maybe_handle_sidebar_resize_sync_command
 from cli.tools_runtime import cmd_tools
@@ -247,6 +248,9 @@ def run_cli_entrypoint(
     if sidebar_resize_sync_result is not None:
         return sidebar_resize_sync_result
     internal_result = maybe_handle_background_update_refresh_command(tokens, script_root=script_root)
+    if internal_result is not None:
+        return internal_result
+    internal_result = maybe_handle_mobile_host_serve_command(tokens, script_root=script_root)
     if internal_result is not None:
         return internal_result
     internal_result = maybe_handle_post_update_command(tokens, script_root=script_root)
