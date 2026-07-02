@@ -109,6 +109,9 @@ void main() {
     final draftController = TextEditingController();
     final focusNode = FocusNode();
     final timelineController = ScrollController();
+    final workingPlaceholder = syntheticAgentWorkingConversationItem(
+      agent.name,
+    );
     addTearDown(draftController.dispose);
     addTearDown(focusNode.dispose);
     addTearDown(timelineController.dispose);
@@ -123,7 +126,7 @@ void main() {
               agent: agent,
               contentItems: const [],
               initialHistory: null,
-              timelineItems: const [],
+              timelineItems: [workingPlaceholder],
               commsItems: const [],
               isLoadingConversation: true,
               hasOlderConversation: false,
@@ -137,6 +140,7 @@ void main() {
                 isAwaitingAgentResponse: true,
                 isLoadingConversation: true,
               ),
+              workingReplyItemId: workingPlaceholder.id,
             ),
             timelineController: timelineController,
             draftController: draftController,
@@ -169,8 +173,11 @@ void main() {
       ),
     );
 
-    expect(find.byKey(const ValueKey('agent-working-status')), findsOneWidget);
-    expect(find.text('Working'), findsOneWidget);
+    expect(find.byKey(const ValueKey('agent-working-status')), findsNothing);
+    expect(
+      find.byKey(const ValueKey('conversation-working-status-text')),
+      findsOneWidget,
+    );
     expect(find.text('Idle'), findsNothing);
   });
 
@@ -419,7 +426,8 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('Idle'), findsOneWidget);
+    expect(find.byKey(const ValueKey('agent-working-status')), findsNothing);
+    expect(find.text('Idle'), findsNothing);
     expect(find.text('Working'), findsNothing);
 
     await tester.tap(
@@ -446,7 +454,8 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('Idle'), findsOneWidget);
+    expect(find.byKey(const ValueKey('agent-working-status')), findsNothing);
+    expect(find.text('Idle'), findsNothing);
 
     await tester.tap(
       find.byKey(const ValueKey('agent-conversation-refresh-action')),
@@ -1946,7 +1955,8 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('Idle'), findsOneWidget);
+    expect(find.byKey(const ValueKey('agent-working-status')), findsNothing);
+    expect(find.text('Idle'), findsNothing);
 
     await tester.enterText(
       find.byKey(const ValueKey('agent-message-composer')),
@@ -2077,7 +2087,8 @@ void main() {
     await tester.pump(const Duration(seconds: 1));
     await tester.pumpAndSettle();
 
-    expect(find.text('Idle'), findsOneWidget);
+    expect(find.byKey(const ValueKey('agent-working-status')), findsNothing);
+    expect(find.text('Idle'), findsNothing);
     expect(
       find.byKey(const ValueKey('conversation-working-status-text')),
       findsNothing,

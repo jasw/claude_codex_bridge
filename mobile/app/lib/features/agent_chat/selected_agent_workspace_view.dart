@@ -97,9 +97,6 @@ class SelectedAgentWorkspaceView extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final strings = CcbMobileLocalizations.of(context);
-    final hasActiveWorkingBubble =
-        model.executionStatus?.state == 'working' &&
-        model.workingReplyItemId != null;
     return Column(
       key: const ValueKey('selected-agent-workspace'),
       children: [
@@ -151,8 +148,6 @@ class SelectedAgentWorkspaceView extends StatelessWidget {
                   height: 36,
                 ),
               ),
-              if (model.executionStatus != null && !hasActiveWorkingBubble)
-                _AgentWorkingStatus(status: model.executionStatus!),
               const Spacer(),
               if (model.hasNewMessages)
                 TextButton.icon(
@@ -253,63 +248,6 @@ class _ComposerDismissRegionState extends State<_ComposerDismissRegion> {
       onPointerCancel: _handlePointerCancel,
       child: widget.child,
     );
-  }
-}
-
-class _AgentWorkingStatus extends StatelessWidget {
-  const _AgentWorkingStatus({required this.status});
-
-  final AgentExecutionStatus status;
-
-  @override
-  Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    final textTheme = Theme.of(context).textTheme;
-    final statusColor = switch (status.state) {
-      'exception' => colorScheme.error,
-      'idle' => colorScheme.onSurfaceVariant,
-      _ => colorScheme.primary,
-    };
-    return Padding(
-      key: const ValueKey('agent-working-status'),
-      padding: const EdgeInsets.only(left: 4),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          SizedBox.square(
-            dimension: 14,
-            child: _statusIcon(status, statusColor),
-          ),
-          const SizedBox(width: 6),
-          Text(
-            CcbMobileLocalizations.of(context).executionStatus(status.label),
-            style: textTheme.labelMedium?.copyWith(color: statusColor),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _statusIcon(AgentExecutionStatus status, Color color) {
-    final disableAnimations = WidgetsBinding.instance.runtimeType
-        .toString()
-        .contains('Test');
-    if (status.isRefreshing) {
-      return TickerMode(
-        enabled: !disableAnimations,
-        child: CircularProgressIndicator(strokeWidth: 2, color: color),
-      );
-    }
-    if (status.state == 'working') {
-      return TickerMode(
-        enabled: !disableAnimations,
-        child: CircularProgressIndicator(strokeWidth: 2, color: color),
-      );
-    }
-    if (status.state == 'exception') {
-      return Icon(Icons.error_outline, size: 14, color: color);
-    }
-    return Icon(Icons.check_circle_outline, size: 14, color: color);
   }
 }
 

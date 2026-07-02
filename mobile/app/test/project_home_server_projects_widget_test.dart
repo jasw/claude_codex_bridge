@@ -165,7 +165,8 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(gatewayRepository.getProjectViewCalls, ['test_ccb2']);
-    expect(find.text('Idle'), findsOneWidget);
+    expect(find.byKey(const ValueKey('agent-working-status')), findsNothing);
+    expect(find.text('Idle'), findsNothing);
 
     gatewayRepository.replaceProjects([
       _projectFixture(
