@@ -309,13 +309,61 @@ void main() {
       find.byKey(const ValueKey('conversation-working-reply-working')),
       findsOneWidget,
     );
-    expect(find.byType(CircularProgressIndicator), findsOneWidget);
+    expect(find.byIcon(Icons.pending_rounded), findsOneWidget);
+    expect(find.byType(CircularProgressIndicator), findsNothing);
 
     final material = tester.widget<Material>(
       find.byKey(const ValueKey('conversation-item-reply-working')),
     );
     final shape = material.shape as RoundedRectangleBorder;
-    expect(shape.side.color, ThemeData().colorScheme.primary);
+    final colorScheme = ThemeData().colorScheme;
+    expect(
+      material.color,
+      colorScheme.primaryContainer.withValues(alpha: 0.58),
+    );
+    expect(shape.side.color, colorScheme.primary);
+    expect(shape.side.width, 2.4);
+  });
+
+  testWidgets('failed reply keeps error styling over working state', (
+    tester,
+  ) async {
+    const item = CcbConversationItem(
+      id: 'reply-failed',
+      agentName: 'lead',
+      kind: CcbConversationItemKind.agentReply,
+      title: 'Agent reply',
+      body: 'Failed after running',
+      source: 'provider_native/codex',
+      state: CcbConversationDeliveryState.failed,
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: ConversationBubble(
+            item: item,
+            expanded: true,
+            isWorking: true,
+            onToggleExpanded: (_) {},
+          ),
+        ),
+      ),
+    );
+
+    expect(
+      find.byKey(const ValueKey('conversation-working-reply-failed')),
+      findsNothing,
+    );
+    expect(find.byIcon(Icons.pending_rounded), findsNothing);
+
+    final material = tester.widget<Material>(
+      find.byKey(const ValueKey('conversation-item-reply-failed')),
+    );
+    final shape = material.shape as RoundedRectangleBorder;
+    final colorScheme = ThemeData().colorScheme;
+    expect(shape.side.color, colorScheme.error);
+    expect(shape.side.width, 1);
   });
 
   testWidgets('expanded long bubbles can fill available height and scroll', (

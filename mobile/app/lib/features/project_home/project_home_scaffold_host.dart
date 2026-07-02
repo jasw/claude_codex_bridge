@@ -147,41 +147,45 @@ class _ServerProjectListTile extends StatelessWidget {
     final textTheme = Theme.of(context).textTheme;
     final root = project.root.trim();
     final health = project.health.trim();
-    return ListTile(
-      key: ValueKey('project-open-${project.id}'),
-      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      leading: ProjectAttentionAvatar(
-        projectId: project.id,
-        favorite: project.favorite,
-        hasUnreadTaskCompletion: hasUnreadTaskCompletion,
-        hasWorkingAgents: hasWorkingAgents,
-      ),
-      title: Text(
-        project.displayName,
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-        style: textTheme.titleMedium,
-      ),
-      subtitle: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          if (root.isNotEmpty)
-            Text(root, maxLines: 1, overflow: TextOverflow.ellipsis),
-          if (health.isNotEmpty) ...[
-            const SizedBox(height: 4),
-            Text(
-              health,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: textTheme.bodySmall?.copyWith(
-                color: Theme.of(context).colorScheme.onSurfaceVariant,
+    return ProjectWorkingRowHighlight(
+      projectId: project.id,
+      hasWorkingAgents: hasWorkingAgents,
+      child: ListTile(
+        key: ValueKey('project-open-${project.id}'),
+        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        leading: ProjectAttentionAvatar(
+          projectId: project.id,
+          favorite: project.favorite,
+          hasUnreadTaskCompletion: hasUnreadTaskCompletion,
+          hasWorkingAgents: hasWorkingAgents,
+        ),
+        title: Text(
+          project.displayName,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: textTheme.titleMedium,
+        ),
+        subtitle: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (root.isNotEmpty)
+              Text(root, maxLines: 1, overflow: TextOverflow.ellipsis),
+            if (health.isNotEmpty) ...[
+              const SizedBox(height: 4),
+              Text(
+                health,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: textTheme.bodySmall?.copyWith(
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                ),
               ),
-            ),
+            ],
           ],
-        ],
+        ),
+        trailing: const Icon(Icons.chevron_right),
+        onTap: onOpen,
       ),
-      trailing: const Icon(Icons.chevron_right),
-      onTap: onOpen,
     );
   }
 }

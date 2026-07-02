@@ -109,48 +109,91 @@ class ProjectListTile extends StatelessWidget {
     final activeAgent = selectedAgent?.name ?? strings.noAgent;
     final activeWindow = view.activeWindow ?? selectedAgent?.window ?? 'main';
     final root = view.project.root.trim();
-    return ListTile(
-      key: const ValueKey('project-open-current'),
-      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      selected: selected,
-      selectedTileColor: Theme.of(context).colorScheme.secondaryContainer,
-      leading: ProjectAttentionAvatar(
-        projectId: view.project.id,
-        favorite: view.project.favorite,
-        hasUnreadTaskCompletion: hasUnreadTaskCompletion,
-        hasWorkingAgents: hasWorkingAgents,
+    return ProjectWorkingRowHighlight(
+      projectId: view.project.id,
+      hasWorkingAgents: hasWorkingAgents,
+      child: ListTile(
+        key: const ValueKey('project-open-current'),
+        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        selected: selected,
+        selectedTileColor: Theme.of(context).colorScheme.secondaryContainer,
+        leading: ProjectAttentionAvatar(
+          projectId: view.project.id,
+          favorite: view.project.favorite,
+          hasUnreadTaskCompletion: hasUnreadTaskCompletion,
+          hasWorkingAgents: hasWorkingAgents,
+        ),
+        title: Text(
+          view.project.displayName,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: textTheme.titleMedium,
+        ),
+        subtitle: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (root.isNotEmpty)
+              Text(root, maxLines: 1, overflow: TextOverflow.ellipsis),
+            const SizedBox(height: 4),
+            Text(
+              'cmd $activeWindow · $activeAgent',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: textTheme.bodySmall?.copyWith(
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
+              ),
+            ),
+          ],
+        ),
+        trailing: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text('${view.agents.length}'),
+            const SizedBox(width: 6),
+            const Icon(Icons.chevron_right),
+          ],
+        ),
+        onTap: onOpen,
       ),
-      title: Text(
-        view.project.displayName,
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-        style: textTheme.titleMedium,
-      ),
-      subtitle: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          if (root.isNotEmpty)
-            Text(root, maxLines: 1, overflow: TextOverflow.ellipsis),
-          const SizedBox(height: 4),
-          Text(
-            'cmd $activeWindow · $activeAgent',
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: textTheme.bodySmall?.copyWith(
-              color: Theme.of(context).colorScheme.onSurfaceVariant,
+    );
+  }
+}
+
+class ProjectWorkingRowHighlight extends StatelessWidget {
+  const ProjectWorkingRowHighlight({
+    required this.projectId,
+    required this.hasWorkingAgents,
+    required this.child,
+    super.key,
+  });
+
+  final String projectId;
+  final bool hasWorkingAgents;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    if (!hasWorkingAgents) {
+      return child;
+    }
+    final colorScheme = Theme.of(context).colorScheme;
+    return Semantics(
+      key: ValueKey('project-working-row-$projectId'),
+      container: true,
+      hint: 'Project has working agents',
+      child: Material(
+        color: colorScheme.primaryContainer.withValues(alpha: 0.38),
+        clipBehavior: Clip.antiAlias,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            border: Border(
+              left: BorderSide(color: colorScheme.primary, width: 4),
             ),
           ),
-        ],
+          child: child,
+        ),
       ),
-      trailing: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Text('${view.agents.length}'),
-          const SizedBox(width: 6),
-          const Icon(Icons.chevron_right),
-        ],
-      ),
-      onTap: onOpen,
     );
   }
 }
@@ -179,23 +222,9 @@ class ProjectAttentionAvatar extends StatelessWidget {
         clipBehavior: Clip.none,
         children: [
           Center(
-            child: Container(
-              key:
-                  hasWorkingAgents
-                      ? ValueKey('project-working-ring-$projectId')
-                      : null,
-              padding: const EdgeInsets.all(3),
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                border:
-                    hasWorkingAgents
-                        ? Border.all(color: colorScheme.tertiary, width: 2)
-                        : null,
-              ),
-              child: CircleAvatar(
-                radius: 22,
-                child: Icon(favorite ? Icons.star : Icons.terminal),
-              ),
+            child: CircleAvatar(
+              radius: 22,
+              child: Icon(favorite ? Icons.star : Icons.terminal),
             ),
           ),
           if (hasUnreadTaskCompletion)

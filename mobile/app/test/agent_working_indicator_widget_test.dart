@@ -54,31 +54,54 @@ void main() {
     );
   });
 
-  testWidgets('project avatar can show working ring and unread star together', (
-    tester,
-  ) async {
-    await tester.pumpWidget(
-      const MaterialApp(
-        home: Scaffold(
-          body: ProjectAttentionAvatar(
-            projectId: 'proj',
-            favorite: false,
-            hasUnreadTaskCompletion: true,
-            hasWorkingAgents: true,
+  testWidgets(
+    'project row can show working highlight and unread star together',
+    (tester) async {
+      await tester.pumpWidget(
+        const MaterialApp(
+          home: Scaffold(
+            body: ProjectWorkingRowHighlight(
+              projectId: 'proj',
+              hasWorkingAgents: true,
+              child: ProjectAttentionAvatar(
+                projectId: 'proj',
+                favorite: false,
+                hasUnreadTaskCompletion: true,
+                hasWorkingAgents: true,
+              ),
+            ),
           ),
         ),
-      ),
-    );
+      );
 
-    expect(
-      find.byKey(const ValueKey('project-working-ring-proj')),
-      findsOneWidget,
-    );
-    expect(
-      find.byKey(const ValueKey('project-unread-star-proj')),
-      findsOneWidget,
-    );
-  });
+      expect(
+        find.byKey(const ValueKey('project-working-row-proj')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('project-unread-star-proj')),
+        findsOneWidget,
+      );
+
+      final rowDecorations =
+          tester
+              .widgetList<DecoratedBox>(
+                find.descendant(
+                  of: find.byKey(const ValueKey('project-working-row-proj')),
+                  matching: find.byType(DecoratedBox),
+                ),
+              )
+              .map((box) => box.decoration)
+              .whereType<BoxDecoration>();
+      expect(
+        rowDecorations.any((decoration) {
+          final border = decoration.border;
+          return border is Border && border.left.width == 4;
+        }),
+        isTrue,
+      );
+    },
+  );
 
   testWidgets(
     'wide agent list highlights source-working agents with a border',

@@ -80,18 +80,21 @@ class ConversationBubble extends StatelessWidget {
             );
           },
         );
+    final showWorking =
+        isWorking && item.state != CcbConversationDeliveryState.failed;
     final bubbleColor =
-        isWorking
-            ? colorScheme.tertiaryContainer.withValues(alpha: 0.54)
+        showWorking
+            ? colorScheme.primaryContainer.withValues(alpha: 0.58)
             : isUser
             ? colorScheme.primaryContainer
             : colorScheme.surfaceContainerLow;
     final borderColor = switch (item.state) {
       CcbConversationDeliveryState.failed => colorScheme.error,
       CcbConversationDeliveryState.unconfirmed => colorScheme.tertiary,
-      _ when isWorking => colorScheme.primary,
+      _ when showWorking => colorScheme.primary,
       _ => colorScheme.outlineVariant,
     };
+    final borderWidth = showWorking ? 2.4 : 1.0;
     final visibleState =
         item.state == CcbConversationDeliveryState.sent ? null : item.state;
     final metadataColor =
@@ -102,154 +105,161 @@ class ConversationBubble extends StatelessWidget {
       alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 720),
-        child: Material(
-          key: ValueKey('conversation-item-${item.id}'),
-          color: bubbleColor,
-          clipBehavior: Clip.antiAlias,
-          shape: RoundedRectangleBorder(
-            side: BorderSide(color: borderColor),
-            borderRadius: BorderRadius.circular(8),
-          ),
-          child: Padding(
-            padding: const EdgeInsets.all(10),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Material(
-                  color: Colors.transparent,
-                  child: InkWell(
-                    onTap: collapsible ? _toggleExpanded : null,
-                    child: Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Icon(conversationIcon(item.kind), size: 16),
-                        const SizedBox(width: 6),
-                        Expanded(
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Flexible(
-                                child: Text(
-                                  conversationDisplayTitle(item),
-                                  style: Theme.of(context).textTheme.titleSmall,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                ),
-                              ),
-                              if (timestampLabel != null) ...[
-                                const SizedBox(width: 6),
-                                Text(
-                                  timestampLabel,
-                                  key: ValueKey(
-                                    'conversation-timestamp-${item.id}',
-                                  ),
-                                  style: Theme.of(context).textTheme.bodySmall
-                                      ?.copyWith(color: metadataColor),
-                                  maxLines: 1,
-                                  softWrap: false,
-                                  overflow: TextOverflow.fade,
-                                ),
-                              ],
-                              if (isWorking) ...[
-                                const SizedBox(width: 8),
-                                _ConversationWorkingIndicator(
-                                  key: ValueKey(
-                                    'conversation-working-${item.id}',
-                                  ),
-                                ),
-                              ],
-                            ],
-                          ),
-                        ),
-                        if (visibleState != null)
-                          ConversationStateChip(
-                            key: ValueKey('conversation-state-${item.id}'),
-                            state: visibleState,
-                          ),
-                        if (collapsible)
-                          IconButton(
-                            key: ValueKey('conversation-expand-${item.id}'),
-                            visualDensity: VisualDensity.compact,
-                            padding: EdgeInsets.zero,
-                            constraints: const BoxConstraints.tightFor(
-                              width: 32,
-                              height: 32,
-                            ),
-                            tooltip:
-                                expanded
-                                    ? strings.collapseMessage
-                                    : strings.expandMessage,
-                            onPressed: _toggleExpanded,
-                            icon: Icon(
-                              expanded ? Icons.expand_less : Icons.expand_more,
-                            ),
-                          ),
-                      ],
-                    ),
-                  ),
-                ),
-                if (sourceLabel != null) ...[
-                  const SizedBox(height: 1),
-                  Text(
-                    sourceLabel,
-                    style: Theme.of(context).textTheme.bodySmall,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ],
-                const SizedBox(height: 6),
-                if (collapsible && !expanded)
+        child: Semantics(
+          container: true,
+          hint: showWorking ? strings.executionStatus('Working') : null,
+          child: Material(
+            key: ValueKey('conversation-item-${item.id}'),
+            color: bubbleColor,
+            clipBehavior: Clip.antiAlias,
+            shape: RoundedRectangleBorder(
+              side: BorderSide(color: borderColor, width: borderWidth),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.all(10),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
                   Material(
                     color: Colors.transparent,
                     child: InkWell(
-                      onTap: _toggleExpanded,
-                      child: ConversationPreview(item: item),
-                    ),
-                  )
-                else
-                  ConversationBodyViewport(
-                    item: item,
-                    timelineViewportHeight: timelineViewportHeight,
-                    child: body,
-                  ),
-                if (item.attachments.isNotEmpty) ...[
-                  const SizedBox(height: 6),
-                  ConversationAttachmentList(
-                    item: item,
-                    onDownloadAttachment: onDownloadAttachment,
-                    onOpenAttachment: onOpenAttachment,
-                    downloadingAttachmentIds: downloadingAttachmentIds,
-                    downloadedAttachmentIds: downloadedAttachmentIds,
-                  ),
-                ],
-                if (onRetry != null || onDelete != null) ...[
-                  const SizedBox(height: 6),
-                  Align(
-                    alignment: Alignment.centerRight,
-                    child: Wrap(
-                      alignment: WrapAlignment.end,
-                      spacing: 4,
-                      runSpacing: 4,
-                      children: [
-                        if (onDelete != null)
-                          TextButton.icon(
-                            key: ValueKey('delete-message-${item.id}'),
-                            onPressed: onDelete,
-                            icon: const Icon(Icons.delete_outline),
-                            label: Text(strings.deleteMessage),
+                      onTap: collapsible ? _toggleExpanded : null,
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Icon(conversationIcon(item.kind), size: 16),
+                          const SizedBox(width: 6),
+                          Expanded(
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Flexible(
+                                  child: Text(
+                                    conversationDisplayTitle(item),
+                                    style:
+                                        Theme.of(context).textTheme.titleSmall,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                                if (timestampLabel != null) ...[
+                                  const SizedBox(width: 6),
+                                  Text(
+                                    timestampLabel,
+                                    key: ValueKey(
+                                      'conversation-timestamp-${item.id}',
+                                    ),
+                                    style: Theme.of(context).textTheme.bodySmall
+                                        ?.copyWith(color: metadataColor),
+                                    maxLines: 1,
+                                    softWrap: false,
+                                    overflow: TextOverflow.fade,
+                                  ),
+                                ],
+                                if (showWorking) ...[
+                                  const SizedBox(width: 8),
+                                  _ConversationWorkingIndicator(
+                                    key: ValueKey(
+                                      'conversation-working-${item.id}',
+                                    ),
+                                  ),
+                                ],
+                              ],
+                            ),
                           ),
-                        if (onRetry != null)
-                          TextButton.icon(
-                            key: ValueKey('retry-message-${item.id}'),
-                            onPressed: onRetry,
-                            icon: const Icon(Icons.refresh),
-                            label: Text(strings.retry),
-                          ),
-                      ],
+                          if (visibleState != null)
+                            ConversationStateChip(
+                              key: ValueKey('conversation-state-${item.id}'),
+                              state: visibleState,
+                            ),
+                          if (collapsible)
+                            IconButton(
+                              key: ValueKey('conversation-expand-${item.id}'),
+                              visualDensity: VisualDensity.compact,
+                              padding: EdgeInsets.zero,
+                              constraints: const BoxConstraints.tightFor(
+                                width: 32,
+                                height: 32,
+                              ),
+                              tooltip:
+                                  expanded
+                                      ? strings.collapseMessage
+                                      : strings.expandMessage,
+                              onPressed: _toggleExpanded,
+                              icon: Icon(
+                                expanded
+                                    ? Icons.expand_less
+                                    : Icons.expand_more,
+                              ),
+                            ),
+                        ],
+                      ),
                     ),
                   ),
+                  if (sourceLabel != null) ...[
+                    const SizedBox(height: 1),
+                    Text(
+                      sourceLabel,
+                      style: Theme.of(context).textTheme.bodySmall,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ],
+                  const SizedBox(height: 6),
+                  if (collapsible && !expanded)
+                    Material(
+                      color: Colors.transparent,
+                      child: InkWell(
+                        onTap: _toggleExpanded,
+                        child: ConversationPreview(item: item),
+                      ),
+                    )
+                  else
+                    ConversationBodyViewport(
+                      item: item,
+                      timelineViewportHeight: timelineViewportHeight,
+                      child: body,
+                    ),
+                  if (item.attachments.isNotEmpty) ...[
+                    const SizedBox(height: 6),
+                    ConversationAttachmentList(
+                      item: item,
+                      onDownloadAttachment: onDownloadAttachment,
+                      onOpenAttachment: onOpenAttachment,
+                      downloadingAttachmentIds: downloadingAttachmentIds,
+                      downloadedAttachmentIds: downloadedAttachmentIds,
+                    ),
+                  ],
+                  if (onRetry != null || onDelete != null) ...[
+                    const SizedBox(height: 6),
+                    Align(
+                      alignment: Alignment.centerRight,
+                      child: Wrap(
+                        alignment: WrapAlignment.end,
+                        spacing: 4,
+                        runSpacing: 4,
+                        children: [
+                          if (onDelete != null)
+                            TextButton.icon(
+                              key: ValueKey('delete-message-${item.id}'),
+                              onPressed: onDelete,
+                              icon: const Icon(Icons.delete_outline),
+                              label: Text(strings.deleteMessage),
+                            ),
+                          if (onRetry != null)
+                            TextButton.icon(
+                              key: ValueKey('retry-message-${item.id}'),
+                              onPressed: onRetry,
+                              icon: const Icon(Icons.refresh),
+                              label: Text(strings.retry),
+                            ),
+                        ],
+                      ),
+                    ),
+                  ],
                 ],
-              ],
+              ),
             ),
           ),
         ),
@@ -265,21 +275,16 @@ class _ConversationWorkingIndicator extends StatelessWidget {
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
     final label = CcbMobileLocalizations.of(context).executionStatus('Working');
-    final disableAnimations = WidgetsBinding.instance.runtimeType
-        .toString()
-        .contains('Test');
     return Tooltip(
       message: label,
       child: Semantics(
         label: label,
         child: SizedBox.square(
           dimension: 14,
-          child: TickerMode(
-            enabled: !disableAnimations,
-            child: CircularProgressIndicator(
-              strokeWidth: 2,
-              color: colorScheme.primary,
-            ),
+          child: Icon(
+            Icons.pending_rounded,
+            size: 14,
+            color: colorScheme.primary,
           ),
         ),
       ),
