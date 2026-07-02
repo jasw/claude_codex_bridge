@@ -186,49 +186,52 @@ void main() {
     },
   );
 
-  testWidgets('expanded bottom bubble cannot scroll into large trailing blank', (
-    tester,
-  ) async {
-    await setTestSurfaceSize(tester, const Size(390, 844));
-    await tester.pumpWidget(
-      MaterialApp(
-        home: ProjectHomeScreen(
-          repository: LongConversationRepository(messageCount: 160),
+  testWidgets(
+    'expanded bottom bubble cannot scroll into large trailing blank',
+    (tester) async {
+      await setTestSurfaceSize(tester, const Size(390, 844));
+      await tester.pumpWidget(
+        MaterialApp(
+          home: ProjectHomeScreen(
+            repository: LongConversationRepository(messageCount: 160),
+          ),
         ),
-      ),
-    );
-    await tester.pumpAndSettle();
-    await openCurrentProject(tester);
+      );
+      await tester.pumpAndSettle();
+      await openCurrentProject(tester);
 
-    await dragUntilVisible(
-      tester,
-      const ValueKey('conversation-expand-long-159'),
-      const Offset(0, -700),
-    );
-    final timeline = tester.widget<ListView>(
-      find.byKey(const ValueKey('agent-chat-timeline')),
-    );
-    final controller = timeline.controller!;
+      await dragUntilVisible(
+        tester,
+        const ValueKey('conversation-expand-long-159'),
+        const Offset(0, -700),
+      );
+      final timeline = tester.widget<ListView>(
+        find.byKey(const ValueKey('agent-chat-timeline')),
+      );
+      final controller = timeline.controller!;
 
-    await tester.tap(
-      find.byKey(const ValueKey('conversation-expand-long-159')),
-    );
-    await tester.pumpAndSettle();
+      await tester.tap(
+        find.byKey(const ValueKey('conversation-expand-long-159')),
+      );
+      await tester.pumpAndSettle();
 
-    controller.jumpTo(controller.position.maxScrollExtent);
-    await tester.pumpAndSettle();
+      controller.jumpTo(controller.position.maxScrollExtent);
+      await tester.pumpAndSettle();
 
-    final itemBottom =
-        tester
-            .getBottomRight(find.byKey(conversationTimelineItemKey('long-159')))
-            .dy;
-    final timelineBottom =
-        tester
-            .getBottomRight(find.byKey(const ValueKey('agent-chat-timeline')))
-            .dy;
+      final itemBottom =
+          tester
+              .getBottomRight(
+                find.byKey(conversationTimelineItemKey('long-159')),
+              )
+              .dy;
+      final timelineBottom =
+          tester
+              .getBottomRight(find.byKey(const ValueKey('agent-chat-timeline')))
+              .dy;
 
-    expect(timelineBottom - itemBottom, lessThan(140));
-  });
+      expect(timelineBottom - itemBottom, lessThan(140));
+    },
+  );
 
   testWidgets('new latest bubble is comfortably revealed while following', (
     tester,
@@ -265,6 +268,7 @@ void main() {
 
     expect(timelineBottom - itemBottom, greaterThanOrEqualTo(32));
     expect(timelineBottom - itemBottom, lessThan(120));
+    expect(_composerGap(tester), lessThanOrEqualTo(8));
   });
 
   testWidgets('remote latest bubble does not yank while reading history', (
@@ -296,7 +300,11 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(controller.position.pixels, closeTo(beforeRefreshOffset, 1));
-    expect(find.byKey(const ValueKey('agent-new-messages-jump')), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('agent-new-messages-jump')),
+      findsOneWidget,
+    );
+    expect(_composerGap(tester), lessThanOrEqualTo(8));
     expect(
       find.byKey(const ValueKey('conversation-item-remote-new')),
       findsNothing,
@@ -341,6 +349,16 @@ void main() {
       findsNothing,
     );
   });
+}
+
+double _composerGap(WidgetTester tester) {
+  final timelineBottom =
+      tester
+          .getBottomLeft(find.byKey(const ValueKey('agent-chat-timeline')))
+          .dy;
+  final composerTop =
+      tester.getTopLeft(find.byKey(const ValueKey('agent-chat-composer'))).dy;
+  return composerTop - timelineBottom;
 }
 
 class _MutableLongConversationRepository extends LongConversationRepository {

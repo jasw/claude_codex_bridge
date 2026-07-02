@@ -61,6 +61,7 @@ class SelectedAgentWorkspaceView extends StatelessWidget {
     required this.onSend,
     required this.onSendTab,
     required this.onSendEscape,
+    this.showInlineRefreshAction = false,
     super.key,
   });
 
@@ -93,71 +94,61 @@ class SelectedAgentWorkspaceView extends StatelessWidget {
   final VoidCallback onSend;
   final VoidCallback onSendTab;
   final VoidCallback onSendEscape;
+  final bool showInlineRefreshAction;
 
   @override
   Widget build(BuildContext context) {
-    final strings = CcbMobileLocalizations.of(context);
     return Column(
       key: const ValueKey('selected-agent-workspace'),
       children: [
         Expanded(
-          child: _ComposerDismissRegion(
-            key: const ValueKey('agent-compose-dismiss-region'),
-            onDismiss: onCollapseComposer,
-            child: ConversationTimeline(
-              key: ValueKey('agent-chat-timeline-${model.agent.name}'),
-              repository: repository,
-              view: view,
-              agent: model.agent,
-              contentItems: model.contentItems,
-              initialHistory: model.initialHistory,
-              items: model.timelineItems,
-              isLoading: model.isLoadingConversation,
-              controller: timelineController,
-              expandedItemIds: model.expandedItemIds,
-              workingItemId: model.workingReplyItemId,
-              downloadingAttachmentIds: downloadingAttachmentIds,
-              downloadedAttachmentIds: downloadedAttachmentIds,
-              onRetry: onRetry,
-              onDeleteFailedMessage: onDeleteFailedMessage,
-              onToggleExpanded: onToggleExpanded,
-              onNearEnd: onNearEnd,
-              onUserNearEnd: onUserNearEnd,
-              onNearStart: onNearStart,
-              onUserScrollDirectionChanged: onUserScrollDirectionChanged,
-              hasOlderItems: model.hasOlderConversation,
-              onDownloadAttachment: onDownloadAttachment,
-              onOpenAttachment: onOpenAttachment,
-            ),
-          ),
-        ),
-        const SizedBox(height: 4),
-        SizedBox(
-          height: 36,
-          child: Row(
+          child: Stack(
             children: [
-              IconButton(
-                key: const ValueKey('agent-conversation-refresh-action'),
-                tooltip: strings.refreshConversation,
-                onPressed: model.isLoadingConversation ? null : onRefreshLatest,
-                icon: const Icon(Icons.refresh),
-                iconSize: 20,
-                padding: EdgeInsets.zero,
-                constraints: const BoxConstraints.tightFor(
-                  width: 36,
-                  height: 36,
+              Positioned.fill(
+                child: _ComposerDismissRegion(
+                  key: const ValueKey('agent-compose-dismiss-region'),
+                  onDismiss: onCollapseComposer,
+                  child: ConversationTimeline(
+                    key: ValueKey('agent-chat-timeline-${model.agent.name}'),
+                    repository: repository,
+                    view: view,
+                    agent: model.agent,
+                    contentItems: model.contentItems,
+                    initialHistory: model.initialHistory,
+                    items: model.timelineItems,
+                    isLoading: model.isLoadingConversation,
+                    controller: timelineController,
+                    expandedItemIds: model.expandedItemIds,
+                    workingItemId: model.workingReplyItemId,
+                    downloadingAttachmentIds: downloadingAttachmentIds,
+                    downloadedAttachmentIds: downloadedAttachmentIds,
+                    onRetry: onRetry,
+                    onDeleteFailedMessage: onDeleteFailedMessage,
+                    onToggleExpanded: onToggleExpanded,
+                    onNearEnd: onNearEnd,
+                    onUserNearEnd: onUserNearEnd,
+                    onNearStart: onNearStart,
+                    onUserScrollDirectionChanged: onUserScrollDirectionChanged,
+                    hasOlderItems: model.hasOlderConversation,
+                    onDownloadAttachment: onDownloadAttachment,
+                    onOpenAttachment: onOpenAttachment,
+                  ),
                 ),
               ),
-              const Spacer(),
-              if (model.hasNewMessages)
-                TextButton.icon(
-                  key: const ValueKey('agent-new-messages-jump'),
-                  onPressed: onJumpToLatest,
-                  icon: const Icon(Icons.south, size: 18),
-                  label: Text(strings.newMessages),
-                  style: TextButton.styleFrom(
-                    visualDensity: VisualDensity.compact,
+              if (showInlineRefreshAction)
+                Positioned(
+                  top: 4,
+                  right: 4,
+                  child: _RefreshLatestButton(
+                    enabled: !model.isLoadingConversation,
+                    onRefreshLatest: onRefreshLatest,
                   ),
+                ),
+              if (model.hasNewMessages)
+                Positioned(
+                  right: 8,
+                  bottom: 8,
+                  child: _NewMessagesButton(onJumpToLatest: onJumpToLatest),
                 ),
             ],
           ),
@@ -166,7 +157,7 @@ class SelectedAgentWorkspaceView extends StatelessWidget {
           const SizedBox(height: 6),
           _AgentCommsStatusStrip(item: model.commsItems.last),
         ],
-        const SizedBox(height: 8),
+        const SizedBox(height: 6),
         AgentMessageComposer(
           agentName: model.agent.name,
           controller: draftController,
@@ -185,6 +176,63 @@ class SelectedAgentWorkspaceView extends StatelessWidget {
           onSendEscape: onSendEscape,
         ),
       ],
+    );
+  }
+}
+
+class _RefreshLatestButton extends StatelessWidget {
+  const _RefreshLatestButton({
+    required this.enabled,
+    required this.onRefreshLatest,
+  });
+
+  final bool enabled;
+  final VoidCallback onRefreshLatest;
+
+  @override
+  Widget build(BuildContext context) {
+    final strings = CcbMobileLocalizations.of(context);
+    return Material(
+      color: Theme.of(context).colorScheme.surfaceContainerHighest,
+      shape: const CircleBorder(),
+      clipBehavior: Clip.antiAlias,
+      child: IconButton(
+        key: const ValueKey('agent-conversation-refresh-action'),
+        tooltip: strings.refreshConversation,
+        onPressed: enabled ? onRefreshLatest : null,
+        icon: const Icon(Icons.refresh),
+        iconSize: 20,
+        padding: EdgeInsets.zero,
+        constraints: const BoxConstraints.tightFor(width: 36, height: 36),
+      ),
+    );
+  }
+}
+
+class _NewMessagesButton extends StatelessWidget {
+  const _NewMessagesButton({required this.onJumpToLatest});
+
+  final VoidCallback onJumpToLatest;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final strings = CcbMobileLocalizations.of(context);
+    return Material(
+      color: colorScheme.surfaceContainerHigh,
+      shape: const StadiumBorder(),
+      elevation: 2,
+      child: TextButton.icon(
+        key: const ValueKey('agent-new-messages-jump'),
+        onPressed: onJumpToLatest,
+        icon: const Icon(Icons.south, size: 18),
+        label: Text(strings.newMessages),
+        style: TextButton.styleFrom(
+          visualDensity: VisualDensity.compact,
+          foregroundColor: colorScheme.primary,
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+        ),
+      ),
     );
   }
 }

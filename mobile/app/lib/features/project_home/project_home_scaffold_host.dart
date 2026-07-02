@@ -190,7 +190,7 @@ class _ServerProjectListTile extends StatelessWidget {
   }
 }
 
-class ProjectHomeMobileChatScaffoldHost extends StatelessWidget {
+class ProjectHomeMobileChatScaffoldHost extends StatefulWidget {
   const ProjectHomeMobileChatScaffoldHost({
     required this.view,
     required this.selectedAgent,
@@ -229,12 +229,29 @@ class ProjectHomeMobileChatScaffoldHost extends StatelessWidget {
   final Set<String> unreadAgentNames;
 
   @override
+  State<ProjectHomeMobileChatScaffoldHost> createState() =>
+      _ProjectHomeMobileChatScaffoldHostState();
+}
+
+class _ProjectHomeMobileChatScaffoldHostState
+    extends State<ProjectHomeMobileChatScaffoldHost> {
+  final SelectedAgentWorkspaceController _workspaceController =
+      SelectedAgentWorkspaceController();
+
+  @override
+  void dispose() {
+    _workspaceController.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final selectedAgent = widget.selectedAgent;
     final terminalAction =
         selectedAgent == null
             ? null
             : () {
-              onOpenTerminal(selectedAgent!.name);
+              widget.onOpenTerminal(selectedAgent.name);
             };
     return Scaffold(
       body: SafeArea(
@@ -243,47 +260,50 @@ class ProjectHomeMobileChatScaffoldHost extends StatelessWidget {
           padding: const EdgeInsets.fromLTRB(8, 4, 8, 8),
           child: Column(
             children: [
-              if (mobileAgentsCollapsed)
+              if (widget.mobileAgentsCollapsed)
                 _MobileCollapsedProjectBar(
-                  view: view,
+                  view: widget.view,
                   selectedAgent: selectedAgent,
-                  unreadAgentNames: unreadAgentNames,
-                  onShowProjects: onBack,
-                  onExpandAgents: onExpandAgents,
+                  unreadAgentNames: widget.unreadAgentNames,
+                  onShowProjects: widget.onBack,
+                  onExpandAgents: widget.onExpandAgents,
+                  onRefreshConversation: _workspaceController.refreshLatest,
                   onOpenTerminal: terminalAction,
-                  onOpenConnectionDetails: onOpenConnectionDetails,
+                  onOpenConnectionDetails: widget.onOpenConnectionDetails,
                 )
               else ...[
                 ProjectChatHeader(
-                  view: view,
-                  onBack: onBack,
+                  view: widget.view,
+                  onBack: widget.onBack,
+                  onRefreshConversation: _workspaceController.refreshLatest,
                   onOpenTerminal: terminalAction,
-                  onOpenConnectionDetails: onOpenConnectionDetails,
+                  onOpenConnectionDetails: widget.onOpenConnectionDetails,
                 ),
                 const SizedBox(height: 4),
                 MobileAgentSwitcherPanel(
-                  view: view,
+                  view: widget.view,
                   selectedAgent: selectedAgent,
                   collapsed: false,
-                  unreadAgentNames: unreadAgentNames,
-                  onCollapse: onCollapseAgents,
-                  onExpand: onExpandAgents,
-                  onWindowSelected: onWindowSelected,
-                  onAgentSelected: onAgentSelected,
+                  unreadAgentNames: widget.unreadAgentNames,
+                  onCollapse: widget.onCollapseAgents,
+                  onExpand: widget.onExpandAgents,
+                  onWindowSelected: widget.onWindowSelected,
+                  onAgentSelected: widget.onAgentSelected,
                 ),
               ],
               const SizedBox(height: 4),
               Expanded(
                 child: SelectedAgentWorkspace(
-                  repository: repository,
-                  terminalTransport: terminalTransport,
-                  usePaneInputForMessages: usePaneInputForMessages,
-                  view: view,
+                  repository: widget.repository,
+                  terminalTransport: widget.terminalTransport,
+                  usePaneInputForMessages: widget.usePaneInputForMessages,
+                  view: widget.view,
                   agent: selectedAgent,
                   enableComposerCollapse: true,
-                  onRefreshView: onRefreshView,
+                  onRefreshView: widget.onRefreshView,
                   onUserScrollDirectionChanged:
-                      onTimelineScrollDirectionChanged,
+                      widget.onTimelineScrollDirectionChanged,
+                  controller: _workspaceController,
                 ),
               ),
             ],
@@ -303,6 +323,7 @@ class _MobileCollapsedProjectBar extends StatelessWidget {
     required this.unreadAgentNames,
     required this.onShowProjects,
     required this.onExpandAgents,
+    required this.onRefreshConversation,
     required this.onOpenTerminal,
     required this.onOpenConnectionDetails,
   });
@@ -312,6 +333,7 @@ class _MobileCollapsedProjectBar extends StatelessWidget {
   final Set<String> unreadAgentNames;
   final VoidCallback onShowProjects;
   final VoidCallback onExpandAgents;
+  final VoidCallback onRefreshConversation;
   final VoidCallback? onOpenTerminal;
   final VoidCallback onOpenConnectionDetails;
 
@@ -393,6 +415,13 @@ class _MobileCollapsedProjectBar extends StatelessWidget {
               visualDensity: VisualDensity.compact,
               onPressed: onExpandAgents,
               icon: const Icon(Icons.keyboard_arrow_down),
+            ),
+            IconButton(
+              key: const ValueKey('agent-conversation-refresh-action'),
+              tooltip: strings.refreshConversation,
+              visualDensity: VisualDensity.compact,
+              onPressed: onRefreshConversation,
+              icon: const Icon(Icons.refresh),
             ),
             IconButton(
               key: const ValueKey('open-agent-terminal-button'),

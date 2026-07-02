@@ -64,6 +64,15 @@ void main() {
       expect(find.byKey(const ValueKey('project-chat-screen')), findsOneWidget);
       expect(find.byKey(const ValueKey('project-chat-header')), findsOneWidget);
       expect(
+        find.descendant(
+          of: find.byKey(const ValueKey('project-chat-header')),
+          matching: find.byKey(
+            const ValueKey('agent-conversation-refresh-action'),
+          ),
+        ),
+        findsOneWidget,
+      );
+      expect(
         find.byKey(const ValueKey('mobile-agent-switcher-expanded')),
         findsOneWidget,
       );
@@ -217,6 +226,15 @@ void main() {
       expect(find.byKey(const ValueKey('project-back-button')), findsNothing);
       expect(
         find.byKey(const ValueKey('mobile-agent-switcher-collapsed')),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(
+          of: find.byKey(const ValueKey('mobile-agent-switcher-collapsed')),
+          matching: find.byKey(
+            const ValueKey('agent-conversation-refresh-action'),
+          ),
+        ),
         findsOneWidget,
       );
       expect(find.byKey(const ValueKey('project-chat-title')), findsOneWidget);

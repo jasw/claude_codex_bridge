@@ -9,11 +9,13 @@ class ProjectChatHeader extends StatelessWidget {
     required this.onBack,
     required this.onOpenTerminal,
     required this.onOpenConnectionDetails,
+    this.onRefreshConversation,
     super.key,
   });
 
   final CcbProjectView view;
   final VoidCallback? onBack;
+  final VoidCallback? onRefreshConversation;
   final VoidCallback? onOpenTerminal;
   final VoidCallback onOpenConnectionDetails;
 
@@ -47,6 +49,13 @@ class ProjectChatHeader extends StatelessWidget {
                 ),
               ),
             ),
+            if (onRefreshConversation != null)
+              IconButton(
+                key: const ValueKey('agent-conversation-refresh-action'),
+                tooltip: strings.refreshConversation,
+                onPressed: onRefreshConversation,
+                icon: const Icon(Icons.refresh),
+              ),
             IconButton(
               key: const ValueKey('open-agent-terminal-button'),
               tooltip: strings.openTerminal,

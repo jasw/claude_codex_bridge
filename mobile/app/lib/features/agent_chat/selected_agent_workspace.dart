@@ -46,6 +46,7 @@ class SelectedAgentWorkspace extends StatefulWidget {
     required this.onRefreshView,
     this.onUserScrollDirectionChanged,
     this.localMessageStore,
+    this.controller,
   });
 
   final MobileCcbRepository repository;
@@ -57,9 +58,30 @@ class SelectedAgentWorkspace extends StatefulWidget {
   final Future<CcbProjectView?> Function()? onRefreshView;
   final ValueChanged<ScrollDirection>? onUserScrollDirectionChanged;
   final AgentLocalMessageStore? localMessageStore;
+  final SelectedAgentWorkspaceController? controller;
 
   @override
   State<SelectedAgentWorkspace> createState() => _SelectedAgentWorkspaceState();
+}
+
+class SelectedAgentWorkspaceController {
+  VoidCallback? _refreshLatest;
+
+  void refreshLatest() {
+    _refreshLatest?.call();
+  }
+
+  void _attachRefreshLatest(VoidCallback refreshLatest) {
+    _refreshLatest = refreshLatest;
+  }
+
+  void _detachRefreshLatest() {
+    _refreshLatest = null;
+  }
+
+  void dispose() {
+    _refreshLatest = null;
+  }
 }
 
 class _SelectedAgentWorkspaceState extends State<SelectedAgentWorkspace> {
@@ -117,6 +139,7 @@ class _SelectedAgentWorkspaceState extends State<SelectedAgentWorkspace> {
   @override
   void initState() {
     super.initState();
+    widget.controller?._attachRefreshLatest(_refreshSelectedAgentLatest);
     _restoreLocalMessagesForSelectedAgent();
     _loadSelectedAgentConversation();
   }
@@ -124,6 +147,10 @@ class _SelectedAgentWorkspaceState extends State<SelectedAgentWorkspace> {
   @override
   void didUpdateWidget(covariant SelectedAgentWorkspace oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (oldWidget.controller != widget.controller) {
+      oldWidget.controller?._detachRefreshLatest();
+      widget.controller?._attachRefreshLatest(_refreshSelectedAgentLatest);
+    }
     final projectOrAgentChanged =
         oldWidget.view.project.id != widget.view.project.id ||
         oldWidget.agent?.name != widget.agent?.name;
@@ -159,6 +186,7 @@ class _SelectedAgentWorkspaceState extends State<SelectedAgentWorkspace> {
 
   @override
   void dispose() {
+    widget.controller?._detachRefreshLatest();
     unawaited(_paneMessageSubmitter.closeSessions());
     _uiControllers.dispose();
     _conversationRefreshScheduler.cancelAll(notify: false);
@@ -996,6 +1024,14 @@ class _SelectedAgentWorkspaceState extends State<SelectedAgentWorkspace> {
     _scrollTimelineToEnd(agentName);
   }
 
+  void _refreshSelectedAgentLatest() {
+    final agentName = widget.agent?.name;
+    if (agentName == null) {
+      return;
+    }
+    _refreshLatest(agentName);
+  }
+
   void _scrollTimelineToEnd(String agentName, {int attempt = 0}) {
     _clearNewMessageFlag(agentName);
     _uiControllers.scrollTimelineToEnd(
@@ -1083,6 +1119,7 @@ class _SelectedAgentWorkspaceState extends State<SelectedAgentWorkspace> {
       onRefreshLatest: () {
         _refreshLatest(selectedAgent.name);
       },
+      showInlineRefreshAction: widget.controller == null,
       onNearEnd: () {
         _clearNewMessageFlag(selectedAgent.name);
       },
