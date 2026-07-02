@@ -105,8 +105,12 @@ class SelectedAgentWorkspaceView extends StatelessWidget {
           child: ListenableBuilder(
             listenable: draftFocusNode,
             builder: (context, _) {
+              final flutterView = View.of(context);
+              final keyboardOverlapsView =
+                  flutterView.viewInsets.bottom / flutterView.devicePixelRatio >
+                  conversationTimelineKeyboardInsetThreshold;
               final bottomRevealPadding =
-                  draftFocusNode.hasFocus
+                  keyboardOverlapsView
                       ? conversationTimelineComposerRevealPadding
                       : conversationTimelineFollowLatestPadding;
               return Stack(

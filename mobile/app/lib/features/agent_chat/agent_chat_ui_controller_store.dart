@@ -15,6 +15,7 @@ class AgentChatUiControllerStore {
   final Map<String, FocusNode> _draftFocusNodes = {};
   final Map<String, List<CcbMessageAttachment>> _draftAttachments = {};
   final Map<String, ScrollController> _scrollControllers = {};
+  final Map<String, int> _timelineAutoFollowGenerations = {};
 
   TextEditingController draftController(String agentName) {
     return _draftControllers.putIfAbsent(agentName, TextEditingController.new);
@@ -64,14 +65,22 @@ class AgentChatUiControllerStore {
     return isScrollMetricsNearEnd(controller.position);
   }
 
+  void cancelTimelineAutoFollow(String agentName) {
+    _timelineAutoFollowGenerations[agentName] =
+        (_timelineAutoFollowGenerations[agentName] ?? 0) + 1;
+  }
+
   void scrollTimelineToEnd(
     String agentName, {
     required AgentChatAgentIsActive isActive,
     String? targetItemId,
     int attempt = 0,
+    int? generation,
   }) {
+    generation ??= _timelineAutoFollowGenerations[agentName] ?? 0;
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!isActive(agentName)) {
+      if (!isActive(agentName) ||
+          generation != (_timelineAutoFollowGenerations[agentName] ?? 0)) {
         return;
       }
       final controller = _scrollControllers[agentName];
@@ -82,6 +91,7 @@ class AgentChatUiControllerStore {
             isActive: isActive,
             targetItemId: targetItemId,
             attempt: attempt + 1,
+            generation: generation,
           );
         }
         return;
@@ -103,6 +113,7 @@ class AgentChatUiControllerStore {
           isActive: isActive,
           targetItemId: targetItemId,
           attempt: attempt + 1,
+          generation: generation,
         );
       }
     });

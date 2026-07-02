@@ -1012,6 +1012,14 @@ class _SelectedAgentWorkspaceState extends State<SelectedAgentWorkspace>
     _scrollTimelineToEnd(agentName);
   }
 
+  void _handleTimelineUserScrollDirection(
+    String agentName,
+    ScrollDirection direction,
+  ) {
+    _uiControllers.cancelTimelineAutoFollow(agentName);
+    widget.onUserScrollDirectionChanged?.call(direction);
+  }
+
   Future<void> _loadOlderConversation(String agentName) async {
     if (!_chatController.hasOlderConversation(agentName) ||
         _chatController.isLoadingConversation(agentName)) {
@@ -1178,7 +1186,7 @@ class _SelectedAgentWorkspaceState extends State<SelectedAgentWorkspace>
         _clearNewMessageFlag(selectedAgent.name);
       },
       onUserScrollDirectionChanged: (direction) {
-        widget.onUserScrollDirectionChanged?.call(direction);
+        _handleTimelineUserScrollDirection(selectedAgent.name, direction);
       },
       onNearStart: () {
         _loadOlderConversation(selectedAgent.name);

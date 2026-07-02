@@ -308,7 +308,7 @@ void main() {
     expect(_composerGap(tester), lessThanOrEqualTo(8));
   });
 
-  testWidgets('composer expansion dynamically reveals latest bubble', (
+  testWidgets('focused composer without soft keyboard keeps latest tight', (
     tester,
   ) async {
     await setTestSurfaceSize(tester, const Size(390, 844));
@@ -330,6 +330,10 @@ void main() {
       find.byKey(const ValueKey('agent-composer-expand-action')),
     );
     await tester.pumpAndSettle();
+    await tester.showKeyboard(
+      find.byKey(const ValueKey('agent-message-composer')),
+    );
+    await tester.pumpAndSettle();
 
     var itemBottom =
         tester
@@ -346,10 +350,10 @@ void main() {
     );
     expect(
       _timelineBottomPadding(tester),
-      conversationTimelineComposerRevealPadding,
+      conversationTimelineFollowLatestPadding,
     );
-    expect(timelineBottom - itemBottom, greaterThanOrEqualTo(24));
-    expect(timelineBottom - itemBottom, lessThan(128));
+    expect(timelineBottom - itemBottom, greaterThanOrEqualTo(6));
+    expect(timelineBottom - itemBottom, lessThan(100));
 
     await tester.tap(
       find.byKey(const ValueKey('agent-composer-collapse-action')),
@@ -374,6 +378,47 @@ void main() {
       conversationTimelineFollowLatestPadding,
     );
     expect(timelineBottom - itemBottom, lessThan(100));
+  });
+
+  testWidgets('soft keyboard inset dynamically reveals latest bubble', (
+    tester,
+  ) async {
+    await setTestSurfaceSize(tester, const Size(390, 844));
+    setTestViewInsets(tester, const EdgeInsets.only(bottom: 220));
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ProjectHomeScreen(
+          repository: LongConversationRepository(messageCount: 120),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await openCurrentProject(tester);
+
+    await tester.tap(
+      find.byKey(const ValueKey('agent-composer-collapse-action')),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.byKey(const ValueKey('agent-composer-expand-action')),
+    );
+    await tester.pumpAndSettle();
+
+    final itemBottom =
+        tester
+            .getBottomRight(find.byKey(conversationTimelineItemKey('long-119')))
+            .dy;
+    final timelineBottom =
+        tester
+            .getBottomRight(find.byKey(const ValueKey('agent-chat-timeline')))
+            .dy;
+
+    expect(
+      _timelineBottomPadding(tester),
+      conversationTimelineComposerRevealPadding,
+    );
+    expect(timelineBottom - itemBottom, greaterThanOrEqualTo(24));
+    expect(timelineBottom - itemBottom, lessThan(128));
   });
 
   testWidgets('remote latest bubble does not yank while reading history', (
@@ -417,6 +462,39 @@ void main() {
     expect(
       find.byKey(const ValueKey('conversation-item-long-020')),
       findsOneWidget,
+    );
+  });
+
+  testWidgets('user upward drag cancels pending follow-latest snap-back', (
+    tester,
+  ) async {
+    await setTestSurfaceSize(tester, const Size(390, 844));
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ProjectHomeScreen(
+          repository: LongConversationRepository(messageCount: 120),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await openCurrentProject(tester);
+
+    await tester.enterText(
+      find.byKey(const ValueKey('agent-message-composer')),
+      'cancel follow latest send',
+    );
+    await tester.tap(find.byKey(const ValueKey('agent-message-send-button')));
+    await tester.pump();
+
+    final timelineFinder = find.byKey(const ValueKey('agent-chat-timeline'));
+    await tester.drag(timelineFinder, const Offset(0, 420));
+    await tester.pumpAndSettle();
+
+    final timeline = tester.widget<ListView>(timelineFinder);
+    final controller = timeline.controller!;
+    expect(
+      controller.position.maxScrollExtent - controller.position.pixels,
+      greaterThan(conversationTimelineNearEndThreshold),
     );
   });
 

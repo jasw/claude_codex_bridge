@@ -15,6 +15,7 @@ const double conversationTimelineFollowLatestPadding = 6;
 const double conversationTimelineComposerRevealPadding = 32;
 const double conversationTimelineExpandedRevealPadding = 64;
 const double conversationTimelineNearEndThreshold = 120;
+const double conversationTimelineKeyboardInsetThreshold = 80;
 
 class ConversationTimeline extends StatelessWidget {
   const ConversationTimeline({
