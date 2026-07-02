@@ -398,9 +398,15 @@ void main() {
 
     expect(model.executionStatus?.state, 'working');
     expect(model.workingReplyItemId, 'reply-2');
+    expect(
+      model.timelineItems
+          .map((item) => item.id)
+          .contains(syntheticAgentWorkingConversationItemId(agent.name)),
+      isFalse,
+    );
   });
 
-  test('does not mark historical reply without timing metadata as working', () {
+  test('shows synthetic working reply when no unfinished reply exists', () {
     final chatController = AgentChatController();
     final view = _view();
     final agent = _agent(
@@ -415,13 +421,14 @@ void main() {
         projectId: view.project.id,
         agentName: agent.name,
         namespaceEpoch: view.namespaceEpoch!,
-        items: const [
+        items: [
           CcbConversationItem(
             id: 'user-1',
             agentName: 'mobile',
             kind: CcbConversationItemKind.userMessage,
             title: 'You',
             body: 'old request',
+            sentAt: DateTime.utc(2026, 7, 1, 10),
           ),
           CcbConversationItem(
             id: 'reply-1',
@@ -429,6 +436,8 @@ void main() {
             kind: CcbConversationItemKind.agentReply,
             title: 'Agent reply',
             body: 'old answer from legacy history',
+            completedAt: DateTime.utc(2026, 7, 1, 10, 6),
+            durationMs: 6000,
           ),
         ],
         generatedAt: DateTime.utc(2026, 7, 1),
@@ -443,7 +452,22 @@ void main() {
     );
 
     expect(model.executionStatus?.state, 'working');
-    expect(model.workingReplyItemId, isNull);
+    expect(
+      model.workingReplyItemId,
+      syntheticAgentWorkingConversationItemId(agent.name),
+    );
+    expect(model.timelineItems.map((item) => item.id), [
+      'user-1',
+      'reply-1',
+      syntheticAgentWorkingConversationItemId(agent.name),
+    ]);
+    final completedReply = model.timelineItems[1];
+    expect(completedReply.completedAt, DateTime.utc(2026, 7, 1, 10, 6));
+    expect(completedReply.durationMs, 6000);
+    final placeholder = model.timelineItems.last;
+    expect(placeholder.kind, CcbConversationItemKind.agentReply);
+    expect(placeholder.body, 'Working...');
+    expect(placeholder.completedAt, isNull);
   });
 
   test('marks latest terminal output block as working fallback', () {
@@ -486,13 +510,70 @@ void main() {
     expect(model.workingReplyItemId, 'terminal-history-1');
   });
 
-  test('does not mark stale reply when latest item is user message', () {
+  test(
+    'shows synthetic working reply instead of stale reply after latest user',
+    () {
+      final chatController = AgentChatController();
+      final view = _view();
+      final agent = _agent(
+        activityState: 'active',
+        activitySource: 'codex_runtime',
+        activityReason: 'codex_working_status_line',
+      );
+      chatController.applyRemoteConversation(
+        agentName: agent.name,
+        shouldScroll: true,
+        conversation: CcbAgentConversation(
+          projectId: view.project.id,
+          agentName: agent.name,
+          namespaceEpoch: view.namespaceEpoch!,
+          items: const [
+            CcbConversationItem(
+              id: 'reply-1',
+              agentName: 'mobile',
+              kind: CcbConversationItemKind.agentReply,
+              title: 'Agent reply',
+              body: 'old answer',
+            ),
+            CcbConversationItem(
+              id: 'user-2',
+              agentName: 'mobile',
+              kind: CcbConversationItemKind.userMessage,
+              title: 'You',
+              body: 'new request',
+            ),
+          ],
+          generatedAt: DateTime.utc(2026, 7, 1),
+        ),
+      );
+
+      final model = selectedAgentWorkspaceModel(
+        view: _view(agent: agent),
+        agent: agent,
+        chatController: chatController,
+        isAwaitingAgentResponse: false,
+      );
+
+      expect(model.executionStatus?.state, 'working');
+      expect(
+        model.workingReplyItemId,
+        syntheticAgentWorkingConversationItemId(agent.name),
+      );
+      expect(model.timelineItems.map((item) => item.id), [
+        'reply-1',
+        'user-2',
+        syntheticAgentWorkingConversationItemId(agent.name),
+      ]);
+    },
+  );
+
+  test('does not show synthetic working reply when idle', () {
     final chatController = AgentChatController();
     final view = _view();
     final agent = _agent(
-      activityState: 'active',
-      activitySource: 'codex_runtime',
-      activityReason: 'codex_working_status_line',
+      activityState: 'idle',
+      activitySource: 'provider_pane',
+      activityReason: 'provider_prompt_idle',
     );
     chatController.applyRemoteConversation(
       agentName: agent.name,
@@ -509,12 +590,45 @@ void main() {
             title: 'Agent reply',
             body: 'old answer',
           ),
+        ],
+        generatedAt: DateTime.utc(2026, 7, 1),
+      ),
+    );
+
+    final model = selectedAgentWorkspaceModel(
+      view: _view(agent: agent),
+      agent: agent,
+      chatController: chatController,
+      isAwaitingAgentResponse: false,
+    );
+
+    expect(model.executionStatus?.state, 'idle');
+    expect(model.workingReplyItemId, isNull);
+    expect(model.timelineItems.map((item) => item.id), ['reply-1']);
+  });
+
+  test('does not show synthetic working reply for exception status', () {
+    final chatController = AgentChatController();
+    final view = _view();
+    final agent = _agent(
+      activityState: 'failed',
+      activitySource: 'provider_pane',
+      activityReason: 'conversation_interrupted',
+    );
+    chatController.applyRemoteConversation(
+      agentName: agent.name,
+      shouldScroll: true,
+      conversation: CcbAgentConversation(
+        projectId: view.project.id,
+        agentName: agent.name,
+        namespaceEpoch: view.namespaceEpoch!,
+        items: const [
           CcbConversationItem(
-            id: 'user-2',
+            id: 'reply-1',
             agentName: 'mobile',
-            kind: CcbConversationItemKind.userMessage,
-            title: 'You',
-            body: 'new request',
+            kind: CcbConversationItemKind.agentReply,
+            title: 'Agent reply',
+            body: 'old answer',
           ),
         ],
         generatedAt: DateTime.utc(2026, 7, 1),
@@ -528,8 +642,9 @@ void main() {
       isAwaitingAgentResponse: false,
     );
 
-    expect(model.executionStatus?.state, 'working');
+    expect(model.executionStatus?.state, 'exception');
     expect(model.workingReplyItemId, isNull);
+    expect(model.timelineItems.map((item) => item.id), ['reply-1']);
   });
 
   test('marks running reply when reply starts after local user send time', () {

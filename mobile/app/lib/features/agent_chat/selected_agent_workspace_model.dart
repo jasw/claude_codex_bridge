@@ -80,11 +80,27 @@ SelectedAgentWorkspaceModel selectedAgentWorkspaceModel({
     isLoadingConversation: isLoadingConversation,
     hasLocalExecutionException: hasLocalExecutionException,
   );
+  final workingReplyItemId =
+      executionStatus.state == 'working'
+          ? selectedAgentWorkingReplyItemId(timelineItems)
+          : null;
+  final visibleTimelineItems =
+      workingReplyItemId == null && executionStatus.state == 'working'
+          ? [
+            ...timelineItems,
+            syntheticAgentWorkingConversationItem(agent.name),
+          ]
+          : timelineItems;
+  final visibleWorkingReplyItemId =
+      workingReplyItemId ??
+      (executionStatus.state == 'working'
+          ? syntheticAgentWorkingConversationItemId(agent.name)
+          : null);
   return SelectedAgentWorkspaceModel(
     agent: agent,
     contentItems: contentItems,
     initialHistory: terminalHistory,
-    timelineItems: timelineItems,
+    timelineItems: visibleTimelineItems,
     commsItems: [
       for (final item in allTimelineItems)
         if (item.kind == CcbConversationItemKind.commsItem) item,
@@ -97,10 +113,21 @@ SelectedAgentWorkspaceModel selectedAgentWorkspaceModel({
     isAwaitingAgentResponse: isAwaitingAgentResponse,
     isComposerCollapsed: chatController.isComposerCollapsed(agent.name),
     executionStatus: executionStatus,
-    workingReplyItemId:
-        executionStatus.state == 'working'
-            ? selectedAgentWorkingReplyItemId(timelineItems)
-            : null,
+    workingReplyItemId: visibleWorkingReplyItemId,
+  );
+}
+
+String syntheticAgentWorkingConversationItemId(String agentName) =>
+    'synthetic-working-reply-$agentName';
+
+CcbConversationItem syntheticAgentWorkingConversationItem(String agentName) {
+  return CcbConversationItem(
+    id: syntheticAgentWorkingConversationItemId(agentName),
+    agentName: agentName,
+    kind: CcbConversationItemKind.agentReply,
+    title: 'Agent reply',
+    body: 'Working...',
+    source: 'project_view',
   );
 }
 

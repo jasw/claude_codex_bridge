@@ -9,6 +9,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:xterm/xterm.dart';
 
 import 'package:ccb_mobile/ccb_mobile.dart';
+import 'package:ccb_mobile/features/agent_chat/agent_chat_controller.dart';
 import 'package:ccb_mobile/features/agent_chat/agent_message_composer.dart';
 import 'package:ccb_mobile/features/agent_chat/selected_agent_workspace.dart';
 import 'package:ccb_mobile/features/agent_chat/selected_agent_workspace_model.dart';
@@ -172,6 +173,113 @@ void main() {
     expect(find.text('Working'), findsOneWidget);
     expect(find.text('Idle'), findsNothing);
   });
+
+  testWidgets(
+    'workspace shows synthetic working bubble without running reply',
+    (tester) async {
+      final agent = CcbAgent(
+        name: 'mobile',
+        provider: 'codex',
+        window: 'main',
+        order: 0,
+        active: true,
+        queueDepth: 0,
+        activityState: 'active',
+        activitySource: 'codex_runtime',
+        activityReason: 'codex_working_status_line',
+      );
+      final chatController = AgentChatController();
+      final view = _workspaceView(agent);
+      chatController.applyRemoteConversation(
+        agentName: agent.name,
+        shouldScroll: true,
+        conversation: CcbAgentConversation(
+          projectId: view.project.id,
+          agentName: agent.name,
+          namespaceEpoch: view.namespaceEpoch!,
+          items: [
+            CcbConversationItem(
+              id: 'reply-completed',
+              agentName: agent.name,
+              kind: CcbConversationItemKind.agentReply,
+              title: 'Agent reply',
+              body: 'completed before status poll',
+              completedAt: DateTime.utc(2026, 7, 2, 8, 30),
+              durationMs: 90000,
+            ),
+          ],
+          generatedAt: DateTime.utc(2026, 7, 2),
+        ),
+      );
+      final model = selectedAgentWorkspaceModel(
+        view: view,
+        agent: agent,
+        chatController: chatController,
+        isAwaitingAgentResponse: false,
+      );
+      final draftController = TextEditingController();
+      final focusNode = FocusNode();
+      final timelineController = ScrollController();
+      addTearDown(draftController.dispose);
+      addTearDown(focusNode.dispose);
+      addTearDown(timelineController.dispose);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SelectedAgentWorkspaceView(
+              repository: FakeMobileCcbRepository.demo(),
+              view: view,
+              model: model,
+              timelineController: timelineController,
+              draftController: draftController,
+              draftFocusNode: focusNode,
+              enableComposerCollapse: false,
+              onRetry: (_) {},
+              onToggleExpanded: (_) {},
+              onRefreshLatest: () {},
+              onNearEnd: () {},
+              onUserNearEnd: () {},
+              onNearStart: () {},
+              onUserScrollDirectionChanged: (_) {},
+              onJumpToLatest: () {},
+              onCollapseComposer: () {},
+              onExpandComposer: () {},
+              draftAttachments: const [],
+              downloadingAttachmentIds: const {},
+              downloadedAttachmentIds: const {},
+              onPickImageAttachment: () {},
+              onPickFileAttachment: () {},
+              onRemoveAttachment: (_) {},
+              onDownloadAttachment: (_) {},
+              onOpenAttachment: (_) {},
+              onDeleteFailedMessage: (_) {},
+              onSend: () {},
+              onSendTab: () {},
+              onSendEscape: () {},
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      final placeholderId = syntheticAgentWorkingConversationItemId(agent.name);
+      expect(find.text('completed before status poll'), findsOneWidget);
+      expect(find.text('Working...'), findsOneWidget);
+      expect(
+        find.byKey(ValueKey('conversation-working-$placeholderId')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(ValueKey('conversation-working-glow-$placeholderId')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('conversation-working-reply-completed')),
+        findsNothing,
+      );
+    },
+  );
 
   testWidgets('message composer shows focused quick key toolbar', (
     tester,
