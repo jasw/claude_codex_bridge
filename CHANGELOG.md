@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+## v8.0.10 (2026-07-03)
+
+### Release Metadata
+
+- **Release Workflow Default Updated**: the release-artifacts workflow manual
+  default tag now follows the package version so full CI release checks pass.
+- **Mobile App Link Updated**: `ccb update mobile`, README links, package
+  metadata, and the mobile release manifest now point to the 8.0.10 APK.
+
 ## v8.0.9 (2026-07-03)
 
 ### Mobile Gateway And Conversation Refresh

@@ -6,7 +6,7 @@
 **Visible, controllable multi-agent cooperative TUI workspace**
 
 <p>
-  <img src="https://img.shields.io/badge/version-8.0.9-orange.svg" alt="version">
+  <img src="https://img.shields.io/badge/version-8.0.10-orange.svg" alt="version">
   <img src="https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20WSL-lightgrey.svg" alt="platform">
   <img src="https://img.shields.io/badge/providers-15%20CLI%20families-0B7285.svg" alt="providers">
 </p>
@@ -227,10 +227,10 @@ The command walks through local setup and pairing.
 <details>
 <summary><b>Mobile App details, security boundaries, and source</b></summary>
 
-CCB 8.0.9 includes the Flutter CCB Mobile source under [`mobile/`](mobile/)
+CCB 8.0.10 includes the Flutter CCB Mobile source under [`mobile/`](mobile/)
 and publishes an Android APK as a GitHub Release asset:
 
-- [Download CCB Mobile v8.0.9 APK](https://github.com/bfly123/claude_code_bridge/releases/download/v8.0.9/ccb-mobile-v8.0.9.apk)
+- [Download CCB Mobile v8.0.10 APK](https://github.com/bfly123/claude_code_bridge/releases/download/v8.0.10/ccb-mobile-v8.0.10.apk)
 - App source: [`mobile/app`](mobile/app)
 - Server/gateway source: [`lib/mobile_gateway`](lib/mobile_gateway)
 
