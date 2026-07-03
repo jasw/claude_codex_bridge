@@ -85,34 +85,34 @@ def test_host_project_registry_publish_and_loads_redacted_projects(tmp_path: Pat
     registry_path = tmp_path / 'mobile' / 'projects.json'
     project_root = tmp_path / 'one'
     project_root.mkdir()
-    socket_path = project_root / '.ccb' / 'ccbd' / 'ccbd.sock'
-    socket_path.parent.mkdir(parents=True)
-    unix_socket = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    unix_socket.bind(str(socket_path))
-    try:
-        publish_mobile_gateway_project(
-            project_id='proj-one',
-            project_root=project_root,
-            ccbd_socket_path=socket_path,
-            display_name='one',
-            registry_path=registry_path,
-            updated_at='2026-06-24T00:00:00Z',
-        )
+    with tempfile.TemporaryDirectory(prefix='ccb-sock-', dir='/tmp') as socket_dir:
+        socket_path = Path(socket_dir) / 'ccbd.sock'
+        unix_socket = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        unix_socket.bind(str(socket_path))
+        try:
+            publish_mobile_gateway_project(
+                project_id='proj-one',
+                project_root=project_root,
+                ccbd_socket_path=socket_path,
+                display_name='one',
+                registry_path=registry_path,
+                updated_at='2026-06-24T00:00:00Z',
+            )
 
-        payload = json.loads(registry_path.read_text(encoding='utf-8'))
-        assert payload['record_type'] == 'ccb_mobile_host_project_registry'
-        assert payload['projects'][0]['project_id'] == 'proj-one'
-        assert payload['projects'][0]['ccbd_socket_path'] == str(socket_path)
+            payload = json.loads(registry_path.read_text(encoding='utf-8'))
+            assert payload['record_type'] == 'ccb_mobile_host_project_registry'
+            assert payload['projects'][0]['project_id'] == 'proj-one'
+            assert payload['projects'][0]['ccbd_socket_path'] == str(socket_path)
 
-        registry = load_mobile_gateway_project_registry(registry_path=registry_path)
-        projects = registry.projects()
-        assert len(projects) == 1
-        assert projects[0].project_id == 'proj-one'
-        assert projects[0].project_root == project_root
-        assert projects[0].public_display_name == 'one'
-    finally:
-        unix_socket.close()
-        socket_path.unlink(missing_ok=True)
+            registry = load_mobile_gateway_project_registry(registry_path=registry_path)
+            projects = registry.projects()
+            assert len(projects) == 1
+            assert projects[0].project_id == 'proj-one'
+            assert projects[0].project_root == project_root
+            assert projects[0].public_display_name == 'one'
+        finally:
+            unix_socket.close()
+            socket_path.unlink(missing_ok=True)
 
 
 def test_host_project_registry_omits_stale_persisted_projects(tmp_path: Path) -> None:
@@ -161,40 +161,41 @@ def test_host_project_registry_can_merge_running_projects(tmp_path: Path, monkey
     registry_path = tmp_path / 'mobile' / 'projects.json'
     persisted_root = tmp_path / 'persisted'
     persisted_root.mkdir()
-    persisted_socket_path = tmp_path / 'persisted.sock'
-    unix_socket = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    unix_socket.bind(str(persisted_socket_path))
-    publish_mobile_gateway_project(
-        project_id='proj-persisted',
-        project_root=persisted_root,
-        ccbd_socket_path=persisted_socket_path,
-        display_name='persisted',
-        registry_path=registry_path,
-    )
-    running = MobileGatewayProject(
-        project_id='proj-running',
-        project_root=tmp_path / 'running',
-        display_name='running',
-        ccbd_client_factory=lambda: None,
-    )
-    monkeypatch.setattr(
-        'mobile_gateway.project_registry.discover_running_mobile_gateway_projects',
-        lambda: (running,),
-    )
-
-    try:
-        registry = load_mobile_gateway_project_registry(
+    with tempfile.TemporaryDirectory(prefix='ccb-sock-', dir='/tmp') as socket_dir:
+        persisted_socket_path = Path(socket_dir) / 'persisted.sock'
+        unix_socket = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        unix_socket.bind(str(persisted_socket_path))
+        publish_mobile_gateway_project(
+            project_id='proj-persisted',
+            project_root=persisted_root,
+            ccbd_socket_path=persisted_socket_path,
+            display_name='persisted',
             registry_path=registry_path,
-            include_running=True,
+        )
+        running = MobileGatewayProject(
+            project_id='proj-running',
+            project_root=tmp_path / 'running',
+            display_name='running',
+            ccbd_client_factory=lambda: None,
+        )
+        monkeypatch.setattr(
+            'mobile_gateway.project_registry.discover_running_mobile_gateway_projects',
+            lambda: (running,),
         )
 
-        assert [project.project_id for project in registry.projects()] == [
-            'proj-persisted',
-            'proj-running',
-        ]
-    finally:
-        unix_socket.close()
-        persisted_socket_path.unlink(missing_ok=True)
+        try:
+            registry = load_mobile_gateway_project_registry(
+                registry_path=registry_path,
+                include_running=True,
+            )
+
+            assert [project.project_id for project in registry.projects()] == [
+                'proj-persisted',
+                'proj-running',
+            ]
+        finally:
+            unix_socket.close()
+            persisted_socket_path.unlink(missing_ok=True)
 
 
 def test_prepare_server_mobile_gateway_uses_running_projects(tmp_path: Path, monkeypatch) -> None:

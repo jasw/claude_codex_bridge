@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+## v8.0.12 (2026-07-03)
+
+### Release CI Portability
+
+- **macOS Socket Test Fixed**: mobile host registry tests now bind their
+  temporary Unix sockets under a short `/tmp/ccb-sock-*` path so macOS CI does
+  not fail on `AF_UNIX path too long`.
+- **Mobile App Link Updated**: `ccb update mobile`, README links, package
+  metadata, and the mobile release manifest now point to the 8.0.12 APK.
+
 ## v8.0.11 (2026-07-03)
 
 ### Release CI And Mobile APK
