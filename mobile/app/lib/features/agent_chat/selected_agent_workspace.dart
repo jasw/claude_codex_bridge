@@ -1175,10 +1175,6 @@ class _SelectedAgentWorkspaceState extends State<SelectedAgentWorkspace>
       onToggleExpanded: (itemId) {
         _toggleExpandedItem(selectedAgent.name, itemId);
       },
-      onRefreshLatest: () {
-        _refreshLatest(selectedAgent.name);
-      },
-      showInlineRefreshAction: widget.controller == null,
       onNearEnd: () {
         _clearNewMessageFlag(selectedAgent.name);
       },

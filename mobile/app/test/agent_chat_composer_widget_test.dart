@@ -148,7 +148,6 @@ void main() {
             enableComposerCollapse: false,
             onRetry: (_) {},
             onToggleExpanded: (_) {},
-            onRefreshLatest: () {},
             onNearEnd: () {},
             onUserNearEnd: () {},
             onNearStart: () {},
@@ -244,7 +243,6 @@ void main() {
               enableComposerCollapse: false,
               onRetry: (_) {},
               onToggleExpanded: (_) {},
-              onRefreshLatest: () {},
               onNearEnd: () {},
               onUserNearEnd: () {},
               onNearStart: () {},
@@ -430,9 +428,7 @@ void main() {
     expect(find.text('Idle'), findsNothing);
     expect(find.text('Working'), findsNothing);
 
-    await tester.tap(
-      find.byKey(const ValueKey('agent-conversation-refresh-action')),
-    );
+    await tester.tap(find.byKey(const ValueKey('test-header-refresh-action')));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 100));
 
@@ -457,9 +453,7 @@ void main() {
     expect(find.byKey(const ValueKey('agent-working-status')), findsNothing);
     expect(find.text('Idle'), findsNothing);
 
-    await tester.tap(
-      find.byKey(const ValueKey('agent-conversation-refresh-action')),
-    );
+    await tester.tap(find.byKey(const ValueKey('test-header-refresh-action')));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 100));
 
@@ -2511,31 +2505,45 @@ class _WorkspaceRefreshStatusHarness extends StatefulWidget {
 
 class _WorkspaceRefreshStatusHarnessState
     extends State<_WorkspaceRefreshStatusHarness> {
+  final SelectedAgentWorkspaceController _controller =
+      SelectedAgentWorkspaceController();
   late CcbAgent _agent = _statusAgent();
   late CcbProjectView _view = _workspaceView(_agent);
 
   @override
   Widget build(BuildContext context) {
-    return SelectedAgentWorkspace(
-      repository: FakeMobileCcbRepository.demo(),
-      terminalTransport: null,
-      usePaneInputForMessages: false,
-      view: _view,
-      agent: _agent,
-      enableComposerCollapse: true,
-      onRefreshView: () async {
-        final agent = _statusAgent(
-          activityState: 'pending',
-          activitySource: 'codex_runtime',
-          activityReason: widget.refreshActivityReason,
-        );
-        final view = _workspaceView(agent);
-        setState(() {
-          _agent = agent;
-          _view = view;
-        });
-        return view;
-      },
+    return Column(
+      children: [
+        IconButton(
+          key: const ValueKey('test-header-refresh-action'),
+          onPressed: _controller.refreshLatest,
+          icon: const Icon(Icons.refresh),
+        ),
+        Expanded(
+          child: SelectedAgentWorkspace(
+            repository: FakeMobileCcbRepository.demo(),
+            terminalTransport: null,
+            usePaneInputForMessages: false,
+            view: _view,
+            agent: _agent,
+            enableComposerCollapse: true,
+            controller: _controller,
+            onRefreshView: () async {
+              final agent = _statusAgent(
+                activityState: 'pending',
+                activitySource: 'codex_runtime',
+                activityReason: widget.refreshActivityReason,
+              );
+              final view = _workspaceView(agent);
+              setState(() {
+                _agent = agent;
+                _view = view;
+              });
+              return view;
+            },
+          ),
+        ),
+      ],
     );
   }
 }

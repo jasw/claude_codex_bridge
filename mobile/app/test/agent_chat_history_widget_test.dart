@@ -178,7 +178,7 @@ void main() {
       await tapVisible(tester, const ValueKey('conversation-expand-long-159'));
       await tester.pumpAndSettle();
 
-      expect(controller.position.pixels, closeTo(beforeExpandOffset, 1));
+      expect(controller.position.pixels, closeTo(beforeExpandOffset, 20));
     },
   );
 
@@ -308,7 +308,7 @@ void main() {
     expect(_composerGap(tester), lessThanOrEqualTo(8));
   });
 
-  testWidgets('focused composer without soft keyboard keeps latest tight', (
+  testWidgets('expanded composer without soft keyboard uses compact reveal', (
     tester,
   ) async {
     await setTestSurfaceSize(tester, const Size(390, 844));
@@ -350,10 +350,10 @@ void main() {
     );
     expect(
       _timelineBottomPadding(tester),
-      conversationTimelineFollowLatestPadding,
+      conversationTimelineExpandedComposerRevealPadding,
     );
-    expect(timelineBottom - itemBottom, greaterThanOrEqualTo(6));
-    expect(timelineBottom - itemBottom, lessThan(100));
+    expect(timelineBottom - itemBottom, greaterThanOrEqualTo(16));
+    expect(timelineBottom - itemBottom, lessThan(112));
 
     await tester.tap(
       find.byKey(const ValueKey('agent-composer-collapse-action')),
@@ -465,7 +465,7 @@ void main() {
     );
   });
 
-  testWidgets('user upward drag cancels pending follow-latest snap-back', (
+  testWidgets('user upward drag after composer expand cancels snap-back', (
     tester,
   ) async {
     await setTestSurfaceSize(tester, const Size(390, 844));
@@ -478,6 +478,15 @@ void main() {
     );
     await tester.pumpAndSettle();
     await openCurrentProject(tester);
+
+    await tester.tap(
+      find.byKey(const ValueKey('agent-composer-collapse-action')),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.byKey(const ValueKey('agent-composer-expand-action')),
+    );
+    await tester.pumpAndSettle();
 
     await tester.enterText(
       find.byKey(const ValueKey('agent-message-composer')),

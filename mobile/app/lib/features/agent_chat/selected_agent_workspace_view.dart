@@ -41,7 +41,6 @@ class SelectedAgentWorkspaceView extends StatelessWidget {
     required this.enableComposerCollapse,
     required this.onRetry,
     required this.onToggleExpanded,
-    required this.onRefreshLatest,
     required this.onNearEnd,
     required this.onUserNearEnd,
     required this.onNearStart,
@@ -61,7 +60,6 @@ class SelectedAgentWorkspaceView extends StatelessWidget {
     required this.onSend,
     required this.onSendTab,
     required this.onSendEscape,
-    this.showInlineRefreshAction = false,
     super.key,
   });
 
@@ -74,7 +72,6 @@ class SelectedAgentWorkspaceView extends StatelessWidget {
   final bool enableComposerCollapse;
   final ValueChanged<CcbConversationItem> onRetry;
   final ValueChanged<String> onToggleExpanded;
-  final VoidCallback onRefreshLatest;
   final VoidCallback onNearEnd;
   final VoidCallback onUserNearEnd;
   final VoidCallback onNearStart;
@@ -94,7 +91,6 @@ class SelectedAgentWorkspaceView extends StatelessWidget {
   final VoidCallback onSend;
   final VoidCallback onSendTab;
   final VoidCallback onSendEscape;
-  final bool showInlineRefreshAction;
 
   @override
   Widget build(BuildContext context) {
@@ -109,9 +105,13 @@ class SelectedAgentWorkspaceView extends StatelessWidget {
               final keyboardOverlapsView =
                   flutterView.viewInsets.bottom / flutterView.devicePixelRatio >
                   conversationTimelineKeyboardInsetThreshold;
+              final composerExpanded =
+                  enableComposerCollapse && !model.isComposerCollapsed;
               final bottomRevealPadding =
                   keyboardOverlapsView
                       ? conversationTimelineComposerRevealPadding
+                      : composerExpanded
+                      ? conversationTimelineExpandedComposerRevealPadding
                       : conversationTimelineFollowLatestPadding;
               return Stack(
                 children: [
@@ -150,13 +150,18 @@ class SelectedAgentWorkspaceView extends StatelessWidget {
                       ),
                     ),
                   ),
-                  if (showInlineRefreshAction)
+                  if (model.commsItems.isNotEmpty)
                     Positioned(
-                      top: 4,
-                      right: 4,
-                      child: _RefreshLatestButton(
-                        enabled: !model.isLoadingConversation,
-                        onRefreshLatest: onRefreshLatest,
+                      top: 8,
+                      left: 8,
+                      right: 8,
+                      child: IgnorePointer(
+                        child: Align(
+                          alignment: Alignment.topLeft,
+                          child: _AgentCommsStatusStrip(
+                            item: model.commsItems.last,
+                          ),
+                        ),
                       ),
                     ),
                   if (model.hasNewMessages)
@@ -170,10 +175,6 @@ class SelectedAgentWorkspaceView extends StatelessWidget {
             },
           ),
         ),
-        if (model.commsItems.isNotEmpty) ...[
-          const SizedBox(height: 6),
-          _AgentCommsStatusStrip(item: model.commsItems.last),
-        ],
         const SizedBox(height: 6),
         AgentMessageComposer(
           agentName: model.agent.name,
@@ -193,35 +194,6 @@ class SelectedAgentWorkspaceView extends StatelessWidget {
           onSendEscape: onSendEscape,
         ),
       ],
-    );
-  }
-}
-
-class _RefreshLatestButton extends StatelessWidget {
-  const _RefreshLatestButton({
-    required this.enabled,
-    required this.onRefreshLatest,
-  });
-
-  final bool enabled;
-  final VoidCallback onRefreshLatest;
-
-  @override
-  Widget build(BuildContext context) {
-    final strings = CcbMobileLocalizations.of(context);
-    return Material(
-      color: Theme.of(context).colorScheme.surfaceContainerHighest,
-      shape: const CircleBorder(),
-      clipBehavior: Clip.antiAlias,
-      child: IconButton(
-        key: const ValueKey('agent-conversation-refresh-action'),
-        tooltip: strings.refreshConversation,
-        onPressed: enabled ? onRefreshLatest : null,
-        icon: const Icon(Icons.refresh),
-        iconSize: 20,
-        padding: EdgeInsets.zero,
-        constraints: const BoxConstraints.tightFor(width: 36, height: 36),
-      ),
     );
   }
 }
@@ -327,33 +299,37 @@ class _AgentCommsStatusStrip extends StatelessWidget {
     final textTheme = Theme.of(context).textTheme;
     final strings = CcbMobileLocalizations.of(context);
     final summary = _summaryText(item);
-    return Padding(
+    return Material(
       key: const ValueKey('agent-comms-status'),
-      padding: const EdgeInsets.symmetric(horizontal: 4),
-      child: Row(
-        children: [
-          Icon(Icons.forum_outlined, size: 18, color: colorScheme.primary),
-          const SizedBox(width: 6),
-          Text(
-            strings.communicating,
-            style: textTheme.labelLarge?.copyWith(color: colorScheme.primary),
-          ),
-          if (summary.isNotEmpty) ...[
-            const SizedBox(width: 8),
-            Expanded(
-              child: Text(
-                summary,
-                key: const ValueKey('agent-comms-status-summary'),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: textTheme.bodySmall?.copyWith(
-                  color: colorScheme.onSurfaceVariant,
+      color: colorScheme.surfaceContainerHigh,
+      shape: const StadiumBorder(),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.forum_outlined, size: 18, color: colorScheme.primary),
+            const SizedBox(width: 6),
+            Text(
+              strings.communicating,
+              style: textTheme.labelLarge?.copyWith(color: colorScheme.primary),
+            ),
+            if (summary.isNotEmpty) ...[
+              const SizedBox(width: 8),
+              Flexible(
+                child: Text(
+                  summary,
+                  key: const ValueKey('agent-comms-status-summary'),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: textTheme.bodySmall?.copyWith(
+                    color: colorScheme.onSurfaceVariant,
+                  ),
                 ),
               ),
-            ),
-          ] else
-            const Spacer(),
-        ],
+            ],
+          ],
+        ),
       ),
     );
   }

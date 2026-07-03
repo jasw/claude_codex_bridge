@@ -12,6 +12,7 @@ import 'conversation_bubble.dart';
 import 'readable_terminal_history_panel.dart';
 
 const double conversationTimelineFollowLatestPadding = 6;
+const double conversationTimelineExpandedComposerRevealPadding = 20;
 const double conversationTimelineComposerRevealPadding = 32;
 const double conversationTimelineExpandedRevealPadding = 64;
 const double conversationTimelineNearEndThreshold = 120;

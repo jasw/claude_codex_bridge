@@ -73,7 +73,6 @@ void main() {
               enableComposerCollapse: false,
               onRetry: (_) {},
               onToggleExpanded: (_) {},
-              onRefreshLatest: () {},
               onNearEnd: () {},
               onUserNearEnd: () {},
               onNearStart: () {},
@@ -108,6 +107,17 @@ void main() {
     );
     expect(find.text('project view updated'), findsOneWidget);
     expect(
+      find.byKey(const ValueKey('agent-conversation-refresh-action')),
+      findsNothing,
+    );
+    expect(_composerGap(tester), lessThanOrEqualTo(8));
+    expect(
+      tester.getTopLeft(find.byKey(const ValueKey('agent-comms-status'))).dy,
+      lessThan(
+        tester.getTopLeft(find.byKey(const ValueKey('agent-chat-composer'))).dy,
+      ),
+    );
+    expect(
       find.byKey(const ValueKey('conversation-item-comms-1')),
       findsNothing,
     );
@@ -116,6 +126,16 @@ void main() {
       findsOneWidget,
     );
   });
+}
+
+double _composerGap(WidgetTester tester) {
+  final timelineBottom =
+      tester
+          .getBottomLeft(find.byKey(const ValueKey('agent-chat-timeline')))
+          .dy;
+  final composerTop =
+      tester.getTopLeft(find.byKey(const ValueKey('agent-chat-composer'))).dy;
+  return composerTop - timelineBottom;
 }
 
 CcbProjectView _view() {
