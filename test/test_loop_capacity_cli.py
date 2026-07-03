@@ -27,6 +27,10 @@ def _write(path: Path, text: str) -> None:
     path.write_text(text, encoding='utf-8')
 
 
+def _write_json(path: Path, payload: dict[str, object]) -> None:
+    _write(path, json.dumps(payload, ensure_ascii=False, indent=2) + '\n')
+
+
 def _write_installed_role(store_root: Path, role_id: str, *, default_agent_name: str) -> None:
     _write(
         store_root / 'installed' / role_id / 'current' / 'role.toml',
@@ -72,6 +76,81 @@ thinking = "medium"
 workspace_mode = "git-worktree"
 workspace_group = "review_pool"
 max_instances = 1
+""",
+    )
+    return project_root
+
+
+def _project_with_workflow_topology(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    project_root = tmp_path / 'repo-loop-workflow-dispatch'
+    role_store = tmp_path / 'roles-workflow-dispatch'
+    for role_id, default_agent_name in (
+        ('agentroles.ccb_frontdesk', 'ccb_frontdesk'),
+        ('agentroles.ccb_task_detailer', 'ccb_task_detailer'),
+        ('agentroles.ccb_planner', 'ccb_planner'),
+        ('agentroles.ccb_orchestrator', 'ccb_orchestrator'),
+        ('agentroles.ccb_round_reviewer', 'ccb_round_reviewer'),
+        ('agentroles.coder', 'coder'),
+        ('agentroles.code_reviewer', 'code_reviewer'),
+    ):
+        _write_installed_role(role_store, role_id, default_agent_name=default_agent_name)
+    monkeypatch.setenv('AGENT_ROLES_STORE', str(role_store))
+    _write(
+        project_root / '.ccb' / 'ccb.config',
+        """version = 2
+entry_window = "ccb-user"
+
+[windows]
+ccb-user = "bootstrap:codex"
+
+[loop.capacity]
+enabled = true
+max_nodes = 8
+default_lifetime = "current_loop"
+name_template = "loop-{loop_id}-{profile}-{index}"
+reuse = "prefer_idle"
+
+[loop.role_profiles.ccb_frontdesk]
+role = "agentroles.ccb_frontdesk"
+provider = "codex"
+workspace_mode = "inplace"
+max_instances = 1
+
+[loop.role_profiles.ccb_task_detailer]
+role = "agentroles.ccb_task_detailer"
+provider = "codex"
+workspace_mode = "inplace"
+max_instances = 1
+
+[loop.role_profiles.ccb_planner]
+role = "agentroles.ccb_planner"
+provider = "codex"
+workspace_mode = "inplace"
+max_instances = 1
+
+[loop.role_profiles.ccb_orchestrator]
+role = "agentroles.ccb_orchestrator"
+provider = "codex"
+workspace_mode = "inplace"
+max_instances = 1
+
+[loop.role_profiles.ccb_round_reviewer]
+role = "agentroles.ccb_round_reviewer"
+provider = "codex"
+workspace_mode = "inplace"
+max_instances = 1
+
+[loop.role_profiles.coder]
+role = "agentroles.coder"
+provider = "codex"
+workspace_mode = "git-worktree"
+max_instances = 2
+
+[loop.role_profiles.code_reviewer]
+role = "agentroles.code_reviewer"
+provider = "codex"
+workspace_mode = "git-worktree"
+max_instances = 2
 """,
     )
     return project_root
@@ -178,6 +257,106 @@ def _run_phase2(argv: list[str], *, cwd: Path) -> tuple[int, dict[str, object], 
     return result, payload, stderr.getvalue()
 
 
+def _workflow_dispatch_proposal() -> dict[str, object]:
+    return {
+        'nodes': [
+            {
+                'id': 'plan',
+                'agents': [
+                    {'id': 'wf-ccb-orchestrator', 'profile': 'ccb_orchestrator', 'desired_state': 'present'},
+                    {'id': 'wf-ccb-round-reviewer', 'profile': 'ccb_round_reviewer', 'desired_state': 'present'},
+                ],
+            },
+            {
+                'id': 'work-1',
+                'agents': [
+                    {'id': 'wf-coder-1', 'profile': 'coder', 'desired_state': 'present'},
+                    {'id': 'wf-code-reviewer-1', 'profile': 'code_reviewer', 'desired_state': 'present'},
+                ],
+            },
+        ],
+        'edges': [
+            {
+                'id': 'coder-ask',
+                'from': 'wf-ccb-orchestrator',
+                'to': 'wf-coder-1',
+                'type': 'ask',
+                'order': 10,
+                'output_artifact': 'coder.md',
+            },
+            {
+                'id': 'reviewer-ask',
+                'from': 'wf-coder-1',
+                'to': 'wf-code-reviewer-1',
+                'type': 'ask_after',
+                'after': ['coder-ask'],
+                'order': 20,
+                'input_artifact': 'coder.md',
+                'output_artifact': 'review.md',
+            },
+            {
+                'id': 'round-review',
+                'from': 'wf-code-reviewer-1',
+                'to': 'wf-ccb-round-reviewer',
+                'type': 'ask_after',
+                'after': ['reviewer-ask'],
+                'order': 30,
+                'input_artifact': 'review.md',
+                'output_artifact': 'round.md',
+            },
+        ],
+        'artifacts': {'round': 'round.md'},
+    }
+
+
+def _manual_dispatch_desired(*, loop_id: str, edges: list[dict[str, object]], revision: int = 1) -> dict[str, object]:
+    return {
+        'schema': 'ccb.loop.agent_topology.v1',
+        'record_type': 'ccb_loop_agent_topology_desired',
+        'topology_status': 'committed',
+        'loop_id': loop_id,
+        'revision': revision,
+        'nodes': [],
+        'edges': edges,
+        'artifacts': {},
+    }
+
+
+def _manual_dispatch_observed(
+    *,
+    loop_id: str,
+    desired_revision: int = 1,
+    coder_state: str = 'present',
+) -> dict[str, object]:
+    coder_lifecycle = {'present': 'visible', 'hidden': 'hidden'}.get(coder_state, 'parked')
+    agents = [
+        ('wf-ccb-orchestrator', 'ccb_orchestrator', 'present', 'visible'),
+        ('wf-coder-1', 'coder', coder_state, coder_lifecycle),
+        ('wf-code-reviewer-1', 'code_reviewer', 'present', 'visible'),
+        ('wf-ccb-round-reviewer', 'ccb_round_reviewer', 'present', 'visible'),
+    ]
+    return {
+        'schema': 'ccb.loop.agent_topology.observed.v1',
+        'record_type': 'ccb_loop_agent_topology_observed',
+        'last_reconcile_status': 'reconciled',
+        'loop_id': loop_id,
+        'desired_revision': desired_revision,
+        'agents': [
+            {
+                'id': agent_id,
+                'profile': profile,
+                'desired_state': 'present',
+                'observed_state': observed_state,
+                'lifecycle_state': lifecycle_state,
+                'ask_target': agent_id,
+            }
+            for agent_id, profile, observed_state, lifecycle_state in agents
+        ],
+        'edges': [],
+        'drift': {'mismatched_agents': [], 'agent_count': len(agents)},
+    }
+
+
 def _namespace(project_id: str):
     return SimpleNamespace(
         project_id=project_id,
@@ -260,6 +439,15 @@ def test_loop_capacity_parser_supports_scriptable_json_commands() -> None:
     assert parser.parse(
         ['loop', 'runner', '--once', '--timeout', '5', '--json']
     ) == ParsedLoopRunnerCommand(project=None, once=True, timeout_s=5.0, json_output=True)
+    assert parser.parse(
+        ['loop', 'runner', '--once', '--consume-role-output', '--timeout', '5', '--json']
+    ) == ParsedLoopRunnerCommand(
+        project=None,
+        once=True,
+        timeout_s=5.0,
+        consume_role_output=True,
+        json_output=True,
+    )
 
 
 def test_loop_capacity_ensure_places_worker_and_reviewer_in_execution_node_window(
@@ -742,6 +930,240 @@ def test_loop_runner_once_binds_runs_imports_and_stops_after_one_task(
     }
 
 
+def test_loop_runner_once_dispatches_committed_topology_edges_in_order(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = _project_with_workflow_topology(tmp_path, monkeypatch)
+    _add_ready_plan_task(project_root, task_id='task-topology')
+    proposal_path = project_root / 'workflow-dispatch.json'
+    _write_json(proposal_path, _workflow_dispatch_proposal())
+
+    result, _proposed, stderr = _run_phase2(
+        [
+            'loop',
+            'topology',
+            'propose',
+            '--loop-id',
+            'wf1',
+            '--from',
+            str(proposal_path),
+            '--proposal-id',
+            'dispatch1',
+            '--json',
+        ],
+        cwd=project_root,
+    )
+    assert result == 0, stderr
+    result, committed, stderr = _run_phase2(
+        ['loop', 'topology', 'commit', '--loop-id', 'wf1', '--proposal', 'dispatch1', '--apply', '--json'],
+        cwd=project_root,
+    )
+    assert result == 0, stderr
+    assert committed['reconcile']['loop_topology_status'] == 'reconciled'
+
+    command = ParsedLoopRunnerCommand(project=None, once=True, timeout_s=11.0, json_output=True)
+    context = CliContextBuilder().build(command, cwd=project_root, bootstrap_if_missing=False)
+    plan_task(context, SimpleNamespace(action='task-bind-loop', task_id='task-topology', loop_id='wf1'))
+    submitted: list[tuple[str, str | None, str]] = []
+
+    def fake_submit_ask(_context, ask_command):
+        submitted.append((ask_command.target, ask_command.sender, ask_command.message))
+        return AskSummary(
+            project_id=context.project.project_id,
+            submission_id=None,
+            jobs=({'job_id': f'job-{ask_command.target}', 'agent_name': ask_command.target, 'status': 'submitted'},),
+        )
+
+    def fake_watch_ask_job(_context, job_id, _out, *, timeout, emit_output):
+        assert timeout == 11.0
+        assert emit_output is False
+        if job_id == 'job-wf-ccb-round-reviewer':
+            reply = 'round result: pass\nverification performed: topology dispatch\n'
+            agent_name = 'wf-ccb-round-reviewer'
+        else:
+            reply = f'completed {job_id}\n'
+            agent_name = job_id.removeprefix('job-')
+        return WatchEventBatch(
+            target=job_id,
+            job_id=job_id,
+            agent_name=agent_name,
+            target_kind='job',
+            target_name=job_id,
+            provider='fake',
+            provider_instance=None,
+            cursor=1,
+            generation=1,
+            terminal=True,
+            status='completed',
+            reply=reply,
+            events=(),
+        )
+
+    def forbidden_loop_run_once(*_args, **_kwargs):
+        raise AssertionError('committed topology graph must take precedence over fixed fallback')
+
+    payload = loop_runner_once(
+        context,
+        command,
+        services=SimpleNamespace(
+            submit_ask=fake_submit_ask,
+            watch_ask_job=fake_watch_ask_job,
+            loop_run_once=forbidden_loop_run_once,
+            plan_task=plan_task,
+        ),
+    )
+
+    assert payload['loop_runner_status'] == 'ok'
+    assert payload['action'] == 'ran_one_round'
+    assert payload['dispatch_source'] == 'topology_graph'
+    assert payload['loop_id'] == 'wf1'
+    assert payload['round_result'] == 'pass'
+    assert payload['task_status'] == 'done'
+    assert [target for target, _sender, _message in submitted] == [
+        'wf-coder-1',
+        'wf-code-reviewer-1',
+        'wf-ccb-round-reviewer',
+    ]
+    assert submitted[0][1] == 'wf-ccb-orchestrator'
+    assert submitted[1][1] == 'wf-coder-1'
+    assert submitted[2][1] == 'wf-code-reviewer-1'
+    assert 'Role: coder' in submitted[0][2]
+    assert 'Role: code_reviewer' in submitted[1][2]
+    assert 'Role: ccb_round_reviewer' in submitted[2][2]
+    dispatch_path = project_root / '.ccb' / 'runtime' / 'loops' / 'wf1' / 'topology_dispatch.json'
+    dispatch = json.loads(dispatch_path.read_text(encoding='utf-8'))
+    assert dispatch['dispatch_status'] == 'ok'
+    assert [edge['edge_id'] for edge in dispatch['edges']] == ['coder-ask', 'reviewer-ask', 'round-review']
+    assert all(Path(edge['artifact']).is_file() for edge in dispatch['edges'])
+    shown = plan_task(context, SimpleNamespace(action='task-show', task_id='task-topology'))
+    assert shown['task']['status'] == 'done'
+    assert shown['task']['current_loop'] is None
+    assert shown['task']['artifacts']['round_pass']['actor']['job_id'] == 'job-wf-ccb-round-reviewer'
+
+
+@pytest.mark.parametrize(
+    ('edges', 'observed_kwargs', 'expected'),
+    [
+        (
+            [
+                {
+                    'id': 'bad-type',
+                    'from': 'wf-ccb-orchestrator',
+                    'to': 'wf-coder-1',
+                    'type': 'notify',
+                    'order': 10,
+                }
+            ],
+            {},
+            'unsupported type',
+        ),
+        (
+            [
+                {
+                    'id': 'missing-target',
+                    'from': 'wf-ccb-orchestrator',
+                    'to': 'missing-agent',
+                    'type': 'ask',
+                    'order': 10,
+                }
+            ],
+            {},
+            "target agent 'missing-agent' is not ready: missing",
+        ),
+        (
+            [
+                {
+                    'id': 'cycle-a',
+                    'from': 'wf-ccb-orchestrator',
+                    'to': 'wf-coder-1',
+                    'type': 'ask_after',
+                    'after': ['cycle-b'],
+                    'order': 10,
+                },
+                {
+                    'id': 'cycle-b',
+                    'from': 'wf-coder-1',
+                    'to': 'wf-code-reviewer-1',
+                    'type': 'ask_after',
+                    'after': ['cycle-a'],
+                    'order': 20,
+                },
+            ],
+            {},
+            'dependency cycle detected',
+        ),
+        (
+            [
+                {
+                    'id': 'stale',
+                    'from': 'wf-ccb-orchestrator',
+                    'to': 'wf-coder-1',
+                    'type': 'ask',
+                    'order': 10,
+                }
+            ],
+            {'desired_revision': 0},
+            'observed revision 0 does not match desired revision 1',
+        ),
+        (
+            [
+                {
+                    'id': 'not-ready',
+                    'from': 'wf-ccb-orchestrator',
+                    'to': 'wf-coder-1',
+                    'type': 'ask',
+                    'order': 10,
+                }
+            ],
+            {'coder_state': 'parked'},
+            "target agent 'wf-coder-1' is not ready",
+        ),
+        (
+            [
+                {
+                    'id': 'hidden-target',
+                    'from': 'wf-ccb-orchestrator',
+                    'to': 'wf-coder-1',
+                    'type': 'ask',
+                    'order': 10,
+                }
+            ],
+            {'coder_state': 'hidden'},
+            "target agent 'wf-coder-1' is not ready",
+        ),
+    ],
+)
+def test_loop_runner_topology_dispatch_rejects_invalid_runtime_graphs(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    edges: list[dict[str, object]],
+    observed_kwargs: dict[str, object],
+    expected: str,
+) -> None:
+    project_root = _project_with_workflow_topology(tmp_path, monkeypatch)
+    _add_ready_plan_task(project_root, task_id='task-invalid-topology')
+    command = ParsedLoopRunnerCommand(project=None, once=True, timeout_s=3.0, json_output=True)
+    context = CliContextBuilder().build(command, cwd=project_root, bootstrap_if_missing=False)
+    plan_task(context, SimpleNamespace(action='task-bind-loop', task_id='task-invalid-topology', loop_id='wf-bad'))
+    loop_dir = project_root / '.ccb' / 'runtime' / 'loops' / 'wf-bad'
+    _write_json(loop_dir / 'agent_topology.desired.json', _manual_dispatch_desired(loop_id='wf-bad', edges=edges))
+    _write_json(
+        loop_dir / 'agent_topology.observed.json',
+        _manual_dispatch_observed(loop_id='wf-bad', **observed_kwargs),
+    )
+
+    def forbidden_submit_ask(*_args, **_kwargs):
+        raise AssertionError('invalid topology graph must fail before ask submission')
+
+    with pytest.raises(RuntimeError, match=expected):
+        loop_runner_once(
+            context,
+            command,
+            services=SimpleNamespace(submit_ask=forbidden_submit_ask, plan_task=plan_task),
+        )
+
+
 def test_loop_runner_once_does_not_infer_pass_without_round_checker_result(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -841,6 +1263,393 @@ def test_loop_runner_once_activates_planner_for_draft_task(
     assert activation['task_id'] == 'task-draft'
     assert activation['ask']['job_id'] == 'job_planner'
     assert activation['script_write_rules']
+
+
+def test_loop_runner_once_consumes_planner_output_bundle(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = _project_with_loop_capacity(tmp_path, monkeypatch)
+    _add_plan_task_record(project_root, task_id='task-draft', status='draft')
+    command = ParsedLoopRunnerCommand(
+        project=None,
+        once=True,
+        timeout_s=11.0,
+        consume_role_output=True,
+        json_output=True,
+    )
+    context = CliContextBuilder().build(command, cwd=project_root, bootstrap_if_missing=False)
+    seen: dict[str, object] = {}
+
+    def fake_submit_ask(_context, ask_command):
+        seen['target'] = ask_command.target
+        seen['message'] = ask_command.message
+        return AskSummary(
+            project_id=context.project.project_id,
+            submission_id=None,
+            jobs=({'job_id': 'job_planner', 'agent_name': 'planner', 'status': 'submitted'},),
+        )
+
+    def fake_watch_ask_job(_context, job_id, _out, *, timeout, emit_output):
+        seen['watch_job_id'] = job_id
+        seen['watch_timeout'] = timeout
+        seen['emit_output'] = emit_output
+        reply = json.dumps(
+            {
+                'schema': 'ccb.loop.planner_artifact_bundle/v1',
+                'task_id': 'task-draft',
+                'role_id': 'agentroles.planner_task',
+                'artifacts': {
+                    'requirements': 'requirements from planner\n',
+                    'acceptance_criteria': {'markdown': 'acceptance from planner\n'},
+                    'verification_contract': {'content': 'verification from planner\n'},
+                    'handoff': {'text': 'handoff from planner\n'},
+                },
+                'readiness': {'status': 'ready_for_review'},
+            },
+            ensure_ascii=False,
+        )
+        return WatchEventBatch(
+            target=job_id,
+            job_id=job_id,
+            agent_name='planner',
+            target_kind='job',
+            target_name=job_id,
+            provider='codex',
+            provider_instance=None,
+            cursor=1,
+            generation=1,
+            terminal=True,
+            status='completed',
+            reply=f'```json\n{reply}\n```',
+            events=(),
+        )
+
+    payload = loop_runner_once(
+        context,
+        command,
+        services=SimpleNamespace(submit_ask=fake_submit_ask, watch_ask_job=fake_watch_ask_job),
+    )
+
+    assert payload['loop_runner_status'] == 'ok'
+    assert payload['action'] == 'imported_planner_output'
+    assert payload['task_id'] == 'task-draft'
+    assert payload['task_status'] == 'draft'
+    assert payload['next_owner'] == 'plan_reviewer'
+    assert payload['next_activation'] == 'activate_plan_reviewer'
+    assert payload['role_output']['import_status'] == 'imported'
+    assert payload['role_output']['status_request'] == 'ready_for_review'
+    assert seen['target'] == 'planner'
+    assert seen['watch_job_id'] == 'job_planner'
+    assert seen['watch_timeout'] == 11.0
+    assert seen['emit_output'] is False
+    assert 'ccb.loop.planner_artifact_bundle/v1' in str(seen['message'])
+    assert {artifact['kind'] for artifact in payload['import']['imported_artifacts']} == {
+        'requirements',
+        'acceptance',
+        'verification',
+        'handoff',
+    }
+    shown = plan_task(context, SimpleNamespace(action='task-show', task_id='task-draft'))
+    assert shown['task']['status'] == 'draft'
+    assert set(shown['task']['artifacts']) == {'requirements', 'acceptance', 'verification', 'handoff'}
+    assert shown['task']['artifacts']['requirements']['actor'] == {
+        'source': 'loop_runner_role_output',
+        'actor': 'planner',
+        'role': 'agentroles.planner_task',
+        'job_id': 'job_planner',
+    }
+    activation = json.loads(Path(str(payload['activation_path'])).read_text(encoding='utf-8'))
+    assert activation['role_output']['import_status'] == 'imported'
+
+
+def test_loop_runner_once_consumes_planner_brief_then_task_detailer_bundle(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = _project_with_loop_capacity(tmp_path, monkeypatch)
+    _add_plan_task_record(project_root, task_id='task-detail', status='draft')
+    command = ParsedLoopRunnerCommand(
+        project=None,
+        once=True,
+        timeout_s=11.0,
+        consume_role_output=True,
+        json_output=True,
+    )
+    context = CliContextBuilder().build(command, cwd=project_root, bootstrap_if_missing=False)
+    seen_targets: list[str] = []
+
+    def fake_submit_ask(_context, ask_command):
+        seen_targets.append(ask_command.target)
+        assert ask_command.target in {'planner', 'task_detailer'}
+        if ask_command.target == 'planner':
+            assert 'do not include task_detailer detail bodies' in ask_command.message
+            job_id = 'job_planner'
+        else:
+            assert 'ccb.loop.task_detailer_artifact_bundle/v1' in ask_command.message
+            job_id = 'job_task_detailer'
+        return AskSummary(
+            project_id=context.project.project_id,
+            submission_id=None,
+            jobs=({'job_id': job_id, 'agent_name': ask_command.target, 'status': 'submitted'},),
+        )
+
+    def fake_watch_ask_job(_context, job_id, _out, *, timeout, emit_output):
+        assert timeout == 11.0
+        assert emit_output is False
+        if job_id == 'job_planner':
+            reply = json.dumps(
+                {
+                    'schema': 'ccb.loop.planner_artifact_bundle/v1',
+                    'task_id': 'task-detail',
+                    'role_id': 'agentroles.plan_steward',
+                    'artifacts': {
+                        'brief': 'planner brief\n',
+                        'requirements': 'requirements\n',
+                        'acceptance': 'acceptance\n',
+                        'verification': 'verification\n',
+                        'handoff': 'handoff\n',
+                    },
+                    'readiness': {'status': 'ready_for_review'},
+                },
+                ensure_ascii=False,
+            )
+            agent_name = 'planner'
+        elif job_id == 'job_task_detailer':
+            reply = json.dumps(
+                {
+                    'schema': 'ccb.loop.task_detailer_artifact_bundle/v1',
+                    'task_id': 'task-detail',
+                    'role_id': 'agentroles.task_detailer',
+                    'artifacts': {
+                        'detail_design': 'task-scoped detail design\n',
+                        'detail_summary': 'stable summary backfill\n',
+                        'detail_packet': json.dumps(
+                            {
+                                'schema': 'ccb.loop.detail_packet_manifest/v1',
+                                'status': 'ready_for_review',
+                            },
+                            ensure_ascii=False,
+                        ),
+                        'macro_adjustment_request': json.dumps(
+                            {
+                                'schema': 'ccb.loop.macro_adjustment_request/v1',
+                                'reason': 'macro assumption changed',
+                            },
+                            ensure_ascii=False,
+                        ),
+                    },
+                    'readiness': {'status': 'detail_ready'},
+                },
+                ensure_ascii=False,
+            )
+            agent_name = 'task_detailer'
+        else:
+            raise AssertionError(f'unexpected job id {job_id}')
+        return WatchEventBatch(
+            target=job_id,
+            job_id=job_id,
+            agent_name=agent_name,
+            target_kind='job',
+            target_name=job_id,
+            provider='codex',
+            provider_instance=None,
+            cursor=1,
+            generation=1,
+            terminal=True,
+            status='completed',
+            reply=f'```json\n{reply}\n```',
+            events=(),
+        )
+
+    first = loop_runner_once(
+        context,
+        command,
+        services=SimpleNamespace(submit_ask=fake_submit_ask, watch_ask_job=fake_watch_ask_job),
+    )
+
+    assert first['action'] == 'imported_planner_output'
+    assert first['next_activation'] == 'activate_task_detailer'
+    assert first['next_owner'] == 'task_detailer'
+    shown = plan_task(context, SimpleNamespace(action='task-show', task_id='task-detail'))
+    assert shown['task']['status'] == 'draft'
+    assert shown['task']['artifacts']['brief']['scope'] == 'plan'
+    assert shown['task']['artifacts']['brief']['path'] == 'docs/plantree/plans/demo-plan/brief.md'
+
+    second = loop_runner_once(
+        context,
+        command,
+        services=SimpleNamespace(submit_ask=fake_submit_ask, watch_ask_job=fake_watch_ask_job),
+    )
+
+    assert second['action'] == 'imported_task_detailer_output'
+    assert second['task_status'] == 'detail_ready'
+    assert second['next_activation'] == 'activate_plan_reviewer'
+    assert second['next_owner'] == 'plan_reviewer'
+    shown = plan_task(context, SimpleNamespace(action='task-show', task_id='task-detail'))
+    assert shown['task']['status'] == 'detail_ready'
+    assert shown['task']['owner'] == 'plan_reviewer'
+    assert shown['task']['artifacts']['detail_design']['path'].endswith('/details/task-detail-design.md')
+    assert shown['task']['artifacts']['detail_summary']['path'].endswith('/details/brief-update-summary.md')
+    assert shown['task']['artifacts']['detail_packet']['path'].endswith('/details/detail-packet.manifest.json')
+    assert shown['task']['artifacts']['macro_adjustment_request']['path'].endswith('/details/macro-adjustment-request.json')
+    assert seen_targets == ['planner', 'task_detailer']
+
+
+def test_loop_runner_rejects_planner_bundle_with_detail_body(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = _project_with_loop_capacity(tmp_path, monkeypatch)
+    _add_plan_task_record(project_root, task_id='task-draft', status='draft')
+    command = ParsedLoopRunnerCommand(
+        project=None,
+        once=True,
+        timeout_s=11.0,
+        consume_role_output=True,
+        json_output=True,
+    )
+    context = CliContextBuilder().build(command, cwd=project_root, bootstrap_if_missing=False)
+
+    def fake_submit_ask(_context, ask_command):
+        return AskSummary(
+            project_id=context.project.project_id,
+            submission_id=None,
+            jobs=({'job_id': 'job_planner', 'agent_name': ask_command.target, 'status': 'submitted'},),
+        )
+
+    def fake_watch_ask_job(_context, job_id, _out, *, timeout, emit_output):
+        reply = json.dumps(
+            {
+                'schema': 'ccb.loop.planner_artifact_bundle/v1',
+                'task_id': 'task-draft',
+                'role_id': 'agentroles.plan_steward',
+                'artifacts': {
+                    'requirements': 'requirements\n',
+                    'detail_design': 'planner must not write task detail body\n',
+                },
+                'readiness': {'status': 'ready_for_review'},
+            },
+            ensure_ascii=False,
+        )
+        return WatchEventBatch(
+            target=job_id,
+            job_id=job_id,
+            agent_name='planner',
+            target_kind='job',
+            target_name=job_id,
+            provider='codex',
+            provider_instance=None,
+            cursor=1,
+            generation=1,
+            terminal=True,
+            status='completed',
+            reply=reply,
+            events=(),
+        )
+
+    with pytest.raises(ValueError, match="planner output artifact kind 'detail_design' is not allowed"):
+        loop_runner_once(
+            context,
+            command,
+            services=SimpleNamespace(submit_ask=fake_submit_ask, watch_ask_job=fake_watch_ask_job),
+        )
+
+
+def test_loop_runner_once_consumes_plan_reviewer_output_bundle_and_marks_ready(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = _project_with_loop_capacity(tmp_path, monkeypatch)
+    task_root = project_root / 'docs' / 'plantree' / 'plans' / 'demo-plan' / 'tasks' / 'task-review'
+    artifacts: dict[str, dict[str, object]] = {}
+    for kind, filename, text in (
+        ('requirements', 'requirements.md', 'requirements text\n'),
+        ('acceptance', 'acceptance-criteria.md', 'acceptance text\n'),
+        ('verification', 'verification-contract.md', 'verification text\n'),
+        ('handoff', 'handoff.md', 'handoff text\n'),
+    ):
+        path = task_root / filename
+        _write(path, text)
+        artifacts[kind] = {
+            'kind': kind,
+            'path': str(path.relative_to(project_root)),
+            'source_path': str(path.relative_to(project_root)),
+            'sha256': 'test',
+            'bytes': len(text.encode('utf-8')),
+            'imported_at': '2026-06-27T00:00:00Z',
+        }
+    _add_plan_task_record(project_root, task_id='task-review', status='draft', artifacts=artifacts)
+    command = ParsedLoopRunnerCommand(
+        project=None,
+        once=True,
+        timeout_s=13.0,
+        consume_role_output=True,
+        json_output=True,
+    )
+    context = CliContextBuilder().build(command, cwd=project_root, bootstrap_if_missing=False)
+
+    def fake_submit_ask(_context, ask_command):
+        assert ask_command.target == 'plan_reviewer'
+        assert 'ccb.loop.plan_reviewer_artifact_bundle/v1' in ask_command.message
+        return AskSummary(
+            project_id=context.project.project_id,
+            submission_id=None,
+            jobs=({'job_id': 'job_plan_reviewer', 'agent_name': 'plan_reviewer', 'status': 'submitted'},),
+        )
+
+    def fake_watch_ask_job(_context, job_id, _out, *, timeout, emit_output):
+        assert job_id == 'job_plan_reviewer'
+        assert timeout == 13.0
+        assert emit_output is False
+        return WatchEventBatch(
+            target=job_id,
+            job_id=job_id,
+            agent_name='plan_reviewer',
+            target_kind='job',
+            target_name=job_id,
+            provider='codex',
+            provider_instance=None,
+            cursor=1,
+            generation=1,
+            terminal=True,
+            status='completed',
+            reply=json.dumps(
+                {
+                    'schema': 'ccb.loop.plan_reviewer_artifact_bundle/v1',
+                    'task_id': 'task-review',
+                    'role_id': 'agentroles.reviewer_plan',
+                    'artifacts': {'review': {'content': 'review says ready\n'}},
+                    'readiness': {'status': 'ready'},
+                },
+                ensure_ascii=False,
+            ),
+            events=(),
+        )
+
+    payload = loop_runner_once(
+        context,
+        command,
+        services=SimpleNamespace(submit_ask=fake_submit_ask, watch_ask_job=fake_watch_ask_job),
+    )
+
+    assert payload['loop_runner_status'] == 'ok'
+    assert payload['action'] == 'imported_plan_reviewer_output'
+    assert payload['task_id'] == 'task-review'
+    assert payload['task_status'] == 'ready'
+    assert payload['next_owner'] == 'orchestrator'
+    assert payload['next_activation'] == 'execute'
+    assert payload['import']['status']['status'] == 'ready'
+    assert payload['import']['imported_artifacts'][0]['kind'] == 'review'
+    shown = plan_task(context, SimpleNamespace(action='task-show', task_id='task-review'))
+    assert shown['task']['status'] == 'ready'
+    assert set(shown['task']['artifacts']) == {'requirements', 'acceptance', 'verification', 'handoff', 'review'}
+    assert shown['task']['artifacts']['review']['actor'] == {
+        'source': 'loop_runner_role_output',
+        'actor': 'plan_reviewer',
+        'role': 'agentroles.reviewer_plan',
+        'job_id': 'job_plan_reviewer',
+    }
 
 
 def test_loop_runner_once_activates_planner_with_round_evidence_for_partial_task(

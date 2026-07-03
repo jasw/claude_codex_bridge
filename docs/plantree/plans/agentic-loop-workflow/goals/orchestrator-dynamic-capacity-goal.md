@@ -2,6 +2,17 @@
 
 Date: 2026-06-24
 
+## Supersession Note
+
+This goal records the first landed dynamic-capacity substrate. The current
+preferred workflow design is now topology-driven: `orchestrator` proposes a
+runtime workflow graph, `ccb loop topology` commits desired state, and a
+reconciler uses capacity/lifecycle/layout mechanisms to load, release, park,
+or reflow agents. See
+[../topics/runtime-workflow-graph-and-reconciler.md](../topics/runtime-workflow-graph-and-reconciler.md)
+and
+[../decisions/014-runtime-workflow-graph-reconciler.md](../decisions/014-runtime-workflow-graph-reconciler.md).
+
 ## Objective
 
 Land the first working orchestrator dynamic-capacity loop:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Iterable
 from datetime import datetime, timezone
 import json
 from pathlib import Path
@@ -42,6 +43,30 @@ def agent_lifecycle(context, command) -> dict[str, object]:
     if action in {'remove', 'release'}:
         return _remove(context, command)
     raise ValueError(f'unsupported agent lifecycle action: {action}')
+
+
+def add_lifecycle_agents(context, commands: Iterable[object], *, action: str = 'agent-add-batch') -> list[dict[str, object]]:
+    staged: list[tuple[str, dict[str, object]]] = []
+    previous_by_name: dict[str, dict[str, object] | None] = {}
+    try:
+        for command in tuple(commands):
+            name, previous, payload = _stage_add(context, command)
+            previous_by_name[name] = previous
+            staged.append((name, payload))
+        if not staged:
+            return []
+        apply = _apply_reload_if_mounted(context, action=action)
+        results: list[dict[str, object]] = []
+        for name, payload in staged:
+            payload['apply'] = apply
+            _update_apply_evidence(context, payload)
+            _write_state(context, name, payload)
+            results.append(dict(payload, action='add'))
+        return results
+    except Exception:
+        for name, previous in previous_by_name.items():
+            _restore_state(context, name, previous)
+        raise
 
 
 def _status(context, command) -> dict[str, object]:
@@ -139,6 +164,18 @@ def _show(context, command) -> dict[str, object]:
 
 
 def _add(context, command) -> dict[str, object]:
+    name, previous, payload = _stage_add(context, command)
+    try:
+        payload['apply'] = _apply_reload_if_mounted(context, action='agent-add')
+        _update_apply_evidence(context, payload)
+    except Exception:
+        _restore_state(context, name, previous)
+        raise
+    _write_state(context, name, payload)
+    return dict(payload, action='add')
+
+
+def _stage_add(context, command) -> tuple[str, dict[str, object] | None, dict[str, object]]:
     name = _normalize_name(getattr(command, 'agent_name', None), field_name='agent')
     loaded = load_project_config(context.project.project_root, include_loop_overlays=True)
     if name in loaded.config.agents:
@@ -190,14 +227,7 @@ def _add(context, command) -> dict[str, object]:
     _update_resolved_placement(context, payload)
     _write_state(context, name, payload)
     _append_event(context, {'event': 'add', 'agent': name, 'lifecycle_state': visibility})
-    try:
-        payload['apply'] = _apply_reload_if_mounted(context, action='agent-add')
-        _update_apply_evidence(context, payload)
-    except Exception:
-        _restore_state(context, name, previous)
-        raise
-    _write_state(context, name, payload)
-    return dict(payload, action='add')
+    return name, previous, payload
 
 
 def _remove(context, command) -> dict[str, object]:
@@ -311,10 +341,16 @@ def _remove_many(context, command, names: tuple[str, ...]) -> dict[str, object]:
                 record = dict(previous_by_name[name])
                 if name in retained:
                     record['agent_lifecycle_status'] = 'retained_busy'
+                    record['requested_action'] = requested_action
+                    record['requested_policy'] = policy
+                    record['resolved_policy'] = resolved_by_name[name]
                     record['retained_busy'] = True
                     record['retain_reason'] = retained[name].get('reason')
                     record['runtime_state'] = retained[name].get('runtime_state')
                     record['queue_depth'] = retained[name].get('queue_depth')
+                    record['updated_at'] = _utc_now()
+                    _write_state(context, name, record)
+                    _append_event(context, {'event': f'{requested_action}-retained', 'agent': name, 'policy': resolved_by_name[name]})
                 records.append(_status_record(record, source='dynamic'))
             return {
                 'agent_lifecycle_status': 'retained_busy',
@@ -935,6 +971,17 @@ def _optional_int(value: object) -> int | None:
 
 def _infer_role_class(role: object) -> str:
     text = str(role or '').lower()
+    if any(
+        token in text
+        for token in (
+            'ccb_frontdesk',
+            'ccb_planner',
+            'ccb_orchestrator',
+            'ccb_task_detailer',
+            'ccb_round_reviewer',
+        )
+    ):
+        return 'long_lived_interactive'
     if any(token in text for token in ('coder', 'worker', 'checker', 'reviewer')):
         return 'short_lived_execution'
     if any(token in text for token in ('frontdesk', 'frontend', 'planner', 'orchestrator', 'round_checker', 'broker')):
@@ -1297,4 +1344,4 @@ def _utc_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace('+00:00', 'Z')
 
 
-__all__ = ['agent_lifecycle']
+__all__ = ['add_lifecycle_agents', 'agent_lifecycle']

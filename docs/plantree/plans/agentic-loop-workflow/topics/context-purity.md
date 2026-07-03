@@ -19,9 +19,9 @@ plans, decisions, blockers, and evidence.
 | Class | Examples | Owner | Retention |
 | :--- | :--- | :--- | :--- |
 | Macro intent | User goal, scope, non-goals, risk tolerance | `frontdesk`, planner group | Durable when accepted |
-| Planning truth | PRD, design notes, acceptance criteria, readiness decision | planner group, plan steward | Durable |
+| Planning truth | PRD, design notes, acceptance criteria, readiness decision | planner, planner stewardship mode | Durable |
 | Execution noise | command output, exploratory notes, transient errors, raw logs | execution node, runtime artifacts | Short-lived |
-| Review evidence | findings, fixed issues, test results, changed files | checker, round checker, plan steward | Durable summary only |
+| Review evidence | findings, fixed issues, test results, changed files | checker, round checker, planner stewardship mode | Durable summary only |
 | Recovery evidence | root cause, failed attempts, final fix path | recovery node, monitor | Durable if it changes plan or risk |
 | Loop health | job ids, callback ids, heartbeats, timeout counters, pane evidence | deterministic monitor | Runtime-local |
 

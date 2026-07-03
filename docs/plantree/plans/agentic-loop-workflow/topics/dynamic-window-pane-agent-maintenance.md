@@ -43,79 +43,77 @@ for usability only.
 
 | Logical Order | Window Class | Default Name | Contents | Max Panes |
 | :--- | :--- | :--- | :--- | :--- |
-| 1 | user-facing dialog | `frontdesk-dialog` | `primary_frontend` plus user-visible dialog/expert agents | 6 |
-| 2 | planning and orchestration | `plan-orchestrate` | planner group, broker, plan steward, orchestrator, round checker | 6 |
-| 3+ | execution node | `node-<loop-id>-<node-id>` | one bounded execution node: worker/checker/status/artifacts | 4 |
+| 1 | user interaction | `ccb-user` | V1 resident `ccb_frontdesk`, V1 resident `ccb_task_detailer`, future user-summoned dialog experts | 6 |
+| 2 | planning and orchestration | `ccb-plan` | V1 resident `ccb_planner`, V1 resident `ccb_orchestrator`, on-demand `ccb_round_reviewer` | 6 |
+| 3+ | execution workgroups | `ccb-exec`, `ccb-exec-2`, ... | `coder + code_reviewer` work units, packed three pairs per window | 6 |
 | later | runtime diagnostics | `runtime` | loop runner, ccbd logs, capacity, ask/job queue, monitor, recovery | 6 |
 | later | archived evidence | `archive-<loop-id>` | frozen panes or summaries retained for inspection | 6 |
 
 When a class exceeds its pane limit:
 
-- `frontdesk-dialog` creates `frontdesk-dialog-2`, then `-3`.
-- `plan-orchestrate` creates `plan-orchestrate-2`, then `-3`.
-- Execution nodes do not share overflow windows; each node receives its own
-  `node-<loop-id>-<node-id>` window.
+- `ccb-user` creates `ccb-user-2`, then `-3` for future dialog expert overflow.
+- `ccb-plan` creates `ccb-plan-2`, then `-3` if planning-side panes exceed six.
+- Execution workgroups pack into `ccb-exec`; the seventh active execution
+  pane creates `ccb-exec-2`.
 
-## Window 1: `frontdesk-dialog`
+## Window 1: `ccb-user`
 
 Purpose: visible user discussion space.
 
-Default panes:
+V1 default panes:
 
 ```text
-primary_frontend
-dialog:<expert-or-general>
-dialog:<expert-or-general>
-...
+ccb_frontdesk
+ccb_task_detailer
 ```
 
 Rules:
 
-- Exactly one `primary_frontend` is the default user entrypoint.
-- Dialog agents may be user-visible and conversational.
-- Dialog agents may be general assistants or domain experts.
-- Dialog agents do not own task status, loop status, runtime lifecycle, or
-  execution authority.
-- Dialog agents should produce a summary artifact when they are released if
-  their conversation affects the task.
-- At most six panes per dialog window. More dialogs create a continuation
-  dialog window.
+- `ccb_frontdesk` is the default user-facing boundary.
+- V1 keeps `ccb_task_detailer` resident and visible in Window 1 so task-local
+  refinement and clarification can be dispatched without a hidden-agent
+  readiness problem.
+- `ccb_task_detailer` being resident is a process/topology simplification, not
+  a semantic authority change. It only handles a task after orchestrator
+  triage asks for detail, and it should reset or rehydrate task-scoped context
+  between tasks instead of becoming a long-lived planner.
+- Dialog-facing roles do not own task status, loop status, runtime lifecycle,
+  or execution authority.
+- Any task-affecting conversation should return through explicit artifacts or
+  summaries before release.
 
 Example:
 
 ```text
-frontdesk-dialog
-  primary_frontend
-  dialog:architect
-  dialog:docs
-  dialog:debug
-  dialog:general
+ccb-user
+  ccb_frontdesk
+  ccb_task_detailer
 ```
 
-## Window 2: `plan-orchestrate`
+## Window 2: `ccb-plan`
 
 Purpose: planning, review, clarification, orchestration, and round-level
 verification workspace.
 
-Possible panes:
+V1 default panes:
 
 ```text
-planner_coordinator
-plan_reviewer
-clarification_broker
-plan_steward
-orchestrator
-round_checker
+ccb_planner
+ccb_orchestrator
 ```
 
 Rules:
 
-- Roles are loaded by workflow phase, not all at startup.
-- Planner group can contain multiple agents, but `planner_coordinator` is the
-  current owner for a unified task packet or clarification batch.
-- Orchestrator lives here because it semantically decomposes work, but it does
-  not directly create tmux windows or panes.
-- Round checker lives here when it verifies the whole round result.
+- V1 keeps `ccb_planner` and `ccb_orchestrator` resident and visible in Window
+  2. This gives the first production candidate a stable two-pane planning and
+  orchestration surface.
+- `ccb_planner` owns macro plan/task state recommendations and plan-tree
+  artifacts through script authority.
+- `ccb_orchestrator` lives here because it semantically decomposes work and
+  proposes desired topology; it does not directly create tmux windows or panes.
+- `ccb_round_reviewer` is still placed in `ccb-plan`, but it is on demand for
+  round-end verification rather than part of the V1 always-open four-agent
+  baseline.
 - Scripts and loop runner remain authority; these panes produce artifacts and
   recommendations.
 
@@ -123,45 +121,48 @@ Phase examples:
 
 | Phase | Expected Panes |
 | :--- | :--- |
-| planning | `planner_coordinator`, `plan_reviewer` |
-| clarification | `clarification_broker` |
-| ready/execution start | `orchestrator` |
-| round end | `round_checker`, optionally `plan_steward` |
+| planning | `ccb_planner`, `ccb_orchestrator` |
+| ready/execution start | `ccb_planner`, `ccb_orchestrator` |
+| round end | `ccb_round_reviewer`, optionally `ccb_planner` in stewardship mode |
 
-## Window 3+: Execution Node Windows
+## Window 3+: `ccb-exec` Execution Windows
 
-Purpose: isolate bounded execution work so parallel nodes can be observed,
-retried, blocked, or archived independently.
+Purpose: isolate bounded execution work while keeping panes dense enough for
+repeated observation and review.
 
-Default V1 node window:
+Default work-unit pattern:
 
 ```text
-node-<loop-id>-<node-id>
-  worker
-  checker
+ccb-exec
+  coder
+  code_reviewer
+  coder
+  code_reviewer
+  coder
+  code_reviewer
 ```
 
-Expanded node window:
+Overflow pattern:
 
 ```text
-node-<loop-id>-<node-id>
-  worker
-  checker
-  node-status
-  artifacts-or-test-log
+ccb-exec-2
+  coder
+  code_reviewer
+  ...
 ```
 
 Rules:
 
-- One execution node owns one window.
-- Worker/checker pairs from different nodes should not share a window by
-  default.
-- Node windows are created by runtime layout manager after loop runner accepts
-  a ready task and orchestrator requests node capacity.
-- Node windows are released or archived when node and round evidence is
-  imported.
-- A blocked node can keep its window for inspection while unrelated sibling
-  node windows continue or drain.
+- A recommended work unit is `coder + code_reviewer`.
+- One window holds at most six panes, so one page holds at most three
+  coder/reviewer work units.
+- Desired active execution agents are assigned in desired order; 1-6 go to
+  `ccb-exec`, 7-12 to `ccb-exec-2`, and so on.
+- When a work unit is released or parked out of active execution, later
+  execution agents move back into the earliest available execution window and
+  the empty overflow window is removed by namespace patch/reflow.
+- Busy execution agents are retained and reported as `retained_busy`; they are
+  not killed to satisfy compaction.
 
 ## Runtime Window
 
@@ -196,21 +197,22 @@ replace structured runtime files.
 Placement should be deterministic:
 
 ```text
-agent kind frontend/dialog
-  -> first frontdesk-dialog window with fewer than 6 panes
-  -> else create frontdesk-dialog-N
+profile ccb_frontdesk or ccb_task_detailer
+  -> ccb-user
 
-agent kind planner/broker/plan_steward/orchestrator/round_checker
-  -> first plan-orchestrate window with fewer than 6 panes
-  -> else create plan-orchestrate-N
+profile ccb_planner, ccb_orchestrator, or ccb_round_reviewer
+  -> ccb-plan
 
-agent kind worker/checker
-  -> node-<loop-id>-<node-id>
-  -> never share across nodes by default
+profile coder or code_reviewer
+  -> ccb-exec page by desired-order chunks of six active execution agents
 
 agent kind monitor/recovery/system
   -> runtime
 ```
+
+Profiles outside that built-in set must provide explicit `window_name` or
+`window_class`; the topology reconciler should not silently reinterpret custom
+roles as old worker/checker compatibility.
 
 The pane limit is a readability constraint, not a workflow authority rule.
 
@@ -220,8 +222,8 @@ Workflow roles and skills should be able to ask CCB where a dynamic agent would
 land before they request lifecycle changes. The command surface is read-only:
 
 ```bash
-ccb layout resolve <agent> --window-class plan-orchestrate --json
-ccb layout resolve <agent> --loop-id <loop-id> --node-id <node-id> --json
+ccb layout resolve <agent> --window ccb-plan --json
+ccb layout resolve <agent> --window ccb-exec --json
 ```
 
 The resolver uses the same effective config and placement precedence as
@@ -232,13 +234,14 @@ dynamic agent overlays:
   -> exact window name
 
 --loop-id/--node-id
-  -> node-<loop-id>-<node-id>
+  -> lower-level explicit execution-node placement only when requested
 
 --window-class
   -> first matching class window with fewer than six panes, else class-N
 
 no explicit placement
-  -> entry window for explicit [windows], else default layout surface
+  -> topology profile mapping when reconciled from desired topology;
+     otherwise entry window for explicit [windows], else default layout surface
 ```
 
 It must not write `.ccb/ccb.config`, create runtime lifecycle records, start a
@@ -254,7 +257,7 @@ the lifecycle layer.
 
 ```text
 request agent capacity
-  -> runtime layout manager resolves window class or execution-node window
+  -> topology reconciler or runtime layout manager resolves window placement
   -> ensure window
   -> ensure pane
   -> start provider session
@@ -271,7 +274,7 @@ release request
   -> record final placement state
   -> close pane
   -> compact window
-  -> archive or remove empty node window
+  -> remove empty overflow window when no retained pane remains
 ```
 
 Release must never be a blind `tmux kill-pane`. It should go through CCB
@@ -328,22 +331,20 @@ CCB should maintain deterministic layout state. Candidate shape:
 ```json
 {
   "windows": {
-    "frontdesk-dialog": {
-      "class": "dialog",
+    "ccb-user": {
+      "class": "user_interaction",
       "max_panes": 6,
-      "agents": ["primary_frontend", "dialog_architect"]
+      "agents": ["ccb_frontdesk", "ccb_task_detailer"]
     },
-    "plan-orchestrate": {
-      "class": "planning",
+    "ccb-plan": {
+      "class": "planning_orchestration",
       "max_panes": 6,
-      "agents": ["planner_coordinator", "orchestrator"]
+      "agents": ["ccb_planner", "ccb_orchestrator", "ccb_round_reviewer"]
     },
-    "node:loop1:node1": {
-      "class": "execution_node",
-      "max_panes": 4,
-      "loop_id": "loop1",
-      "node_id": "node1",
-      "agents": ["worker_1", "checker_1"]
+    "ccb-exec": {
+      "class": "execution",
+      "max_panes": 6,
+      "agents": ["coder_1", "code_reviewer_1", "coder_2", "code_reviewer_2"]
     }
   }
 }
@@ -389,16 +390,16 @@ dynamic placement overlay that can produce the same config/topology delta that
 ### Dynamic Add Transaction
 
 ```text
-ccb agent add helper:codex --role agentroles.general --window-class plan-orchestrate
+ccb agent add ccb_round_reviewer:codex --role agentroles.ccb_round_reviewer --window ccb-plan
   -> validate role/provider/profile/lifecycle policy
   -> choose placement target
-  -> write .ccb/runtime/agents/helper/lifecycle.json as pending/applied intent
+  -> write .ccb/runtime/agents/ccb_round_reviewer/lifecycle.json as pending/applied intent
   -> dynamic config overlay materializes target window/layout
   -> if unmounted: defer until startup
   -> if mounted: call reload transaction
        -> dry-run/plan class must be add_agent or add_window
        -> namespace patch creates pane/window and stamps @ccb identity
-       -> runtime mount starts only helper
+       -> runtime mount starts only ccb_round_reviewer
        -> publish graph/signatures
   -> update lifecycle record with pane/window evidence
   -> return apply details
@@ -408,14 +409,14 @@ The dynamic record should carry placement intent and evidence:
 
 ```json
 {
-  "agent": "helper",
+  "agent": "ccb_round_reviewer",
   "provider": "codex",
-  "role": "agentroles.general",
+  "role": "agentroles.ccb_round_reviewer",
   "lifecycle_state": "hidden",
   "placement": {
-    "mode": "auto",
-    "window_class": "plan-orchestrate",
-    "window_name": "plan-orchestrate",
+    "mode": "window",
+    "window_class": null,
+    "window_name": "ccb-plan",
     "layout_policy": "append-only",
     "loop_id": null,
     "node_id": null
@@ -423,7 +424,7 @@ The dynamic record should carry placement intent and evidence:
   "applied": {
     "status": "applied",
     "plan_class": "add_agent",
-    "window_name": "plan-orchestrate",
+    "window_name": "ccb-plan",
     "pane_id": "%12",
     "published_graph_version": 4
   }
@@ -461,12 +462,12 @@ When placement chooses a missing window, the dynamic overlay should add a
 `WindowSpec` to the loaded config:
 
 ```text
-plan-orchestrate
-  helper
+ccb-plan
+  ccb_round_reviewer
 
-node-loop1-node1
-  worker_1
-  checker_1
+ccb-exec
+  coder_1
+  code_reviewer_1
 ```
 
 This maps to existing `add_window`:
@@ -493,23 +494,23 @@ explicit --window-class CLASS
   -> first existing CLASS window with room
   -> else create CLASS-N
 
-worker/checker with --loop-id/--node-id
-  -> node-<loop-id>-<node-id>
-  -> create window if missing
+explicit --loop-id/--node-id
+  -> lower-level execution-node override for non-topology callers
 
-no placement flags
-  -> role-class default
+desired topology without placement flags
+  -> profile mapping: ccb-user, ccb-plan, or packed ccb-exec pages
+
+standalone agent add without placement flags
   -> fallback to entry window append
 ```
 
 Suggested command examples:
 
 ```bash
-ccb agent add helper:codex --role agentroles.general --window main --hidden --json
-ccb agent add planner2:codex --role agentroles.planner --window-class plan-orchestrate --hidden --json
-ccb agent add docs:claude --role agentroles.docs --window-class frontdesk-dialog --visible --json
-ccb agent add worker1:codex --profile worker --loop-id loop1 --node-id node1 --hidden --json
-ccb agent add checker1:codex --profile code_reviewer --loop-id loop1 --node-id node1 --hidden --json
+ccb agent add ccb_task_detailer:codex --role agentroles.ccb_task_detailer --window ccb-user --json
+ccb agent add ccb_round_reviewer:codex --role agentroles.ccb_round_reviewer --window ccb-plan --hidden --json
+ccb agent add coder1:codex --profile coder --window ccb-exec --hidden --json
+ccb agent add code_reviewer1:codex --profile code_reviewer --window ccb-exec --hidden --json
 ```
 
 ### Append-Only First, Reflow Later
@@ -746,11 +747,12 @@ Evidence:
   probe fails, start still reports success but surfaces
   `layout_summary_status: unavailable` with the error type and message.
 - The orchestrator draft RolePack now includes `dynamic-agent-lifecycle` for
-  non-loop dynamic agents while `orchestrator-capacity` remains loop-only. The
-  skill documents allowed `ccb agent ... --json` and read-only
-  `ccb layout status --json` commands, forbidden raw state/tmux/reload/kill
-  actions, ownership/apply fields, safe park/resume/release behavior, and
-  failure reporting.
+  non-loop dynamic agents. The current loop-agent direction is
+  `orchestrator-topology`: orchestrator proposes graph intent, while topology
+  reconciliation uses capacity, lifecycle, and layout mechanisms to apply
+  safe load/release/move behavior. The older `orchestrator-capacity` path is
+  retained as a legacy/debugging substrate rather than the preferred
+  orchestrator-facing contract.
 - `scripts/dynamic_layout_smoke.py` now supports repeated `--provider` values
   for a guarded provider matrix. The real Codex+Claude matrix passed in
   `/home/bfly/yunwei/test_ccb2/dynamic-layout-matrix-real-1782567263-*` for
@@ -771,8 +773,9 @@ Evidence:
   `prepared`. This keeps real provider execution behind explicit local/release
   opt-in while making wrapper drift a normal CI failure.
 - Dynamic reload apply reports now carry pane identity diagnostics. The shared
-  `pane_identity_report` appears under mounted `ccb agent add/remove --json`
-  and `ccb loop capacity ensure/release --json` apply payloads, summarizing
+  `pane_identity_report` appears under mounted `ccb agent add/remove --json`,
+  topology reconciliation, and lower-level
+  `ccb loop capacity ensure/release --json` apply payloads, summarizing
   added and removed agent panes, preserved before/after panes, created/removed
   panes, removed windows, reflowed windows, reflow errors, mounted agents, and
   unloaded agents from the same namespace patch/runtime mount transaction.
@@ -901,20 +904,24 @@ Therefore:
 Candidate config:
 
 ```toml
-[ui.windows.frontdesk_dialog]
-class = "dialog"
+[ui.windows.ccb_user]
+name = "ccb-user"
+class = "user_interaction"
 max_panes = 6
-agents = ["frontend", "dialog"]
+profiles = ["ccb_frontdesk", "ccb_task_detailer"]
 
-[ui.windows.plan_orchestrate]
-class = "planning"
+[ui.windows.ccb_plan]
+name = "ccb-plan"
+class = "planning_orchestration"
 max_panes = 6
-agents = ["planner", "plan_reviewer", "broker", "orchestrator", "round_checker", "plan_steward"]
+profiles = ["ccb_planner", "ccb_orchestrator", "ccb_round_reviewer"]
 
-[ui.windows.execution_node]
-class = "execution_node"
-mode = "one_window_per_node"
-max_panes = 4
+[ui.windows.ccb_exec]
+name = "ccb-exec"
+class = "execution"
+mode = "packed_pages"
+max_panes = 6
+profiles = ["coder", "code_reviewer"]
 
 [ui.windows.runtime]
 class = "runtime"
@@ -930,11 +937,14 @@ V1 should implement enough to support the agentic loop without making tmux
 layout a second workflow system:
 
 1. Track logical window class and pane placement for dynamic agents.
-2. Keep `primary_frontend` in `frontdesk-dialog`.
-3. Place user-visible dialog agents in `frontdesk-dialog`, with six-pane
-   overflow.
-4. Place planner/orchestrator/round_checker in `plan-orchestrate`.
-5. Create one `node-<loop-id>-<node-id>` window for each worker/checker pair.
+2. Place V1 resident `ccb_frontdesk` and `ccb_task_detailer` in `ccb-user`.
+3. Place V1 resident `ccb_planner` and `ccb_orchestrator` in `ccb-plan`;
+   place `ccb_round_reviewer` there only when a round-review topology asks for
+   it.
+4. Pack active `coder + code_reviewer` work units into `ccb-exec` pages with
+   six panes per page.
+5. Reclaim empty execution overflow pages by moving surviving execution agents
+   back into earlier pages during reconcile.
 6. Retain busy agents and release idle agents through runtime state, not raw
    tmux kills.
 7. Provide a read-only `ccb layout status --json` or equivalent diagnostic.
@@ -1014,10 +1024,11 @@ ordered list. Example:
 
 Multi-window shrink:
 
-- 8->7 keeps `frontdesk-dialog-2` with one remaining pane.
-- 7->6 removes `frontdesk-dialog-2` after its last pane is released.
-- Empty execution-node windows are removed or archived after node evidence is
-  imported.
+- 8->7 keeps `ccb-exec-2` with one remaining execution pane when seven active
+  execution agents remain.
+- 7->6 moves the surviving overflow pane back to `ccb-exec` and removes
+  `ccb-exec-2`.
+- Empty execution overflow windows are removed after no retained panes remain.
 
 Compaction can use tmux resize/swap/move operations on surviving panes, but it
 must never kill or respawn surviving agent panes to make the visual layout
@@ -1031,15 +1042,18 @@ Current evidence:
 - `ccb layout status --json` now provides a read-only effective topology and
   runtime pane diagnostic for explicit `[windows]`, including dynamic overlays
   and best-effort tmux observations;
-- dynamic same-node placement now preserves creation order, so worker/checker
-  execution-node windows remain append-only and eligible for live guarded
-  reload;
-- loop-capacity worker/checker allocation now uses execution-node windows and
-  is visible in `layout status` as `source=loop`;
-- multi-node loop-capacity allocation is proven for explicit `[windows]`:
-  `worker=2` plus `code_reviewer=2` creates separate
-  `node-round2-node1` and `node-round2-node2` windows, each with ordered
-  worker/checker panes, and release removes both node windows;
+- topology default placement now maps V1 resident
+  `ccb_frontdesk`/`ccb_task_detailer` to `ccb-user`, V1 resident
+  `ccb_planner`/`ccb_orchestrator` to `ccb-plan`, optional
+  `ccb_round_reviewer` to `ccb-plan` when present, and
+  `coder`/`code_reviewer` to packed `ccb-exec` pages;
+- dynamic overlay-created runtime windows use append-compatible layout specs,
+  so growing an existing `ccb-exec` page from one `coder + code_reviewer`
+  group to two groups produces an additive namespace patch instead of
+  reshaping and respawning existing panes;
+- source tests prove four coder/reviewer work units create `ccb-exec` plus
+  `ccb-exec-2`, then releasing one middle work unit moves the final work unit
+  back into `ccb-exec` and removes `ccb-exec-2`;
 - existing-window and new-window dynamic hot add are proven through guarded
   reload tests and controlled mounted tmux smoke;
 - existing-window and new-window dynamic hot unload are proven through

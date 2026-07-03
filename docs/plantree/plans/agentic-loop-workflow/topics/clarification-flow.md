@@ -4,7 +4,14 @@ Date: 2026-06-24
 
 ## Principle
 
-Clarification should be stage-batched, artifact-first, and reference-driven.
+Clarification should be stage-batched, artifact-first, and reference-driven,
+but there are two different clarification surfaces:
+
+- macro planning clarification, where planner emits candidate questions and a
+  broker filters them before `frontdesk` presents them;
+- task-local refinement clarification, where `task_detailer` already holds the
+  relevant code and plan context and asks the user directly after `frontdesk`
+  or frontend notifies the user where to answer.
 
 Planner group may discover many uncertainties while shaping a plan, but it
 should not stream all of them to `frontdesk` or to the user. It should emit a
@@ -12,11 +19,21 @@ candidate batch for the current phase. A broker then filters the batch into a
 small set of user-facing questions, records defaults and deferrals, and returns
 normalized answers to planner group.
 
+`task_detailer` may discover narrower uncertainties while refining one macro
+task into detailed execution artifacts. In that case, a separate broker or
+`task_clarifier` role is not needed in V1. The detailer creates a
+clarification-needed artifact, the frontend or `frontdesk` notifies the user,
+the user answers inside the same `task_detailer` conversation, and the detailer
+records a clarification summary before continuing.
+
 The goal is to preserve context purity:
 
 - `frontdesk` sees only the curated user-facing question artifact and answer
-  status.
+  status for macro planning, or a task-detailer clarification notification for
+  task-local refinement.
 - Planner group sees the broker review and normalized answers.
+- `task_detailer` sees task-local answers and normalizes them into
+  clarification summaries.
 - Runtime artifacts hold raw candidates, raw answers, and fast-changing detail.
 - Durable plan-tree files only receive accepted assumptions, decisions,
   blockers, or design consequences.
@@ -43,6 +60,8 @@ Stage-batched clarification balances both risks:
 | clarification broker | Candidate questions and evidence refs | User question artifact, assumptions, deferrals, normalized answers | Start execution loop |
 | frontdesk | User question artifact ref | Raw user answer | Inspect all planning scratch by default |
 | planner group after answer | Normalized answers and assumptions | Updated plan or execution-ready artifact | Re-ask broker-resolved details |
+| task_detailer | Macro task refs, plan-tree/source evidence, detail packet draft | Clarification-needed artifact, clarification summary, detailed execution packet | Maintain long-term plan-tree, dispatch workers, or broaden macro scope |
+| frontdesk/frontend for task detail | Clarification-needed notification ref | User routed to `task_detailer` | Interpret task-detail question by default |
 
 ## Broker Lifecycle
 
@@ -60,7 +79,7 @@ The semantic broker should normally be launched with fresh context for one phase
 batch, then released. A deterministic router can remain as a CCB helper that
 creates files, validates schemas, and wakes the next owner.
 
-## Runtime File Layout
+## Macro Runtime File Layout
 
 ```text
 .ccb/runtime/loops/<loop-id>/clarification/<phase>/
@@ -73,6 +92,37 @@ creates files, validates schemas, and wakes the next owner.
   raw_answers.jsonl
   normalized_answers.jsonl
 ```
+
+Task-local detailer clarification uses a per-task detailer surface instead of
+the macro broker queue:
+
+```text
+.ccb/runtime/loops/<loop-id>/tasks/<task-id>/detailer/
+  detail-packet.manifest.json
+  detail-readiness.json
+  clarification/
+    clarification-needed.md
+    clarification-needed.json
+    raw-answer-ref.json
+    clarification-summary.md
+    clarification-summary.json
+```
+
+The frontend or `frontdesk` should receive only a compact notification event:
+
+```json
+{
+  "event": "detail_clarification_needed",
+  "loop_id": "20260624-rich-workflow-001",
+  "task_id": "task-001",
+  "detailer_agent": "task_detailer",
+  "question_ref": ".ccb/runtime/loops/20260624-rich-workflow-001/tasks/task-001/detailer/clarification/clarification-needed.md",
+  "artifact_manifest_ref": ".ccb/runtime/loops/20260624-rich-workflow-001/tasks/task-001/detailer/detail-packet.manifest.json"
+}
+```
+
+It should route the user to the indicated `task_detailer`; it should not expand
+or reinterpret the question by default.
 
 ## Candidate Question Shape
 
@@ -172,6 +222,24 @@ planner_group
 Broker resolution must not directly activate `loop runner` or execution nodes.
 Planner group remains responsible for incorporating clarified answers into the
 plan and marking the task ready through the normal planning review path.
+
+Task-local refinement flow:
+
+```text
+orchestrator/loop_runner
+  -> task_detailer
+  -> clarification-needed artifact
+  -> frontdesk/frontend notification
+  -> user talks to task_detailer
+  -> task_detailer clarification-summary
+  -> task_detailer detail packet
+  -> plan/detail review gate
+  -> orchestrator
+```
+
+The task-local flow does not need `clarification_broker` unless later evidence
+shows that detailer/user clarification becomes too long, too cross-cutting, or
+requires a stricter UI/form/audit process.
 
 ## Answer Normalization
 

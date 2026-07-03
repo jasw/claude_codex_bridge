@@ -1,6 +1,7 @@
 # Workflow RolePack External Spec Handoff V1
 
 Date: 2026-06-27
+Status: Historical / legacy CCB compatibility handoff
 
 ## Goal
 
@@ -9,6 +10,12 @@ Move the CCB workflow role drafts from
 external Agent Roles spec repository as installable catalog Roles, then verify
 that CCB can consume them through the normal Role store, provider skill
 projection, and artifact command surfaces.
+
+This handoff records the legacy `agentroles.ccb_*` draft migration surface. It
+is not the current mainline Role naming plan. Current design uses
+`agentroles.planner`, treats `agentroles.ccb_planner` as compatibility
+material, and makes `agentroles.task_detailer` an orchestrator-demanded
+refinement role rather than a planner-group member.
 
 ## Scope
 

@@ -187,10 +187,10 @@ Round checker should return one of:
 
 | Result | Meaning | Next Owner |
 | :--- | :--- | :--- |
-| `pass` | All required behavior is proven and no hidden degradation was found | `plan_steward` |
+| `pass` | All required behavior is proven and no hidden degradation was found | planner / `ccb plan` |
 | `rework_node` | A specific node can fix the issue within the current plan | `orchestrator` |
-| `partial` | Independent work is complete, but one or more branches need replanning | `planner_group` |
-| `replan_required` | The plan, task split, acceptance criteria, or risk model needs revision | `planner_group` |
+| `partial` | Independent work is complete, but one or more branches need replanning | planner |
+| `replan_required` | The plan, task split, acceptance criteria, or risk model needs revision | planner |
 | `global_blocker` | Execution cannot continue without external input or environment change | `frontdesk` only if user decision is needed |
 
 `partial` must never mean degraded completion. It means completed sibling work

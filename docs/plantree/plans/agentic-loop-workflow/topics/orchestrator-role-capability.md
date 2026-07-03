@@ -11,6 +11,7 @@ execution-node topology, dispatches constrained work through `ask`, and returns
 structured aggregation for round checking or replanning.
 
 It is not a daemon, not a permanent manager, and not the owner of runtime state.
+It proposes runtime topology; CCB scripts commit and reconcile topology.
 
 ## Activation Model
 
@@ -18,7 +19,7 @@ It is not a daemon, not a permanent manager, and not the owner of runtime state.
 loop_runner
   -> ask orchestrator
       inputs: task packet, verification contract, loop state refs, node budget
-      outputs: work items, dependency graph, dispatch plan, runtime requests,
+      outputs: work items, dependency graph, topology proposal, dispatch plan,
                partial summary, round-check handoff
 ```
 
@@ -30,7 +31,7 @@ loop_runner
 - Verification contract path.
 - Current loop breadcrumb.
 - Existing node/branch status refs.
-- Runtime capacity summary.
+- Current topology and runtime capacity summary.
 
 `orchestrator` may read the referenced documents, reason semantically, and
 produce draft artifacts. It must ask CCB scripts to record authoritative state.
@@ -115,52 +116,87 @@ When a node is `non_converged`, orchestrator should:
 
 It must not downgrade the branch to success or silently remove it from scope.
 
-### 4. Runtime Agent Requesting
+### 4. Runtime Workflow Graph Proposal
 
-`orchestrator` may request execution capacity, but it must not directly mutate
-runtime state.
+`orchestrator` may propose the execution-round topology, but it must not
+directly mutate runtime state.
 
 Allowed:
 
-- Call `orchestrator-capacity`, which in turn uses
-  `ccb loop capacity ensure/status/release`.
-- Request a bounded batch of loop-owned agents by declared profile and count.
-- Use returned agent names as the only dynamic ask targets.
-- Report returned node/window placement as evidence only.
-- Request idle release after work completes.
-- Provide reasons, node count, provider/role preferences, and expected lifetime.
+- Call the planned `orchestrator-topology` skill, which in turn uses
+  `ccb loop topology propose/validate/commit/status`.
+- Propose a bounded graph of loop-owned agents by declared profile and count.
+- Define information-flow edges, call order, artifact refs, and release gates.
+- Use committed topology and observed status as the only dynamic ask targets.
+- Report node/window placement as evidence only after the reconciler returns
+  it.
+- Request release by removing or parking agents in topology intent, not by
+  killing or unloading them directly.
+- Provide reasons, node count, provider/role preferences, expected lifetime,
+  failure policies, and release gates.
 
 Disallowed:
 
 - Editing `.ccb/ccb.config` directly.
 - Running `ccb reload` directly from the role.
 - Killing panes or agents directly.
-- Calling `ccb agent add --window`, `ccb agent add --window-class`, or choosing
-  execution-node window names directly.
+- Calling `ccb agent add --window`, `ccb agent add --window-class`,
+  `ccb agent remove`, or choosing execution-node window names directly.
+- Calling `ccb loop capacity ensure/release` directly in the normal topology
+  path after topology commands are available.
 - Writing `.ccb/runtime/loops/*` authority files directly.
 - Bypassing busy unload or provider replacement guards.
 
-Runtime request shape:
+Topology proposal shape:
 
 ```json
 {
-  "request_type": "ensure_execution_agents",
+  "request_type": "propose_runtime_workflow_graph",
   "reason": "Need two independent coder/checker nodes for parallel branches",
   "node_count": 2,
   "max_node_count": 4,
-  "preferred_roles": ["coder", "checker"],
+  "preferred_profiles": ["worker_coder", "reviewer_code"],
   "lifetime": "current_loop_round",
-  "fallback": "use fixed configured coder/checker serially"
+  "edges": [
+    {
+      "id": "edge-worker-node1",
+      "from": "orchestrator",
+      "to": "worker_coder_1",
+      "type": "ask",
+      "order": 10,
+      "output_artifact": "node1.worker-result.md"
+    },
+    {
+      "id": "edge-review-node1",
+      "from": "worker_coder_1",
+      "to": "reviewer_code_1",
+      "type": "ask_after",
+      "after": ["edge-worker-node1"],
+      "order": 20,
+      "input_artifact": "node1.worker-result.md",
+      "output_artifact": "node1.review.md"
+    }
+  ],
+  "release_gates": [
+    {
+      "agents": ["worker_coder_1", "reviewer_code_1"],
+      "condition": "artifacts_imported && agents_idle",
+      "policy": "auto"
+    }
+  ],
+  "fallback": "return replan_required or run fixed configured worker/reviewer serially only when planner policy allows"
 }
 ```
 
-`ccb loop capacity` and the runtime layout manager own translating requests
-into runtime records, guarded reload, window creation, pane placement, idle
+`ccb loop topology` owns validation and desired-state commit. The topology
+reconciler owns translating committed desired topology into capacity records,
+guarded reload, lifecycle records, window creation, pane placement, idle
 release, or rejection. Current CCB has proven loop-generated worker/checker
 placement in `node-<loop-id>-<node-id>` windows for explicit `[windows]`
-layouts. `orchestrator` may inspect `ccb layout status --json` as a read-only
-diagnostic view when capacity placement is unclear, but it must not use layout
-status to pick targets or repair tmux state.
+layouts; the topology reconciler should reuse that substrate. `orchestrator`
+may inspect `ccb loop topology status --json` and `ccb layout status --json`
+as read-only diagnostic views, but it must not use those views to hand-pick
+targets or repair tmux state.
 
 ### 5. Ask Dispatch
 
@@ -235,21 +271,23 @@ partial_loop_report
 
 ## V1 Cut
 
-V1 starts with the narrow loop-capacity path:
+V1 should move to the topology path:
 
 ```text
 planner -> loop_runner -> ask orchestrator
-orchestrator -> ccb loop capacity ensure
-orchestrator -> ask returned worker
-orchestrator -> ask returned checker
+orchestrator -> ccb loop topology propose/commit
+loop_runner/reconciler -> ccb loop topology reconcile
+orchestrator or loop_runner -> ask committed worker target
+orchestrator or loop_runner -> ask committed reviewer target
 orchestrator -> aggregate
-orchestrator -> ccb loop capacity release
+loop_runner/reconciler -> ccb loop topology release/reconcile
 checker or round_checker -> verify
 planner/frontdesk -> receive partial/replan only when needed
 ```
 
-The fixed-agent path remains useful for smoke tests or projects without dynamic
-capacity enabled, but it is not the preferred orchestrator contract.
+The existing `ccb loop capacity` path remains useful as the lower-level
+substrate and for compatibility/debugging, but it is no longer the preferred
+orchestrator contract.
 
 ## Role Pack Guidance
 
@@ -257,10 +295,10 @@ The `orchestrator` Role Pack should include:
 
 - Role memory describing purpose, authorities, non-authorities, and V1 limits.
 - A dispatch skill for work item slicing and ask payload generation.
-- A runtime-request skill for producing structured capacity requests without
-  direct runtime mutation or hand-picked placement.
+- A topology skill for producing structured runtime workflow graph proposals
+  without direct runtime mutation or hand-picked placement.
 - Templates for work items, dependency graphs, worker asks, checker asks,
-  runtime requests, orchestration summaries, and partial loop reports.
+  topology proposals, orchestration summaries, and partial loop reports.
 - References to:
   - `topics/plan-and-runtime-list-structure.md`
   - `topics/execution-node-and-round-verification.md`

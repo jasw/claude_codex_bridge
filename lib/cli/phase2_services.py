@@ -23,6 +23,7 @@ from cli.render import (
     render_loop_capacity,
     render_loop_run_once,
     render_loop_runner,
+    render_loop_topology,
     render_maintenance,
     render_mobile_serve,
     render_plan_task,
@@ -59,6 +60,7 @@ from cli.services.logs import agent_logs
 from cli.services.loop_capacity import loop_capacity
 from cli.services.loop_run_once import loop_run_once
 from cli.services.loop_runner import loop_runner_once
+from cli.services.loop_topology import loop_topology
 from cli.services.maintenance import maintenance_status
 from cli.services.mobile import mobile_devices_status, prepare_mobile_gateway, revoke_mobile_device
 from cli.services.plan_tasks import plan_task
@@ -98,6 +100,7 @@ def build_phase2_dispatch_services(**overrides):
         loop_capacity=loop_capacity,
         loop_run_once=loop_run_once,
         loop_runner_once=loop_runner_once,
+        loop_topology=loop_topology,
         maintenance_status=maintenance_status,
         mobile_devices_status=mobile_devices_status,
         plan_task=plan_task,
@@ -130,6 +133,7 @@ def build_phase2_dispatch_services(**overrides):
         render_loop_capacity=render_loop_capacity,
         render_loop_run_once=render_loop_run_once,
         render_loop_runner=render_loop_runner,
+        render_loop_topology=render_loop_topology,
         render_maintenance=render_maintenance,
         render_mobile_serve=render_mobile_serve,
         render_plan_task=render_plan_task,

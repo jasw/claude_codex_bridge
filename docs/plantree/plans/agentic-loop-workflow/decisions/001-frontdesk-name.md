@@ -14,7 +14,8 @@ or primary execution responsibility, while the intended role is only an intake,
 handoff, reporting, and escalation boundary.
 
 The workflow's control plane should be the scripted state machine and loop
-runner. Planning authority belongs to planner group and plan steward surfaces.
+runner. Planning authority belongs to planner and script-owned stewardship
+surfaces.
 Execution belongs to orchestrator-selected execution nodes. Runtime health
 belongs to monitor layers. The user-facing role should not be encouraged by
 name to take over those responsibilities.

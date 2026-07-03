@@ -20,6 +20,12 @@ style roles carry expensive, long-lived context. They should normally be hidden
 or parked when not active, not unloaded. Short-lived execution roles can be
 unloaded after their evidence has been imported and their work is idle.
 
+Current workflow direction: loop execution agents should normally be created
+and released by topology reconciliation, not by `orchestrator` directly calling
+`ccb agent add/remove` or `ccb loop capacity ensure/release`. The lifecycle
+commands in this document remain the lower-level mechanism for operators,
+non-loop dynamic agents, and the topology reconciler.
+
 ## Role Classes
 
 ### Long-Lived Interactive Roles
@@ -381,7 +387,19 @@ the safety and diagnostics surface for all later lifecycle work.
 
 ### Loop And Orchestrator Commands
 
-`ccb loop capacity` remains the narrow execution-node interface:
+`ccb loop topology` should become the orchestrator-facing execution-node
+interface:
+
+```bash
+ccb loop topology propose --loop-id <loop-id> --from <file> --json
+ccb loop topology commit --loop-id <loop-id> --proposal <id> --apply --json
+ccb loop topology reconcile --loop-id <loop-id> --json
+ccb loop topology status --loop-id <loop-id> --json
+ccb loop topology release --loop-id <loop-id> --policy auto --json
+```
+
+`ccb loop capacity` remains the lower-level substrate that the reconciler may
+use:
 
 ```bash
 ccb loop capacity ensure \
@@ -407,8 +425,10 @@ Planned extensions:
 - `--visibility visible|hidden|parked`;
 - structured `retained_busy` output when release is unsafe.
 
-The orchestrator may request capacity. It should not choose tmux operations or
-provider process operations.
+The orchestrator may request execution capacity only as topology intent. It
+should not choose tmux operations or provider process operations. After
+topology commands exist, the normal orchestrator path should be topology
+proposal, not direct capacity ensure or release.
 
 ### Layout Commands
 
@@ -455,8 +475,10 @@ Allowed commands:
 - `ccb agent resume ... --json`;
 - `ccb agent remove ... --idle-only --json`;
 - `ccb agent release ... --idle-only --json`;
-- `ccb loop capacity ensure/status/release --json` when the caller is
-  orchestrator and the target is execution capacity.
+- `ccb loop topology propose/status/commit --json` when the caller is
+  orchestrator and the target is execution capacity;
+- `ccb loop capacity ensure/status/release --json` only when the caller is the
+  topology reconciler, operator diagnostics, or a legacy compatibility flow.
 
 For `add`, the intended sequence is:
 
@@ -499,13 +521,13 @@ Outputs:
 | :--- | :--- | :--- |
 | `frontdesk` / `frontend` | load visible dialog expert, hide dialog expert, resume parked dialog expert, status | No worker fanout, no hard unload, no plan/runtime authority writes. |
 | planner group | add/load/resume planner helper/reviewer/broker by profile, park planner helpers, status | No execution-node capacity and no direct user question bypass. |
-| orchestrator | ensure/release worker/checker capacity through `ccb loop capacity`, park/resume itself, status | Max 1-4 nodes, no raw tmux, no config edits, no provider kill, no `kill` policy. |
+| orchestrator | propose/inspect/commit topology through `ccb loop topology`, park/resume itself, status | Max 1-4 nodes, no direct capacity ensure/release in the normal path, no raw tmux, no config edits, no provider kill, no `kill` policy. |
 | round checker | status, request temporary diagnostic helper, park self after result import | No implementation fixes and no task status writes. |
 | monitor/recovery | status, report retained/failed lifecycle, suggest operator actions | No force unload unless explicitly escalated. |
 
-`orchestrator-capacity` can remain as a narrow role-specific skill. It may be
-implemented on top of `dynamic-agent-lifecycle`, or kept separate while sharing
-the same underlying runtime command surface.
+`orchestrator-capacity` can remain as a legacy/debugging skill while
+`orchestrator-topology` becomes the normal workflow skill. Both may share the
+same underlying runtime command surface through the topology reconciler.
 
 ## Safety Rules
 
@@ -556,9 +578,9 @@ the same underlying runtime command surface.
    - the skill now requires `ccb layout resolve ... --json` before
      `ccb agent add ... --json`, and checks `addable`,
      `placement_mode`, `resolved_window_name`, and `will_create_window`;
-   - `orchestrator-capacity` now points non-loop helper/broker/diagnostic
-     work to `dynamic-agent-lifecycle` while keeping loop execution capacity
-     behind `ccb loop capacity`.
+  - `orchestrator-capacity` is retained as a legacy loop-capacity substrate;
+    the next skill direction is `orchestrator-topology`, with reconciliation
+    using lifecycle and capacity mechanisms underneath.
 8. Real workflow smoke:
    - start with one visible frontend;
    - dynamically load planner and orchestrator;
@@ -719,7 +741,7 @@ Verification evidence:
 - External dynamic lifecycle policy smoke passed in
   `/home/bfly/yunwei/test_ccb2/lifecycle-policy-smoke.json`: explicit
   `[windows]` startup mounted `frontdesk` and `planner`; dynamic
-  `planner_helper:fake --role agentroles.ccb_planner --window-class
+  legacy `planner_helper:fake --role agentroles.ccb_planner --window-class
   plan-orchestrate --hidden` returned `role_class=long_lived_interactive` and
   `plan_class=add_agent`; `release planner_helper --idle-only` returned
   `resolved_policy=park`, `lifecycle_state=parked`,

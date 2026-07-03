@@ -47,6 +47,18 @@ def handle_loop_capacity(context, command, out, services) -> int:
     return 0
 
 
+def handle_loop_topology(context, command, out, services) -> int:
+    payload = services.loop_topology(context, command)
+    status = str(payload.get('loop_topology_status') or '')
+    exit_code = 0 if status not in {'failed', 'invalid'} else 1
+    if bool(getattr(command, 'json_output', False)):
+        out.write(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
+        out.write('\n')
+        return exit_code
+    services.write_lines(out, services.render_loop_topology(payload))
+    return exit_code
+
+
 def handle_loop_run_once(context, command, out, services) -> int:
     payload = services.loop_run_once(context, command, services)
     exit_code = 0 if str(payload.get('loop_run_status') or '') == 'ok' else 1
@@ -202,6 +214,7 @@ __all__ = [
     'handle_layout',
     'handle_logs',
     'handle_loop_capacity',
+    'handle_loop_topology',
     'handle_loop_run_once',
     'handle_loop_runner',
     'handle_maintenance',

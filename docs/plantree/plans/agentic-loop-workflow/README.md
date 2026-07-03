@@ -31,12 +31,15 @@ recoverable workflow loops.
 
 - [roadmap.md](roadmap.md): planning sequence, current design status, and
   readiness gates.
+- [implementation-status.md](implementation-status.md): current operational
+  handoff, latest landed workflow slice, active TODO, blockers, and last
+  verification.
 - [open-questions.md](open-questions.md): unresolved product, safety, and
   implementation questions.
 - [goals/orchestrator-dynamic-capacity-goal.md](goals/orchestrator-dynamic-capacity-goal.md):
-  implementation and real-test goal for `loop.role_profiles`,
-  `orchestrator-capacity`, dynamic `worker + code_reviewer` loading, task
-  dispatch, review, aggregation, and release in `/home/bfly/yunwei/test_ccb2`.
+  historical implementation and real-test goal for the `loop.role_profiles`
+  and `ccb loop capacity` substrate, now superseded as the
+  orchestrator-facing path by topology proposal and reconciliation.
 - [goals/planner-plan-script-goal.md](goals/planner-plan-script-goal.md):
   implementation and source-test goal for the first planner role boundary and
   `ccb plan` task-packet command surface.
@@ -56,18 +59,24 @@ recoverable workflow loops.
   judgment into scripts.
 - [goals/clarification-planner-followthrough-goal.md](goals/clarification-planner-followthrough-goal.md):
   next implementation goal for adding the V1 `ccb question` artifact surface,
-  broker/frontdesk clarification loop, normalized answers, planner artifact
-  import, plan-reviewer gate, and script-owned transition to `ready`.
+  macro broker/frontdesk clarification loop, normalized answers, planner
+  artifact import, plan-reviewer gate, optional task-detailer refinement, and
+  script-owned transition to `ready`.
 - [goals/workflow-rolepack-external-spec-handoff-goal.md](goals/workflow-rolepack-external-spec-handoff-goal.md):
   external handoff goal for promoting the workflow Role drafts into
   `/home/bfly/yunwei/agent-roles-spec`, installing them through CCB's Role
-  store, and proving planner/broker/frontdesk/reviewer/orchestrator artifact
-  collaboration.
+  store, and proving planner/task-detailer/broker/frontdesk/reviewer/
+  orchestrator artifact collaboration.
 - [goals/workflow-closure-smoke-goal.md](goals/workflow-closure-smoke-goal.md):
   repeatable source-wrapper smoke for the complete fake-provider workflow
-  closure, including planner/broker/frontdesk/reviewer transitions, ready
-  execution, dynamic worker/checker release with `--policy auto`, and the
-  current explicit-windows follow-up finding.
+  closure, including macro planner/broker/frontdesk/reviewer transitions,
+  optional task-detailer refinement, ready execution, dynamic worker/checker
+  release with `--policy auto`, and the current explicit-windows follow-up
+  finding.
+- [goals/minimum-production-candidate-goal.md](goals/minimum-production-candidate-goal.md):
+  narrow production-candidate gate for one scripted workflow closure using
+  `ccb plan`, `ccb question`, `ccb loop runner --once`, dynamic worker/checker
+  capacity, round-result import, and auto-release cleanup.
 - [topics/architecture.md](topics/architecture.md): proposed role topology,
   loop lifecycle, handoff rules, and failure escalation model.
 - [topics/complete-workflow-design.md](topics/complete-workflow-design.md):
@@ -78,8 +87,15 @@ recoverable workflow loops.
   kernel, flexible semantic agents, state projection, role groups, script
   capabilities, lifecycle, V1 loop closure, and deferred items.
 - [topics/planner-role-design.md](topics/planner-role-design.md): planner
-  group authority, internal shape, readiness rules, clarification boundaries,
-  and relationship to plan steward.
+  authority, readiness rules, clarification boundaries, script authority, and
+  orchestrator triage handoff.
+- [topics/planner-plan-tree-brief-and-detail-boundary.md](topics/planner-plan-tree-brief-and-detail-boundary.md):
+  planner-owned plan brief shape and boundary with task-detailer-owned detail
+  docs and per-task execution refinement.
+- [topics/task-detailer-role-design.md](topics/task-detailer-role-design.md):
+  short-lived task refinement role that reads macro task refs, plan-tree/source
+  evidence, performs detailed self-research, owns task-local clarification, and
+  emits detailed execution packets without becoming the long-lived planner.
 - [topics/state-and-script-contract.md](topics/state-and-script-contract.md):
   proposed short-term progress store, script entrypoints, state transitions,
   artifact requirements, and plan-tree synchronization rules.
@@ -93,6 +109,10 @@ recoverable workflow loops.
   orchestrator role capability boundary, ask activation model, 1-4 node
   complexity slicing, runtime-agent request semantics, and task-dispatch
   constraints.
+- [topics/runtime-workflow-graph-and-reconciler.md](topics/runtime-workflow-graph-and-reconciler.md):
+  desired-state runtime workflow graph design, including agent topology,
+  information-flow edges, call order, artifact handoffs, lifecycle gates,
+  topology proposal/commit commands, and reconciler load/release behavior.
 - [topics/orchestrator-rolepack-blueprint.md](topics/orchestrator-rolepack-blueprint.md):
   reviewed `mother` design for the `agentroles.ccb_orchestrator` RolePack,
   including identity, memory, skills, templates, package shape, and validation
@@ -102,10 +122,14 @@ recoverable workflow loops.
   into Agent Roles specs, including frontdesk, planner, plan reviewer, broker,
   orchestrator, worker, checker, round checker, monitor, recovery, and plan
   steward boundaries.
+- [topics/role-class-naming-and-hierarchy.md](topics/role-class-naming-and-hierarchy.md):
+  current flat Role naming and Role Collection direction, including replacement
+  mapping from experimental `agentroles.ccb_*` roles and recommended
+  `agentroles.collections.*` bundles.
 - [topics/role-profiles-and-capacity-skill.md](topics/role-profiles-and-capacity-skill.md):
-  design for `loop.role_profiles` config and the `orchestrator-capacity` skill
-  / `ccb loop capacity` script surface used to load and release dynamic
-  execution nodes by profile.
+  lower-level design for `loop.role_profiles` config and `ccb loop capacity`;
+  retained as the capacity substrate that topology reconciliation may use,
+  rather than the preferred orchestrator-facing contract.
 - [topics/dynamic-window-pane-agent-maintenance.md](topics/dynamic-window-pane-agent-maintenance.md):
   design for runtime-managed tmux windows and panes, including
   `frontdesk-dialog`, `plan-orchestrate`, per-node execution windows, runtime
@@ -125,14 +149,16 @@ recoverable workflow loops.
   principle, short-lived execution context policy, and role boundaries that
   keep `frontdesk` and long-lived planning roles free of fast-changing noise.
 - [topics/clarification-flow.md](topics/clarification-flow.md): staged
-  clarification flow where planner emits candidate questions, broker filters
-  them, and `frontdesk` only displays curated question references.
+  clarification flow where planner emits macro candidate questions, broker
+  filters them, `frontdesk` displays curated question references, and
+  `task_detailer` separately owns task-local clarification with frontend
+  notification.
 - [topics/execution-node-and-round-verification.md](topics/execution-node-and-round-verification.md):
   execution-node structure, checker boundaries, non-convergence handling,
   partial branch draining, and round-level verification.
 - [topics/round-checker-and-planner-rehydration.md](topics/round-checker-and-planner-rehydration.md):
   round checker separation, planner next-loop rehydration inputs, and result
-  routing back to planner, plan steward, or frontdesk.
+  routing back to planner or frontdesk.
 - [decisions/001-frontdesk-name.md](decisions/001-frontdesk-name.md):
   decision to call the user-facing non-executing role `frontdesk` instead of
   `main`.
@@ -169,6 +195,37 @@ recoverable workflow loops.
 - [decisions/012-long-lived-roles-park-before-unload.md](decisions/012-long-lived-roles-park-before-unload.md):
   decision that long-lived interactive roles default to hide/park, while
   short-lived execution roles can unload only after idle/evidence gates.
+- [decisions/013-role-class-prefix-naming.md](decisions/013-role-class-prefix-naming.md):
+  historical decision to replace experimental CCB-prefixed workflow role ids
+  with host-neutral names; its source hierarchy direction is superseded by
+  Decision 017.
+- [decisions/014-runtime-workflow-graph-reconciler.md](decisions/014-runtime-workflow-graph-reconciler.md):
+  decision to drive dynamic agent load/release through committed runtime
+  workflow graphs and topology reconciliation instead of direct orchestrator
+  lifecycle commands.
+- [decisions/015-task-detailer-owns-task-refinement-and-clarification.md](decisions/015-task-detailer-owns-task-refinement-and-clarification.md):
+  historical decision to keep the long-lived planner macro-level, introduce a
+  short-lived `task_detailer` for detailed execution refinement, and keep
+  task-local clarification inside that detailer while frontend/frontdesk only
+  notifies the user; Decision 019 now adds orchestrator triage before detailer
+  activation.
+- [decisions/016-agent-groups-and-macro-adjustment-request.md](decisions/016-agent-groups-and-macro-adjustment-request.md):
+  decision that `task_detailer` macro-drift findings must flow through
+  `macro-adjustment-request` artifacts instead of direct roadmap or decision
+  mutation; its source-level reusable group design is superseded by Decision
+  017.
+- [decisions/017-flat-roles-and-role-collections.md](decisions/017-flat-roles-and-role-collections.md):
+  decision to use flat installable Roles plus Role Collections for Agent Roles
+  source, while keeping CCB runtime groups in Project Binding or runtime
+  topology.
+- [decisions/018-planner-uses-plan-brief.md](decisions/018-planner-uses-plan-brief.md):
+  decision that planner primarily maintains a compact plan brief, while V1
+  task-related detail docs and execution refinement are owned by
+  `task_detailer` after orchestrator asks for refinement.
+- [decisions/019-orchestrator-triage-before-task-detailer.md](decisions/019-orchestrator-triage-before-task-detailer.md):
+  decision that orchestrator triages planner macro packets before activating
+  `task_detailer`, can dispatch direct execution, and routes macro adjustment
+  requests back to planner.
 - [history/review-2026-06-26-loop-runner-readiness.md](history/review-2026-06-26-loop-runner-readiness.md):
   reviewer/coworker readiness review that narrowed the next implementation
   slice to task-loop binding, round-result import, `run-once --task-id`, and
@@ -177,6 +234,13 @@ recoverable workflow loops.
   `mother` RolePack design review that accepted the P0/P1/P2 role priorities,
   common authority rule, host-neutral versus CCB-adapter split, and the first
   external Agent Roles spec landing order.
+- [history/runtime-topology-reconciler-2026-06-30.md](history/runtime-topology-reconciler-2026-06-30.md):
+  landing evidence for `ccb loop topology
+  propose/validate/commit/reconcile/status/release`, desired/observed
+  topology files, and add/move/park/release/reflow source-wrapper tests.
+- [history/workflow-role-output-import-2026-07-02.md](history/workflow-role-output-import-2026-07-02.md):
+  landing evidence for the planner/plan-reviewer role-output import bridge,
+  source-wrapper draft-to-done smoke, and existing workflow closure regression.
 
 ## Related Sources
 
@@ -196,21 +260,26 @@ In scope:
 
 - A user-facing `frontdesk` group that only handles user discussion, macro-task
   intake, confirmations, final reporting, and unrecoverable escalation.
-- A planner group that turns macro tasks into durable execution documents,
-  including PRD-style requirements, design notes, acceptance criteria,
-  risk notes, and task readiness state.
-- A plan steward role that maintains long-term plan-tree state and short-term
-  progress state, but does not perform product implementation.
+- A planner that maintains long-term plan-tree state, compact plan brief,
+  macro task publication, roadmap/evidence hygiene, and readiness
+  recommendations without carrying implementation detail.
+- A task detailer role that is resident and visible in the V1 `ccb-user`
+  topology, but is semantically activated only when orchestrator triage
+  requires detailed execution refinement; it turns macro task refs into
+  task-scoped detail docs and a detail packet, then returns normal outputs to
+  orchestrator and macro drift back to planner.
 - A deterministic loop runner that reads short-term workflow state and starts
   or advances execution loops without relying on one agent's conversation
   memory.
 - An orchestrator role that decomposes a ready execution task into bounded
   work items, selects the required execution-node topology, constrains worker
-  asks, and may request dynamic agent load/unload through script-owned runtime
-  surfaces.
-- A dynamic agent lifecycle layer where long-lived roles such as frontend,
-  planner, and orchestrator default to hide/park, while short-lived execution
-  roles can be unloaded after idle/evidence gates.
+  asks, and proposes a runtime workflow graph that CCB scripts validate,
+  commit, and reconcile.
+- A dynamic agent lifecycle layer where the V1 default visible baseline is
+  four panes, `ccb_frontdesk + ccb_task_detailer` in `ccb-user` and
+  `ccb_planner + ccb_orchestrator` in `ccb-plan`, while execution and
+  round-review roles can be loaded and released after idle/evidence gates
+  through topology or lifecycle reconciliation.
 - Dynamic execution nodes, each defaulting to a flat `worker + checker`
   structure. More complex node-internal teams are deferred until the work item
   cannot be safely split by orchestrator.
@@ -258,9 +327,10 @@ Out of scope:
 | Role | Authority | Non-Authority |
 | :--- | :--- | :--- |
 | `frontdesk` group | User conversation, scope confirmation, final summary, escalation handling | Direct business implementation or internal loop micromanagement |
-| planner group | Planning artifacts, acceptance criteria, readiness review | Runtime worker lifecycle or final authority over code correctness |
+| planner | Macro planning artifacts, plan brief, high-level acceptance, readiness recommendation, macro adjustment review | Detail design body maintenance, detailed implementation packet maintenance, runtime worker lifecycle, direct detailer/worker dispatch, or final authority over code correctness |
+| `task_detailer` | Task-local refinement, task-scoped detail docs, source evidence, detail packet, stable summary backfill, task-local clarification | Roadmap/status authority, runtime dispatch, worker/reviewer control, or long-term user conversation |
 | clarification broker | Candidate-question filtering, user-question artifact, answer normalization | Direct user conversation or execution-loop activation |
-| plan steward | Plan-tree consistency, short-term progress state, evidence linking | Business implementation, provider repair, or daemon supervision |
+| planner stewardship mode / `ccb plan` scripts | Plan-tree consistency, short-term progress state, evidence linking, authoritative task/index/status writes through scripts | Business implementation, provider repair, daemon supervision, or bypassing script validation |
 | loop runner | Deterministic state-machine execution and loop start/advance | Semantic product decisions |
 | orchestrator | Work decomposition, execution-node selection, result aggregation | Long-term plan authority |
 | execution node | Bounded `worker + checker` implementation and node-quality gate | Global task routing, hidden degradation, or durable plan mutation |
@@ -274,10 +344,13 @@ then read [topics/architecture.md](topics/architecture.md), then read
 [topics/state-and-script-contract.md](topics/state-and-script-contract.md) and
 [topics/plan-and-runtime-list-structure.md](topics/plan-and-runtime-list-structure.md),
 then [topics/orchestrator-role-capability.md](topics/orchestrator-role-capability.md),
+then [topics/runtime-workflow-graph-and-reconciler.md](topics/runtime-workflow-graph-and-reconciler.md),
 then [topics/orchestrator-rolepack-blueprint.md](topics/orchestrator-rolepack-blueprint.md),
 then [topics/role-profiles-and-capacity-skill.md](topics/role-profiles-and-capacity-skill.md),
 then [goals/orchestrator-dynamic-capacity-goal.md](goals/orchestrator-dynamic-capacity-goal.md),
 then [topics/planner-role-design.md](topics/planner-role-design.md), then
+[topics/planner-plan-tree-brief-and-detail-boundary.md](topics/planner-plan-tree-brief-and-detail-boundary.md), then
+[topics/task-detailer-role-design.md](topics/task-detailer-role-design.md), then
 [topics/plan-update-script-landing.md](topics/plan-update-script-landing.md),
 then [goals/planner-plan-script-goal.md](goals/planner-plan-script-goal.md),
 then [topics/clarification-flow.md](topics/clarification-flow.md), then read

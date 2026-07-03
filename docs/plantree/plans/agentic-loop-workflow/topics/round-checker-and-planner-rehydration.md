@@ -71,7 +71,7 @@ Round checker result routing:
 
 | Result | Next Owner | Meaning |
 | :--- | :--- | :--- |
-| `pass` | `plan_steward` / `ccb plan` | Import completion evidence and mark task done. |
+| `pass` | planner / `ccb plan` | Import completion evidence and mark task done. |
 | `rework_node` | orchestrator | A bounded node can fix the issue within the current plan. |
 | `partial` | planner | Preserve completed sibling work and replan remaining branch. |
 | `replan_required` | planner | Requirements, split, acceptance, or risk model must change. |

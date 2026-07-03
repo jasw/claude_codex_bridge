@@ -15,6 +15,7 @@ from cli.models import (
     ParsedLayoutCommand,
     ParsedLogsCommand,
     ParsedLoopCapacityCommand,
+    ParsedLoopTopologyCommand,
     ParsedLoopRunOnceCommand,
     ParsedLoopRunnerCommand,
     ParsedMaintenanceCommand,
@@ -393,16 +394,18 @@ def parse_layout(tokens: list[str], *, project: str | None, error_type) -> Parse
     )
 
 
-def parse_loop(tokens: list[str], *, project: str | None, error_type) -> ParsedLoopCapacityCommand | ParsedLoopRunOnceCommand | ParsedLoopRunnerCommand:
+def parse_loop(tokens: list[str], *, project: str | None, error_type) -> ParsedLoopCapacityCommand | ParsedLoopTopologyCommand | ParsedLoopRunOnceCommand | ParsedLoopRunnerCommand:
     if not tokens:
-        raise error_type('loop requires one of: capacity, run-once, runner')
+        raise error_type('loop requires one of: capacity, topology, run-once, runner')
     group = str(tokens[0] or '').strip().lower()
     if group == 'run-once':
         return _parse_loop_run_once(tokens[1:], project=project, error_type=error_type)
     if group == 'runner':
         return _parse_loop_runner(tokens[1:], project=project, error_type=error_type)
+    if group == 'topology':
+        return _parse_loop_topology(tokens[1:], project=project, error_type=error_type)
     if group != 'capacity':
-        raise error_type('loop only supports: ccb loop capacity <ensure|status|release>, ccb loop run-once, or ccb loop runner')
+        raise error_type('loop only supports: ccb loop capacity <ensure|status|release>, ccb loop topology <propose|validate|commit|reconcile|status|release>, ccb loop run-once, or ccb loop runner')
     if len(tokens) < 2:
         raise error_type('loop capacity requires one of: ensure, status, release')
     action = str(tokens[1] or '').strip().lower()
@@ -447,6 +450,83 @@ def parse_loop(tokens: list[str], *, project: str | None, error_type) -> ParsedL
             json_output=bool(namespace.json_output),
         )
     raise error_type('loop capacity only supports: ensure, status, release')
+
+
+def _parse_loop_topology(tokens: list[str], *, project: str | None, error_type) -> ParsedLoopTopologyCommand:
+    if len(tokens) < 1:
+        raise error_type('loop topology requires one of: propose, validate, commit, reconcile, status, release')
+    action = str(tokens[0] or '').strip().lower()
+    rest = tokens[1:]
+    if action == 'propose':
+        parser = argparse.ArgumentParser(prog='ccb loop topology propose', add_help=False)
+        parser.add_argument('--loop-id', required=True)
+        parser.add_argument('--from', dest='from_path', required=True)
+        parser.add_argument('--proposal-id', dest='proposal_id', default=None)
+        parser.add_argument('--json', dest='json_output', action='store_true')
+        namespace = parse_args(parser, rest, error_message='invalid loop topology propose command', error_type=error_type)
+        return ParsedLoopTopologyCommand(
+            project=project,
+            action=action,
+            loop_id=str(namespace.loop_id),
+            from_path=str(namespace.from_path),
+            proposal_id=str(namespace.proposal_id) if namespace.proposal_id is not None else None,
+            json_output=bool(namespace.json_output),
+        )
+    if action == 'validate':
+        parser = argparse.ArgumentParser(prog='ccb loop topology validate', add_help=False)
+        parser.add_argument('--loop-id', required=True)
+        parser.add_argument('--proposal', dest='proposal_id', required=True)
+        parser.add_argument('--json', dest='json_output', action='store_true')
+        namespace = parse_args(parser, rest, error_message='invalid loop topology validate command', error_type=error_type)
+        return ParsedLoopTopologyCommand(
+            project=project,
+            action=action,
+            loop_id=str(namespace.loop_id),
+            proposal_id=str(namespace.proposal_id),
+            json_output=bool(namespace.json_output),
+        )
+    if action == 'commit':
+        parser = argparse.ArgumentParser(prog='ccb loop topology commit', add_help=False)
+        parser.add_argument('--loop-id', required=True)
+        parser.add_argument('--proposal', dest='proposal_id', required=True)
+        parser.add_argument('--apply', dest='apply', action='store_true')
+        parser.add_argument('--json', dest='json_output', action='store_true')
+        namespace = parse_args(parser, rest, error_message='invalid loop topology commit command', error_type=error_type)
+        return ParsedLoopTopologyCommand(
+            project=project,
+            action=action,
+            loop_id=str(namespace.loop_id),
+            proposal_id=str(namespace.proposal_id),
+            apply=bool(namespace.apply),
+            json_output=bool(namespace.json_output),
+        )
+    if action in {'reconcile', 'status'}:
+        parser = argparse.ArgumentParser(prog=f'ccb loop topology {action}', add_help=False)
+        parser.add_argument('--loop-id', required=True)
+        parser.add_argument('--json', dest='json_output', action='store_true')
+        namespace = parse_args(parser, rest, error_message=f'invalid loop topology {action} command', error_type=error_type)
+        return ParsedLoopTopologyCommand(
+            project=project,
+            action=action,
+            loop_id=str(namespace.loop_id),
+            json_output=bool(namespace.json_output),
+        )
+    if action == 'release':
+        parser = argparse.ArgumentParser(prog='ccb loop topology release', add_help=False)
+        parser.add_argument('--loop-id', required=True)
+        parser.add_argument('--policy', default='auto', choices=('auto', 'idle-only'))
+        parser.add_argument('--idle-only', dest='idle_only', action='store_true')
+        parser.add_argument('--json', dest='json_output', action='store_true')
+        namespace = parse_args(parser, rest, error_message='invalid loop topology release command', error_type=error_type)
+        return ParsedLoopTopologyCommand(
+            project=project,
+            action=action,
+            loop_id=str(namespace.loop_id),
+            policy=str(namespace.policy),
+            idle_only=bool(namespace.idle_only),
+            json_output=bool(namespace.json_output),
+        )
+    raise error_type('loop topology only supports: propose, validate, commit, reconcile, status, release')
 
 
 def parse_plan(tokens: list[str], *, project: str | None, error_type) -> ParsedPlanTaskCommand:
@@ -627,6 +707,7 @@ def _parse_loop_runner(tokens: list[str], *, project: str | None, error_type) ->
     parser = argparse.ArgumentParser(prog='ccb loop runner', add_help=False)
     parser.add_argument('--once', action='store_true')
     parser.add_argument('--timeout', type=float, default=None)
+    parser.add_argument('--consume-role-output', action='store_true')
     parser.add_argument('--json', dest='json_output', action='store_true')
     namespace = parse_args(parser, tokens, error_message='invalid loop runner command', error_type=error_type)
     if not bool(namespace.once):
@@ -637,6 +718,7 @@ def _parse_loop_runner(tokens: list[str], *, project: str | None, error_type) ->
         project=project,
         once=True,
         timeout_s=float(namespace.timeout) if namespace.timeout is not None else None,
+        consume_role_output=bool(namespace.consume_role_output),
         json_output=bool(namespace.json_output),
     )
 

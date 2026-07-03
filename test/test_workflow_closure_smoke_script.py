@@ -23,9 +23,10 @@ def test_build_config_declares_full_workflow_and_loop_profiles() -> None:
 
     text = module.build_config(provider="fake")
 
-    assert "frontdesk:fake; planner:fake; clarification_broker:fake" in text
+    assert "frontdesk:fake; planner:fake; task_detailer:fake; clarification_broker:fake" in text
     assert "frontdesk:fake" in text
     assert "planner:fake" in text
+    assert "task_detailer:fake" in text
     assert "clarification_broker:fake" in text
     assert "plan_reviewer:fake" in text
     assert "orchestrator:fake" in text
@@ -115,6 +116,20 @@ def test_run_workflow_smoke_requires_review_and_auto_releases_capacity(
             if runner_count == 3:
                 return subprocess.CompletedProcess(command, 0, stdout=_json({"loop_runner_status": "ok", "action": "activated_planner"}), stderr="")
             if runner_count == 4:
+                assert "--consume-role-output" in command
+                return subprocess.CompletedProcess(
+                    command,
+                    0,
+                    stdout=_json(
+                        {
+                            "loop_runner_status": "ok",
+                            "action": "imported_task_detailer_output",
+                            "task_status": "detail_ready",
+                        }
+                    ),
+                    stderr="",
+                )
+            if runner_count == 5:
                 return subprocess.CompletedProcess(command, 0, stdout=_json({"loop_runner_status": "ok", "action": "activated_plan_reviewer"}), stderr="")
             project_arg = Path(command[command.index("--project") + 1])
             round_path = project_arg / ".ccb" / "runtime" / "loops" / "lpabc123" / "round.json"
@@ -170,7 +185,9 @@ def test_run_workflow_smoke_requires_review_and_auto_releases_capacity(
     assert payload["summary"]["checks"]["release_retained_zero"] is True
     assert payload["summary"]["checks"]["dynamic_agents_absent_from_ps"] is True
     assert payload["summary"]["final_status"] == "blocked"
-    assert runner_count == 5
+    assert payload["summary"]["checks"]["task_detailer_imported"] is True
+    assert payload["summary"]["checks"]["task_detailer_detail_ready"] is True
+    assert runner_count == 6
     assert ready_count == 2
 
 

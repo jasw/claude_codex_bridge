@@ -33,7 +33,7 @@ def build_config(*, provider: str = "fake") -> str:
     return "\n".join(
         [
             (
-                "frontdesk:{provider}; planner:{provider}; clarification_broker:{provider}; "
+                "frontdesk:{provider}; planner:{provider}; task_detailer:{provider}; clarification_broker:{provider}; "
                 "plan_reviewer:{provider}; orchestrator:{provider}; round_checker:{provider}"
             ).format(provider=provider),
             "",
@@ -41,6 +41,9 @@ def build_config(*, provider: str = "fake") -> str:
             'role = "agentroles.ccb_frontdesk"',
             "",
             "[agents.planner]",
+            'role = "agentroles.ccb_planner"',
+            "",
+            "[agents.task_detailer]",
             'role = "agentroles.ccb_planner"',
             "",
             "[agents.clarification_broker]",
@@ -171,9 +174,19 @@ def run_workflow_smoke(
         _append_question(results, "normalized_import", ccb_test, project_root, test_root, env, "normalized-import", artifacts["normalized_answers"])
         _append_runner(results, "runner_planner_after_answers", ccb_test=ccb_test, project_root=project_root, test_root=test_root, env=env, timeout_s=timeout_s)
 
-        for kind in ("requirements", "acceptance", "verification", "handoff"):
+        for kind in ("brief", "requirements", "acceptance", "verification", "handoff"):
             _append_plan_artifact(results, kind, ccb_test, project_root, test_root, env, artifacts[kind])
 
+        _append_runner(
+            results,
+            "runner_task_detailer",
+            ccb_test=ccb_test,
+            project_root=project_root,
+            test_root=test_root,
+            env=env,
+            timeout_s=timeout_s,
+            consume_role_output=True,
+        )
         _append(
             results,
             "ready_before_review_rejected",
@@ -246,6 +259,7 @@ def write_artifacts(*, project_root: Path, task_id: str) -> dict[str, str]:
         "user_questions": drafts / "user-questions.json",
         "raw_answer": drafts / "raw-answer.md",
         "normalized_answers": drafts / "normalized-answers.jsonl",
+        "brief": drafts / "brief.md",
         "requirements": drafts / "requirements.md",
         "acceptance": drafts / "acceptance.md",
         "verification": drafts / "verification.md",
@@ -305,7 +319,7 @@ def write_artifacts(*, project_root: Path, task_id: str) -> dict[str, str]:
         + "\n",
         encoding="utf-8",
     )
-    for kind in ("requirements", "acceptance", "verification", "handoff", "review"):
+    for kind in ("brief", "requirements", "acceptance", "verification", "handoff", "review"):
         files[kind].write_text(f"# {kind}\n\nWorkflow closure smoke artifact for {kind}.\n", encoding="utf-8")
     return {key: str(path) for key, path in files.items()}
 
@@ -327,6 +341,8 @@ def _workflow_summary(results: list[dict[str, Any]]) -> dict[str, Any]:
         "frontdesk_pause_reached": (payloads.get("runner_paused_for_frontdesk") or {}).get("loop_runner_status") == "paused",
         "normalized_answers_returned_to_draft": (payloads.get("normalized_import") or {}).get("task_status") == "draft",
         "planner_after_answers_activated": (payloads.get("runner_planner_after_answers") or {}).get("action") == "activated_planner",
+        "task_detailer_imported": (payloads.get("runner_task_detailer") or {}).get("action") == "imported_task_detailer_output",
+        "task_detailer_detail_ready": (payloads.get("runner_task_detailer") or {}).get("task_status") == "detail_ready",
         "plan_reviewer_activated": (payloads.get("runner_plan_reviewer") or {}).get("action") == "activated_plan_reviewer",
         "ready_after_review": (payloads.get("ready_after_review") or {}).get("status") == "ready",
         "execution_round_ran": runner_execute.get("action") == "ran_one_round",
@@ -407,11 +423,15 @@ def _append_runner(
     test_root: Path,
     env: dict[str, str],
     timeout_s: int,
+    consume_role_output: bool = False,
 ) -> None:
+    command = [str(ccb_test), "--project", str(project_root), "loop", "runner", "--once", "--timeout", str(timeout_s), "--json"]
+    if consume_role_output:
+        command.insert(-1, "--consume-role-output")
     _append(
         results,
         name,
-        [str(ccb_test), "--project", str(project_root), "loop", "runner", "--once", "--timeout", str(timeout_s), "--json"],
+        command,
         cwd=test_root,
         env=env,
         timeout=timeout_s + 60,

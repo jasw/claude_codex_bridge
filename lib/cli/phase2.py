@@ -34,6 +34,7 @@ from cli.services.logs import agent_logs
 from cli.services.loop_capacity import loop_capacity
 from cli.services.loop_run_once import loop_run_once
 from cli.services.loop_runner import loop_runner_once
+from cli.services.loop_topology import loop_topology
 from cli.services.maintenance import maintenance_status
 from cli.services.mobile import mobile_devices_status, prepare_mobile_gateway, revoke_mobile_device
 from cli.services.plan_tasks import plan_task
@@ -86,7 +87,18 @@ def maybe_handle_phase2(
 
 def _command_requires_bootstrap_config(command) -> bool:
     kind = getattr(command, 'kind', None)
-    return kind not in {'cleanup', 'config-validate', 'kill', 'loop-capacity', 'loop-run-once', 'loop-runner', 'plan-task', 'question', 'reload'}
+    return kind not in {
+        'cleanup',
+        'config-validate',
+        'kill',
+        'loop-capacity',
+        'loop-run-once',
+        'loop-runner',
+        'loop-topology',
+        'plan-task',
+        'question',
+        'reload',
+    }
 
 
 def _render_kill_without_anchor(command, *, cwd: Path | None, out: TextIO) -> int:
@@ -154,6 +166,7 @@ def _dispatch_services():
         loop_capacity=loop_capacity,
         loop_run_once=loop_run_once,
         loop_runner_once=loop_runner_once,
+        loop_topology=loop_topology,
         maintenance_status=maintenance_status,
         mobile_devices_status=mobile_devices_status,
         prepare_mobile_gateway=prepare_mobile_gateway,

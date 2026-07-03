@@ -85,7 +85,18 @@ def resolve_requested_project_root(command, *, cwd: Path, project_discovery_erro
 
 def should_bootstrap_if_missing(command) -> bool:
     kind = getattr(command, 'kind', None)
-    return kind not in {'cleanup', 'config-validate', 'kill', 'loop-capacity', 'loop-run-once', 'loop-runner', 'plan-task', 'question', 'reload'}
+    return kind not in {
+        'cleanup',
+        'config-validate',
+        'kill',
+        'loop-capacity',
+        'loop-run-once',
+        'loop-runner',
+        'loop-topology',
+        'plan-task',
+        'question',
+        'reload',
+    }
 
 
 def confirm_project_reset(project_root: Path, *, out, stdin, stream_is_tty_fn) -> None:

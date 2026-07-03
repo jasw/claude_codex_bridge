@@ -15,11 +15,16 @@ from storage.locks import file_lock
 _SEGMENT_RE = re.compile(r'^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$')
 _SLUG_RE = re.compile(r'[^A-Za-z0-9_-]+')
 _ARTIFACT_FILES = {
+    'brief': 'brief.md',
     'requirements': 'requirements.md',
     'acceptance': 'acceptance-criteria.md',
     'verification': 'verification-contract.md',
     'risk': 'risk-notes.md',
     'handoff': 'handoff.md',
+    'detail_design': 'details/task-detail-design.md',
+    'detail_summary': 'details/brief-update-summary.md',
+    'detail_packet': 'details/detail-packet.manifest.json',
+    'macro_adjustment_request': 'details/macro-adjustment-request.json',
     'review': 'review.md',
     'completion': 'completion.md',
     'round_pass': 'round-pass.md',
@@ -27,6 +32,8 @@ _ARTIFACT_FILES = {
     'round_replan': 'round-replan.md',
     'round_blocker': 'round-blocker.md',
 }
+_PLAN_ROOT_ARTIFACTS = frozenset({'brief'})
+_DETAIL_READY_REQUIRED = frozenset({'detail_design', 'detail_summary', 'detail_packet'})
 _READY_REQUIRED = frozenset({'requirements', 'acceptance', 'verification', 'handoff', 'review'})
 _PLAN_REVIEW_REQUIRED = frozenset({'requirements', 'acceptance', 'verification', 'handoff'})
 _TERMINAL_STATUSES = frozenset({'done', 'blocked'})
@@ -40,6 +47,7 @@ _VALID_STATUSES = frozenset(
     {
         'draft',
         'needs_clarification',
+        'detail_ready',
         'ready',
         'running',
         'partial',
@@ -49,8 +57,9 @@ _VALID_STATUSES = frozenset(
     }
 )
 _STATUS_EDGES = {
-    'draft': {'draft', 'needs_clarification', 'ready'},
+    'draft': {'draft', 'needs_clarification', 'detail_ready', 'ready'},
     'needs_clarification': {'needs_clarification', 'draft'},
+    'detail_ready': {'detail_ready', 'ready'},
     'ready': {'ready', 'running'},
     'running': {'running', 'partial', 'replan_required', 'done', 'blocked'},
     'partial': {'partial', 'replan_required', 'done'},
@@ -297,6 +306,10 @@ def _validate_status_requirements(record: dict[str, object], status: str) -> Non
         missing = sorted(_READY_REQUIRED - artifacts)
         if missing:
             raise ValueError(f'plan task ready requires artifacts: {", ".join(missing)}')
+    if status == 'detail_ready':
+        missing = sorted(_DETAIL_READY_REQUIRED - artifacts)
+        if missing:
+            raise ValueError(f'plan task detail_ready requires artifacts: {", ".join(missing)}')
     if status == 'done' and not ({'completion', 'round_pass'} & artifacts):
         raise ValueError('plan task done requires artifact: completion or round_pass')
     if status == 'partial' and 'round_partial' not in artifacts:
@@ -310,6 +323,8 @@ def _validate_status_requirements(record: dict[str, object], status: str) -> Non
 def _owner_for_status(status: str) -> str:
     if status in {'draft', 'needs_clarification', 'replan_required'}:
         return 'planner'
+    if status == 'detail_ready':
+        return 'plan_reviewer'
     if status in {'ready', 'running', 'partial'}:
         return 'loop_runner'
     return 'frontdesk'
@@ -380,9 +395,11 @@ def find_first_actionable_task(context) -> dict[str, object] | None:
     priority = {
         'execute': 0,
         'activate_planner': 1,
-        'paused': 2,
-        'blocked': 3,
-        'terminal': 4,
+        'activate_task_detailer': 2,
+        'activate_plan_reviewer': 3,
+        'paused': 4,
+        'blocked': 5,
+        'terminal': 6,
     }
     return min(candidates, key=lambda item: priority.get(str(item.get('runner_action') or ''), 99))
     return None
@@ -395,8 +412,12 @@ def _runner_action_for_record(record: dict[str, object]) -> dict[str, str] | Non
         return {'action': 'execute', 'reason': 'ready_task', 'next_owner': 'orchestrator'}
     if status == 'draft' and not current_loop:
         if _ready_for_plan_review(record):
+            if _needs_task_detail(record):
+                return {'action': 'activate_task_detailer', 'reason': 'detail_required', 'next_owner': 'task_detailer'}
             return {'action': 'activate_plan_reviewer', 'reason': 'review_required', 'next_owner': 'plan_reviewer'}
         return {'action': 'activate_planner', 'reason': f'{status}_task', 'next_owner': 'planner'}
+    if status == 'detail_ready' and not current_loop:
+        return {'action': 'activate_plan_reviewer', 'reason': 'detail_ready', 'next_owner': 'plan_reviewer'}
     if status in {'partial', 'replan_required'} and not current_loop:
         return {'action': 'activate_planner', 'reason': f'{status}_task', 'next_owner': 'planner'}
     if status == 'needs_clarification':
@@ -411,6 +432,11 @@ def _runner_action_for_record(record: dict[str, object]) -> dict[str, str] | Non
 def _ready_for_plan_review(record: dict[str, object]) -> bool:
     artifacts = set((record.get('artifacts') or {}).keys()) if isinstance(record.get('artifacts'), dict) else set()
     return _PLAN_REVIEW_REQUIRED <= artifacts and 'review' not in artifacts
+
+
+def _needs_task_detail(record: dict[str, object]) -> bool:
+    artifacts = set((record.get('artifacts') or {}).keys()) if isinstance(record.get('artifacts'), dict) else set()
+    return 'brief' in artifacts and not _DETAIL_READY_REQUIRED <= artifacts
 
 
 def task_execution_text(context, task_id: object) -> str:
@@ -520,7 +546,11 @@ def _import_text_artifact(
     if text is None:
         text = _read_utf8_artifact(source_path)
     task_root = Path(context.project.project_root) / str(record['task_root'])
-    dest = task_root / _ARTIFACT_FILES[artifact_kind]
+    if artifact_kind in _PLAN_ROOT_ARTIFACTS:
+        dest = Path(context.project.project_root) / str(record['plan_root']) / _ARTIFACT_FILES[artifact_kind]
+    else:
+        dest = task_root / _ARTIFACT_FILES[artifact_kind]
+    dest.parent.mkdir(parents=True, exist_ok=True)
     atomic_write_text(dest, text)
     encoded = text.encode('utf-8')
     now = _utc_now()
@@ -528,6 +558,7 @@ def _import_text_artifact(
         'kind': artifact_kind,
         'path': str(dest.relative_to(context.project.project_root)),
         'source_path': str(source_path.relative_to(context.project.project_root)),
+        'scope': 'plan' if artifact_kind in _PLAN_ROOT_ARTIFACTS else 'task',
         'sha256': hashlib.sha256(encoded).hexdigest(),
         'bytes': len(encoded),
         'imported_at': now,

@@ -4,16 +4,25 @@ Date: 2026-06-24
 
 ## Purpose
 
-Define the two missing pieces for dynamic execution nodes:
+Define the profile and capacity substrate for dynamic execution nodes:
 
 1. `loop.role_profiles` in `.ccb/ccb.config`, where users declare which
    role/provider/model/thinking/workspace combinations are allowed.
-2. An `orchestrator-capacity` skill and script protocol, where `orchestrator`
-   requests concrete node capacity by profile name and count.
+2. A `ccb loop capacity` script protocol that can ensure, inspect, and release
+   concrete node capacity by profile name and count.
 
-The goal is to let `orchestrator` dynamically load and release execution
-agents without giving it direct authority to edit config, run raw reload, kill
-panes, or write runtime files.
+This document originally described an `orchestrator-capacity` skill. The
+current preferred design is topology-driven:
+
+```text
+orchestrator proposes topology
+  -> ccb loop topology commits desired state
+  -> topology reconciler uses role profiles, capacity, lifecycle, and layout
+```
+
+The goal is no longer to let `orchestrator` directly request dynamic capacity.
+The goal is to keep provider/model/thinking/profile policy declarative while
+the topology reconciler safely loads and releases execution agents.
 
 For the broader lifecycle policy shared by frontend, planner, orchestrator,
 and execution roles, see
@@ -28,18 +37,23 @@ Separate source policy from runtime instances.
 .ccb/ccb.config
   declares allowed loop capacity profiles
 
-orchestrator-capacity skill
-  chooses profile counts from task complexity
+orchestrator-topology skill
+  proposes graph nodes, edges, artifacts, and release gates
+
+ccb loop topology commit/reconcile
+  validates graph intent and commits desired topology
 
 ccb loop capacity ensure/release/status
-  validates requests, creates or reuses agents, and owns runtime writes
+  remains a lower-level substrate for creating or releasing concrete profile
+  instances when the reconciler needs it
 
 runtime layout manager / ccbd / guarded reload
   performs window, pane, provider, service-graph, and runtime-authority mutation
 ```
 
-`orchestrator` may execute dynamic capacity actions only through the narrow
-script surface. The script surface is the permission boundary.
+`orchestrator` may submit topology intent only through the narrow topology
+surface. Capacity and lifecycle surfaces are permission boundaries for scripts
+and operators, not the normal orchestrator path.
 
 ## Config Shape
 
@@ -131,7 +145,9 @@ level, validation should fail visibly instead of silently ignoring it.
 
 ## Command Surface
 
-The skill should expose only three command families.
+The capacity substrate should expose only three command families. These may be
+called by topology reconciliation, by operator diagnostics, or by legacy
+compatibility flows.
 
 ### Ensure
 
@@ -238,39 +254,47 @@ loop-generated execution profiles into `node-<loop-id>-<node-id>` windows and
 removes empty node windows after idle release. This placement behavior remains
 an implementation contract of CCB, not an orchestrator choice.
 
-## Orchestrator Skill Contract
+## Topology Reconciler Contract
 
-The `orchestrator-capacity` skill should be installed into
-`agentroles.ccb_orchestrator`.
+`ccb loop capacity` should be treated as a reconciler substrate. The
+orchestrator-facing skill should become `orchestrator-topology`, which calls
+`ccb loop topology` commands and receives status from desired/observed
+topology state.
 
-Trigger:
+Reconciler triggers:
 
-- Before dispatching work items when the planned node count exceeds currently
-  available matching agents.
-- After round drain or partial completion when generated agents can be released.
-- During recovery when capacity status is needed to explain a blocked loop.
+- After `ccb loop topology commit --apply`.
+- Before dispatching work items when required topology targets may be missing.
+- After round drain or partial completion when generated agents can be
+  released.
+- During recovery when observed topology drift needs a capacity explanation.
 
 Inputs:
 
 - loop id
-- requested work-item graph
-- desired profiles and counts
+- committed desired topology revision
+- desired profiles and counts derived from graph nodes
 - configured max node budget
 - current capacity summary ref
 - lifetime
 
 Allowed actions:
 
-- call `ccb loop capacity ensure --json`
-- call `ccb loop capacity status --json`
-- call `ccb loop capacity release --json`
-- use returned agent names as `ask` targets
-- include returned blockers in partial/replan reports
+- reconciler may call `ccb loop capacity ensure --json`
+- reconciler may call `ccb loop capacity status --json`
+- reconciler may call `ccb loop capacity release --json`
+- reconciler writes observed topology and events
+- loop runner or orchestrator may use committed/observed ready agent names as
+  `ask` targets
+- blockers are recorded in observed topology and may be included in
+  partial/replan reports
 - inspect `ccb layout status --json` only as a read-only diagnostic view for
   `source=loop`, `loop_id`, `node_id`, and pane evidence
 
 Forbidden actions:
 
+- normal orchestrator workflow calling `ccb loop capacity ensure/release`
+  directly after topology commands exist
 - edit `.ccb/ccb.config`
 - call raw `ccb reload`
 - call raw `ccb kill`

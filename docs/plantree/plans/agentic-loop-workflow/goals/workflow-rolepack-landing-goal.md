@@ -1,11 +1,20 @@
 # Workflow RolePack Landing Goal
 
 Date: 2026-06-27
+Status: Historical / superseded by flat Role naming
 
 ## Goal
 
 Land the first CCB workflow RolePack draft set for external Agent Roles spec
 iteration while preserving the simple-kernel/flexible-agent design rule.
+
+This goal records the first legacy `agentroles.ccb_*` draft landing slice. The
+current mainline Role naming is described in
+[../topics/role-class-naming-and-hierarchy.md](../topics/role-class-naming-and-hierarchy.md)
+and [../decisions/019-orchestrator-triage-before-task-detailer.md](../decisions/019-orchestrator-triage-before-task-detailer.md):
+use `agentroles.planner` for macro planning, treat `agentroles.ccb_planner` as
+legacy compatibility, and activate `agentroles.task_detailer` only through
+orchestrator triage.
 
 The landing slice covers:
 

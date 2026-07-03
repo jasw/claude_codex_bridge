@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 from datetime import timedelta
+import json
 
 from ccbd.api_models import JobRecord
 from ccbd.system import parse_utc_timestamp
@@ -176,6 +177,13 @@ def _reply_for_body(job: JobRecord) -> tuple[str, list[dict[str, object]]]:
     agent_name = job.agent_name
     body = job.request.body
     marker = body.strip()
+    effective_body = _effective_request_body(job)
+    workflow_reply = _workflow_role_bundle_reply(agent_name=agent_name, body=effective_body)
+    if workflow_reply is None:
+        workflow_reply = _workflow_round_checker_reply(agent_name=agent_name, body=effective_body)
+    if workflow_reply is not None:
+        return (workflow_reply, [])
+
     prefix = 'ccb-local-md:'
     if marker.startswith(prefix):
         ident = marker[len(prefix) :].strip() or 'sample'
@@ -277,6 +285,110 @@ def _reply_for_body(job: JobRecord) -> tuple[str, list[dict[str, object]]]:
         )
 
     return (f'FAKE[{agent_name}] {body}', [])
+
+
+def _effective_request_body(job: JobRecord) -> str:
+    artifact = job.request.body_artifact if isinstance(job.request.body_artifact, dict) else {}
+    path_text = str(artifact.get('path') or '').strip()
+    if path_text:
+        try:
+            from pathlib import Path
+
+            return Path(path_text).read_text(encoding='utf-8')
+        except OSError:
+            pass
+    preview = str(artifact.get('preview') or '').strip()
+    if preview:
+        return preview
+    return job.request.body
+
+
+def _workflow_role_bundle_reply(*, agent_name: str, body: str) -> str | None:
+    task_id = _loop_activation_task_id(body)
+    if agent_name == 'planner' and 'ccb.loop.planner_artifact_bundle/v1' in body:
+        return json.dumps(
+            {
+                'schema': 'ccb.loop.planner_artifact_bundle/v1',
+                'task_id': task_id,
+                'role_id': 'agentroles.ccb_planner',
+                'artifacts': {
+                    'brief': '# Plan Brief\n\nFake planner brief for deterministic workflow smoke.\n',
+                    'requirements': '# Requirements\n\nFake planner requirements for deterministic workflow smoke.\n',
+                    'acceptance': '# Acceptance\n\nFake planner acceptance criteria for deterministic workflow smoke.\n',
+                    'verification': '# Verification\n\nFake planner verification contract for deterministic workflow smoke.\n',
+                    'handoff': '# Handoff\n\nFake planner handoff for deterministic workflow smoke.\n',
+                },
+                'readiness': {'status': 'ready_for_review'},
+            },
+            ensure_ascii=False,
+        )
+    if agent_name == 'task_detailer' and 'ccb.loop.task_detailer_artifact_bundle/v1' in body:
+        return json.dumps(
+            {
+                'schema': 'ccb.loop.task_detailer_artifact_bundle/v1',
+                'task_id': task_id,
+                'role_id': 'agentroles.task_detailer',
+                'artifacts': {
+                    'detail_design': '# Detail Design\n\nFake task_detailer detail design for deterministic workflow smoke.\n',
+                    'detail_summary': '# Brief Update Summary\n\nFake task_detailer stable summary backfill for deterministic workflow smoke.\n',
+                    'detail_packet': json.dumps(
+                        {
+                            'schema': 'ccb.loop.detail_packet_manifest/v1',
+                            'task_id': task_id,
+                            'source': 'fake_provider',
+                            'status': 'ready_for_review',
+                            'detail_design_ref': 'details/task-detail-design.md',
+                            'brief_update_summary_ref': 'details/brief-update-summary.md',
+                        },
+                        ensure_ascii=False,
+                        indent=2,
+                        sort_keys=True,
+                    )
+                    + '\n',
+                },
+                'readiness': {'status': 'detail_ready'},
+            },
+            ensure_ascii=False,
+        )
+    if agent_name == 'plan_reviewer' and 'ccb.loop.plan_reviewer_artifact_bundle/v1' in body:
+        return json.dumps(
+            {
+                'schema': 'ccb.loop.plan_reviewer_artifact_bundle/v1',
+                'task_id': task_id,
+                'role_id': 'agentroles.ccb_plan_reviewer',
+                'artifacts': {
+                    'review': '# Review\n\nFake plan reviewer marks the deterministic workflow smoke ready.\n',
+                },
+                'readiness': {'status': 'ready'},
+            },
+            ensure_ascii=False,
+        )
+    return None
+
+
+def _workflow_round_checker_reply(*, agent_name: str, body: str) -> str | None:
+    normalized_agent = agent_name.replace('-', '_')
+    is_round_reviewer = agent_name == 'round_checker' or 'round_reviewer' in normalized_agent
+    has_round_role = 'Role: round_checker' in body or 'Role: ccb_round_reviewer' in body
+    if not is_round_reviewer or not has_round_role:
+        return None
+    return (
+        'round result: pass\n'
+        'verification performed: fake provider deterministic workflow smoke\n'
+        'hidden degradation audit: no degradation requested\n'
+        'evidence refs: fake-provider smoke artifacts\n'
+        'recommended next owner: loop_runner\n'
+    )
+
+
+def _loop_activation_task_id(body: str) -> str:
+    for raw_line in str(body or '').splitlines():
+        line = raw_line.strip()
+        if line.startswith('Task:'):
+            value = line.split(':', 1)[1].strip()
+            if value:
+                return value
+    return ''
 
 
 __all__ = [

@@ -15,8 +15,8 @@ Default window classes:
 
 - `frontdesk-dialog`: one primary frontend plus visible dialog/expert agents,
   at most six panes per window.
-- `plan-orchestrate`: planner group, broker, plan steward, orchestrator, and
-  round checker, at most six panes per window.
+- `plan-orchestrate`: planner group, broker, planner stewardship mode,
+  orchestrator, and round checker, at most six panes per window.
 - `node-<loop-id>-<node-id>`: one execution node per window, normally
   worker + checker plus optional node status/artifact panes.
 - `runtime`: loop runner, ccbd logs, capacity, ask/job queue, monitor, and

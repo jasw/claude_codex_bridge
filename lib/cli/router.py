@@ -86,6 +86,8 @@ def print_start_help(*, file=None) -> None:
                                     Safely release one dynamic agent through role policy.
               ccb loop capacity ensure --loop-id ID --profile worker=1 --profile code_reviewer=1 --json
                                     Plan dynamic loop workers from configured loop.role_profiles.
+              ccb loop topology propose|commit|reconcile|status|release --loop-id ID --json
+                                    Manage runtime workflow graph desired/observed topology.
               ccb loop run-once --loop-id ID --task TEXT --json
                                     Run one worker/reviewer/orchestrator/round-checker round and write loop artifacts.
               ccb kill             Stop the current project's background runtime.

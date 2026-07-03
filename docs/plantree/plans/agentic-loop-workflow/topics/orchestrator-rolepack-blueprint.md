@@ -15,6 +15,16 @@ Source input:
 - SHA256:
   `0fd84fca0253dab406eb4f763d5f832b285860a16a28abbfb19521e65ecb1251`
 
+## Current Update
+
+This blueprint predates the topology-driven runtime direction. Keep its core
+role boundary: `orchestrator` is a short-lived semantic dispatcher and has no
+runtime mutation authority. For new Role materialization, replace
+`runtime-capacity request` as the primary artifact with a topology proposal
+that includes nodes, information-flow edges, artifact refs, call order, and
+release gates. See
+[runtime-workflow-graph-and-reconciler.md](runtime-workflow-graph-and-reconciler.md).
+
 ## Audit Result
 
 The proposed design is accepted as a V1 blueprint with one important boundary:

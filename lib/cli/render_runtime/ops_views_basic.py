@@ -214,6 +214,61 @@ def render_loop_capacity(summary) -> tuple[str, ...]:
     return tuple(lines)
 
 
+def render_loop_topology(summary) -> tuple[str, ...]:
+    payload = summary if isinstance(summary, Mapping) else {}
+    status = str(payload.get('loop_topology_status') or 'unknown')
+    lines = [
+        f'loop_topology_status: {status}',
+        f'loop_id: {payload.get("loop_id", "")}',
+    ]
+    for key in ('proposal_id', 'revision', 'desired_revision', 'agent_count', 'retained_count', 'released_count'):
+        if key in payload:
+            lines.append(f'{key}: {payload.get(key)}')
+    for key in ('proposal_path', 'desired_path', 'observed_path'):
+        value = str(payload.get(key) or '').strip()
+        if value:
+            lines.append(f'{key}: {value}')
+    validation = payload.get('validation')
+    if isinstance(validation, Mapping):
+        lines.append(f'topology_validation_status: {validation.get("topology_validation_status", "")}')
+        lines.append(f'present_agent_count: {validation.get("present_agent_count", 0)}')
+        profile_counts = validation.get('profile_counts')
+        if isinstance(profile_counts, Mapping):
+            for profile, count in sorted(profile_counts.items()):
+                lines.append(f'topology_profile: profile={profile} count={count}')
+    observed = payload.get('observed')
+    if isinstance(observed, Mapping):
+        drift = observed.get('drift')
+        if isinstance(drift, Mapping):
+            mismatched = tuple(drift.get('mismatched_agents') or ())
+            lines.append(f'drift_mismatch_count: {len(mismatched)}')
+        for agent in tuple(observed.get('agents') or ()):
+            if not isinstance(agent, Mapping):
+                continue
+            lines.append(
+                'topology_agent: '
+                f'id={agent.get("id", "")} '
+                f'profile={agent.get("profile", "")} '
+                f'desired={agent.get("desired_state", "")} '
+                f'observed={agent.get("observed_state", "")} '
+                f'node={agent.get("node_id", "")} '
+                f'window={agent.get("window_name", "")}'
+            )
+    actions = tuple(payload.get('actions') or ())
+    if actions:
+        lines.append(f'action_count: {len(actions)}')
+        for action in actions:
+            if isinstance(action, Mapping):
+                lines.append(
+                    'topology_action: '
+                    f'action={action.get("action", "")} '
+                    f'agent={action.get("agent", "")} '
+                    f'window={action.get("window_name", "") or action.get("target_window", "")} '
+                    f'status={action.get("status", "")}'
+                )
+    return tuple(lines)
+
+
 def render_loop_run_once(summary) -> tuple[str, ...]:
     payload = summary if isinstance(summary, Mapping) else {}
     agents = payload.get('agents') if isinstance(payload.get('agents'), Mapping) else {}
@@ -929,6 +984,7 @@ __all__ = [
     'render_logs',
     'render_layout',
     'render_loop_capacity',
+    'render_loop_topology',
     'render_loop_run_once',
     'render_loop_runner',
     'render_maintenance',

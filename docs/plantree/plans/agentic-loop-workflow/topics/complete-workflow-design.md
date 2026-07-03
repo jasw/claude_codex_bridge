@@ -53,9 +53,10 @@ workflow loop
 
 execution round
   orchestrator
+  topology commit/reconcile
   worker/checker node(s)
   round checker
-  capacity release
+  topology release/reconcile
 ```
 
 Planner is inside the workflow loop. Planner is outside the execution round.
@@ -106,6 +107,10 @@ round.json
 asks.jsonl
 events.jsonl
 breadcrumb.md
+agent_topology.desired.json
+agent_topology.observed.json
+agent_topology.events.jsonl
+topology_proposals/
 artifacts/
 nodes/
 branches/
@@ -125,9 +130,10 @@ high-frequency execution evidence.
 | `clarification` | broker/frontdesk | Ask only stage-blocking user questions. |
 | `ready` | loop runner | Task packet is execution-ready. |
 | `orchestration` | orchestrator | Split task into bounded work items. |
+| `topology_reconcile` | CCB scripts / reconciler | Commit desired runtime workflow graph and converge required agents, placement, and lifecycle. |
 | `execution` | execution nodes | Worker/checker nodes perform and verify bounded work. |
 | `round_checking` | round checker | Verify integrated round result. |
-| `writeback` | scripts / plan steward | Import durable evidence and update task status. |
+| `writeback` | scripts / planner stewardship mode | Import durable evidence and update task status. |
 | `done` | terminal | Task is complete. |
 | `blocked` | terminal or paused | External condition or decision blocks progress. |
 | `needs_clarification` | paused | User answer required before continuing. |
@@ -323,6 +329,8 @@ while true:
 
   if state is ready:
     bind_current_loop()
+    ask_orchestrator_for_topology()
+    commit_and_reconcile_topology()
     start_execution_round()
     continue
 
@@ -331,6 +339,7 @@ while true:
     continue
 
   if round_result is pass:
+    reconcile_release_gates()
     import_completion_and_mark_done()
     notify_frontdesk
     stop
@@ -341,6 +350,7 @@ while true:
 
   if round_result is partial/replan_required:
     import_round_evidence_and_mark_status()
+    reconcile_release_or_park()
     continue
 ```
 
@@ -361,7 +371,7 @@ Minimal V1 role set:
 | `worker` | yes | Performs bounded work. |
 | `checker` / `code_reviewer` | yes | Node-level quality gate. |
 | `round_checker` | yes | Whole-round verifier, separate from planner. |
-| `plan_steward` | script-first | Deterministic `ccb plan` commands are V1 steward. |
+| planner stewardship mode / `ccb plan` | script-first | Deterministic `ccb plan` commands are V1 authority; planner may audit/summarize without bypassing scripts. |
 | `inner_monitor` | partial/later | Deterministic health checks first; semantic monitor later. |
 
 ## V1 Command Surface
@@ -388,6 +398,7 @@ ccb plan task-import-round --task <task-id> --loop <loop-id> \
   --result <pass|partial|replan_required|blocked> --report <path>
 ccb loop run-once --task-id <task-id>
 ccb loop runner --once
+ccb loop topology propose/validate/commit/reconcile/status/release
 ```
 
 The immediate gap is removing the manual bridge between a ready task packet and
@@ -401,6 +412,10 @@ Current proven slice:
 
 - `ccb plan` creates durable task packets and enforces readiness artifacts.
 - `ccb loop run-once` runs worker, reviewer, orchestrator, and round checker.
+- Topology-driven execution is the next design target: orchestrator should
+  propose a runtime workflow graph, scripts should commit desired topology,
+  and the reconciler should load/release execution agents by diffing desired
+  and observed state.
 - External fake-provider smoke reached:
 
 ```text
@@ -420,6 +435,8 @@ Remaining implementation gap:
 
 - loop runner should automatically read task status and activate planner or
   execution round;
+- runtime workflow graph commands and reconciler should replace direct
+  orchestrator capacity ensure/release in the normal execution path;
 - task packet should track `current_loop`;
 - round results need first-class artifact kinds beyond generic `completion`;
 - task/loop binding needs per-task lock or lease protection before automatic

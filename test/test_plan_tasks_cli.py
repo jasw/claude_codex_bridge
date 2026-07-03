@@ -304,6 +304,112 @@ def test_plan_task_artifact_records_actor_metadata(tmp_path: Path, monkeypatch: 
     assert payload['task']['artifacts']['requirements']['actor']['job_id'] == 'job_planner123'
 
 
+def test_plan_task_artifact_imports_plan_brief_and_task_detail_docs(tmp_path: Path) -> None:
+    project_root = _project_with_plan(tmp_path)
+    drafts = project_root / 'drafts'
+    _write(drafts / 'brief.md', '# Brief\n\nPlanner-owned macro summary.\n')
+    _write(drafts / 'detail-design.md', '# Detail Design\n\nTask-scoped detail body.\n')
+    _write(drafts / 'detail-summary.md', '# Detail Summary\n\nStable summary backfill.\n')
+    _write(
+        drafts / 'detail-packet.json',
+        '{"schema":"ccb.loop.detail_packet_manifest/v1","status":"ready_for_review"}\n',
+    )
+    _write(
+        drafts / 'macro-adjustment-request.json',
+        '{"schema":"ccb.loop.macro_adjustment_request/v1","reason":"macro assumption changed"}\n',
+    )
+
+    code, _payload, _out, err = _run_phase2(
+        [
+            'plan',
+            'task-create',
+            '--plan',
+            'demo-plan',
+            '--title',
+            'Brief and detail docs',
+            '--task-id',
+            'task-detail',
+            '--json',
+        ],
+        cwd=project_root,
+    )
+    assert code == 0, err
+
+    for kind, file_name in (
+        ('brief', 'brief.md'),
+        ('detail_design', 'detail-design.md'),
+        ('detail_summary', 'detail-summary.md'),
+    ):
+        code, payload, _out, err = _run_phase2(
+            [
+                'plan',
+                'task-artifact',
+                '--task',
+                'task-detail',
+                '--kind',
+                kind,
+                '--file',
+                str(drafts / file_name),
+                '--json',
+            ],
+            cwd=project_root,
+        )
+        assert code == 0, err
+        assert payload['artifact']['kind'] == kind
+
+    code, _payload, _out, err = _run_phase2(
+        ['plan', 'task-status', '--task', 'task-detail', '--status', 'detail_ready', '--json'],
+        cwd=project_root,
+    )
+    assert code == 1
+    assert 'detail_ready requires artifacts' in err
+
+    for kind, file_name in (
+        ('detail_packet', 'detail-packet.json'),
+        ('macro_adjustment_request', 'macro-adjustment-request.json'),
+    ):
+        code, payload, _out, err = _run_phase2(
+            [
+                'plan',
+                'task-artifact',
+                '--task',
+                'task-detail',
+                '--kind',
+                kind,
+                '--file',
+                str(drafts / file_name),
+                '--json',
+            ],
+            cwd=project_root,
+        )
+        assert code == 0, err
+        assert payload['artifact']['kind'] == kind
+
+    code, payload, _out, err = _run_phase2(['plan', 'task-show', '--task', 'task-detail', '--json'], cwd=project_root)
+    assert code == 0, err
+    artifacts = payload['task']['artifacts']
+    assert artifacts['brief']['scope'] == 'plan'
+    assert artifacts['brief']['path'] == 'docs/plantree/plans/demo-plan/brief.md'
+    assert artifacts['detail_design']['scope'] == 'task'
+    assert artifacts['detail_design']['path'].endswith('/tasks/task-detail/details/task-detail-design.md')
+    assert artifacts['detail_summary']['path'].endswith('/tasks/task-detail/details/brief-update-summary.md')
+    assert artifacts['detail_packet']['path'].endswith('/tasks/task-detail/details/detail-packet.manifest.json')
+    assert artifacts['macro_adjustment_request']['path'].endswith('/tasks/task-detail/details/macro-adjustment-request.json')
+    assert (project_root / 'docs' / 'plantree' / 'plans' / 'demo-plan' / 'brief.md').read_text(encoding='utf-8').startswith('# Brief')
+
+    code, _payload, _out, err = _run_phase2(
+        ['plan', 'task-status', '--task', 'task-detail', '--status', 'detail_ready', '--json'],
+        cwd=project_root,
+    )
+    assert code == 0, err
+    code, _payload, _out, err = _run_phase2(
+        ['plan', 'task-status', '--task', 'task-detail', '--status', 'ready', '--json'],
+        cwd=project_root,
+    )
+    assert code == 1
+    assert 'ready requires artifacts' in err
+
+
 def test_plan_task_artifact_rejects_project_external_file(tmp_path: Path) -> None:
     project_root = _project_with_plan(tmp_path)
     outside = tmp_path / 'outside.md'

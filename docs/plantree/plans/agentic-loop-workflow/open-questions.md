@@ -24,12 +24,13 @@ Date: 2026-06-24
    per-task lock in the `ccb plan` command service used by
    `task-bind-loop`/`task-import-round`. The longer-term owner for loop-wide
    locks across ccbd, an external runner, or a separate helper remains open.
-3. Should plan steward be an agent-only role, a deterministic command surface,
-   or both? Current V1 direction: deterministic `ccb plan` commands write
-   authority; an optional semantic steward may audit and summarize but cannot
-   bypass scripts.
+3. Resolved V1 direction: plan stewardship is a planner work mode plus
+   deterministic `ccb plan` command authority, not a separate required
+   mainline Role. Scripts write authority; planner may audit and summarize but
+   cannot bypass scripts.
 4. Should agents be allowed to request transitions directly, or must every
-   transition pass through an explicit `plan_steward` approval step?
+   transition pass through explicit script validation and planner review when
+   macro state changes?
 5. What fields are required for a transition to be accepted: phase, owner,
    artifact refs, verification refs, parent job id, and lease id?
 6. Resolved for V1: `ccb plan task-*` should be implemented as first-class CLI
@@ -78,10 +79,13 @@ Date: 2026-06-24
 
 ## Runtime Questions
 
-1. When should the design graduate from fixed configured `coder`/`checker`
-   agents to loop-runner-mediated dynamic execution-node load/unload?
-2. How should temporary execution nodes be named and cleaned up without
-   conflicting with configured long-lived agents?
+1. Resolved V1 direction: the workflow has graduated from fixed configured
+   `coder`/`checker` agents to loop-runner-mediated dynamic
+   `worker + code_reviewer` capacity for the one-shot execution round. The next
+   graduation target is topology-driven dispatch from committed runtime graphs.
+2. Resolved V1 direction: temporary execution agents use generated
+   `loop-<loop-id>-<profile>-<index>` names, are scoped by loop capacity or
+   topology records, and are released through script-owned idle/evidence gates.
 3. What is the hard maximum for per-loop nodes, recovery rounds, and total
    runtime after default per-node rework is bounded separately?
 4. Should the orchestrator be released and recreated after each loop round, or
@@ -94,6 +98,8 @@ Date: 2026-06-24
    model settings?
 7. Should generated loop agents appear in the sidebar as normal agents, grouped
    under a loop window, or under a dedicated runtime section?
+8. How should committed topology graphs become the preferred dispatch input for
+   `loop runner --once` while preserving the fixed worker/reviewer fallback?
 
 ## Execution Verification Questions
 
@@ -115,8 +121,10 @@ Date: 2026-06-24
    current plan. If the split, dependency graph, acceptance criteria,
    verification contract, or risk model must change, orchestrator/round
    checker should escalate to `partial` or `replan_required`.
-7. What exact schema should represent round result imports:
-   `round_pass`, `round_partial`, `round_replan`, and `round_blocker`?
+7. Resolved V1 direction: `task-import-round` imports explicit round results
+   into first-class artifacts named `round_pass`, `round_partial`,
+   `round_replan`, and `round_blocker`. The broader branch/node schema remains
+   open.
 
 ## Monitoring Questions
 

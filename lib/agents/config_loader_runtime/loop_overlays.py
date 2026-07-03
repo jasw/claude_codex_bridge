@@ -14,7 +14,6 @@ from agents.models import (
     RuntimeMode,
     WorkspaceMode,
     WindowSpec,
-    build_pane_growth_layout,
     normalize_agent_name,
     parse_layout_spec,
 )
@@ -227,28 +226,24 @@ def _new_loop_window(
     order: int,
     agents: dict[str, AgentSpec],
 ) -> WindowSpec:
-    layout = build_pane_growth_layout(agent_names)
     return WindowSpec(
         name=window_name,
         order=order,
-        layout_spec=_with_agent_providers(layout, agents=agents).render(),
+        layout_spec=_append_compatible_layout_spec(agent_names, agents=agents),
         agent_names=agent_names,
     )
 
 
-def _with_agent_providers(node, *, agents: dict[str, AgentSpec]):
-    if node.kind == 'leaf':
-        assert node.leaf is not None
-        name = normalize_agent_name(node.leaf.name)
-        spec = agents[name]
-        return _layout_leaf(name, provider=spec.provider, workspace_mode=spec.workspace_mode.value)
-    assert node.left is not None
-    assert node.right is not None
-    return LayoutNode(
-        kind=node.kind,
-        left=_with_agent_providers(node.left, agents=agents),
-        right=_with_agent_providers(node.right, agents=agents),
-    )
+def _append_compatible_layout_spec(agent_names: tuple[str, ...], *, agents: dict[str, AgentSpec]) -> str:
+    if not agent_names:
+        raise ValueError('at least one agent is required for loop window layout')
+    first = agent_names[0]
+    spec = agents[first]
+    node = _layout_leaf(first, provider=spec.provider, workspace_mode=spec.workspace_mode.value)
+    for agent_name in agent_names[1:]:
+        spec = agents[agent_name]
+        node = _append_layout_leaf(node, agent_name, provider=spec.provider, workspace_mode=spec.workspace_mode.value)
+    return node.render()
 
 
 def _append_layout_leaf(node, agent_name: str, *, provider: str, workspace_mode: str):

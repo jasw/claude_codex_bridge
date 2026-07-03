@@ -21,8 +21,8 @@ Keep `round_checker` as a separate role identity from planner.
 
 After each round, `round_checker` produces a compact round review report with
 result, verification evidence, failed criteria, hidden-degradation findings,
-and recommended next owner. CCB scripts or plan steward import durable
-completion, partial, blocker, or replan evidence into the task packet.
+and recommended next owner. CCB scripts or planner stewardship mode import
+durable completion, partial, blocker, or replan evidence into the task packet.
 
 When another loop is needed, planner is rehydrated from the task packet and
 round evidence refs. Planner creates the next task or revised plan from files,
@@ -34,7 +34,7 @@ not from retained conversation memory.
 - Round checker can independently challenge execution results.
 - Next-loop planning still has full evidence through task packet and round
   report files.
-- `pass` can go directly to plan steward / `ccb plan`; `partial` and
+- `pass` can go directly to planner / `ccb plan`; `partial` and
   `replan_required` return to planner; `global_blocker` reaches frontdesk only
   when a user decision is needed.
 - V1 can keep `plan_reviewer` inside planner group while preserving
