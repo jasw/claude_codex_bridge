@@ -6,7 +6,7 @@
 **مساحة عمل TUI مرئية وقابلة للتحكم لعدة وكلاء**
 
 <p>
-  <img src="https://img.shields.io/badge/version-8.0.12-orange.svg" alt="version">
+  <img src="https://img.shields.io/badge/version-8.0.15-orange.svg" alt="version">
   <img src="https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20WSL-lightgrey.svg" alt="platform">
   <img src="https://img.shields.io/badge/providers-15%20CLI%20families-0B7285.svg" alt="providers">
 </p>
@@ -169,9 +169,9 @@ ccb update mobile
 <details>
 <summary><b>تفاصيل Mobile App وحدود الأمان والمصدر</b></summary>
 
-يتضمن CCB 8.0.12 مصدر Flutter الخاص بـ CCB Mobile داخل [`mobile/`](mobile/) وينشر Android APK عبر GitHub Releases:
+يتضمن CCB 8.0.15 مصدر Flutter الخاص بـ CCB Mobile داخل [`mobile/`](mobile/) وينشر Android APK عبر GitHub Releases:
 
-- [تنزيل CCB Mobile v8.0.12 APK](https://github.com/bfly123/claude_code_bridge/releases/download/v8.0.12/ccb-mobile-v8.0.12.apk)
+- [تنزيل CCB Mobile v8.0.15 APK](https://github.com/bfly123/claude_code_bridge/releases/download/v8.0.15/ccb-mobile-v8.0.15.apk)
 - مصدر التطبيق: [`mobile/app`](mobile/app)
 - مصدر gateway الخادم: [`lib/mobile_gateway`](lib/mobile_gateway)
 

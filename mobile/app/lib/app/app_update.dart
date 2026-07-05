@@ -1,4 +1,4 @@
-const ccbMobileDefaultVersion = '8.0.14+8000014';
+const ccbMobileDefaultVersion = '8.0.15+8000015';
 const ccbMobileDefaultApkDownloadUrl =
     'https://github.com/bfly123/claude_code_bridge/releases/latest';
 

@@ -2,6 +2,29 @@
 
 ## Unreleased
 
+## v8.0.15 (2026-07-05)
+
+### Ask Routing And Mobile Runtime
+
+- **Ask Chain Terminology Simplified**: inter-agent dependent work now uses
+  `chain` terminology consistently across CLI help, skills, manuals, and
+  tests, removing the older callback wording from user-facing guidance.
+- **Ask Project Boundary Hardened**: `ask` routing is constrained to the
+  current `.ccb` project by default so provider cwd drift cannot silently send
+  work into another mounted project.
+- **Mobile Terminal Pane Snapshots Stabilized**: CCB Mobile terminal streaming
+  now reads the selected tmux pane snapshot directly and requires pane evidence
+  before opening a terminal session.
+- **Mobile Conversation Loading Cache Included**: this release carries the
+  server-side mobile conversation page cache, reducing repeated
+  provider-native transcript parsing during mobile refreshes.
+- **Mobile Project Activity Improved**: server project activity and mobile
+  status payloads better reflect provider pane state, running jobs, and stale
+  terminal output recovery.
+- **Release Surface Synchronized**: VERSION, package.json, mobile app version
+  metadata, update links, README variants, and release workflow defaults are
+  aligned for 8.0.15.
+
 ## v8.0.14 (2026-07-04)
 
 ### Mobile Runtime Polish

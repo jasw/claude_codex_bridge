@@ -6,7 +6,7 @@
 **Ein sichtbarer und steuerbarer Multi-Agent-TUI-Arbeitsbereich**
 
 <p>
-  <img src="https://img.shields.io/badge/version-8.0.12-orange.svg" alt="version">
+  <img src="https://img.shields.io/badge/version-8.0.15-orange.svg" alt="version">
   <img src="https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20WSL-lightgrey.svg" alt="platform">
   <img src="https://img.shields.io/badge/providers-15%20CLI%20families-0B7285.svg" alt="providers">
 </p>
@@ -169,9 +169,9 @@ Dieser Befehl fuehrt durch Installation und Konfiguration.
 <details>
 <summary><b>Mobile-App-Details, Sicherheitsgrenze und Source</b></summary>
 
-CCB 8.0.12 enthaelt den Flutter-Quellcode von CCB Mobile in [`mobile/`](mobile/) und veroeffentlicht das Android APK ueber GitHub Releases:
+CCB 8.0.15 enthaelt den Flutter-Quellcode von CCB Mobile in [`mobile/`](mobile/) und veroeffentlicht das Android APK ueber GitHub Releases:
 
-- [CCB Mobile v8.0.12 APK herunterladen](https://github.com/bfly123/claude_code_bridge/releases/download/v8.0.12/ccb-mobile-v8.0.12.apk)
+- [CCB Mobile v8.0.15 APK herunterladen](https://github.com/bfly123/claude_code_bridge/releases/download/v8.0.15/ccb-mobile-v8.0.15.apk)
 - App-Source: [`mobile/app`](mobile/app)
 - Server-gateway-Source: [`lib/mobile_gateway`](lib/mobile_gateway)
 

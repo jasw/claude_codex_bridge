@@ -6,7 +6,7 @@
 **Видимое и управляемое multi-agent TUI рабочее пространство**
 
 <p>
-  <img src="https://img.shields.io/badge/version-8.0.12-orange.svg" alt="version">
+  <img src="https://img.shields.io/badge/version-8.0.15-orange.svg" alt="version">
   <img src="https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20WSL-lightgrey.svg" alt="platform">
   <img src="https://img.shields.io/badge/providers-15%20CLI%20families-0B7285.svg" alt="providers">
 </p>
@@ -169,9 +169,9 @@ ccb update mobile
 <details>
 <summary><b>Детали Mobile App, граница безопасности и исходники</b></summary>
 
-CCB 8.0.12 включает Flutter source CCB Mobile в [`mobile/`](mobile/) и публикует Android APK через GitHub Releases:
+CCB 8.0.15 включает Flutter source CCB Mobile в [`mobile/`](mobile/) и публикует Android APK через GitHub Releases:
 
-- [Скачать CCB Mobile v8.0.12 APK](https://github.com/bfly123/claude_code_bridge/releases/download/v8.0.12/ccb-mobile-v8.0.12.apk)
+- [Скачать CCB Mobile v8.0.15 APK](https://github.com/bfly123/claude_code_bridge/releases/download/v8.0.15/ccb-mobile-v8.0.15.apk)
 - Исходники app: [`mobile/app`](mobile/app)
 - Исходники server gateway: [`lib/mobile_gateway`](lib/mobile_gateway)
 

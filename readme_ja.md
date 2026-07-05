@@ -6,7 +6,7 @@
 **見える、制御できるマルチエージェント TUI ワークスペース**
 
 <p>
-  <img src="https://img.shields.io/badge/version-8.0.12-orange.svg" alt="version">
+  <img src="https://img.shields.io/badge/version-8.0.15-orange.svg" alt="version">
   <img src="https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20WSL-lightgrey.svg" alt="platform">
   <img src="https://img.shields.io/badge/providers-15%20CLI%20families-0B7285.svg" alt="providers">
 </p>
@@ -169,9 +169,9 @@ ccb update mobile
 <details>
 <summary><b>Mobile App の詳細、安全境界、ソース</b></summary>
 
-CCB 8.0.12 では Flutter 版 CCB Mobile のソースが [`mobile/`](mobile/) に含まれ、Android APK は GitHub Releases で公開されています。
+CCB 8.0.15 では Flutter 版 CCB Mobile のソースが [`mobile/`](mobile/) に含まれ、Android APK は GitHub Releases で公開されています。
 
-- [CCB Mobile v8.0.12 APK をダウンロード](https://github.com/bfly123/claude_code_bridge/releases/download/v8.0.12/ccb-mobile-v8.0.12.apk)
+- [CCB Mobile v8.0.15 APK をダウンロード](https://github.com/bfly123/claude_code_bridge/releases/download/v8.0.15/ccb-mobile-v8.0.15.apk)
 - App ソース：[`mobile/app`](mobile/app)
 - サーバー gateway ソース：[`lib/mobile_gateway`](lib/mobile_gateway)
 

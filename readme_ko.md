@@ -6,7 +6,7 @@
 **보이고 제어 가능한 멀티 에이전트 TUI 작업 공간**
 
 <p>
-  <img src="https://img.shields.io/badge/version-8.0.12-orange.svg" alt="version">
+  <img src="https://img.shields.io/badge/version-8.0.15-orange.svg" alt="version">
   <img src="https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20WSL-lightgrey.svg" alt="platform">
   <img src="https://img.shields.io/badge/providers-15%20CLI%20families-0B7285.svg" alt="providers">
 </p>
@@ -169,9 +169,9 @@ ccb update mobile
 <details>
 <summary><b>Mobile App 세부 정보, 안전 경계, 소스</b></summary>
 
-CCB 8.0.12은 Flutter CCB Mobile 소스를 [`mobile/`](mobile/)에 포함하며 Android APK를 GitHub Releases로 배포합니다.
+CCB 8.0.15은 Flutter CCB Mobile 소스를 [`mobile/`](mobile/)에 포함하며 Android APK를 GitHub Releases로 배포합니다.
 
-- [CCB Mobile v8.0.12 APK 다운로드](https://github.com/bfly123/claude_code_bridge/releases/download/v8.0.12/ccb-mobile-v8.0.12.apk)
+- [CCB Mobile v8.0.15 APK 다운로드](https://github.com/bfly123/claude_code_bridge/releases/download/v8.0.15/ccb-mobile-v8.0.15.apk)
 - 앱 소스: [`mobile/app`](mobile/app)
 - 서버 gateway 소스: [`lib/mobile_gateway`](lib/mobile_gateway)
 
