@@ -2,11 +2,15 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import pytest
+
 from mobile_gateway.terminal import (
     TerminalAttachTarget,
     TerminalGeometry,
     _send_tmux_terminal_bytes,
     _send_tmux_terminal_literal,
+    _select_tmux_terminal_pane,
+    _terminal_client_env,
 )
 
 
@@ -19,6 +23,44 @@ def _target() -> TerminalAttachTarget:
         geometry=TerminalGeometry(),
         target_summary={'project_id': 'proj-test', 'agent': 'lead', 'pane_id': '%42'},
     )
+
+
+def test_terminal_attach_command_targets_session_not_pane() -> None:
+    assert _target().command == [
+        'tmux',
+        '-S',
+        '/tmp/ccb-test/tmux.sock',
+        'attach-session',
+        '-t',
+        'ccb-test',
+    ]
+
+
+def test_terminal_open_selects_target_pane_before_attach(monkeypatch) -> None:
+    calls: list[list[str]] = []
+
+    def fake_run(command, **kwargs):
+        calls.append(list(command))
+        return SimpleNamespace(returncode=0, stdout='', stderr='')
+
+    monkeypatch.setattr('mobile_gateway.terminal.subprocess.run', fake_run)
+
+    _select_tmux_terminal_pane(_target())
+
+    assert calls == [
+        ['tmux', '-S', '/tmp/ccb-test/tmux.sock', 'select-window', '-t', '%42'],
+        ['tmux', '-S', '/tmp/ccb-test/tmux.sock', 'select-pane', '-t', '%42'],
+    ]
+
+
+def test_terminal_attach_env_removes_nested_tmux_and_sets_term(monkeypatch) -> None:
+    monkeypatch.setenv('TMUX', '/tmp/outer-tmux,1,0')
+    monkeypatch.setenv('TERM', 'dumb')
+
+    env = _terminal_client_env()
+
+    assert 'TMUX' not in env
+    assert env['TERM'] == 'xterm-256color'
 
 
 def test_terminal_literal_input_targets_pane(monkeypatch) -> None:
@@ -56,6 +98,100 @@ def test_terminal_control_bytes_target_pane(monkeypatch) -> None:
         ['tmux', '-S', '/tmp/ccb-test/tmux.sock', 'send-keys', '-t', '%42', 'Tab'],
         ['tmux', '-S', '/tmp/ccb-test/tmux.sock', 'send-keys', '-t', '%42', 'Escape'],
     ]
+
+
+def test_terminal_navigation_bytes_target_pane(monkeypatch) -> None:
+    calls: list[list[str]] = []
+
+    def fake_run(command, **kwargs):
+        calls.append(list(command))
+        return SimpleNamespace(returncode=0, stdout='', stderr='')
+
+    monkeypatch.setattr('mobile_gateway.terminal.subprocess.run', fake_run)
+    target = _target()
+
+    _send_tmux_terminal_bytes(target, b'\x1b[A')
+    _send_tmux_terminal_bytes(target, b'\x1b[B')
+    _send_tmux_terminal_bytes(target, b'\x1b[C')
+    _send_tmux_terminal_bytes(target, b'\x1b[D')
+    _send_tmux_terminal_bytes(target, b'\x1b[H')
+    _send_tmux_terminal_bytes(target, b'\x1b[F')
+    _send_tmux_terminal_bytes(target, b'\x1b[3~')
+    _send_tmux_terminal_bytes(target, b'\x1b[5~')
+    _send_tmux_terminal_bytes(target, b'\x1b[6~')
+
+    assert calls == [
+        ['tmux', '-S', '/tmp/ccb-test/tmux.sock', 'send-keys', '-t', '%42', 'Up'],
+        ['tmux', '-S', '/tmp/ccb-test/tmux.sock', 'send-keys', '-t', '%42', 'Down'],
+        ['tmux', '-S', '/tmp/ccb-test/tmux.sock', 'send-keys', '-t', '%42', 'Right'],
+        ['tmux', '-S', '/tmp/ccb-test/tmux.sock', 'send-keys', '-t', '%42', 'Left'],
+        ['tmux', '-S', '/tmp/ccb-test/tmux.sock', 'send-keys', '-t', '%42', 'Home'],
+        ['tmux', '-S', '/tmp/ccb-test/tmux.sock', 'send-keys', '-t', '%42', 'End'],
+        ['tmux', '-S', '/tmp/ccb-test/tmux.sock', 'send-keys', '-t', '%42', 'Delete'],
+        ['tmux', '-S', '/tmp/ccb-test/tmux.sock', 'send-keys', '-t', '%42', 'PageUp'],
+        ['tmux', '-S', '/tmp/ccb-test/tmux.sock', 'send-keys', '-t', '%42', 'PageDown'],
+    ]
+
+
+def test_terminal_common_ctrl_bytes_target_pane(monkeypatch) -> None:
+    calls: list[list[str]] = []
+
+    def fake_run(command, **kwargs):
+        calls.append(list(command))
+        return SimpleNamespace(returncode=0, stdout='', stderr='')
+
+    monkeypatch.setattr('mobile_gateway.terminal.subprocess.run', fake_run)
+    target = _target()
+
+    _send_tmux_terminal_bytes(target, b'\x03')
+    _send_tmux_terminal_bytes(target, b'\x04')
+    _send_tmux_terminal_bytes(target, b'\x15')
+    _send_tmux_terminal_bytes(target, b'\x0c')
+
+    assert calls == [
+        ['tmux', '-S', '/tmp/ccb-test/tmux.sock', 'send-keys', '-t', '%42', 'C-c'],
+        ['tmux', '-S', '/tmp/ccb-test/tmux.sock', 'send-keys', '-t', '%42', 'C-d'],
+        ['tmux', '-S', '/tmp/ccb-test/tmux.sock', 'send-keys', '-t', '%42', 'C-u'],
+        ['tmux', '-S', '/tmp/ccb-test/tmux.sock', 'send-keys', '-t', '%42', 'C-l'],
+    ]
+
+
+def test_terminal_unsupported_control_bytes_fail_closed(monkeypatch) -> None:
+    calls: list[list[str]] = []
+
+    def fake_run(command, **kwargs):
+        calls.append(list(command))
+        return SimpleNamespace(returncode=0, stdout='', stderr='')
+
+    monkeypatch.setattr('mobile_gateway.terminal.subprocess.run', fake_run)
+
+    with pytest.raises(RuntimeError, match='unsupported terminal input bytes'):
+        _send_tmux_terminal_bytes(_target(), b'\x1b[999~')
+
+    assert calls == []
+
+
+def test_terminal_protocol_reports_are_ignored_not_written_to_pane(monkeypatch) -> None:
+    calls: list[list[str]] = []
+
+    def fake_run(command, **kwargs):
+        calls.append(list(command))
+        return SimpleNamespace(returncode=0, stdout='', stderr='')
+
+    monkeypatch.setattr('mobile_gateway.terminal.subprocess.run', fake_run)
+
+    _send_tmux_terminal_bytes(
+        _target(),
+        b'\x1b[?1;2c'
+        b'\x1b[>0;0;0c'
+        b'\x1bP!|00000000\x1b\\'
+        b'\x1b[0n'
+        b'\x1b[12;40R'
+        b'\x1b[8;24;80t'
+        b'\x1b]10;rgb:ffff/ffff/ffff\x1b\\',
+    )
+
+    assert calls == []
 
 
 def test_terminal_decoded_bytes_fall_back_to_literal_pane_input(monkeypatch) -> None:

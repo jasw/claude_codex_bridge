@@ -183,6 +183,138 @@ void main() {
       );
     });
 
+    testWidgets('mobile host embeds terminal mode and returns to chat', (
+      tester,
+    ) async {
+      final view = _view();
+      final terminalTransport = RecordingTerminalTransport();
+
+      await _pump(
+        tester,
+        ProjectHomeMobileChatScaffoldHost(
+          view: view,
+          selectedAgent: view.agentByName('mobile'),
+          repository: RecordingGatewayRepository(),
+          terminalTransport: terminalTransport,
+          usePaneInputForMessages: true,
+          mobileAgentsCollapsed: false,
+          onBack: () {},
+          onOpenTerminal: (_) {},
+          onOpenConnectionDetails: () {},
+          onCollapseAgents: () {},
+          onExpandAgents: () {},
+          onWindowSelected: (_) {},
+          onAgentSelected: (_) {},
+          onRefreshView: () async => null,
+          onTimelineScrollDirectionChanged: (_) {},
+        ),
+      );
+
+      expect(
+        find.byKey(const ValueKey('agent-workspace-mode-switch')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('agent-message-composer')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('ccb-live-terminal-view')),
+        findsNothing,
+      );
+
+      await tester.tap(find.text('Terminal'));
+      await tester.pumpAndSettle();
+
+      expect(
+        find.byKey(const ValueKey('agent-terminal-pane-mobile')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('ccb-live-terminal-view')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('agent-message-composer')),
+        findsNothing,
+      );
+      expect(terminalTransport.requests, hasLength(1));
+      expect(terminalTransport.requests.single.target.agent, 'mobile');
+      expect(terminalTransport.requests.single.target.projectId, 'proj-demo');
+
+      await tester.tap(find.text('Chat'));
+      await tester.pumpAndSettle();
+
+      expect(
+        find.byKey(const ValueKey('ccb-live-terminal-view')),
+        findsNothing,
+      );
+      expect(
+        find.byKey(const ValueKey('agent-message-composer')),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets(
+      'mobile host resets terminal mode when selected agent changes',
+      (tester) async {
+        final view = _view();
+        var selectedAgent = view.agentByName('mobile');
+
+        await _pump(
+          tester,
+          StatefulBuilder(
+            builder: (context, setState) {
+              return ProjectHomeMobileChatScaffoldHost(
+                view: view,
+                selectedAgent: selectedAgent,
+                repository: RecordingGatewayRepository(),
+                terminalTransport: RecordingTerminalTransport(),
+                usePaneInputForMessages: true,
+                mobileAgentsCollapsed: false,
+                onBack: () {},
+                onOpenTerminal: (_) {},
+                onOpenConnectionDetails: () {},
+                onCollapseAgents: () {},
+                onExpandAgents: () {},
+                onWindowSelected: (_) {},
+                onAgentSelected: (agentName) {
+                  setState(() {
+                    selectedAgent = view.agentByName(agentName);
+                  });
+                },
+                onRefreshView: () async => null,
+                onTimelineScrollDirectionChanged: (_) {},
+              );
+            },
+          ),
+        );
+
+        await tester.tap(find.text('Terminal'));
+        await tester.pumpAndSettle();
+        expect(
+          find.byKey(const ValueKey('ccb-live-terminal-view')),
+          findsOneWidget,
+        );
+
+        await tester.tap(find.byKey(const ValueKey('agent-lead')));
+        await tester.pumpAndSettle();
+
+        expect(
+          find.byKey(const ValueKey('ccb-live-terminal-view')),
+          findsNothing,
+        );
+        expect(
+          find.byKey(const ValueKey('agent-message-composer')),
+          findsOneWidget,
+        );
+        expect(
+          find.byKey(const ValueKey('agent-chat-timeline-lead')),
+          findsOneWidget,
+        );
+      },
+    );
+
     testWidgets('mobile collapsed host folds project header into switcher', (
       tester,
     ) async {

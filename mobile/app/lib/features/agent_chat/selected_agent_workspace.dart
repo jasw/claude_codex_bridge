@@ -16,6 +16,7 @@ import '../../models/ccb_conversation_item.dart';
 import '../../models/ccb_project_view.dart';
 import '../../repository/mobile_ccb_repository.dart';
 import '../../transport/terminal_transport.dart';
+import '../terminal/agent_terminal_pane.dart';
 import 'agent_chat_controller.dart';
 import 'agent_chat_ui_controller_store.dart';
 import 'agent_conversation_refresh_coordinator.dart';
@@ -34,6 +35,8 @@ const agentMessageMaxAttachmentBytes = 25 * 1024 * 1024;
 const selectedAgentTabKeyBytes = [9];
 const selectedAgentEscapeKeyBytes = [27];
 const selectedAgentExpandScrollDuration = Duration(milliseconds: 220);
+
+enum SelectedAgentWorkspaceMode { chat, terminal }
 
 class SelectedAgentWorkspace extends StatefulWidget {
   const SelectedAgentWorkspace({
@@ -135,6 +138,7 @@ class _SelectedAgentWorkspaceState extends State<SelectedAgentWorkspace>
   final Set<String> _localExceptionStatusAgentNames = {};
   final Map<String, String> _recentPaneOutputText = {};
   final Set<String> _pendingClearNewMessageAgents = {};
+  SelectedAgentWorkspaceMode _mode = SelectedAgentWorkspaceMode.chat;
   FocusNode? _observedDraftFocusNode;
   String? _observedDraftFocusAgentName;
   var _nextDraftAttachmentIndex = 0;
@@ -170,6 +174,7 @@ class _SelectedAgentWorkspaceState extends State<SelectedAgentWorkspace>
         _chatController.clearRefreshedTerminalHistories();
       }
       if (projectOrAgentChanged) {
+        _mode = SelectedAgentWorkspaceMode.chat;
         _restoreLocalMessagesForSelectedAgent();
       }
       _loadSelectedAgentConversation();
@@ -1124,6 +1129,36 @@ class _SelectedAgentWorkspaceState extends State<SelectedAgentWorkspace>
     if (selectedAgent == null) {
       return const NoSelectedAgentWorkspaceView();
     }
+    final modeSwitch = _SelectedAgentWorkspaceModeSwitch(
+      mode: _mode,
+      onChanged: (mode) {
+        if (_mode == mode) {
+          return;
+        }
+        setState(() {
+          _mode = mode;
+        });
+      },
+    );
+    if (_mode == SelectedAgentWorkspaceMode.terminal) {
+      return Column(
+        key: const ValueKey('selected-agent-workspace'),
+        children: [
+          modeSwitch,
+          const SizedBox(height: 2),
+          Expanded(
+            child: AgentTerminalPane(
+              key: ValueKey('agent-terminal-pane-${selectedAgent.name}'),
+              view: widget.view,
+              target: widget.view.terminalTargetForAgent(selectedAgent.name),
+              terminalTransport: widget.terminalTransport,
+              gatewayTerminal: widget.terminalTransport != null,
+              showHeader: true,
+            ),
+          ),
+        ],
+      );
+    }
     final model = selectedAgentWorkspaceModel(
       view: widget.view,
       agent: selectedAgent,
@@ -1137,82 +1172,96 @@ class _SelectedAgentWorkspaceState extends State<SelectedAgentWorkspace>
     );
     final draftFocusNode = _draftFocusNode(selectedAgent.name);
     _observeDraftFocusNode(selectedAgent.name, draftFocusNode);
-    return SelectedAgentWorkspaceView(
-      repository: widget.repository,
-      view: widget.view,
-      model: model,
-      timelineController: _scrollController(selectedAgent.name),
-      draftController: _draftController(selectedAgent.name),
-      draftFocusNode: draftFocusNode,
-      enableComposerCollapse: widget.enableComposerCollapse,
-      draftAttachments: _draftAttachments(selectedAgent.name),
-      downloadingAttachmentIds: _downloadingAttachmentIds,
-      downloadedAttachmentIds: _downloadedAttachmentPaths.keys.toSet(),
-      onPickImageAttachment: () {
-        _pickAttachments(agentName: selectedAgent.name, type: FileType.image);
-      },
-      onPickFileAttachment: () {
-        _pickAttachments(agentName: selectedAgent.name, type: FileType.custom);
-      },
-      onRemoveAttachment: (localId) {
-        _removeAttachment(selectedAgent.name, localId);
-      },
-      onDownloadAttachment: (attachment) {
-        final projectId = widget.view.project.id;
-        _downloadAttachment(
-          selectedAgent,
-          attachment,
-          projectId: projectId,
-          openAfterDownload: false,
-        );
-      },
-      onOpenAttachment: (attachment) {
-        final projectId = widget.view.project.id;
-        _confirmAndOpenAttachment(selectedAgent, attachment, projectId);
-      },
-      onRetry: _retryMessage,
-      onDeleteFailedMessage: _deleteFailedMessage,
-      onToggleExpanded: (itemId) {
-        _toggleExpandedItem(selectedAgent.name, itemId);
-      },
-      onNearEnd: () {
-        _clearNewMessageFlag(selectedAgent.name);
-      },
-      onUserNearEnd: () {
-        _clearNewMessageFlag(selectedAgent.name);
-      },
-      onUserScrollDirectionChanged: (direction) {
-        _handleTimelineUserScrollDirection(selectedAgent.name, direction);
-      },
-      onNearStart: () {
-        _loadOlderConversation(selectedAgent.name);
-      },
-      onJumpToLatest: () {
-        _jumpToLatest(selectedAgent.name);
-      },
-      onCollapseComposer: () {
-        _collapseComposer(selectedAgent.name);
-      },
-      onExpandComposer: () {
-        _expandComposer(selectedAgent.name);
-      },
-      onSend: () {
-        _sendMessage(selectedAgent);
-      },
-      onSendTab: () {
-        _sendDraftThenPaneKey(
-          selectedAgent,
-          bytes: selectedAgentTabKeyBytes,
-          label: 'Tab',
-        );
-      },
-      onSendEscape: () {
-        _sendPaneKey(
-          selectedAgent,
-          bytes: selectedAgentEscapeKeyBytes,
-          label: 'Esc',
-        );
-      },
+    return Column(
+      children: [
+        modeSwitch,
+        const SizedBox(height: 2),
+        Expanded(
+          child: SelectedAgentWorkspaceView(
+            repository: widget.repository,
+            view: widget.view,
+            model: model,
+            timelineController: _scrollController(selectedAgent.name),
+            draftController: _draftController(selectedAgent.name),
+            draftFocusNode: draftFocusNode,
+            enableComposerCollapse: widget.enableComposerCollapse,
+            draftAttachments: _draftAttachments(selectedAgent.name),
+            downloadingAttachmentIds: _downloadingAttachmentIds,
+            downloadedAttachmentIds: _downloadedAttachmentPaths.keys.toSet(),
+            onPickImageAttachment: () {
+              _pickAttachments(
+                agentName: selectedAgent.name,
+                type: FileType.image,
+              );
+            },
+            onPickFileAttachment: () {
+              _pickAttachments(
+                agentName: selectedAgent.name,
+                type: FileType.custom,
+              );
+            },
+            onRemoveAttachment: (localId) {
+              _removeAttachment(selectedAgent.name, localId);
+            },
+            onDownloadAttachment: (attachment) {
+              final projectId = widget.view.project.id;
+              _downloadAttachment(
+                selectedAgent,
+                attachment,
+                projectId: projectId,
+                openAfterDownload: false,
+              );
+            },
+            onOpenAttachment: (attachment) {
+              final projectId = widget.view.project.id;
+              _confirmAndOpenAttachment(selectedAgent, attachment, projectId);
+            },
+            onRetry: _retryMessage,
+            onDeleteFailedMessage: _deleteFailedMessage,
+            onToggleExpanded: (itemId) {
+              _toggleExpandedItem(selectedAgent.name, itemId);
+            },
+            onNearEnd: () {
+              _clearNewMessageFlag(selectedAgent.name);
+            },
+            onUserNearEnd: () {
+              _clearNewMessageFlag(selectedAgent.name);
+            },
+            onUserScrollDirectionChanged: (direction) {
+              _handleTimelineUserScrollDirection(selectedAgent.name, direction);
+            },
+            onNearStart: () {
+              _loadOlderConversation(selectedAgent.name);
+            },
+            onJumpToLatest: () {
+              _jumpToLatest(selectedAgent.name);
+            },
+            onCollapseComposer: () {
+              _collapseComposer(selectedAgent.name);
+            },
+            onExpandComposer: () {
+              _expandComposer(selectedAgent.name);
+            },
+            onSend: () {
+              _sendMessage(selectedAgent);
+            },
+            onSendTab: () {
+              _sendDraftThenPaneKey(
+                selectedAgent,
+                bytes: selectedAgentTabKeyBytes,
+                label: 'Tab',
+              );
+            },
+            onSendEscape: () {
+              _sendPaneKey(
+                selectedAgent,
+                bytes: selectedAgentEscapeKeyBytes,
+                label: 'Esc',
+              );
+            },
+          ),
+        ),
+      ],
     );
   }
 
@@ -1223,6 +1272,51 @@ class _SelectedAgentWorkspaceState extends State<SelectedAgentWorkspace>
       }
       _draftFocusNode(agentName).requestFocus();
     });
+  }
+}
+
+class _SelectedAgentWorkspaceModeSwitch extends StatelessWidget {
+  const _SelectedAgentWorkspaceModeSwitch({
+    required this.mode,
+    required this.onChanged,
+  });
+
+  final SelectedAgentWorkspaceMode mode;
+  final ValueChanged<SelectedAgentWorkspaceMode> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: SegmentedButton<SelectedAgentWorkspaceMode>(
+        key: const ValueKey('agent-workspace-mode-switch'),
+        style: ButtonStyle(
+          visualDensity: VisualDensity.compact,
+          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+          padding: WidgetStateProperty.all(
+            const EdgeInsets.symmetric(horizontal: 10),
+          ),
+          minimumSize: WidgetStateProperty.all(const Size(0, 34)),
+        ),
+        segments: const [
+          ButtonSegment<SelectedAgentWorkspaceMode>(
+            value: SelectedAgentWorkspaceMode.chat,
+            label: Text('Chat'),
+            icon: Icon(Icons.chat_bubble_outline),
+          ),
+          ButtonSegment<SelectedAgentWorkspaceMode>(
+            value: SelectedAgentWorkspaceMode.terminal,
+            label: Text('Terminal'),
+            icon: Icon(Icons.terminal),
+          ),
+        ],
+        selected: {mode},
+        showSelectedIcon: false,
+        onSelectionChanged: (selection) {
+          onChanged(selection.single);
+        },
+      ),
+    );
   }
 }
 

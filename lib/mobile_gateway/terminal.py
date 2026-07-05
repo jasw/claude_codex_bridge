@@ -41,8 +41,7 @@ class TerminalAttachTarget:
 
     @property
     def command(self) -> list[str]:
-        target = self.pane_id or self.session_name
-        return ['tmux', '-S', self.socket_path, 'attach-session', '-t', target]
+        return ['tmux', '-S', self.socket_path, 'attach-session', '-t', self.session_name]
 
 
 @dataclass(frozen=True)
@@ -141,12 +140,15 @@ class TmuxTerminalSession:
         self._master_fd, slave_fd = pty.openpty()
         try:
             self._resize(target.geometry)
+            if target.pane_id:
+                _select_tmux_terminal_pane(target)
             self._process = subprocess.Popen(
                 target.command,
                 stdin=slave_fd,
                 stdout=slave_fd,
                 stderr=slave_fd,
                 close_fds=True,
+                env=_terminal_client_env(),
             )
         finally:
             os.close(slave_fd)
@@ -206,6 +208,19 @@ def create_tmux_terminal_session(target: TerminalAttachTarget) -> TmuxTerminalSe
     return TmuxTerminalSession(target)
 
 
+def _terminal_client_env() -> dict[str, str]:
+    env = dict(os.environ)
+    env.pop('TMUX', None)
+    if not env.get('TERM') or env.get('TERM') == 'dumb':
+        env['TERM'] = 'xterm-256color'
+    return env
+
+
+def _select_tmux_terminal_pane(target: TerminalAttachTarget) -> None:
+    _tmux_terminal_run(target, ['select-window', '-t', str(target.pane_id)])
+    _tmux_terminal_run(target, ['select-pane', '-t', str(target.pane_id)])
+
+
 def _send_tmux_terminal_literal(target: TerminalAttachTarget, text: str) -> None:
     if not text:
         return
@@ -218,21 +233,79 @@ def _send_tmux_terminal_bytes(target: TerminalAttachTarget, data: bytes) -> None
         b'\n': 'Enter',
         b'\t': 'Tab',
         b'\x1b': 'Escape',
+        b'\x01': 'C-a',
         b'\x03': 'C-c',
         b'\x04': 'C-d',
+        b'\x05': 'C-e',
+        b'\x0b': 'C-k',
+        b'\x0c': 'C-l',
+        b'\x12': 'C-r',
         b'\x15': 'C-u',
+        b'\x17': 'C-w',
+        b'\x1a': 'C-z',
         b'\x7f': 'BSpace',
         b'\b': 'BSpace',
+        b'\x1b[A': 'Up',
+        b'\x1b[B': 'Down',
+        b'\x1b[C': 'Right',
+        b'\x1b[D': 'Left',
+        b'\x1b[H': 'Home',
+        b'\x1b[F': 'End',
+        b'\x1bOH': 'Home',
+        b'\x1bOF': 'End',
+        b'\x1b[1~': 'Home',
+        b'\x1b[4~': 'End',
+        b'\x1b[3~': 'Delete',
+        b'\x1b[5~': 'PageUp',
+        b'\x1b[6~': 'PageDown',
     }
     key = key_names.get(data)
     if key is not None:
         _tmux_terminal_run(target, ['send-keys', '-t', str(target.pane_id), key])
         return
+    if _is_terminal_protocol_response(data):
+        return
+    if _has_control_byte(data):
+        raise RuntimeError(f'unsupported terminal input bytes for {target.terminal_id}')
     try:
         text = data.decode('utf-8')
     except UnicodeDecodeError:
         raise RuntimeError(f'unsupported terminal input bytes for {target.terminal_id}')
     _send_tmux_terminal_literal(target, text)
+
+
+def _has_control_byte(data: bytes) -> bool:
+    return any(byte < 0x20 or byte == 0x7F for byte in data)
+
+
+_TERMINAL_PROTOCOL_RESPONSES = (
+    re.compile(r'\x1b\[\?[0-9;]*c'),  # primary device attributes
+    re.compile(r'\x1b\[>[0-9;]*c'),  # secondary device attributes
+    re.compile(r'\x1bP!\|[0-9A-Fa-f]*\x1b\\'),  # tertiary device attributes
+    re.compile(r'\x1b\[0n'),  # operating status
+    re.compile(r'\x1b\[[0-9;]*R'),  # cursor position report
+    re.compile(r'\x1b\[8;[0-9]+;[0-9]+t'),  # terminal size report
+    re.compile(r'\x1b\[[IO]'),  # focus in/out
+    re.compile(r'\x1b\[<[0-9;]+[mM]'),  # SGR mouse report
+    re.compile(r'\x1b\]1[01];(?:rgb:)?[0-9A-Fa-f/]+(?:\x07|\x1b\\)'),  # OSC colors
+)
+
+
+def _is_terminal_protocol_response(data: bytes) -> bool:
+    try:
+        text = data.decode('utf-8')
+    except UnicodeDecodeError:
+        return False
+    index = 0
+    while index < len(text):
+        for pattern in _TERMINAL_PROTOCOL_RESPONSES:
+            match = pattern.match(text, index)
+            if match is not None:
+                index = match.end()
+                break
+        else:
+            return False
+    return bool(text)
 
 
 def _tmux_terminal_run(

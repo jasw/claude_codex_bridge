@@ -359,50 +359,6 @@ void main() {
     expect(find.text('paired gateway chat'), findsOneWidget);
     expect(gatewayRepository.conversationCalls, isNotEmpty);
 
-    await tester.tap(find.byKey(const ValueKey('open-agent-terminal-button')));
-    await tester.pumpAndSettle();
-
-    expect(gatewayRepository.focusAgentCalls, [('proj-demo', 'lead', 4)]);
-    expect(find.byType(TerminalView), findsOneWidget);
-    expect(
-      find.byKey(const ValueKey('ccb-live-terminal-view')),
-      findsOneWidget,
-    );
-    expect(gatewayTerminalTransport.requests, hasLength(2));
-    expect(
-      gatewayTerminalTransport.requests.last.attachCommand,
-      'gateway terminal stream proj-demo/lead',
-    );
-    final agentSession = gatewayTerminalTransport.sessions.last;
-    await tester.enterText(
-      find.byKey(const ValueKey('terminal-command-input')),
-      'ccb-mobile-ui-send',
-    );
-    await tester.tap(find.byKey(const ValueKey('terminal-send-button')));
-    await tester.pumpAndSettle();
-    expect(utf8.decode(agentSession.written.single), 'ccb-mobile-ui-send');
-    expect(find.text('Sent'), findsOneWidget);
-
-    await tester.enterText(
-      find.byKey(const ValueKey('terminal-command-input')),
-      'ccb-mobile-ui-paste',
-    );
-    await tester.tap(find.byKey(const ValueKey('terminal-paste-button')));
-    await tester.pumpAndSettle();
-    expect(agentSession.pasted.single, 'ccb-mobile-ui-paste');
-    expect(find.text('Pasted'), findsOneWidget);
-
-    await tester.tap(find.byKey(const ValueKey('terminal-resize-button')));
-    await tester.pumpAndSettle();
-    expect(agentSession.resized, isNotEmpty);
-    expect(find.text('Size synced'), findsOneWidget);
-
-    await tester.tap(find.byKey(const ValueKey('terminal-reconnect-button')));
-    await tester.pumpAndSettle();
-    expect(agentSession.reconnectCount, 1);
-    expect(find.text('Reconnected'), findsOneWidget);
-
-    await dismissConnectionDetails(tester);
     await openConnectionDetails(tester);
 
     expect(find.text('Diagnostics'), findsWidgets);

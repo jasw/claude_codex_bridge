@@ -3123,7 +3123,7 @@ def test_terminal_websocket_streams_frames_and_rejects_replayed_input(tmp_path: 
             '/tmp/ccb-demo/tmux.sock',
             'attach-session',
             '-t',
-            '%2',
+            'ccb-demo',
         ]
         assert sessions[0].target.geometry.columns == 100
         assert sessions[0].target.geometry.rows == 30
