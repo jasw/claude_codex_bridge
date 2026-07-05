@@ -316,7 +316,12 @@ def _validate_project_local_ask_context(context, command, *, configured_agents: 
                 'ask is project-local; --project cannot target another .ccb project'
             )
 
-    if local_anchor is not None and local_anchor != project_root and source != 'caller-runtime':
+    if (
+        local_anchor is not None
+        and local_anchor != project_root
+        and source != 'caller-runtime'
+        and not _is_internal_explicit_project_ask(context, command)
+    ):
         raise ValueError(
             'ask is project-local; workspace or cwd resolved to another .ccb project'
         )
@@ -325,6 +330,15 @@ def _validate_project_local_ask_context(context, command, *, configured_agents: 
         _validate_workspace_binding_project(context, project_root)
 
     _validate_caller_runtime_project(project_root, configured_agents=configured_agents)
+
+
+def _is_internal_explicit_project_ask(context, command) -> bool:
+    if str(getattr(context.project, 'source', '') or '') != 'explicit':
+        return False
+    if str(getattr(command, 'project', '') or '').strip():
+        return False
+    parent_kind = str(getattr(getattr(context, 'command', None), 'kind', '') or '')
+    return parent_kind not in {'', 'ask'}
 
 
 def _validate_workspace_binding_project(context, project_root: Path) -> None:

@@ -159,7 +159,10 @@ class ParsedPlanTaskCommand:
     task_id: str | None = None
     artifact_kind: str | None = None
     file_path: str | None = None
+    route: str | None = None
     status: str | None = None
+    next_owner: str | None = None
+    activation_reason: str | None = None
     loop_id: str | None = None
     result: str | None = None
     json_output: bool = False

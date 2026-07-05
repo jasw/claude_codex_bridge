@@ -89,7 +89,7 @@ optional plan_reviewer
 orchestrator triage
   -> direct_execution
   -> needs_detail -> task_detailer -> orchestrator
-  -> macro_adjustment_blocked -> planner
+  -> macro_adjustment_request -> planner
 ```
 
 `plan_steward` is a historical term for planner stewardship work mode or the

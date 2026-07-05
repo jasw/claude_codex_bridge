@@ -97,7 +97,7 @@ When the child result is needed to continue the round, submit with callback and
 then stop until CCB resumes the task:
 
 ```bash
-command ask --callback "$WORKER_AGENT" <<'EOF'
+command ask --chain "$WORKER_AGENT" <<'EOF'
 <bounded worker request>
 EOF
 ```
@@ -106,7 +106,7 @@ After the worker callback resumes the orchestrator, submit the reviewer ask the
 same way:
 
 ```bash
-command ask --callback "$REVIEWER_AGENT" <<'EOF'
+command ask --chain "$REVIEWER_AGENT" <<'EOF'
 <bounded reviewer request with worker result/artifact refs>
 EOF
 ```

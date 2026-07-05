@@ -183,6 +183,49 @@ Planner decides whether this summary is stable enough for the brief. If it is
 not stable, the task detail docs remain linked as work in progress rather than
 absorbed into the macro summary.
 
+## Compact Planner Import Policy
+
+Planner consumes task evidence through compact imported artifacts, not by
+copying detail bodies into planner-owned state.
+
+The compact planner import evidence kinds are:
+
+- `detail_summary`: stable summary backfill from detail work. It may inform
+  `brief.md`, roadmap/status handoff text, decision links, open-question links,
+  and task refs after planner review. It must not copy detail design bodies,
+  source-evidence maps, task-local clarification, or worker handoff detail into
+  the brief or roadmap.
+- `macro_adjustment_request`: a request for planner review. It may propose one
+  macro update, but importing it must not mutate roadmap, decisions,
+  open questions, task status, or next owner by itself. Planner either rejects
+  it with a short reason or requests a script-owned plan update.
+- `round_summary`: compact round result evidence. It is imported only through
+  script-owned round import, not generic artifact import. Planner may use it to
+  rehydrate the brief, update a compact status handoff, or plan the next task
+  after explicit review.
+
+The script-side import contract records compact policy metadata on these
+artifacts:
+
+```text
+planner_compact_import.policy = planner_compact_import
+planner_compact_import.allowed_updates =
+  brief, roadmap_status_handoff, decision_links, open_question_links, task_refs
+```
+
+Forbidden planner-owned imports remain:
+
+- detail design body;
+- source-evidence map;
+- task-local clarification thread or transcript;
+- worker/reviewer handoff detail;
+- provider reply text as authority.
+
+`round_summary` has one additional guard: `ccb plan task-artifact --kind
+round_summary` is rejected. A round result must pass through `ccb plan
+task-import-round`, which binds the loop id, round result, actor metadata, and
+status transition in one script-owned operation.
+
 ## Cleanup And Retention Rules
 
 After `task_detailer` finishes or blocks:

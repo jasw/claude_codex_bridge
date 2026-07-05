@@ -55,7 +55,7 @@ Date: 2026-06-24
   [decisions/018-planner-uses-plan-brief.md](decisions/018-planner-uses-plan-brief.md).
 - Accepted the orchestrator-triage boundary: planner hands macro task packets
   to orchestrator, orchestrator chooses `direct_execution`, `needs_detail`,
-  `macro_adjustment_blocked`, or `blocked`, and `task_detailer` is only
+  `macro_adjustment_request`, or `blocked`, and `task_detailer` is only
   activated for `needs_detail`. See
   [decisions/019-orchestrator-triage-before-task-detailer.md](decisions/019-orchestrator-triage-before-task-detailer.md).
 - Accepted the non-goal that CCB should not copy Trellis' implicit subagent
@@ -155,6 +155,9 @@ Date: 2026-06-24
   [topics/runtime-workflow-graph-and-reconciler.md](topics/runtime-workflow-graph-and-reconciler.md)
   and
   [decisions/014-runtime-workflow-graph-reconciler.md](decisions/014-runtime-workflow-graph-reconciler.md).
+  Decision 020 later narrows the preferred future contract to mount topology
+  plus ask-first collaboration; keep this item as landed historical substrate,
+  not the current communication-flow direction.
 - Landed the first topology desired-state controller slice:
   `ccb loop topology propose/validate/commit/reconcile/status/release`
   imports orchestrator graph proposals, validates profile/capacity/edge
@@ -178,6 +181,20 @@ Date: 2026-06-24
   `coder`/`code_reviewer` to Window 3+ packed `ccb-exec` pages. Source tests
   prove four coder/reviewer work units overflow to `ccb-exec-2`, then compact
   back to one execution window after a middle pair is released.
+- Accepted the simplified topology/communication split: topology should be
+  narrowed to mount state for agents, windows, panes, providers, and
+  lifecycle. Normal worker/reviewer/detailer/orchestrator collaboration should
+  use `ask`; only task packet, execution contract, mount topology,
+  orchestration notes, and round summary become durable anchors. See
+  [topics/mount-topology-and-ask-first-orchestration.md](topics/mount-topology-and-ask-first-orchestration.md)
+  and
+  [decisions/020-mount-topology-and-ask-first-orchestration.md](decisions/020-mount-topology-and-ask-first-orchestration.md).
+- Passed the Phase 1 local worktree gate for the mount-topology split:
+  `agent_mount_topology.*` writes, legacy `agent_topology.*` reads, mount
+  schema validation for windows/agents/provider/lifecycle, default rejection
+  of `edges/gates/artifacts`, explicit legacy graph dispatch compatibility,
+  targeted pytest, adjacent lifecycle/layout regression, and a lightweight
+  source-wrapper `ccb_test` smoke.
 - Landed the first continuous dynamic layout smoke in the current worktree:
   `ccb layout dynamic-smoke` grows fake-agent panes in one isolated tmux session
   and then shrinks them. Verified from `/home/bfly/yunwei/test_ccb2` with
@@ -336,6 +353,21 @@ Date: 2026-06-24
 
 ## In Progress
 
+- Phase 1-6 acceptance coordination is now in final packaging closeout. Phase
+  6A is accepted for the fake-provider, single-round program-matrix scope, and
+  Phase 6B is accepted for initial real-provider, single-round capability after
+  L0 repeat6, L1-L4 repeat12, L5 partial repeat4, and `talk2` final
+  aggregation. The current dated final report is
+  [history/phase1-6-acceptance-report-20260705.md](history/phase1-6-acceptance-report-20260705.md);
+  [history/phase1-6-acceptance-report-20260704.md](history/phase1-6-acceptance-report-20260704.md)
+  remains the historical Phase 6A-only report. Remaining work is
+  source-control packaging hygiene and separate follow-up goals for
+  production/default enablement, post-detail execution, reviewer-rework
+  observation, and multi-round stability. See
+  [implementation-status.md](implementation-status.md),
+  [topics/phase6a-fake-provider-matrix-closure-runbook.md](topics/phase6a-fake-provider-matrix-closure-runbook.md),
+  and
+  [topics/phase1-6-module-level-audit-worksheet.md](topics/phase1-6-module-level-audit-worksheet.md).
 - Shape the first architecture contract for a state-machine-driven agentic
   loop that separates user-facing interaction, planning, orchestration,
   execution, monitoring, recovery, and plan-tree maintenance.
@@ -1150,9 +1182,11 @@ Still outside the candidate:
 5. Define the minimum `ccb loop`, `ccb plan`, and `ccb question` command
    surface for creating tasks, transitioning phases, recording artifacts,
    blocking, finishing, and syncing to plan-tree.
-6. Extend `loop runner --once` so it can consume committed topology before
-   round dispatch, execute validated ask edges in order, import edge artifacts,
-   and call topology release/reconcile after evidence writeback.
+6. Split the next runner/topology slice around the simplified contract:
+   topology mounts/releases/reflows agents; orchestrator coordinates ordinary
+   collaboration through `ask`; only stable outputs are imported through
+   task/round artifacts. Execute this through
+   [goals/mount-topology-ask-first-landing-goal.md](goals/mount-topology-ask-first-landing-goal.md).
 7. Define the v1 team spec format for planner group, orchestrator, execution
    node, recovery node, and monitor behavior.
 8. Define context-purity budgets for each role, including what may enter
@@ -1167,9 +1201,10 @@ Still outside the candidate:
 11. Define the v1 execution-node and round-verification artifact schemas,
    including node check plans, non-convergence reports, branch freeze records,
    partial loop reports, verification contracts, and round verification plans.
-12. Map the design to existing CCB communication primitives: `ask`,
-   `--callback`, `--silence`, message bureau records, dispatcher jobs,
-   completion state, and queue/trace diagnostics.
+12. Map the simplified ask-first design to existing CCB communication
+   primitives: agent-to-agent `ask` for normal collaboration, programmatic ask
+   for runner gates and smokes, message bureau records for diagnostics, and
+   script imports for authority transitions.
 13. Identify the first implementation slice that can run with one planner, one
    orchestrator, one execution node, and deterministic monitoring before
    enabling dynamic multi-node fanout.

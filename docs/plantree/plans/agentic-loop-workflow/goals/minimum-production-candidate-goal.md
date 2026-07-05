@@ -2,6 +2,12 @@
 
 Date: 2026-06-29
 
+Status: Historical narrow candidate gate. Current active Phase 6 acceptance
+target is
+[phase6-single-round-task-matrix-goal.md](phase6-single-round-task-matrix-goal.md).
+Historical naming note: older `checker` references map to the current
+`code_reviewer` execution-review role.
+
 ## Objective
 
 Define and verify the smallest agentic workflow slice that can be treated as a

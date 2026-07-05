@@ -410,7 +410,7 @@ def test_question_answers_wake_planner_with_answer_refs(tmp_path: Path) -> None:
     assert activation['open_question_refs']['latest']['normalized_answers']['path'] == normalized_payload['artifact']['path']
 
 
-def test_runner_activates_plan_reviewer_and_plan_guard_requires_review(tmp_path: Path) -> None:
+def test_runner_keeps_new_draft_with_planner_and_plan_guard_requires_review(tmp_path: Path) -> None:
     project_root = _project_with_plan(tmp_path)
     _create_task(project_root, task_id='task-review')
     for kind in ('requirements', 'acceptance', 'verification', 'handoff'):
@@ -433,16 +433,16 @@ def test_runner_activates_plan_reviewer_and_plan_guard_requires_review(tmp_path:
         return AskSummary(
             project_id=context.project.project_id,
             submission_id=None,
-            jobs=({'job_id': 'job_plan_reviewer', 'agent_name': 'plan_reviewer', 'status': 'submitted'},),
+            jobs=({'job_id': 'job_planner', 'agent_name': 'planner', 'status': 'submitted'},),
         )
 
     payload = loop_runner_once(context, command, services=SimpleNamespace(submit_ask=fake_submit_ask))
 
     assert payload['loop_runner_status'] == 'ok'
-    assert payload['action'] == 'activated_plan_reviewer'
-    assert payload['next_owner'] == 'plan_reviewer'
-    assert seen['target'] == 'plan_reviewer'
-    assert 'review artifact' in str(seen['message'])
+    assert payload['action'] == 'activated_planner'
+    assert payload['next_owner'] == 'planner'
+    assert seen['target'] == 'planner'
+    assert 'Task packet root:' in str(seen['message'])
     activation = json.loads(Path(str(payload['activation_path'])).read_text(encoding='utf-8'))
     assert set(activation['artifact_refs']) == {'acceptance', 'handoff', 'requirements', 'verification'}
     assert activation['script_write_rules']

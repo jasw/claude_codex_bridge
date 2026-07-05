@@ -25,6 +25,23 @@ def _write_json(path: Path, payload: dict[str, object]) -> None:
     _write(path, json.dumps(payload, ensure_ascii=False, indent=2) + '\n')
 
 
+def _topology_agent_ids(payload: dict[str, object]) -> set[str]:
+    ids = {
+        str(agent.get('id') or agent.get('name') or '')
+        for agent in tuple(payload.get('agents') or ())
+        if isinstance(agent, dict)
+    }
+    for node in tuple(payload.get('nodes') or ()):
+        if not isinstance(node, dict):
+            continue
+        ids.update(
+            str(agent.get('id') or agent.get('name') or '')
+            for agent in tuple(node.get('agents') or ())
+            if isinstance(agent, dict)
+        )
+    return {name for name in ids if name}
+
+
 def _write_installed_role(store_root: Path, role_id: str, *, default_agent_name: str) -> None:
     _write(
         store_root / 'installed' / role_id / 'current' / 'role.toml',
@@ -212,30 +229,41 @@ def _proposal() -> dict[str, object]:
                 ],
             }
         ],
-        'edges': [
+        'edges': [],
+        'artifacts': {},
+        'gates': [],
+    }
+
+
+def _mount_schema_proposal() -> dict[str, object]:
+    return {
+        'schema': 'ccb.loop.agent_mount_topology.v1',
+        'windows': [
             {
-                'id': 'coder-task',
-                'from': 'ccb_orchestrator',
-                'to': 'loop-round1-coder-1',
-                'type': 'ask',
-                'order': 10,
-                'output_artifact': 'node1.coder.md',
-            },
-            {
-                'id': 'review-task',
-                'from': 'loop-round1-coder-1',
-                'to': 'loop-round1-code_reviewer-1',
-                'type': 'ask_after',
-                'after': ['coder-task'],
-                'order': 20,
-                'input_artifact': 'node1.coder.md',
-                'output_artifact': 'node1.review.md',
-            },
+                'name': 'ccb-exec',
+                'class': 'execution',
+                'max_panes': 6,
+                'layout_policy': 'append-or-create-window',
+            }
         ],
-        'artifacts': {
-            'round': 'docs/plantree/runtime/round1.md',
-        },
-        'gates': [{'id': 'round-review', 'type': 'all_edges_complete'}],
+        'agents': [
+            {
+                'id': 'loop-round1-coder-1',
+                'profile': 'coder',
+                'role': 'agentroles.coder',
+                'provider': 'codex',
+                'model': 'gpt-5',
+                'thinking': 'high',
+                'provider_profile': {'sandbox': 'workspace-write'},
+                'desired_state': 'present',
+                'window_name': 'ccb-exec',
+                'pane_order': 0,
+                'lifecycle': 'ephemeral',
+                'release_policy': 'auto',
+            }
+        ],
+        'edges': [],
+        'gates': [],
     }
 
 
@@ -348,6 +376,180 @@ def test_loop_topology_parser_supports_scriptable_json_commands() -> None:
     ) == ParsedLoopTopologyCommand(project=None, action='release', loop_id='round1', policy='auto', json_output=True)
 
 
+def test_loop_topology_accepts_mount_schema_windows_agents_and_provider_snapshot(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = _project_with_topology(tmp_path, monkeypatch)
+    proposal_path = project_root / 'mount-topology.json'
+    proposal = _mount_schema_proposal()
+    for key in ('edges', 'artifacts', 'gates'):
+        proposal.pop(key, None)
+    _write_json(proposal_path, proposal)
+
+    result, proposed, stderr = _run_phase2(
+        [
+            'loop',
+            'topology',
+            'propose',
+            '--loop-id',
+            'round1',
+            '--from',
+            str(proposal_path),
+            '--proposal-id',
+            'mount1',
+            '--json',
+        ],
+        cwd=project_root,
+    )
+
+    assert result == 0, stderr
+    assert proposed['validation']['window_count'] == 1
+    assert proposed['validation']['edge_count'] == 0
+    normalized_proposal = json.loads(Path(proposed['proposal_path']).read_text(encoding='utf-8'))
+    assert 'edges' not in normalized_proposal
+    assert 'artifacts' not in normalized_proposal
+    assert 'gates' not in normalized_proposal
+
+    result, committed, stderr = _run_phase2(
+        ['loop', 'topology', 'commit', '--loop-id', 'round1', '--proposal', 'mount1', '--apply', '--json'],
+        cwd=project_root,
+    )
+
+    assert result == 0, stderr
+    desired_path = Path(committed['desired_path'])
+    assert desired_path.name == 'agent_mount_topology.desired.json'
+    desired = json.loads(desired_path.read_text(encoding='utf-8'))
+    assert desired['schema'] == 'ccb.loop.agent_mount_topology.v1'
+    assert desired['record_type'] == 'ccb_loop_agent_mount_topology_desired'
+    assert desired['windows'][0]['name'] == 'ccb-exec'
+    assert desired['agents'][0]['provider'] == 'codex'
+    assert 'edges' not in desired
+    assert 'artifacts' not in desired
+    assert 'gates' not in desired
+    assert 'edges' not in committed['reconcile']['observed']
+    observed_agent = committed['reconcile']['observed']['agents'][0]
+    assert observed_agent['provider_profile'] == {'sandbox': 'workspace-write'}
+    assert observed_agent['lifecycle'] == 'ephemeral'
+    assert observed_agent['lifetime'] == 'current_round'
+    assert observed_agent['release_policy'] == 'auto'
+    assert observed_agent['pane_order'] == 0
+
+
+def test_loop_topology_mount_schema_rejects_dispatch_dsl_by_default(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = _project_with_topology(tmp_path, monkeypatch)
+    cases = [
+        (
+            'edge',
+            {
+                **_mount_schema_proposal(),
+                'edges': [{'id': 'ask-coder', 'from': 'user', 'to': 'loop-round1-coder-1', 'type': 'ask'}],
+            },
+            'mount topology does not accept communication or dispatch edges',
+        ),
+        (
+            'artifact',
+            {
+                **_mount_schema_proposal(),
+                'artifacts': {'round': 'round.md'},
+            },
+            'mount topology does not accept topology dispatch artifacts',
+        ),
+        (
+            'gate',
+            {
+                **_mount_schema_proposal(),
+                'gates': [{'id': 'round-complete', 'type': 'all_edges_complete'}],
+            },
+            'mount topology does not accept topology dispatch gates',
+        ),
+    ]
+    for proposal_id, proposal, expected in cases:
+        proposal_path = project_root / f'{proposal_id}.json'
+        _write_json(proposal_path, proposal)
+
+        result, payload, stderr = _run_phase2(
+            [
+                'loop',
+                'topology',
+                'propose',
+                '--loop-id',
+                'round1',
+                '--from',
+                str(proposal_path),
+                '--proposal-id',
+                proposal_id,
+                '--json',
+            ],
+            cwd=project_root,
+        )
+
+        assert result == 1
+        assert payload == {}
+        assert expected in stderr
+
+
+def test_loop_topology_status_reads_legacy_agent_topology_files(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = _project_with_topology(tmp_path, monkeypatch)
+    loop_dir = project_root / '.ccb' / 'runtime' / 'loops' / 'round1'
+    desired = {
+        'schema': 'ccb.loop.agent_topology.v1',
+        'record_type': 'ccb_loop_agent_topology_desired',
+        'topology_status': 'committed',
+        'project_id': 'test',
+        'project_root': str(project_root),
+        'loop_id': 'round1',
+        'revision': 4,
+        'nodes': _proposal()['nodes'],
+        'edges': [],
+        'release_policy': {'policy': 'auto', 'idle_only': True},
+    }
+    observed = {
+        'schema': 'ccb.loop.agent_topology.observed.v1',
+        'record_type': 'ccb_loop_agent_topology_observed',
+        'last_reconcile_status': 'reconciled',
+        'project_id': 'test',
+        'project_root': str(project_root),
+        'loop_id': 'round1',
+        'desired_revision': 4,
+        'agents': [
+            {
+                'id': 'loop-round1-coder-1',
+                'profile': 'coder',
+                'desired_state': 'present',
+                'observed_state': 'present',
+            },
+            {
+                'id': 'loop-round1-code_reviewer-1',
+                'profile': 'code_reviewer',
+                'desired_state': 'present',
+                'observed_state': 'present',
+            },
+        ],
+        'drift': {'mismatched_agents': []},
+    }
+    _write_json(loop_dir / 'agent_topology.desired.json', desired)
+    _write_json(loop_dir / 'agent_topology.observed.json', observed)
+
+    result, status, stderr = _run_phase2(
+        ['loop', 'topology', 'status', '--loop-id', 'round1', '--json'],
+        cwd=project_root,
+    )
+
+    assert result == 0, stderr
+    assert status['loop_topology_status'] == 'ready'
+    assert status['desired_path'].endswith('agent_topology.desired.json')
+    assert status['observed_path'].endswith('agent_topology.observed.json')
+    assert status['desired']['revision'] == 4
+    assert status['observed']['revision'] == 4
+
+
 def test_loop_topology_commit_apply_and_release_manage_dynamic_agents(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -425,6 +627,11 @@ def test_loop_topology_commit_apply_and_release_manage_dynamic_agents(
     assert released['released_count'] == 2
     assert released['released_agents'] == ['loop-round1-code_reviewer-1', 'loop-round1-coder-1']
     assert released['retained_count'] == 0
+    desired_after_release = json.loads(Path(str(released['desired_path'])).read_text(encoding='utf-8'))
+    observed_after_release = json.loads(Path(str(released['observed_path'])).read_text(encoding='utf-8'))
+    assert _topology_agent_ids(desired_after_release) == set()
+    assert [agent['id'] for agent in observed_after_release['agents']] == []
+    assert observed_after_release['released_agents'] == released['released_agents']
     loaded_after_release = load_project_config(project_root).config
     assert 'loop-round1-coder-1' not in loaded_after_release.agents
     assert 'loop-round1-code_reviewer-1' not in loaded_after_release.agents
@@ -1022,6 +1229,22 @@ def test_loop_topology_release_retains_busy_agents(
     assert result == 0, stderr
     assert released['loop_topology_status'] == 'retained_busy'
     assert released['retained_count'] == 1
+    assert released['released_agents'] == ['loop-round1-code_reviewer-1']
+    assert released['retained_agents'] == ['loop-round1-coder-1']
+    assert released['retain_reasons'] == {'loop-round1-coder-1': 'runtime_state=busy'}
+    release_actions = {
+        str(action.get('agent')): action
+        for action in released['actions']
+        if action.get('action') == 'release'
+    }
+    assert release_actions['loop-round1-coder-1']['status'] == 'retained_busy'
+    assert release_actions['loop-round1-coder-1']['retain_reason'] == 'runtime_state=busy'
+    desired_after_release = json.loads(Path(str(released['desired_path'])).read_text(encoding='utf-8'))
+    observed_after_release = json.loads(Path(str(released['observed_path'])).read_text(encoding='utf-8'))
+    assert _topology_agent_ids(desired_after_release) == {'loop-round1-coder-1'}
+    assert [agent['id'] for agent in observed_after_release['agents']] == ['loop-round1-coder-1']
+    assert observed_after_release['released_agents'] == ['loop-round1-code_reviewer-1']
+    assert observed_after_release['retained_agents'] == ['loop-round1-coder-1']
     coder_state = json.loads(
         (project_root / '.ccb' / 'runtime' / 'agents' / 'loop-round1-coder-1' / 'lifecycle.json').read_text(
             encoding='utf-8'
@@ -1035,6 +1258,160 @@ def test_loop_topology_release_retains_busy_agents(
     assert coder_state['agent_lifecycle_status'] == 'retained_busy'
     assert coder_state['lifecycle_state'] == 'visible'
     assert reviewer_state['lifecycle_state'] == 'unloaded'
+
+
+def test_loop_topology_release_drains_resident_planning_group_without_unloading(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = _project_with_workflow_topology(tmp_path, monkeypatch)
+    proposal_a = {
+        'nodes': [
+            {
+                'id': 'user-boundary',
+                'agents': [
+                    {
+                        'id': 'p6bl0b-frontdesk',
+                        'profile': 'ccb_frontdesk',
+                        'desired_state': 'present',
+                        'release_policy': 'auto',
+                    },
+                    {
+                        'id': 'p6bl0b-detailer',
+                        'profile': 'ccb_task_detailer',
+                        'desired_state': 'present',
+                        'release_policy': 'auto',
+                    },
+                ],
+            },
+            {
+                'id': 'planning',
+                'agents': [
+                    {
+                        'id': 'p6bl0b-planner',
+                        'profile': 'ccb_planner',
+                        'desired_state': 'present',
+                        'release_policy': 'auto',
+                    },
+                    {
+                        'id': 'p6bl0b-orchestrator',
+                        'profile': 'ccb_orchestrator',
+                        'desired_state': 'present',
+                        'release_policy': 'auto',
+                    },
+                ],
+            }
+        ],
+        'release_policy': {'policy': 'auto', 'idle_only': True},
+    }
+    proposal_b = {
+        'nodes': [
+            {
+                'id': 'planning',
+                'agents': [
+                    {
+                        'id': 'p6bl0c-orchestrator',
+                        'profile': 'ccb_orchestrator',
+                        'desired_state': 'present',
+                        'release_policy': 'auto',
+                    }
+                ],
+            }
+        ],
+        'release_policy': {'policy': 'auto', 'idle_only': True},
+    }
+    proposal_a_path = project_root / 'proposal-a.json'
+    proposal_b_path = project_root / 'proposal-b.json'
+    _write_json(proposal_a_path, proposal_a)
+    _write_json(proposal_b_path, proposal_b)
+
+    result, _proposed, stderr = _run_phase2(
+        [
+            'loop',
+            'topology',
+            'propose',
+            '--loop-id',
+            'p6bl0a',
+            '--from',
+            str(proposal_a_path),
+            '--proposal-id',
+            'p6bl0a-plan',
+            '--json',
+        ],
+        cwd=project_root,
+    )
+    assert result == 0, stderr
+    result, _committed, stderr = _run_phase2(
+        ['loop', 'topology', 'commit', '--loop-id', 'p6bl0a', '--proposal', 'p6bl0a-plan', '--apply', '--json'],
+        cwd=project_root,
+    )
+    assert result == 0, stderr
+
+    result, released, stderr = _run_phase2(
+        ['loop', 'topology', 'release', '--loop-id', 'p6bl0a', '--json'],
+        cwd=project_root,
+    )
+
+    assert result == 0, stderr
+    assert released['loop_topology_status'] == 'released'
+    assert released['released_count'] == 0
+    expected_drained = ['p6bl0b-detailer', 'p6bl0b-frontdesk', 'p6bl0b-orchestrator', 'p6bl0b-planner']
+    assert released['drained_count'] == 4
+    assert released['drained_agents'] == expected_drained
+    assert released['drain_reasons'] == {name: 'parked_after_release' for name in expected_drained}
+    observed_after_release = json.loads(Path(str(released['observed_path'])).read_text(encoding='utf-8'))
+    desired_after_release = json.loads(Path(str(released['desired_path'])).read_text(encoding='utf-8'))
+    assert observed_after_release['last_reconcile_status'] == 'reconciled'
+    assert observed_after_release['drained_agents'] == expected_drained
+    assert _topology_agent_ids(observed_after_release) == set()
+    assert _topology_agent_ids(desired_after_release) == set()
+    assert 'edges' not in desired_after_release
+    assert 'gates' not in desired_after_release
+    assert 'artifacts' not in desired_after_release
+    assert not (project_root / '.ccb' / 'runtime' / 'loops' / 'p6bl0a' / 'topology_dispatch.json').exists()
+    for agent_name in expected_drained:
+        retained_state = json.loads(
+            (
+                project_root
+                / '.ccb'
+                / 'runtime'
+                / 'agents'
+                / agent_name
+                / 'lifecycle.json'
+            ).read_text(encoding='utf-8')
+        )
+        assert retained_state['lifecycle_state'] == 'parked'
+        assert retained_state['dispatch_disabled'] is True
+    result, status, stderr = _run_phase2(
+        ['loop', 'topology', 'status', '--loop-id', 'p6bl0a', '--json'],
+        cwd=project_root,
+    )
+    assert result == 0, stderr
+    assert status['loop_topology_status'] == 'released'
+
+    result, _proposed, stderr = _run_phase2(
+        [
+            'loop',
+            'topology',
+            'propose',
+            '--loop-id',
+            'p6bl0c',
+            '--from',
+            str(proposal_b_path),
+            '--proposal-id',
+            'p6bl0c-plan',
+            '--json',
+        ],
+        cwd=project_root,
+    )
+    assert result == 0, stderr
+    result, committed_b, stderr = _run_phase2(
+        ['loop', 'topology', 'commit', '--loop-id', 'p6bl0c', '--proposal', 'p6bl0c-plan', '--apply', '--json'],
+        cwd=project_root,
+    )
+    assert result == 1
+    assert committed_b == {}
+    assert 'agent profile ccb_orchestrator exceeds max_instances=1' in stderr
 
 
 def test_loop_topology_release_keeps_other_loop_agents(
@@ -1172,8 +1549,9 @@ def test_loop_topology_release_batches_dynamic_agents(
     )
     assert result == 0, stderr
     assert release_calls == [('loop-round1-code_reviewer-1', 'loop-round1-coder-1')]
-    assert reconciled['released_count'] == 2
-    assert reconciled['released_agents'] == ['loop-round1-code_reviewer-1', 'loop-round1-coder-1']
+    assert reconciled['released_count'] == 0
+    assert reconciled['released_agents'] == []
+    assert reconciled['agent_count'] == 0
 
 
 def test_loop_topology_commit_rejects_stale_base_revision(
@@ -1430,7 +1808,7 @@ def test_loop_topology_partial_reconcile_failure_writes_observed_and_recovers(
     assert result == 1
     assert payload == {}
     assert 'synthetic batch add failure' in stderr
-    observed_path = project_root / '.ccb' / 'runtime' / 'loops' / 'round1' / 'agent_topology.observed.json'
+    observed_path = project_root / '.ccb' / 'runtime' / 'loops' / 'round1' / 'agent_mount_topology.observed.json'
     observed = json.loads(observed_path.read_text(encoding='utf-8'))
     assert observed['last_reconcile_status'] == 'failed'
     assert observed['error'] == 'synthetic batch add failure'
@@ -1462,6 +1840,7 @@ def test_loop_topology_propose_rejects_edge_dependency_cycles(
 ) -> None:
     project_root = _project_with_topology(tmp_path, monkeypatch)
     proposal = _proposal()
+    proposal['dispatch_compatibility'] = 'legacy'
     proposal['edges'] = [
         {'id': 'a', 'from': 'ccb_orchestrator', 'to': 'loop-round1-coder-1', 'type': 'ask', 'after': ['b']},
         {

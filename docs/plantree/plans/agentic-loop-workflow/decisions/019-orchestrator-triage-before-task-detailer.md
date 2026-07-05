@@ -42,8 +42,10 @@ Orchestrator classifies the next step as one of:
   bounded worker/reviewer asks.
 - `needs_detail`: the task needs source-backed refinement before dispatch;
   orchestrator requests a short-lived `ccb_task_detailer`.
-- `macro_adjustment_blocked`: the macro packet cannot safely proceed without a
-  planner-owned roadmap, decision, scope, acceptance, or open-question update.
+- `macro_adjustment_request`: the macro packet cannot safely proceed without a
+  planner-owned roadmap, decision, scope, acceptance, or open-question update,
+  so orchestrator or task_detailer emits a compact artifact for planner
+  review.
 - `blocked`: execution cannot proceed and needs a blocker artifact or user
   escalation.
 

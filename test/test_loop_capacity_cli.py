@@ -3,6 +3,7 @@ from __future__ import annotations
 from io import StringIO
 import json
 from pathlib import Path
+import shutil
 from types import SimpleNamespace
 
 import pytest
@@ -14,6 +15,8 @@ from cli.models import ParsedLoopCapacityCommand, ParsedLoopRunOnceCommand, Pars
 from cli.parser import CliParser
 from cli.phase2 import maybe_handle_phase2
 from cli.phase2_runtime.handlers_ops import handle_loop_run_once
+from cli.services import ask as ask_service
+from cli.services import loop_ask_first as loop_ask_first_module
 from cli.services.ask_runtime import AskSummary
 from cli.services.loop_run_once import loop_run_once
 from cli.services.loop_runner import loop_runner_once
@@ -29,6 +32,33 @@ def _write(path: Path, text: str) -> None:
 
 def _write_json(path: Path, payload: dict[str, object]) -> None:
     _write(path, json.dumps(payload, ensure_ascii=False, indent=2) + '\n')
+
+
+def _seed_copy_workspace_binding(context, project_root: Path, target: str) -> Path:
+    workspace = project_root / '.ccb' / 'workspaces' / target
+    for path in sorted(project_root.rglob('*')):
+        try:
+            relative = path.relative_to(project_root)
+        except ValueError:
+            continue
+        if relative.parts and relative.parts[0] == '.ccb':
+            continue
+        if path.is_dir():
+            continue
+        destination = workspace / relative
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(path, destination)
+    _write_json(
+        workspace / '.ccb-workspace.json',
+        {
+            'agent_name': target,
+            'workspace_mode': 'copy',
+            'workspace_path': str(workspace),
+            'target_project': str(project_root),
+            'project_id': context.project.project_id,
+        },
+    )
+    return workspace
 
 
 def _write_installed_role(store_root: Path, role_id: str, *, default_agent_name: str) -> None:
@@ -156,7 +186,67 @@ max_instances = 2
     return project_root
 
 
-def _add_ready_plan_task(project_root: Path, *, task_id: str = 'task-001') -> None:
+def _add_ready_plan_task(
+    project_root: Path,
+    *,
+    task_id: str = 'task-001',
+    task_packet_text: str = 'task packet text\n',
+    execution_contract_text: str = 'execution contract text\n',
+) -> None:
+    plan_root = project_root / 'docs' / 'plantree' / 'plans' / 'demo-plan'
+    task_root = plan_root / 'tasks' / task_id
+    _write(plan_root / 'README.md', '# Demo Plan\n')
+    artifacts: dict[str, dict[str, object]] = {}
+    for kind, filename, text in (
+        ('task_packet', 'task_packet.md', task_packet_text),
+        ('execution_contract', 'execution_contract.md', execution_contract_text),
+    ):
+        path = task_root / filename
+        _write(path, text)
+        artifacts[kind] = {
+            'kind': kind,
+            'artifact_kind': kind,
+            'path': str(path.relative_to(project_root)),
+            'artifact_path': str(path.relative_to(project_root)),
+            'source_path': str(path.relative_to(project_root)),
+            'sha256': 'test',
+            'bytes': len(text.encode('utf-8')),
+            'imported_at': '2026-06-27T00:00:00Z',
+        }
+    record = {
+        'task_id': task_id,
+        'title': 'Task id bridge',
+        'plan_slug': 'demo-plan',
+        'plan_root': 'docs/plantree/plans/demo-plan',
+        'status': 'ready_for_orchestration',
+        'current_loop': None,
+        'owner': 'loop_runner',
+        'next_owner': 'orchestrator',
+        'activation_reason': 'test_ready_for_orchestration',
+        'created_at': '2026-06-27T00:00:00Z',
+        'updated_at': '2026-06-27T00:00:00Z',
+        'task_root': str(task_root.relative_to(project_root)),
+        'artifacts': artifacts,
+    }
+    _write(
+        plan_root / 'tasks' / 'index.json',
+        json.dumps(
+            {
+                'schema_version': 1,
+                'record_type': 'ccb_plan_task_index',
+                'plan_slug': 'demo-plan',
+                'plan_root': str(plan_root),
+                'updated_at': '2026-06-27T00:00:00Z',
+                'tasks': [record],
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+        + '\n',
+    )
+
+
+def _add_legacy_ready_plan_task(project_root: Path, *, task_id: str = 'task-legacy-ready') -> None:
     plan_root = project_root / 'docs' / 'plantree' / 'plans' / 'demo-plan'
     task_root = plan_root / 'tasks' / task_id
     _write(plan_root / 'README.md', '# Demo Plan\n')
@@ -172,7 +262,9 @@ def _add_ready_plan_task(project_root: Path, *, task_id: str = 'task-001') -> No
         _write(path, text)
         artifacts[kind] = {
             'kind': kind,
+            'artifact_kind': kind,
             'path': str(path.relative_to(project_root)),
+            'artifact_path': str(path.relative_to(project_root)),
             'source_path': str(path.relative_to(project_root)),
             'sha256': 'test',
             'bytes': len(text.encode('utf-8')),
@@ -180,7 +272,7 @@ def _add_ready_plan_task(project_root: Path, *, task_id: str = 'task-001') -> No
         }
     record = {
         'task_id': task_id,
-        'title': 'Task id bridge',
+        'title': 'Legacy ready task',
         'plan_slug': 'demo-plan',
         'plan_root': 'docs/plantree/plans/demo-plan',
         'status': 'ready',
@@ -216,6 +308,8 @@ def _add_plan_task_record(
     status: str,
     artifacts: dict[str, dict[str, object]] | None = None,
     current_loop: str | None = None,
+    next_owner: str | None = None,
+    activation_reason: str | None = None,
 ) -> None:
     plan_root = project_root / 'docs' / 'plantree' / 'plans' / 'demo-plan'
     task_root = plan_root / 'tasks' / task_id
@@ -233,6 +327,10 @@ def _add_plan_task_record(
         'task_root': str(task_root.relative_to(project_root)),
         'artifacts': artifacts or {},
     }
+    if next_owner is not None:
+        record['next_owner'] = next_owner
+    if activation_reason is not None:
+        record['activation_reason'] = activation_reason
     index_path = plan_root / 'tasks' / 'index.json'
     try:
         index = json.loads(index_path.read_text(encoding='utf-8'))
@@ -249,6 +347,28 @@ def _add_plan_task_record(
     _write(index_path, json.dumps(index, ensure_ascii=False, indent=2) + '\n')
 
 
+def _import_orchestration_notes(
+    context,
+    project_root: Path,
+    *,
+    task_id: str,
+    route: str,
+    text: str | None = None,
+) -> dict[str, object]:
+    notes = project_root / 'drafts' / f'{task_id}-{route}-orchestration-notes.md'
+    _write(notes, text or f'route: {route}\n')
+    return plan_task(
+        context,
+        SimpleNamespace(
+            action='task-artifact',
+            task_id=task_id,
+            artifact_kind='orchestration_notes',
+            file_path=str(notes),
+            route=route,
+        ),
+    )
+
+
 def _run_phase2(argv: list[str], *, cwd: Path) -> tuple[int, dict[str, object], str]:
     stdout = StringIO()
     stderr = StringIO()
@@ -259,6 +379,7 @@ def _run_phase2(argv: list[str], *, cwd: Path) -> tuple[int, dict[str, object], 
 
 def _workflow_dispatch_proposal() -> dict[str, object]:
     return {
+        'dispatch_compatibility': 'legacy',
         'nodes': [
             {
                 'id': 'plan',
@@ -869,7 +990,8 @@ def test_loop_run_once_task_id_binds_ready_task_and_reads_handoff(
     assert payload['loop_run_status'] == 'ok'
     assert payload['task_id'] == 'task-bridge'
     assert worker_messages
-    assert 'Handoff:\nhandoff text' in worker_messages[0]
+    assert 'Task Packet:\ntask packet text' in worker_messages[0]
+    assert 'Execution Contract:\nexecution contract text' in worker_messages[0]
     shown = plan_task(context, SimpleNamespace(action='task-show', task_id='task-bridge'))
     assert shown['task']['status'] == 'running'
     assert shown['task']['current_loop'] == 'loop-a'
@@ -877,7 +999,7 @@ def test_loop_run_once_task_id_binds_ready_task_and_reads_handoff(
     assert 'Task: task-bridge\n' in breadcrumb
 
 
-def test_loop_runner_once_binds_runs_imports_and_stops_after_one_task(
+def test_loop_runner_once_ready_for_orchestration_activates_orchestrator_only(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -885,52 +1007,247 @@ def test_loop_runner_once_binds_runs_imports_and_stops_after_one_task(
     _add_ready_plan_task(project_root, task_id='task-runner')
     command = ParsedLoopRunnerCommand(project=None, once=True, timeout_s=11.0, json_output=True)
     context = CliContextBuilder().build(command, cwd=project_root, bootstrap_if_missing=False)
+    ready = plan_task(context, SimpleNamespace(action='task-show', task_id='task-runner'))
+    assert ready['task']['status'] == 'ready_for_orchestration'
+    assert ready['task']['next_owner'] == 'orchestrator'
     seen: dict[str, object] = {}
 
-    def fake_loop_run_once(_context, run_command, _services):
-        seen['task_id'] = run_command.task_id
-        seen['timeout_s'] = run_command.timeout_s
-        loop_dir = project_root / '.ccb' / 'runtime' / 'loops' / run_command.loop_id
-        loop_dir.mkdir(parents=True, exist_ok=True)
-        round_path = loop_dir / 'round.json'
-        payload = {
-            'schema_version': 1,
-            'record_type': 'ccb_loop_run_once_round',
-            'loop_run_status': 'ok',
-            'loop_id': run_command.loop_id,
-            'task_id': run_command.task_id,
-            'round_checker': {'job_id': 'job_round_checker', 'reply': 'round result: pass\nverified\n'},
-            'paths': {'round': str(round_path)},
-        }
-        _write(round_path, json.dumps(payload, ensure_ascii=False, indent=2) + '\n')
-        return payload
+    def fake_submit_ask(_context, ask_command):
+        seen['calls'] = int(seen.get('calls') or 0) + 1
+        seen['target'] = ask_command.target
+        seen['sender'] = ask_command.sender
+        seen['task_id'] = ask_command.task_id
+        seen['artifact_request'] = ask_command.artifact_request
+        seen['message'] = ask_command.message
+        return AskSummary(
+            project_id=context.project.project_id,
+            submission_id=None,
+            jobs=(
+                {
+                    'job_id': 'job_orchestrator',
+                    'agent_name': 'orchestrator',
+                    'status': 'completed',
+                    'reply': 'route: blocked\nstatus: done\nround result: pass\n',
+                },
+            ),
+        )
+
+    def forbidden_loop_run_once(*_args, **_kwargs):
+        raise AssertionError('ready_for_orchestration must not run the fixed execution bridge')
+
+    def forbidden_watch_ask_job(*_args, **_kwargs):
+        raise AssertionError('orchestrator route/status must not be parsed from provider replies')
+
+    def forbidden_plan_task(*_args, **_kwargs):
+        raise AssertionError('orchestrator activation must not bind loops or import status artifacts')
 
     payload = loop_runner_once(
         context,
         command,
-        services=SimpleNamespace(loop_run_once=fake_loop_run_once, plan_task=plan_task),
+        services=SimpleNamespace(
+            submit_ask=fake_submit_ask,
+            watch_ask_job=forbidden_watch_ask_job,
+            loop_run_once=forbidden_loop_run_once,
+            plan_task=forbidden_plan_task,
+        ),
     )
 
     assert payload['loop_runner_status'] == 'ok'
-    assert payload['action'] == 'ran_one_round'
+    assert payload['action'] == 'activated_orchestrator'
     assert payload['task_id'] == 'task-runner'
-    assert payload['round_result'] == 'pass'
-    assert payload['round_result_source'] == 'round_checker_reply'
-    assert payload['task_status'] == 'done'
-    assert payload['next_activation'] == 'stop'
-    assert seen == {'task_id': 'task-runner', 'timeout_s': 11.0}
-    shown = plan_task(context, SimpleNamespace(action='task-show', task_id='task-runner'))
-    assert shown['task']['status'] == 'done'
-    assert shown['task']['current_loop'] is None
-    assert shown['task']['artifacts']['round_pass']['round_result'] == 'pass'
-    assert shown['task']['artifacts']['round_pass']['actor'] == {
-        'source': 'loop_runner',
-        'actor': 'loop_runner',
-        'job_id': 'job_round_checker',
+    assert payload['task_status'] == 'ready_for_orchestration'
+    assert payload['next_owner'] == 'orchestrator'
+    assert payload['ask'] == {'target': 'orchestrator', 'job_id': 'job_orchestrator', 'status': 'completed'}
+    assert payload['next_activation'] == 'stop_after_one_activation'
+    assert seen['target'] == 'orchestrator'
+    assert seen['sender'] == 'system'
+    assert seen['artifact_request'] is True
+    assert seen['calls'] == 1
+    message = str(seen['message'])
+    assert 'Allowed routes: direct_execution, needs_detail, macro_adjustment_request, blocked, partial_completion' in message
+    assert (
+        'route: <one of direct_execution|needs_detail|macro_adjustment_request|blocked|partial_completion>'
+        in message
+    )
+    assert 'Reply only; do not run ccb, ccb_test, artifact import commands, or wrapper commands.' in message
+    assert (
+        'Supervisor/script-owned import will record orchestration_notes with the selected route after reviewing this reply.'
+        in message
+    )
+    assert 'do not rely on provider reply text' in message
+    assert 'do not start task_detailer, worker, reviewer, loop_run_once, or topology dispatch' in message
+    assert 'ccb plan task-artifact' not in message
+    assert 'plan task-artifact' not in message
+    assert 'route_import_command' not in message
+    assert 'import the stable decision' not in message
+    assert 'use CCB plan commands or host-provided wrappers for authoritative writes' not in message
+    activation = json.loads(Path(str(payload['activation_path'])).read_text(encoding='utf-8'))
+    assert activation['record_type'] == 'ccb_loop_orchestrator_activation'
+    assert activation['task_id'] == 'task-runner'
+    assert 'route_import_command' not in activation
+    assert (
+        activation['required_next_output']
+        == 'reply-only route decision and compact orchestration notes for supervisor-owned import'
+    )
+    assert activation['artifact_refs'] == {
+        'execution_contract': 'docs/plantree/plans/demo-plan/tasks/task-runner/execution_contract.md',
+        'task_packet': 'docs/plantree/plans/demo-plan/tasks/task-runner/task_packet.md',
     }
+    assert activation['compact_artifacts']['task_packet']['content'] == 'task packet text'
+    assert activation['compact_artifacts']['execution_contract']['content'] == 'execution contract text'
+    assert activation['allowed_routes'] == [
+        'direct_execution',
+        'needs_detail',
+        'macro_adjustment_request',
+        'blocked',
+        'partial_completion',
+    ]
+    script_write_rules = '\n'.join(str(rule) for rule in activation['script_write_rules'])
+    assert 'Reply only; do not run ccb, ccb_test, artifact import commands, or wrapper commands.' in script_write_rules
+    assert (
+        'Supervisor/script-owned import will record orchestration_notes with the selected route after reviewing this reply.'
+        in script_write_rules
+    )
+    assert 'ccb plan task-artifact' not in script_write_rules
+    assert 'plan task-artifact' not in script_write_rules
+    assert 'Import the stable route' not in script_write_rules
+    assert 'authoritative writes' not in script_write_rules
+    shown = plan_task(context, SimpleNamespace(action='task-show', task_id='task-runner'))
+    assert shown['task']['status'] == 'ready_for_orchestration'
+    assert shown['task']['current_loop'] is None
+    assert shown['task']['next_owner'] == 'orchestrator'
+    assert set(shown['task']['artifacts']) == {'task_packet', 'execution_contract'}
 
 
-def test_loop_runner_once_dispatches_committed_topology_edges_in_order(
+def test_loop_runner_once_explicit_project_from_outer_cwd_submits_orchestrator_ask(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = _project_with_loop_capacity(tmp_path, monkeypatch)
+    outer_project = tmp_path / 'outer-ccb-project'
+    _write(outer_project / '.ccb' / 'ccb.config', 'cmd; outer:codex\n')
+    _add_ready_plan_task(project_root, task_id='task-runner')
+    command = ParsedLoopRunnerCommand(project=str(project_root), once=True, timeout_s=11.0, json_output=True)
+    context = CliContextBuilder().build(command, cwd=outer_project, bootstrap_if_missing=False)
+    captured: dict[str, object] = {}
+
+    class _FakeClient:
+        def submit(self, envelope) -> dict:
+            captured['project_id'] = envelope.project_id
+            captured['to_agent'] = envelope.to_agent
+            captured['from_actor'] = envelope.from_actor
+            captured['task_id'] = envelope.task_id
+            captured['route_options'] = envelope.route_options
+            captured['body'] = envelope.body
+            captured['body_artifact'] = envelope.body_artifact
+            return {
+                'job_id': 'job_orchestrator',
+                'agent_name': envelope.to_agent,
+                'target_name': envelope.to_agent,
+                'status': 'submitted',
+            }
+
+    monkeypatch.setattr(
+        ask_service,
+        'invoke_mounted_daemon',
+        lambda context, allow_restart_stale, request_fn: request_fn(_FakeClient()),
+    )
+
+    payload = loop_runner_once(context, command, services=SimpleNamespace(submit_ask=ask_service.submit_ask))
+
+    assert context.project.project_root == project_root.resolve()
+    assert context.project.source == 'explicit'
+    assert context.cwd == outer_project
+    assert payload['loop_runner_status'] == 'ok'
+    assert payload['action'] == 'activated_orchestrator'
+    assert payload['ask'] == {'target': 'orchestrator', 'job_id': 'job_orchestrator', 'status': 'submitted'}
+    assert captured['project_id'] == context.project.project_id
+    assert captured['to_agent'] == 'orchestrator'
+    assert captured['from_actor'] == 'system'
+    assert captured['route_options'] == {'artifact_request': True}
+    assert str(captured['task_id']).startswith('act-')
+    artifact = captured['body_artifact']
+    assert isinstance(artifact, dict)
+    message = Path(str(artifact['path'])).read_text(encoding='utf-8')
+    assert 'Required reply-only output:' in message
+    assert 'ccb plan task-artifact' not in message
+    assert 'plan task-artifact' not in message
+
+
+def test_loop_runner_once_selects_ready_task_despite_committed_legacy_topology(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = _project_with_workflow_topology(tmp_path, monkeypatch)
+    _add_ready_plan_task(project_root, task_id='task-runner')
+    proposal_path = project_root / 'workflow-dispatch.json'
+    _write_json(proposal_path, _workflow_dispatch_proposal())
+
+    result, _proposed, stderr = _run_phase2(
+        [
+            'loop',
+            'topology',
+            'propose',
+            '--loop-id',
+            'wf1',
+            '--from',
+            str(proposal_path),
+            '--proposal-id',
+            'dispatch1',
+            '--json',
+        ],
+        cwd=project_root,
+    )
+    assert result == 0, stderr
+    result, committed, stderr = _run_phase2(
+        ['loop', 'topology', 'commit', '--loop-id', 'wf1', '--proposal', 'dispatch1', '--apply', '--json'],
+        cwd=project_root,
+    )
+    assert result == 0, stderr
+    assert committed['reconcile']['loop_topology_status'] == 'reconciled'
+
+    command = ParsedLoopRunnerCommand(project=None, once=True, timeout_s=11.0, json_output=True)
+    context = CliContextBuilder().build(command, cwd=project_root, bootstrap_if_missing=False)
+    seen: dict[str, object] = {}
+
+    def forbidden_topology_task(*_args, **_kwargs):
+        raise AssertionError('runner mainline must not consult topology dispatch task discovery')
+
+    def forbidden_topology_dispatch(*_args, **_kwargs):
+        raise AssertionError('runner mainline must not execute topology dispatch')
+
+    def fake_submit_ask(_context, ask_command):
+        seen['target'] = ask_command.target
+        return AskSummary(
+            project_id=context.project.project_id,
+            submission_id=None,
+            jobs=({'job_id': 'job_orchestrator_topology', 'agent_name': 'orchestrator', 'status': 'submitted'},),
+        )
+
+    def forbidden_loop_run_once(*_args, **_kwargs):
+        raise AssertionError('new ready_for_orchestration task must not run the fixed bridge')
+
+    payload = loop_runner_once(
+        context,
+        command,
+        services=SimpleNamespace(
+            find_topology_dispatch_task=forbidden_topology_task,
+            topology_dispatch=forbidden_topology_dispatch,
+            loop_run_once=forbidden_loop_run_once,
+            submit_ask=fake_submit_ask,
+            plan_task=plan_task,
+        ),
+    )
+
+    assert payload['loop_runner_status'] == 'ok'
+    assert payload['action'] == 'activated_orchestrator'
+    assert payload['task_id'] == 'task-runner'
+    assert seen == {'target': 'orchestrator'}
+    dispatch_path = project_root / '.ccb' / 'runtime' / 'loops' / 'wf1' / 'topology_dispatch.json'
+    assert not dispatch_path.exists()
+
+
+def test_loop_runner_once_pauses_bound_topology_loop_without_dispatch(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -965,32 +1282,98 @@ def test_loop_runner_once_dispatches_committed_topology_edges_in_order(
     command = ParsedLoopRunnerCommand(project=None, once=True, timeout_s=11.0, json_output=True)
     context = CliContextBuilder().build(command, cwd=project_root, bootstrap_if_missing=False)
     plan_task(context, SimpleNamespace(action='task-bind-loop', task_id='task-topology', loop_id='wf1'))
-    submitted: list[tuple[str, str | None, str]] = []
+
+    def forbidden_submit_ask(*_args, **_kwargs):
+        raise AssertionError('bound topology loop must not submit topology dispatch asks')
+
+    def forbidden_loop_run_once(*_args, **_kwargs):
+        raise AssertionError('bound topology loop must not fall back to fixed runner')
+
+    def forbidden_topology_dispatch(*_args, **_kwargs):
+        raise AssertionError('topology dispatch is legacy/disabled for loop runner mainline')
+
+    payload = loop_runner_once(
+        context,
+        command,
+        services=SimpleNamespace(
+            submit_ask=forbidden_submit_ask,
+            loop_run_once=forbidden_loop_run_once,
+            topology_dispatch=forbidden_topology_dispatch,
+            plan_task=plan_task,
+        ),
+    )
+
+    assert payload['loop_runner_status'] == 'paused'
+    assert payload['action'] == 'ask_first_execution_not_ready'
+    assert 'Phase 4 ask-first execution can only start from an unbound direct_execution task' in payload['reason']
+    assert payload['loop_id'] == 'wf1'
+    assert payload['task_id'] == 'task-topology'
+    assert payload['task_status'] == 'running'
+    assert payload['next_owner'] == 'orchestrator'
+    assert payload['next_activation'] == 'phase4_ask_first_runner_required'
+    dispatch_path = project_root / '.ccb' / 'runtime' / 'loops' / 'wf1' / 'topology_dispatch.json'
+    assert not dispatch_path.exists()
+    shown = plan_task(context, SimpleNamespace(action='task-show', task_id='task-topology'))
+    assert shown['task']['status'] == 'running'
+    assert shown['task']['current_loop'] == 'wf1'
+    assert 'round_summary' not in shown['task']['artifacts']
+
+
+def test_loop_runner_direct_execution_route_runs_ask_first_round_without_dispatch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = _project_with_workflow_topology(tmp_path, monkeypatch)
+    _write(project_root / 'lab_docs' / 'direct_execution_note.md', 'status: draft\n')
+    _add_ready_plan_task(
+        project_root,
+        task_id='task-direct',
+        execution_contract_text='execution contract text\nallowed_change_paths: lab_docs/direct_execution_note.md\n',
+    )
+    command = ParsedLoopRunnerCommand(project=None, once=True, timeout_s=11.0, json_output=True)
+    context = CliContextBuilder().build(command, cwd=project_root, bootstrap_if_missing=False)
+    _import_orchestration_notes(context, project_root, task_id='task-direct', route='direct_execution')
+    submitted: list[object] = []
+    targets_by_job: dict[str, str] = {}
 
     def fake_submit_ask(_context, ask_command):
-        submitted.append((ask_command.target, ask_command.sender, ask_command.message))
+        next_index = len(submitted) + 1
+        if next_index == 2 and ask_command.callback:
+            raise RuntimeError('ask --chain requires an active parent job for the sender')
+        if next_index == 2 and ask_command.sender != 'system':
+            raise RuntimeError('plain ask from an active CCB task requires --chain')
+        submitted.append(ask_command)
+        job_id = f'job_{len(submitted)}'
+        targets_by_job[job_id] = ask_command.target
         return AskSummary(
             project_id=context.project.project_id,
-            submission_id=None,
-            jobs=({'job_id': f'job-{ask_command.target}', 'agent_name': ask_command.target, 'status': 'submitted'},),
+            submission_id=f'sub_{len(submitted)}',
+            jobs=({'job_id': job_id, 'agent_name': ask_command.target, 'status': 'accepted'},),
         )
 
     def fake_watch_ask_job(_context, job_id, _out, *, timeout, emit_output):
         assert timeout == 11.0
         assert emit_output is False
-        if job_id == 'job-wf-ccb-round-reviewer':
-            reply = 'round result: pass\nverification performed: topology dispatch\n'
-            agent_name = 'wf-ccb-round-reviewer'
+        target = targets_by_job[str(job_id)]
+        if target.startswith('loop-') and '-coder-' in target:
+            workspace = _seed_copy_workspace_binding(context, project_root, target)
+            _write(workspace / 'lab_docs' / 'direct_execution_note.md', 'status: reviewed\n')
+        if target == 'ccb_round_reviewer':
+            reply = (
+                'round result: pass\n'
+                'verification performed: direct execution fake review\n'
+                'hidden degradation audit: no hidden fallback, scope shrink, or fake success\n'
+                'evidence refs: task_packet execution_contract\n'
+            )
         else:
-            reply = f'completed {job_id}\n'
-            agent_name = job_id.removeprefix('job-')
+            reply = f'reply from {target}'
         return WatchEventBatch(
             target=job_id,
             job_id=job_id,
-            agent_name=agent_name,
+            agent_name=target,
             target_kind='job',
             target_name=job_id,
-            provider='fake',
+            provider='codex',
             provider_instance=None,
             cursor=1,
             generation=1,
@@ -1001,7 +1384,1506 @@ def test_loop_runner_once_dispatches_committed_topology_edges_in_order(
         )
 
     def forbidden_loop_run_once(*_args, **_kwargs):
-        raise AssertionError('committed topology graph must take precedence over fixed fallback')
+        raise AssertionError('direct_execution route must not run the legacy fixed bridge')
+
+    def forbidden_topology_dispatch(*_args, **_kwargs):
+        raise AssertionError('direct_execution route must not execute topology dispatch')
+
+    payload = loop_runner_once(
+        context,
+        command,
+        services=SimpleNamespace(
+            submit_ask=fake_submit_ask,
+            watch_ask_job=fake_watch_ask_job,
+            loop_run_once=forbidden_loop_run_once,
+            topology_dispatch=forbidden_topology_dispatch,
+            plan_task=plan_task,
+        ),
+    )
+
+    assert payload['loop_runner_status'] == 'ok'
+    assert payload['action'] == 'ran_one_round'
+    assert payload['execution_mode'] == 'ask_first_direct_execution'
+    assert payload['dispatch_source'] == 'ask_first_mount_topology'
+    assert payload['task_id'] == 'task-direct'
+    assert payload['round_result'] == 'pass'
+    assert payload['round_result_source'] == 'round_reviewer_reply'
+    assert payload['task_status'] == 'done'
+    assert payload['next_activation'] == 'stop'
+    assert payload['release']['released_count'] == 2
+    assert payload['release']['retained_count'] == 0
+    assert payload['topology']['status'] == 'ready'
+    assert (project_root / 'lab_docs' / 'direct_execution_note.md').read_text(encoding='utf-8') == 'status: reviewed\n'
+    targets = [command.target for command in submitted]
+    assert len(targets) == 4
+    assert targets[0].startswith(f'loop-{payload["loop_id"]}-coder-')
+    assert targets[1].startswith(f'loop-{payload["loop_id"]}-code_reviewer-')
+    assert targets[2] == 'orchestrator'
+    assert targets[3] == 'ccb_round_reviewer'
+    assert all(command.sender == 'system' for command in submitted)
+    assert all(command.callback is False for command in submitted)
+    assert all(command.silence is False for command in submitted)
+    assert 'task_detailer' not in targets
+    worker_message = submitted[0].message
+    reviewer_message = submitted[1].message
+    assert 'task_packet:' in worker_message
+    assert 'execution_contract:' in worker_message
+    assert 'Task Packet:\ntask packet text' in worker_message
+    assert 'Execution Contract:\nexecution contract text' in worker_message
+    assert 'explicitly check execution_contract' in reviewer_message
+    assert 'reject hidden fallback, scope shrink, and fake success' in reviewer_message
+    normalized_proposal = json.loads(Path(str(payload['topology']['proposal_path'])).read_text(encoding='utf-8'))
+    desired = json.loads(Path(str(payload['topology']['desired_path'])).read_text(encoding='utf-8'))
+    observed = json.loads(Path(str(payload['topology']['observed_path'])).read_text(encoding='utf-8'))
+    assert [agent['profile'] for agent in normalized_proposal['agents']] == ['coder', 'code_reviewer']
+    for persisted in (normalized_proposal, desired, observed):
+        assert 'edges' not in persisted
+        assert 'artifacts' not in persisted
+        assert 'gates' not in persisted
+    assert not (project_root / '.ccb' / 'runtime' / 'loops' / payload['loop_id'] / 'topology_dispatch.json').exists()
+    round_json = json.loads(Path(str(payload['round']['round_json_path'])).read_text(encoding='utf-8'))
+    assert round_json['agents']['ccb_round_reviewer'] == 'ccb_round_reviewer'
+    assert round_json['ccb_round_reviewer']['target'] == 'ccb_round_reviewer'
+    assert 'round_checker' not in round_json['agents']
+    assert 'round_checker' not in round_json
+    assert round_json['legacy_aliases']['round_checker']['field'] == 'ccb_round_reviewer'
+    assert round_json['topology']['release']['released_count'] == 2
+    assert round_json['authority_update']['source'] == 'isolated_workspace_changes_promoted'
+    assert round_json['authority_update']['changed_files'] == ['lab_docs/direct_execution_note.md']
+    assert round_json['authority_update']['allowed_change_paths'] == ['lab_docs/direct_execution_note.md']
+    assert round_json['authority_update']['verified_project_root'] is True
+    assert round_json['authority_import']['status'] == 'done'
+    assert (Path(str(round_json['paths']['artifacts'])) / 'ccb_round_reviewer-reply.md').is_file()
+    shown = plan_task(context, SimpleNamespace(action='task-show', task_id='task-direct'))
+    assert shown['task']['status'] == 'done'
+    assert shown['task']['current_loop'] is None
+    assert shown['task']['artifacts']['orchestration_notes']['orchestrator_route'] == 'direct_execution'
+    assert shown['task']['artifacts']['round_summary']['round_result'] == 'pass'
+    assert shown['task']['artifacts']['round_summary']['actor'] == {
+        'source': 'loop_runner',
+        'actor': 'loop_runner',
+        'job_id': 'job_1',
+    }
+
+
+def test_loop_runner_direct_execution_promotes_isolated_workspace_changes_before_pass(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = _project_with_workflow_topology(tmp_path, monkeypatch)
+    _write(project_root / 'lab_docs' / 'l1_release_note.md', 'status: draft\n')
+    _add_ready_plan_task(
+        project_root,
+        task_id='task-direct',
+        execution_contract_text='execution contract text\nallowed_change_paths: lab_docs/l1_release_note.md\n',
+    )
+    command = ParsedLoopRunnerCommand(project=None, once=True, timeout_s=11.0, json_output=True)
+    context = CliContextBuilder().build(command, cwd=project_root, bootstrap_if_missing=False)
+    _import_orchestration_notes(context, project_root, task_id='task-direct', route='direct_execution')
+    submitted: list[object] = []
+    targets_by_job: dict[str, str] = {}
+
+    def fake_submit_ask(_context, ask_command):
+        submitted.append(ask_command)
+        job_id = f'job_{len(submitted)}'
+        targets_by_job[job_id] = ask_command.target
+        return AskSummary(
+            project_id=context.project.project_id,
+            submission_id=f'sub_{len(submitted)}',
+            jobs=({'job_id': job_id, 'agent_name': ask_command.target, 'status': 'accepted'},),
+        )
+
+    def fake_watch_ask_job(_context, job_id, _out, *, timeout, emit_output):
+        assert timeout == 11.0
+        assert emit_output is False
+        target = targets_by_job[str(job_id)]
+        if target.startswith('loop-') and '-coder-' in target:
+            workspace = _seed_copy_workspace_binding(context, project_root, target)
+            _write(workspace / 'lab_docs' / 'l1_release_note.md', 'status: reviewed\n')
+        if target == 'ccb_round_reviewer':
+            reply = (
+                'round result: pass\n'
+                'verification performed: direct execution fake review\n'
+                'hidden degradation audit: no hidden fallback, scope shrink, or fake success\n'
+                'evidence refs: task_packet execution_contract\n'
+            )
+        else:
+            reply = f'reply from {target}'
+        return WatchEventBatch(
+            target=job_id,
+            job_id=job_id,
+            agent_name=target,
+            target_kind='job',
+            target_name=job_id,
+            provider='codex',
+            provider_instance=None,
+            cursor=1,
+            generation=1,
+            terminal=True,
+            status='completed',
+            reply=reply,
+            events=(),
+        )
+
+    def forbidden_loop_run_once(*_args, **_kwargs):
+        raise AssertionError('direct_execution route must not run the legacy fixed bridge')
+
+    def forbidden_topology_dispatch(*_args, **_kwargs):
+        raise AssertionError('direct_execution route must not execute topology dispatch')
+
+    payload = loop_runner_once(
+        context,
+        command,
+        services=SimpleNamespace(
+            submit_ask=fake_submit_ask,
+            watch_ask_job=fake_watch_ask_job,
+            loop_run_once=forbidden_loop_run_once,
+            topology_dispatch=forbidden_topology_dispatch,
+            plan_task=plan_task,
+        ),
+    )
+
+    assert payload['loop_runner_status'] == 'ok'
+    assert payload['round_result'] == 'pass'
+    assert payload['round_result_source'] == 'round_reviewer_reply'
+    assert payload['task_status'] == 'done'
+    assert payload['release']['released_count'] == 2
+    assert (project_root / 'lab_docs' / 'l1_release_note.md').read_text(encoding='utf-8') == 'status: reviewed\n'
+    round_json = json.loads(Path(str(payload['round']['round_json_path'])).read_text(encoding='utf-8'))
+    assert round_json['round_result'] == 'pass'
+    assert round_json['authority_update']['source'] == 'isolated_workspace_changes_promoted'
+    assert round_json['authority_update']['changed_files'] == ['lab_docs/l1_release_note.md']
+    assert round_json['authority_update']['verified_project_root'] is True
+    assert round_json['authority_import']['status'] == 'done'
+    summary_text = Path(str(round_json['paths']['round'])).read_text(encoding='utf-8')
+    assert 'round result: pass' in summary_text
+    assert '## Authority Update' in summary_text
+    assert '- changed_files: lab_docs/l1_release_note.md' in summary_text
+    shown = plan_task(context, SimpleNamespace(action='task-show', task_id='task-direct'))
+    assert shown['task']['status'] == 'done'
+    assert shown['task']['artifacts']['round_summary']['round_result'] == 'pass'
+
+
+def test_loop_runner_direct_execution_promotes_before_project_root_review(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = _project_with_workflow_topology(tmp_path, monkeypatch)
+    _write(project_root / 'lab_docs' / 'l1_release_note.md', 'status: draft\n')
+    _add_ready_plan_task(
+        project_root,
+        task_id='task-direct',
+        execution_contract_text='execution contract text\nallowed_change_paths: lab_docs/l1_release_note.md\n',
+    )
+    command = ParsedLoopRunnerCommand(project=None, once=True, timeout_s=11.0, json_output=True)
+    context = CliContextBuilder().build(command, cwd=project_root, bootstrap_if_missing=False)
+    _import_orchestration_notes(context, project_root, task_id='task-direct', route='direct_execution')
+    submitted: list[object] = []
+    targets_by_job: dict[str, str] = {}
+    reviewer_project_root_seen: list[str] = []
+    round_reviewer_project_root_seen: list[str] = []
+
+    def fake_submit_ask(_context, ask_command):
+        submitted.append(ask_command)
+        job_id = f'job_{len(submitted)}'
+        targets_by_job[job_id] = ask_command.target
+        return AskSummary(
+            project_id=context.project.project_id,
+            submission_id=f'sub_{len(submitted)}',
+            jobs=({'job_id': job_id, 'agent_name': ask_command.target, 'status': 'accepted'},),
+        )
+
+    def fake_watch_ask_job(_context, job_id, _out, *, timeout, emit_output):
+        assert timeout == 11.0
+        assert emit_output is False
+        target = targets_by_job[str(job_id)]
+        if target.startswith('loop-') and '-coder-' in target:
+            workspace = _seed_copy_workspace_binding(context, project_root, target)
+            _write(workspace / 'lab_docs' / 'l1_release_note.md', 'status: reviewed\n')
+            reply = 'status: done\nchanged_files: lab_docs/l1_release_note.md\n'
+        elif target.startswith('loop-') and '-code_reviewer-' in target:
+            content = (project_root / 'lab_docs' / 'l1_release_note.md').read_text(encoding='utf-8')
+            reviewer_project_root_seen.append(content)
+            reply = (
+                'status: pass\n'
+                f'project-root evidence: lab_docs/l1_release_note.md -> {content.strip()}\n'
+            )
+        elif target == 'ccb_round_reviewer':
+            content = (project_root / 'lab_docs' / 'l1_release_note.md').read_text(encoding='utf-8')
+            round_reviewer_project_root_seen.append(content)
+            if content == 'status: reviewed\n':
+                reply = (
+                    'round result: pass\n'
+                    'verification performed: project root contains reviewed release note\n'
+                    'hidden degradation audit: no hidden fallback, scope shrink, or fake success\n'
+                )
+            else:
+                reply = (
+                    'round result: rework_node\n'
+                    'fake success evidence: worker workspace changed but project root is still draft\n'
+                )
+        else:
+            reply = f'reply from {target}'
+        return WatchEventBatch(
+            target=job_id,
+            job_id=job_id,
+            agent_name=target,
+            target_kind='job',
+            target_name=job_id,
+            provider='codex',
+            provider_instance=None,
+            cursor=1,
+            generation=1,
+            terminal=True,
+            status='completed',
+            reply=reply,
+            events=(),
+        )
+
+    def forbidden_loop_run_once(*_args, **_kwargs):
+        raise AssertionError('direct_execution route must not run the legacy fixed bridge')
+
+    def forbidden_topology_dispatch(*_args, **_kwargs):
+        raise AssertionError('direct_execution route must not execute topology dispatch')
+
+    payload = loop_runner_once(
+        context,
+        command,
+        services=SimpleNamespace(
+            submit_ask=fake_submit_ask,
+            watch_ask_job=fake_watch_ask_job,
+            loop_run_once=forbidden_loop_run_once,
+            topology_dispatch=forbidden_topology_dispatch,
+            plan_task=plan_task,
+        ),
+    )
+
+    assert payload['loop_runner_status'] == 'ok'
+    assert payload['round_result'] == 'pass'
+    assert payload['round_result_source'] == 'round_reviewer_reply'
+    assert payload['task_status'] == 'done'
+    assert reviewer_project_root_seen == ['status: reviewed\n']
+    assert round_reviewer_project_root_seen == ['status: reviewed\n']
+    assert (project_root / 'lab_docs' / 'l1_release_note.md').read_text(encoding='utf-8') == 'status: reviewed\n'
+    round_json = json.loads(Path(str(payload['round']['round_json_path'])).read_text(encoding='utf-8'))
+    assert round_json['authority_update']['source'] == 'isolated_workspace_changes_promoted'
+    assert round_json['authority_update']['changed_files'] == ['lab_docs/l1_release_note.md']
+    assert round_json['authority_update']['verified_project_root'] is True
+
+
+def test_loop_runner_direct_execution_blocks_when_workspace_promotion_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = _project_with_workflow_topology(tmp_path, monkeypatch)
+    _write(project_root / 'lab_docs' / 'l1_release_note.md', 'status: draft\n')
+    _add_ready_plan_task(
+        project_root,
+        task_id='task-direct',
+        execution_contract_text='execution contract text\nallowed_change_paths: lab_docs/l1_release_note.md\n',
+    )
+    command = ParsedLoopRunnerCommand(project=None, once=True, timeout_s=11.0, json_output=True)
+    context = CliContextBuilder().build(command, cwd=project_root, bootstrap_if_missing=False)
+    _import_orchestration_notes(context, project_root, task_id='task-direct', route='direct_execution')
+    submitted: list[object] = []
+    targets_by_job: dict[str, str] = {}
+
+    def fake_submit_ask(_context, ask_command):
+        submitted.append(ask_command)
+        job_id = f'job_{len(submitted)}'
+        targets_by_job[job_id] = ask_command.target
+        return AskSummary(
+            project_id=context.project.project_id,
+            submission_id=f'sub_{len(submitted)}',
+            jobs=({'job_id': job_id, 'agent_name': ask_command.target, 'status': 'accepted'},),
+        )
+
+    def fake_watch_ask_job(_context, job_id, _out, *, timeout, emit_output):
+        assert timeout == 11.0
+        assert emit_output is False
+        target = targets_by_job[str(job_id)]
+        if target.startswith('loop-') and '-coder-' in target:
+            workspace = _seed_copy_workspace_binding(context, project_root, target)
+            _write(workspace / 'lab_docs' / 'l1_release_note.md', 'status: reviewed\n')
+        if target == 'ccb_round_reviewer':
+            reply = (
+                'round result: pass\n'
+                'verification performed: direct execution fake review\n'
+                'hidden degradation audit: no hidden fallback, scope shrink, or fake success\n'
+                'evidence refs: task_packet execution_contract\n'
+            )
+        else:
+            reply = f'reply from {target}'
+        return WatchEventBatch(
+            target=job_id,
+            job_id=job_id,
+            agent_name=target,
+            target_kind='job',
+            target_name=job_id,
+            provider='codex',
+            provider_instance=None,
+            cursor=1,
+            generation=1,
+            terminal=True,
+            status='completed',
+            reply=reply,
+            events=(),
+        )
+
+    def blocked_copy(*_args, **_kwargs):
+        raise RuntimeError('promotion blocked by test')
+
+    monkeypatch.setattr(loop_ask_first_module, '_copy_workspace_files', blocked_copy)
+
+    def forbidden_loop_run_once(*_args, **_kwargs):
+        raise AssertionError('direct_execution route must not run the legacy fixed bridge')
+
+    def forbidden_topology_dispatch(*_args, **_kwargs):
+        raise AssertionError('direct_execution route must not execute topology dispatch')
+
+    payload = loop_runner_once(
+        context,
+        command,
+        services=SimpleNamespace(
+            submit_ask=fake_submit_ask,
+            watch_ask_job=fake_watch_ask_job,
+            loop_run_once=forbidden_loop_run_once,
+            topology_dispatch=forbidden_topology_dispatch,
+            plan_task=plan_task,
+        ),
+    )
+
+    assert payload['loop_runner_status'] == 'ok'
+    assert payload['round_result'] == 'blocked'
+    assert payload['round_result_source'] == 'isolated_workspace_promotion_failed'
+    assert payload['task_status'] == 'blocked'
+    assert payload['release']['released_count'] == 2
+    assert (project_root / 'lab_docs' / 'l1_release_note.md').read_text(encoding='utf-8') == 'status: draft\n'
+    round_json = json.loads(Path(str(payload['round']['round_json_path'])).read_text(encoding='utf-8'))
+    assert round_json['round_result'] == 'blocked'
+    assert round_json['failure']['source'] == 'isolated_workspace_promotion_failed'
+    assert round_json['failure']['changed_files'] == ['lab_docs/l1_release_note.md']
+    assert round_json['authority_import']['status'] == 'blocked'
+    summary_text = Path(str(round_json['paths']['round'])).read_text(encoding='utf-8')
+    assert 'round result: blocked' in summary_text
+    assert '- changed_files: lab_docs/l1_release_note.md' in summary_text
+    shown = plan_task(context, SimpleNamespace(action='task-show', task_id='task-direct'))
+    assert shown['task']['status'] == 'blocked'
+
+
+def test_loop_runner_direct_execution_blocks_isolated_workspace_pass_without_project_effect(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = _project_with_workflow_topology(tmp_path, monkeypatch)
+    _write(project_root / 'lab_docs' / 'l1_release_note.md', 'status: draft\n')
+    _add_ready_plan_task(project_root, task_id='task-direct')
+    command = ParsedLoopRunnerCommand(project=None, once=True, timeout_s=11.0, json_output=True)
+    context = CliContextBuilder().build(command, cwd=project_root, bootstrap_if_missing=False)
+    _import_orchestration_notes(context, project_root, task_id='task-direct', route='direct_execution')
+    submitted: list[object] = []
+    targets_by_job: dict[str, str] = {}
+
+    def fake_submit_ask(_context, ask_command):
+        submitted.append(ask_command)
+        job_id = f'job_{len(submitted)}'
+        targets_by_job[job_id] = ask_command.target
+        return AskSummary(
+            project_id=context.project.project_id,
+            submission_id=f'sub_{len(submitted)}',
+            jobs=({'job_id': job_id, 'agent_name': ask_command.target, 'status': 'accepted'},),
+        )
+
+    def fake_watch_ask_job(_context, job_id, _out, *, timeout, emit_output):
+        assert timeout == 11.0
+        assert emit_output is False
+        target = targets_by_job[str(job_id)]
+        if target.startswith('loop-') and '-coder-' in target:
+            _seed_copy_workspace_binding(context, project_root, target)
+        if target == 'ccb_round_reviewer':
+            reply = (
+                'round result: pass\n'
+                'verification performed: direct execution fake review\n'
+                'hidden degradation audit: no hidden fallback, scope shrink, or fake success\n'
+                'evidence refs: task_packet execution_contract\n'
+            )
+        else:
+            reply = f'reply from {target}'
+        return WatchEventBatch(
+            target=job_id,
+            job_id=job_id,
+            agent_name=target,
+            target_kind='job',
+            target_name=job_id,
+            provider='codex',
+            provider_instance=None,
+            cursor=1,
+            generation=1,
+            terminal=True,
+            status='completed',
+            reply=reply,
+            events=(),
+        )
+
+    def forbidden_loop_run_once(*_args, **_kwargs):
+        raise AssertionError('direct_execution route must not run the legacy fixed bridge')
+
+    def forbidden_topology_dispatch(*_args, **_kwargs):
+        raise AssertionError('direct_execution route must not execute topology dispatch')
+
+    payload = loop_runner_once(
+        context,
+        command,
+        services=SimpleNamespace(
+            submit_ask=fake_submit_ask,
+            watch_ask_job=fake_watch_ask_job,
+            loop_run_once=forbidden_loop_run_once,
+            topology_dispatch=forbidden_topology_dispatch,
+            plan_task=plan_task,
+        ),
+    )
+
+    assert payload['round_result'] == 'blocked'
+    assert payload['round_result_source'] == 'isolated_workspace_no_project_root_effect'
+    assert payload['task_status'] == 'blocked'
+    assert (project_root / 'lab_docs' / 'l1_release_note.md').read_text(encoding='utf-8') == 'status: draft\n'
+    round_json = json.loads(Path(str(payload['round']['round_json_path'])).read_text(encoding='utf-8'))
+    assert round_json['failure']['source'] == 'isolated_workspace_no_project_root_effect'
+    assert round_json['failure']['changed_files'] == []
+    assert 'authority_update' not in round_json
+    assert round_json['authority_import']['status'] == 'blocked'
+    shown = plan_task(context, SimpleNamespace(action='task-show', task_id='task-direct'))
+    assert shown['task']['status'] == 'blocked'
+
+
+def test_loop_runner_direct_execution_blocks_when_change_scope_missing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = _project_with_workflow_topology(tmp_path, monkeypatch)
+    _write(project_root / 'lab_docs' / 'l1_release_note.md', 'status: draft\n')
+    _add_ready_plan_task(project_root, task_id='task-direct')
+    command = ParsedLoopRunnerCommand(project=None, once=True, timeout_s=11.0, json_output=True)
+    context = CliContextBuilder().build(command, cwd=project_root, bootstrap_if_missing=False)
+    _import_orchestration_notes(context, project_root, task_id='task-direct', route='direct_execution')
+    submitted: list[object] = []
+    targets_by_job: dict[str, str] = {}
+
+    def fake_submit_ask(_context, ask_command):
+        submitted.append(ask_command)
+        job_id = f'job_{len(submitted)}'
+        targets_by_job[job_id] = ask_command.target
+        return AskSummary(
+            project_id=context.project.project_id,
+            submission_id=f'sub_{len(submitted)}',
+            jobs=({'job_id': job_id, 'agent_name': ask_command.target, 'status': 'accepted'},),
+        )
+
+    def fake_watch_ask_job(_context, job_id, _out, *, timeout, emit_output):
+        assert timeout == 11.0
+        assert emit_output is False
+        target = targets_by_job[str(job_id)]
+        if target.startswith('loop-') and '-coder-' in target:
+            workspace = _seed_copy_workspace_binding(context, project_root, target)
+            _write(workspace / 'lab_docs' / 'l1_release_note.md', 'status: reviewed\n')
+        if target == 'ccb_round_reviewer':
+            reply = 'round result: pass\nverification performed: direct execution fake review\n'
+        else:
+            reply = f'reply from {target}'
+        return WatchEventBatch(
+            target=job_id,
+            job_id=job_id,
+            agent_name=target,
+            target_kind='job',
+            target_name=job_id,
+            provider='codex',
+            provider_instance=None,
+            cursor=1,
+            generation=1,
+            terminal=True,
+            status='completed',
+            reply=reply,
+            events=(),
+        )
+
+    payload = loop_runner_once(
+        context,
+        command,
+        services=SimpleNamespace(
+            submit_ask=fake_submit_ask,
+            watch_ask_job=fake_watch_ask_job,
+            loop_run_once=lambda *_args, **_kwargs: (_ for _ in ()).throw(
+                AssertionError('direct_execution route must not run the legacy fixed bridge')
+            ),
+            topology_dispatch=lambda *_args, **_kwargs: (_ for _ in ()).throw(
+                AssertionError('direct_execution route must not execute topology dispatch')
+            ),
+            plan_task=plan_task,
+        ),
+    )
+
+    assert payload['round_result'] == 'blocked'
+    assert payload['round_result_source'] == 'isolated_workspace_change_scope_missing'
+    assert payload['task_status'] == 'blocked'
+    assert (project_root / 'lab_docs' / 'l1_release_note.md').read_text(encoding='utf-8') == 'status: draft\n'
+    round_json = json.loads(Path(str(payload['round']['round_json_path'])).read_text(encoding='utf-8'))
+    assert round_json['failure']['source'] == 'isolated_workspace_change_scope_missing'
+    assert round_json['failure']['changed_files'] == ['lab_docs/l1_release_note.md']
+    assert round_json['failure']['allowed_change_paths'] == []
+    assert 'authority_update' not in round_json
+
+
+def test_loop_runner_direct_execution_blocks_out_of_scope_workspace_delta(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = _project_with_workflow_topology(tmp_path, monkeypatch)
+    _write(project_root / 'lab_docs' / 'l1_release_note.md', 'status: draft\n')
+    _write(project_root / 'lab_docs' / 'unrelated.md', 'status: draft\n')
+    _add_ready_plan_task(
+        project_root,
+        task_id='task-direct',
+        execution_contract_text='execution contract text\nallowed_change_paths: lab_docs/l1_release_note.md\n',
+    )
+    command = ParsedLoopRunnerCommand(project=None, once=True, timeout_s=11.0, json_output=True)
+    context = CliContextBuilder().build(command, cwd=project_root, bootstrap_if_missing=False)
+    _import_orchestration_notes(context, project_root, task_id='task-direct', route='direct_execution')
+    submitted: list[object] = []
+    targets_by_job: dict[str, str] = {}
+
+    def fake_submit_ask(_context, ask_command):
+        submitted.append(ask_command)
+        job_id = f'job_{len(submitted)}'
+        targets_by_job[job_id] = ask_command.target
+        return AskSummary(
+            project_id=context.project.project_id,
+            submission_id=f'sub_{len(submitted)}',
+            jobs=({'job_id': job_id, 'agent_name': ask_command.target, 'status': 'accepted'},),
+        )
+
+    def fake_watch_ask_job(_context, job_id, _out, *, timeout, emit_output):
+        assert timeout == 11.0
+        assert emit_output is False
+        target = targets_by_job[str(job_id)]
+        if target.startswith('loop-') and '-coder-' in target:
+            workspace = _seed_copy_workspace_binding(context, project_root, target)
+            _write(workspace / 'lab_docs' / 'l1_release_note.md', 'status: reviewed\n')
+            _write(workspace / 'lab_docs' / 'unrelated.md', 'status: reviewed\n')
+        if target == 'ccb_round_reviewer':
+            reply = 'round result: pass\nverification performed: direct execution fake review\n'
+        else:
+            reply = f'reply from {target}'
+        return WatchEventBatch(
+            target=job_id,
+            job_id=job_id,
+            agent_name=target,
+            target_kind='job',
+            target_name=job_id,
+            provider='codex',
+            provider_instance=None,
+            cursor=1,
+            generation=1,
+            terminal=True,
+            status='completed',
+            reply=reply,
+            events=(),
+        )
+
+    payload = loop_runner_once(
+        context,
+        command,
+        services=SimpleNamespace(
+            submit_ask=fake_submit_ask,
+            watch_ask_job=fake_watch_ask_job,
+            loop_run_once=lambda *_args, **_kwargs: (_ for _ in ()).throw(
+                AssertionError('direct_execution route must not run the legacy fixed bridge')
+            ),
+            topology_dispatch=lambda *_args, **_kwargs: (_ for _ in ()).throw(
+                AssertionError('direct_execution route must not execute topology dispatch')
+            ),
+            plan_task=plan_task,
+        ),
+    )
+
+    assert payload['round_result'] == 'blocked'
+    assert payload['round_result_source'] == 'isolated_workspace_change_scope_violation'
+    assert payload['task_status'] == 'blocked'
+    assert (project_root / 'lab_docs' / 'l1_release_note.md').read_text(encoding='utf-8') == 'status: draft\n'
+    assert (project_root / 'lab_docs' / 'unrelated.md').read_text(encoding='utf-8') == 'status: draft\n'
+    round_json = json.loads(Path(str(payload['round']['round_json_path'])).read_text(encoding='utf-8'))
+    assert round_json['failure']['source'] == 'isolated_workspace_change_scope_violation'
+    assert round_json['failure']['allowed_change_paths'] == ['lab_docs/l1_release_note.md']
+    assert round_json['failure']['out_of_scope_files'] == ['lab_docs/unrelated.md']
+    assert 'authority_update' not in round_json
+
+
+def test_loop_runner_direct_execution_blocks_delete_or_rename_workspace_delta(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = _project_with_workflow_topology(tmp_path, monkeypatch)
+    _write(project_root / 'lab_docs' / 'l1_release_note.md', 'status: draft\n')
+    _add_ready_plan_task(project_root, task_id='task-direct')
+    command = ParsedLoopRunnerCommand(project=None, once=True, timeout_s=11.0, json_output=True)
+    context = CliContextBuilder().build(command, cwd=project_root, bootstrap_if_missing=False)
+    _import_orchestration_notes(context, project_root, task_id='task-direct', route='direct_execution')
+    submitted: list[object] = []
+    targets_by_job: dict[str, str] = {}
+
+    def fake_submit_ask(_context, ask_command):
+        submitted.append(ask_command)
+        job_id = f'job_{len(submitted)}'
+        targets_by_job[job_id] = ask_command.target
+        return AskSummary(
+            project_id=context.project.project_id,
+            submission_id=f'sub_{len(submitted)}',
+            jobs=({'job_id': job_id, 'agent_name': ask_command.target, 'status': 'accepted'},),
+        )
+
+    def fake_watch_ask_job(_context, job_id, _out, *, timeout, emit_output):
+        assert timeout == 11.0
+        assert emit_output is False
+        target = targets_by_job[str(job_id)]
+        if target.startswith('loop-') and '-coder-' in target:
+            workspace = _seed_copy_workspace_binding(context, project_root, target)
+            (workspace / 'lab_docs' / 'l1_release_note.md').unlink()
+        if target == 'ccb_round_reviewer':
+            reply = (
+                'round result: pass\n'
+                'verification performed: direct execution fake review\n'
+                'hidden degradation audit: no hidden fallback, scope shrink, or fake success\n'
+                'evidence refs: task_packet execution_contract\n'
+            )
+        else:
+            reply = f'reply from {target}'
+        return WatchEventBatch(
+            target=job_id,
+            job_id=job_id,
+            agent_name=target,
+            target_kind='job',
+            target_name=job_id,
+            provider='codex',
+            provider_instance=None,
+            cursor=1,
+            generation=1,
+            terminal=True,
+            status='completed',
+            reply=reply,
+            events=(),
+        )
+
+    def forbidden_loop_run_once(*_args, **_kwargs):
+        raise AssertionError('direct_execution route must not run the legacy fixed bridge')
+
+    def forbidden_topology_dispatch(*_args, **_kwargs):
+        raise AssertionError('direct_execution route must not execute topology dispatch')
+
+    payload = loop_runner_once(
+        context,
+        command,
+        services=SimpleNamespace(
+            submit_ask=fake_submit_ask,
+            watch_ask_job=fake_watch_ask_job,
+            loop_run_once=forbidden_loop_run_once,
+            topology_dispatch=forbidden_topology_dispatch,
+            plan_task=plan_task,
+        ),
+    )
+
+    assert payload['round_result'] == 'blocked'
+    assert payload['round_result_source'] == 'isolated_workspace_deletions_unsupported'
+    assert payload['task_status'] == 'blocked'
+    assert (project_root / 'lab_docs' / 'l1_release_note.md').is_file()
+    round_json = json.loads(Path(str(payload['round']['round_json_path'])).read_text(encoding='utf-8'))
+    assert round_json['failure']['source'] == 'isolated_workspace_deletions_unsupported'
+    assert round_json['failure']['deleted_files'] == ['lab_docs/l1_release_note.md']
+    assert 'authority_update' not in round_json
+    summary_text = Path(str(round_json['paths']['round'])).read_text(encoding='utf-8')
+    assert '- deleted_files: lab_docs/l1_release_note.md' in summary_text
+    shown = plan_task(context, SimpleNamespace(action='task-show', task_id='task-direct'))
+    assert shown['task']['status'] == 'blocked'
+
+
+def test_loop_runner_direct_execution_blocks_when_copy_workspace_binding_missing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = _project_with_workflow_topology(tmp_path, monkeypatch)
+    _add_ready_plan_task(project_root, task_id='task-direct')
+    command = ParsedLoopRunnerCommand(project=None, once=True, timeout_s=11.0, json_output=True)
+    context = CliContextBuilder().build(command, cwd=project_root, bootstrap_if_missing=False)
+    _import_orchestration_notes(context, project_root, task_id='task-direct', route='direct_execution')
+    submitted: list[object] = []
+    targets_by_job: dict[str, str] = {}
+
+    def fake_submit_ask(_context, ask_command):
+        submitted.append(ask_command)
+        job_id = f'job_{len(submitted)}'
+        targets_by_job[job_id] = ask_command.target
+        return AskSummary(
+            project_id=context.project.project_id,
+            submission_id=f'sub_{len(submitted)}',
+            jobs=({'job_id': job_id, 'agent_name': ask_command.target, 'status': 'accepted'},),
+        )
+
+    def fake_watch_ask_job(_context, job_id, _out, *, timeout, emit_output):
+        assert timeout == 11.0
+        assert emit_output is False
+        target = targets_by_job[str(job_id)]
+        if target == 'ccb_round_reviewer':
+            reply = (
+                'round result: pass\n'
+                'verification performed: direct execution fake review\n'
+                'hidden degradation audit: no hidden fallback, scope shrink, or fake success\n'
+                'evidence refs: task_packet execution_contract\n'
+            )
+        else:
+            reply = f'reply from {target}'
+        return WatchEventBatch(
+            target=job_id,
+            job_id=job_id,
+            agent_name=target,
+            target_kind='job',
+            target_name=job_id,
+            provider='codex',
+            provider_instance=None,
+            cursor=1,
+            generation=1,
+            terminal=True,
+            status='completed',
+            reply=reply,
+            events=(),
+        )
+
+    payload = loop_runner_once(
+        context,
+        command,
+        services=SimpleNamespace(
+            submit_ask=fake_submit_ask,
+            watch_ask_job=fake_watch_ask_job,
+            loop_run_once=lambda *_args, **_kwargs: (_ for _ in ()).throw(
+                AssertionError('direct_execution route must not run the legacy fixed bridge')
+            ),
+            topology_dispatch=lambda *_args, **_kwargs: (_ for _ in ()).throw(
+                AssertionError('direct_execution route must not execute topology dispatch')
+            ),
+            plan_task=plan_task,
+        ),
+    )
+
+    assert payload['round_result'] == 'blocked'
+    assert payload['round_result_source'] == 'workspace_binding_missing'
+    assert payload['task_status'] == 'blocked'
+    round_json = json.loads(Path(str(payload['round']['round_json_path'])).read_text(encoding='utf-8'))
+    assert round_json['failure']['source'] == 'workspace_binding_missing'
+    assert round_json['failure']['workspace_mode_configured'] == 'git-worktree'
+    assert round_json['authority_import']['status'] == 'blocked'
+    shown = plan_task(context, SimpleNamespace(action='task-show', task_id='task-direct'))
+    assert shown['task']['status'] == 'blocked'
+
+
+def test_loop_runner_direct_execution_blocks_when_workspace_binding_invalid(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = _project_with_workflow_topology(tmp_path, monkeypatch)
+    _add_ready_plan_task(project_root, task_id='task-direct')
+    command = ParsedLoopRunnerCommand(project=None, once=True, timeout_s=11.0, json_output=True)
+    context = CliContextBuilder().build(command, cwd=project_root, bootstrap_if_missing=False)
+    _import_orchestration_notes(context, project_root, task_id='task-direct', route='direct_execution')
+    submitted: list[object] = []
+    targets_by_job: dict[str, str] = {}
+
+    def fake_submit_ask(_context, ask_command):
+        submitted.append(ask_command)
+        job_id = f'job_{len(submitted)}'
+        targets_by_job[job_id] = ask_command.target
+        return AskSummary(
+            project_id=context.project.project_id,
+            submission_id=f'sub_{len(submitted)}',
+            jobs=({'job_id': job_id, 'agent_name': ask_command.target, 'status': 'accepted'},),
+        )
+
+    def fake_watch_ask_job(_context, job_id, _out, *, timeout, emit_output):
+        assert timeout == 11.0
+        assert emit_output is False
+        target = targets_by_job[str(job_id)]
+        if target.startswith('loop-') and '-coder-' in target:
+            _write(project_root / '.ccb' / 'workspaces' / target / '.ccb-workspace.json', '{not-json')
+        if target == 'ccb_round_reviewer':
+            reply = (
+                'round result: pass\n'
+                'verification performed: direct execution fake review\n'
+                'hidden degradation audit: no hidden fallback, scope shrink, or fake success\n'
+                'evidence refs: task_packet execution_contract\n'
+            )
+        else:
+            reply = f'reply from {target}'
+        return WatchEventBatch(
+            target=job_id,
+            job_id=job_id,
+            agent_name=target,
+            target_kind='job',
+            target_name=job_id,
+            provider='codex',
+            provider_instance=None,
+            cursor=1,
+            generation=1,
+            terminal=True,
+            status='completed',
+            reply=reply,
+            events=(),
+        )
+
+    payload = loop_runner_once(
+        context,
+        command,
+        services=SimpleNamespace(
+            submit_ask=fake_submit_ask,
+            watch_ask_job=fake_watch_ask_job,
+            loop_run_once=lambda *_args, **_kwargs: (_ for _ in ()).throw(
+                AssertionError('direct_execution route must not run the legacy fixed bridge')
+            ),
+            topology_dispatch=lambda *_args, **_kwargs: (_ for _ in ()).throw(
+                AssertionError('direct_execution route must not execute topology dispatch')
+            ),
+            plan_task=plan_task,
+        ),
+    )
+
+    assert payload['round_result'] == 'blocked'
+    assert payload['round_result_source'] == 'workspace_binding_invalid'
+    assert payload['task_status'] == 'blocked'
+    round_json = json.loads(Path(str(payload['round']['round_json_path'])).read_text(encoding='utf-8'))
+    assert round_json['failure']['source'] == 'workspace_binding_invalid'
+    assert round_json['authority_import']['status'] == 'blocked'
+
+
+def test_loop_runner_direct_execution_blocks_when_project_root_test_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = _project_with_workflow_topology(tmp_path, monkeypatch)
+    _write(project_root / 'lab_code' / 'calculator.py', 'def add(a, b):\n    return a - b\n')
+    _write(
+        project_root / 'tests' / 'test_calculator.py',
+        'import unittest\n\n'
+        'from lab_code.calculator import add\n\n'
+        'class CalculatorTest(unittest.TestCase):\n'
+        '    def test_add(self):\n'
+        '        self.assertEqual(add(2, 3), 5)\n',
+    )
+    _add_ready_plan_task(
+        project_root,
+        task_id='task-direct',
+        execution_contract_text=(
+            'execution contract text\n'
+            'allowed_change_paths: lab_code/calculator.py\n'
+            'test_command: python -m unittest discover -s tests -p test_calculator.py\n'
+        ),
+    )
+    command = ParsedLoopRunnerCommand(project=None, once=True, timeout_s=11.0, json_output=True)
+    context = CliContextBuilder().build(command, cwd=project_root, bootstrap_if_missing=False)
+    _import_orchestration_notes(context, project_root, task_id='task-direct', route='direct_execution')
+    submitted: list[object] = []
+    targets_by_job: dict[str, str] = {}
+
+    def fake_submit_ask(_context, ask_command):
+        submitted.append(ask_command)
+        job_id = f'job_{len(submitted)}'
+        targets_by_job[job_id] = ask_command.target
+        return AskSummary(
+            project_id=context.project.project_id,
+            submission_id=f'sub_{len(submitted)}',
+            jobs=({'job_id': job_id, 'agent_name': ask_command.target, 'status': 'accepted'},),
+        )
+
+    def fake_watch_ask_job(_context, job_id, _out, *, timeout, emit_output):
+        assert timeout == 11.0
+        assert emit_output is False
+        target = targets_by_job[str(job_id)]
+        if target.startswith('loop-') and '-coder-' in target:
+            workspace = _seed_copy_workspace_binding(context, project_root, target)
+            _write(workspace / 'lab_code' / 'calculator.py', 'def add(a, b):\n    return a * b\n')
+        if target == 'ccb_round_reviewer':
+            reply = (
+                'round result: pass\n'
+                'verification performed: direct execution fake review\n'
+                'hidden degradation audit: no hidden fallback, scope shrink, or fake success\n'
+                'evidence refs: task_packet execution_contract\n'
+            )
+        else:
+            reply = f'reply from {target}'
+        return WatchEventBatch(
+            target=job_id,
+            job_id=job_id,
+            agent_name=target,
+            target_kind='job',
+            target_name=job_id,
+            provider='codex',
+            provider_instance=None,
+            cursor=1,
+            generation=1,
+            terminal=True,
+            status='completed',
+            reply=reply,
+            events=(),
+        )
+
+    payload = loop_runner_once(
+        context,
+        command,
+        services=SimpleNamespace(
+            submit_ask=fake_submit_ask,
+            watch_ask_job=fake_watch_ask_job,
+            loop_run_once=lambda *_args, **_kwargs: (_ for _ in ()).throw(
+                AssertionError('direct_execution route must not run the legacy fixed bridge')
+            ),
+            topology_dispatch=lambda *_args, **_kwargs: (_ for _ in ()).throw(
+                AssertionError('direct_execution route must not execute topology dispatch')
+            ),
+            plan_task=plan_task,
+        ),
+    )
+
+    assert payload['round_result'] == 'blocked'
+    assert payload['round_result_source'] == 'project_root_test_failed'
+    assert payload['task_status'] == 'blocked'
+    assert (project_root / 'lab_code' / 'calculator.py').read_text(encoding='utf-8') == 'def add(a, b):\n    return a - b\n'
+    round_json = json.loads(Path(str(payload['round']['round_json_path'])).read_text(encoding='utf-8'))
+    assert round_json['failure']['source'] == 'project_root_test_failed'
+    assert round_json['failure']['test_result'] == 'fail'
+    assert round_json['failure']['test_command'] == 'python -m unittest discover -s tests -p test_calculator.py'
+    assert round_json['failure']['test_cwd'] == str(project_root)
+    assert round_json['failure']['test_file_resolved_to_lab'] is True
+    assert round_json['failure']['test_sys_path_project_first'] is True
+    assert round_json['project_root_test']['test_result'] == 'fail'
+    assert Path(str(round_json['project_root_test']['test_resolution_path'])).is_file()
+    assert round_json['authority_import']['status'] == 'blocked'
+    shown = plan_task(context, SimpleNamespace(action='task-show', task_id='task-direct'))
+    assert shown['task']['status'] == 'blocked'
+
+
+def test_loop_runner_direct_execution_pass_requires_verified_project_root_test(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = _project_with_workflow_topology(tmp_path, monkeypatch)
+    _write(project_root / 'lab_code' / 'calculator.py', 'def add(a, b):\n    return a - b\n')
+    _write(
+        project_root / 'tests' / 'test_calculator.py',
+        'import unittest\n\n'
+        'from lab_code.calculator import add\n\n'
+        'class CalculatorTest(unittest.TestCase):\n'
+        '    def test_add(self):\n'
+        '        self.assertEqual(add(2, 3), 5)\n',
+    )
+    _add_ready_plan_task(
+        project_root,
+        task_id='task-direct',
+        execution_contract_text=(
+            'execution contract text\n'
+            'allowed_change_paths: lab_code/calculator.py\n'
+            'test_command: python -m unittest discover -s tests -p test_calculator.py\n'
+        ),
+    )
+    command = ParsedLoopRunnerCommand(project=None, once=True, timeout_s=11.0, json_output=True)
+    context = CliContextBuilder().build(command, cwd=project_root, bootstrap_if_missing=False)
+    _import_orchestration_notes(context, project_root, task_id='task-direct', route='direct_execution')
+    submitted: list[object] = []
+    targets_by_job: dict[str, str] = {}
+
+    def fake_submit_ask(_context, ask_command):
+        submitted.append(ask_command)
+        job_id = f'job_{len(submitted)}'
+        targets_by_job[job_id] = ask_command.target
+        return AskSummary(
+            project_id=context.project.project_id,
+            submission_id=f'sub_{len(submitted)}',
+            jobs=({'job_id': job_id, 'agent_name': ask_command.target, 'status': 'accepted'},),
+        )
+
+    def fake_watch_ask_job(_context, job_id, _out, *, timeout, emit_output):
+        assert timeout == 11.0
+        assert emit_output is False
+        target = targets_by_job[str(job_id)]
+        if target.startswith('loop-') and '-coder-' in target:
+            workspace = _seed_copy_workspace_binding(context, project_root, target)
+            _write(workspace / 'lab_code' / 'calculator.py', 'def add(a, b):\n    return a + b\n')
+        if target == 'ccb_round_reviewer':
+            reply = (
+                'round result: pass\n'
+                'verification performed: direct execution fake review\n'
+                'hidden degradation audit: no hidden fallback, scope shrink, or fake success\n'
+                'evidence refs: task_packet execution_contract\n'
+            )
+        else:
+            reply = f'reply from {target}'
+        return WatchEventBatch(
+            target=job_id,
+            job_id=job_id,
+            agent_name=target,
+            target_kind='job',
+            target_name=job_id,
+            provider='codex',
+            provider_instance=None,
+            cursor=1,
+            generation=1,
+            terminal=True,
+            status='completed',
+            reply=reply,
+            events=(),
+        )
+
+    payload = loop_runner_once(
+        context,
+        command,
+        services=SimpleNamespace(
+            submit_ask=fake_submit_ask,
+            watch_ask_job=fake_watch_ask_job,
+            loop_run_once=lambda *_args, **_kwargs: (_ for _ in ()).throw(
+                AssertionError('direct_execution route must not run the legacy fixed bridge')
+            ),
+            topology_dispatch=lambda *_args, **_kwargs: (_ for _ in ()).throw(
+                AssertionError('direct_execution route must not execute topology dispatch')
+            ),
+            plan_task=plan_task,
+        ),
+    )
+
+    assert payload['round_result'] == 'pass'
+    assert payload['round_result_source'] == 'round_reviewer_reply'
+    assert payload['task_status'] == 'done'
+    assert (project_root / 'lab_code' / 'calculator.py').read_text(encoding='utf-8') == 'def add(a, b):\n    return a + b\n'
+    round_json = json.loads(Path(str(payload['round']['round_json_path'])).read_text(encoding='utf-8'))
+    assert round_json['authority_update']['source'] == 'isolated_workspace_changes_promoted'
+    assert round_json['authority_update']['verified_project_root'] is True
+    assert round_json['authority_update']['changed_files'] == ['lab_code/calculator.py']
+    assert round_json['project_root_test']['test_result'] == 'pass'
+    assert round_json['project_root_test']['test_command'] == 'python -m unittest discover -s tests -p test_calculator.py'
+    assert round_json['project_root_test']['test_cwd'] == str(project_root)
+    assert round_json['project_root_test']['test_file_resolved_to_lab'] is True
+    assert round_json['project_root_test']['test_sys_path_project_first'] is True
+    assert Path(str(round_json['project_root_test']['test_resolution_path'])).is_file()
+    assert round_json['authority_import']['status'] == 'done'
+    shown = plan_task(context, SimpleNamespace(action='task-show', task_id='task-direct'))
+    assert shown['task']['status'] == 'done'
+
+
+def test_loop_runner_partial_completion_route_imports_partial_without_done(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = _project_with_workflow_topology(tmp_path, monkeypatch)
+    _add_ready_plan_task(project_root, task_id='task-partial')
+    command = ParsedLoopRunnerCommand(project=None, once=True, timeout_s=11.0, json_output=True)
+    context = CliContextBuilder().build(command, cwd=project_root, bootstrap_if_missing=False)
+    _import_orchestration_notes(context, project_root, task_id='task-partial', route='partial_completion')
+    submitted: list[object] = []
+    targets_by_job: dict[str, str] = {}
+
+    def fake_submit_ask(_context, ask_command):
+        submitted.append(ask_command)
+        job_id = f'job_{len(submitted)}'
+        targets_by_job[job_id] = ask_command.target
+        return AskSummary(
+            project_id=context.project.project_id,
+            submission_id=f'sub_{len(submitted)}',
+            jobs=({'job_id': job_id, 'agent_name': ask_command.target, 'status': 'accepted'},),
+        )
+
+    def fake_watch_ask_job(_context, job_id, _out, *, timeout, emit_output):
+        assert timeout == 11.0
+        assert emit_output is False
+        target = targets_by_job[str(job_id)]
+        reply = 'round result: partial\nunfinished step evidence: step-2 open\n' if target == 'ccb_round_reviewer' else f'reply from {target}'
+        return WatchEventBatch(
+            target=job_id,
+            job_id=job_id,
+            agent_name=target,
+            target_kind='job',
+            target_name=job_id,
+            provider='codex',
+            provider_instance=None,
+            cursor=1,
+            generation=1,
+            terminal=True,
+            status='completed',
+            reply=reply,
+            events=(),
+        )
+
+    payload = loop_runner_once(
+        context,
+        command,
+        services=SimpleNamespace(
+            submit_ask=fake_submit_ask,
+            watch_ask_job=fake_watch_ask_job,
+            plan_task=plan_task,
+        ),
+    )
+
+    assert payload['loop_runner_status'] == 'ok'
+    assert payload['action'] == 'ran_one_round'
+    assert payload['round_result'] == 'partial'
+    assert payload['task_status'] == 'partial'
+    assert payload['next_activation'] == 'planner'
+    assert len(submitted) == 4
+    assert all(command.sender == 'system' for command in submitted)
+    assert all(command.callback is False for command in submitted)
+    assert all(command.silence is False for command in submitted)
+    shown = plan_task(context, SimpleNamespace(action='task-show', task_id='task-partial'))
+    assert shown['task']['status'] == 'partial'
+    assert shown['task']['next_owner'] == 'planner'
+    assert shown['task']['current_loop'] is None
+    assert shown['task']['artifacts']['orchestration_notes']['orchestrator_route'] == 'partial_completion'
+    assert shown['task']['artifacts']['round_summary']['round_result'] == 'partial'
+
+
+@pytest.mark.parametrize(
+    ('round_reviewer_reply', 'expected_result', 'expected_status', 'reviewer_recheck_status'),
+    (
+        ('round result: pass\n', 'pass', 'done', 'pass'),
+        ('round result: replan_required\n', 'replan_required', 'replan_required', 'rework_required'),
+    ),
+)
+def test_loop_runner_direct_execution_uses_one_bounded_rework_cycle(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    round_reviewer_reply: str,
+    expected_result: str,
+    expected_status: str,
+    reviewer_recheck_status: str,
+) -> None:
+    project_root = _project_with_workflow_topology(tmp_path, monkeypatch)
+    _write(project_root / 'lab_docs' / 'bounded_rework_note.md', 'status: draft\n')
+    _add_ready_plan_task(
+        project_root,
+        task_id='task-rework',
+        execution_contract_text='execution contract text\nallowed_change_paths: lab_docs/bounded_rework_note.md\n',
+    )
+    command = ParsedLoopRunnerCommand(project=None, once=True, timeout_s=11.0, json_output=True)
+    context = CliContextBuilder().build(command, cwd=project_root, bootstrap_if_missing=False)
+    _import_orchestration_notes(context, project_root, task_id='task-rework', route='direct_execution')
+    submitted: list[object] = []
+    commands_by_job: dict[str, object] = {}
+
+    def fake_submit_ask(_context, ask_command):
+        submitted.append(ask_command)
+        job_id = f'job_{len(submitted)}'
+        commands_by_job[job_id] = ask_command
+        return AskSummary(
+            project_id=context.project.project_id,
+            submission_id=f'sub_{len(submitted)}',
+            jobs=({'job_id': job_id, 'agent_name': ask_command.target, 'status': 'accepted'},),
+        )
+
+    def fake_watch_ask_job(_context, job_id, _out, *, timeout, emit_output):
+        assert timeout == 11.0
+        assert emit_output is False
+        ask_command = commands_by_job[str(job_id)]
+        target = ask_command.target
+        if target.startswith('loop-') and '-coder-' in target:
+            workspace = _seed_copy_workspace_binding(context, project_root, target)
+            _write(workspace / 'lab_docs' / 'bounded_rework_note.md', 'status: reviewed\n')
+        if target == 'ccb_round_reviewer':
+            reply = round_reviewer_reply
+        elif str(ask_command.task_id).endswith('-reviewer'):
+            reply = 'status: rework_required\nexecution_contract audit: fail\n'
+        elif str(ask_command.task_id).endswith('-reviewer-recheck'):
+            reply = f'status: {reviewer_recheck_status}\nexecution_contract audit: fail\n'
+        else:
+            reply = f'status: done\nreply from {target}'
+        return WatchEventBatch(
+            target=job_id,
+            job_id=job_id,
+            agent_name=target,
+            target_kind='job',
+            target_name=job_id,
+            provider='codex',
+            provider_instance=None,
+            cursor=1,
+            generation=1,
+            terminal=True,
+            status='completed',
+            reply=reply,
+            events=(),
+        )
+
+    payload = loop_runner_once(
+        context,
+        command,
+        services=SimpleNamespace(
+            submit_ask=fake_submit_ask,
+            watch_ask_job=fake_watch_ask_job,
+            plan_task=plan_task,
+        ),
+    )
+
+    assert payload['loop_runner_status'] == 'ok'
+    assert payload['round_result'] == expected_result
+    assert payload['task_status'] == expected_status
+    assert payload['release']['released_count'] == 2
+    assert [command.task_id for command in submitted] == [
+        f'{payload["loop_id"]}-worker',
+        f'{payload["loop_id"]}-reviewer',
+        f'{payload["loop_id"]}-worker-rework',
+        f'{payload["loop_id"]}-reviewer-recheck',
+        f'{payload["loop_id"]}-orchestrator',
+        f'{payload["loop_id"]}-round-reviewer',
+    ]
+    assert all(command.sender == 'system' for command in submitted)
+    assert all(command.callback is False for command in submitted)
+    assert all(command.silence is False for command in submitted)
+    round_json = json.loads(Path(str(payload['round']['round_json_path'])).read_text(encoding='utf-8'))
+    assert set(round_json['rework']) == {'worker_rework', 'reviewer_recheck'}
+    assert round_json['rework']['worker_rework']['status'] == 'completed'
+    assert round_json['rework']['reviewer_recheck']['status'] == 'completed'
+    if expected_result == 'pass':
+        assert (project_root / 'lab_docs' / 'bounded_rework_note.md').read_text(encoding='utf-8') == 'status: reviewed\n'
+        assert round_json['authority_update']['source'] == 'isolated_workspace_changes_promoted'
+        assert round_json['authority_update']['changed_files'] == ['lab_docs/bounded_rework_note.md']
+        assert round_json['authority_update']['allowed_change_paths'] == ['lab_docs/bounded_rework_note.md']
+        assert round_json['authority_update']['verified_project_root'] is True
+    else:
+        assert (project_root / 'lab_docs' / 'bounded_rework_note.md').read_text(encoding='utf-8') == 'status: draft\n'
+        assert round_json['authority_update']['source'] == 'isolated_workspace_changes_promoted'
+        assert round_json['authority_update']['changed_files'] == ['lab_docs/bounded_rework_note.md']
+        assert round_json['authority_update']['authority_rollback'] == 'restored_project_root'
+        assert round_json['authority_update']['authority_rollback_reason'] == 'non_pass_round_result:replan_required'
+    asks = [
+        json.loads(line)['purpose']
+        for line in (project_root / '.ccb' / 'runtime' / 'loops' / payload['loop_id'] / 'asks.jsonl').read_text(encoding='utf-8').splitlines()
+    ]
+    assert asks == ['worker', 'reviewer', 'worker_rework', 'reviewer_recheck', 'orchestrator', 'ccb_round_reviewer']
+    shown = plan_task(context, SimpleNamespace(action='task-show', task_id='task-rework'))
+    assert shown['task']['status'] == expected_status
+    assert shown['task']['current_loop'] is None
+
+
+def test_loop_runner_direct_execution_blocks_without_asks_when_topology_not_ready(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = _project_with_loop_capacity(tmp_path, monkeypatch)
+    _add_ready_plan_task(project_root, task_id='task-direct')
+    command = ParsedLoopRunnerCommand(project=None, once=True, timeout_s=11.0, json_output=True)
+    context = CliContextBuilder().build(command, cwd=project_root, bootstrap_if_missing=False)
+    _import_orchestration_notes(context, project_root, task_id='task-direct', route='direct_execution')
+    topology_calls: list[str] = []
+
+    def fake_loop_topology(_context, topology_command):
+        action = str(topology_command.action)
+        topology_calls.append(action)
+        loop_id = str(topology_command.loop_id)
+        loop_dir = project_root / '.ccb' / 'runtime' / 'loops' / loop_id
+        proposal_path = loop_dir / 'topology_proposals' / 'ask-first-execution.json'
+        desired_path = loop_dir / 'agent_mount_topology.desired.json'
+        observed_path = loop_dir / 'agent_mount_topology.observed.json'
+        if action == 'propose':
+            _write_json(
+                proposal_path,
+                {
+                    'schema': 'ccb.loop.agent_mount_topology.proposal.v1',
+                    'loop_id': loop_id,
+                    'agents': [],
+                    'windows': [],
+                },
+            )
+            return {
+                'loop_topology_status': 'proposed',
+                'loop_id': loop_id,
+                'proposal_id': 'ask-first-execution',
+                'proposal_path': str(proposal_path),
+                'validation': {'agent_count': 2},
+            }
+        if action == 'commit':
+            _write_json(
+                desired_path,
+                {
+                    'schema': 'ccb.loop.agent_mount_topology.v1',
+                    'loop_id': loop_id,
+                    'revision': 1,
+                    'agents': [],
+                    'windows': [],
+                },
+            )
+            _write_json(
+                observed_path,
+                {
+                    'schema': 'ccb.loop.agent_mount_topology.observed.v1',
+                    'loop_id': loop_id,
+                    'desired_revision': 1,
+                    'last_reconcile_status': 'failed',
+                    'agents': [],
+                    'windows': [],
+                },
+            )
+            return {
+                'loop_topology_status': 'committed',
+                'loop_id': loop_id,
+                'desired_path': str(desired_path),
+                'reconcile': {
+                    'loop_topology_status': 'failed',
+                    'loop_id': loop_id,
+                    'observed_path': str(observed_path),
+                    'agent_count': 2,
+                    'released_count': 0,
+                    'retained_count': 0,
+                },
+            }
+        if action == 'status':
+            return {
+                'loop_topology_status': 'failed',
+                'loop_id': loop_id,
+                'desired_path': str(desired_path),
+                'observed_path': str(observed_path),
+            }
+        if action == 'release':
+            return {
+                'loop_topology_status': 'released',
+                'loop_id': loop_id,
+                'desired_path': str(desired_path),
+                'observed_path': str(observed_path),
+                'released_count': 0,
+                'retained_count': 0,
+                'released_agents': [],
+            }
+        raise AssertionError(f'unexpected topology action: {action}')
+
+    def forbidden_submit_ask(*_args, **_kwargs):
+        raise AssertionError('topology-not-ready must stop before worker/reviewer asks')
+
+    def forbidden_watch_ask_job(*_args, **_kwargs):
+        raise AssertionError('topology-not-ready must not watch ask jobs')
+
+    def forbidden_loop_run_once(*_args, **_kwargs):
+        raise AssertionError('direct_execution route must not run the legacy fixed bridge')
+
+    payload = loop_runner_once(
+        context,
+        command,
+        services=SimpleNamespace(
+            loop_topology=fake_loop_topology,
+            submit_ask=forbidden_submit_ask,
+            watch_ask_job=forbidden_watch_ask_job,
+            loop_run_once=forbidden_loop_run_once,
+            plan_task=plan_task,
+        ),
+    )
+
+    assert payload['loop_runner_status'] == 'ok'
+    assert payload['execution_mode'] == 'ask_first_direct_execution'
+    assert payload['round_result'] == 'blocked'
+    assert payload['round_result_source'] == 'topology_not_ready'
+    assert payload['task_status'] == 'blocked'
+    assert payload['next_activation'] == 'terminal'
+    assert payload['topology']['status'] == 'failed'
+    assert payload['release']['released_count'] == 0
+    assert payload['release']['retained_count'] == 0
+    assert topology_calls == ['propose', 'commit', 'status', 'release']
+    loop_dir = project_root / '.ccb' / 'runtime' / 'loops' / payload['loop_id']
+    assert not (loop_dir / 'asks.jsonl').exists()
+    summary_text = Path(str(payload['round']['round_path'])).read_text(encoding='utf-8')
+    assert 'round result: blocked' in summary_text
+    assert 'source: topology_not_ready' in summary_text
+    assert 'mount topology status failed; expected ready' in summary_text
+    round_json = json.loads(Path(str(payload['round']['round_json_path'])).read_text(encoding='utf-8'))
+    assert round_json['failure']['source'] == 'topology_not_ready'
+    assert round_json['failure']['stage'] == 'topology'
+    assert round_json['failure']['reason'] == 'mount topology status failed; expected ready'
+    assert round_json['failure']['loop_topology_status'] == 'failed'
+    assert round_json['failure']['topology_status']['loop_topology_status'] == 'failed'
+    assert round_json['topology']['release']['released_count'] == 0
+    assert round_json['authority_import']['status'] == 'blocked'
+    shown = plan_task(context, SimpleNamespace(action='task-show', task_id='task-direct'))
+    assert shown['task']['status'] == 'blocked'
+    assert shown['task']['current_loop'] is None
+    assert shown['task']['artifacts']['round_summary']['round_result'] == 'blocked'
+
+
+def test_loop_runner_direct_execution_submit_failure_blocks_and_releases(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = _project_with_workflow_topology(tmp_path, monkeypatch)
+    _add_ready_plan_task(project_root, task_id='task-direct')
+    command = ParsedLoopRunnerCommand(project=None, once=True, timeout_s=11.0, json_output=True)
+    context = CliContextBuilder().build(command, cwd=project_root, bootstrap_if_missing=False)
+    _import_orchestration_notes(context, project_root, task_id='task-direct', route='direct_execution')
+    submitted: list[object] = []
+
+    def fake_submit_ask(_context, ask_command):
+        submitted.append(ask_command)
+        raise RuntimeError('submit transport failed')
+
+    def forbidden_watch_ask_job(*_args, **_kwargs):
+        raise AssertionError('submit failure must not watch ask jobs')
+
+    def forbidden_loop_run_once(*_args, **_kwargs):
+        raise AssertionError('direct_execution route must not run the legacy fixed bridge')
+
+    payload = loop_runner_once(
+        context,
+        command,
+        services=SimpleNamespace(
+            submit_ask=fake_submit_ask,
+            watch_ask_job=forbidden_watch_ask_job,
+            loop_run_once=forbidden_loop_run_once,
+            plan_task=plan_task,
+        ),
+    )
+
+    assert payload['loop_runner_status'] == 'ok'
+    assert payload['round_result'] == 'blocked'
+    assert payload['round_result_source'] == 'ask_submission_failed'
+    assert payload['task_status'] == 'blocked'
+    assert payload['release']['released_count'] == 2
+    assert payload['release']['retained_count'] == 0
+    assert len(submitted) == 1
+    assert submitted[0].target.startswith(f'loop-{payload["loop_id"]}-coder-')
+    assert submitted[0].sender == 'system'
+    assert submitted[0].callback is False
+    assert submitted[0].silence is False
+    loop_dir = project_root / '.ccb' / 'runtime' / 'loops' / payload['loop_id']
+    assert not (loop_dir / 'asks.jsonl').exists()
+    round_json = json.loads(Path(str(payload['round']['round_json_path'])).read_text(encoding='utf-8'))
+    assert round_json['failure']['source'] == 'ask_submission_failed'
+    assert round_json['failure']['stage'] == 'worker_ask'
+    assert round_json['failure']['reason'] == 'submit transport failed'
+    assert round_json['topology']['release']['released_count'] == 2
+    assert round_json['authority_import']['status'] == 'blocked'
+    shown = plan_task(context, SimpleNamespace(action='task-show', task_id='task-direct'))
+    assert shown['task']['status'] == 'blocked'
+    assert shown['task']['current_loop'] is None
+
+
+def test_loop_runner_direct_execution_ask_failure_blocks_and_releases(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = _project_with_workflow_topology(tmp_path, monkeypatch)
+    _add_ready_plan_task(project_root, task_id='task-direct')
+    command = ParsedLoopRunnerCommand(project=None, once=True, timeout_s=11.0, json_output=True)
+    context = CliContextBuilder().build(command, cwd=project_root, bootstrap_if_missing=False)
+    _import_orchestration_notes(context, project_root, task_id='task-direct', route='direct_execution')
+    submitted: list[object] = []
+
+    def fake_submit_ask(_context, ask_command):
+        submitted.append(ask_command)
+        return AskSummary(
+            project_id=context.project.project_id,
+            submission_id=f'sub_{len(submitted)}',
+            jobs=({'job_id': f'job_{len(submitted)}', 'agent_name': ask_command.target, 'status': 'accepted'},),
+        )
+
+    def fake_watch_ask_job(_context, _job_id, _out, *, timeout, emit_output):
+        assert timeout == 11.0
+        assert emit_output is False
+        raise RuntimeError('watch transport failed')
+
+    def forbidden_loop_run_once(*_args, **_kwargs):
+        raise AssertionError('direct_execution route must not run the legacy fixed bridge')
 
     payload = loop_runner_once(
         context,
@@ -1015,153 +2897,340 @@ def test_loop_runner_once_dispatches_committed_topology_edges_in_order(
     )
 
     assert payload['loop_runner_status'] == 'ok'
-    assert payload['action'] == 'ran_one_round'
-    assert payload['dispatch_source'] == 'topology_graph'
-    assert payload['loop_id'] == 'wf1'
-    assert payload['round_result'] == 'pass'
-    assert payload['task_status'] == 'done'
-    assert [target for target, _sender, _message in submitted] == [
-        'wf-coder-1',
-        'wf-code-reviewer-1',
-        'wf-ccb-round-reviewer',
-    ]
-    assert submitted[0][1] == 'wf-ccb-orchestrator'
-    assert submitted[1][1] == 'wf-coder-1'
-    assert submitted[2][1] == 'wf-code-reviewer-1'
-    assert 'Role: coder' in submitted[0][2]
-    assert 'Role: code_reviewer' in submitted[1][2]
-    assert 'Role: ccb_round_reviewer' in submitted[2][2]
-    dispatch_path = project_root / '.ccb' / 'runtime' / 'loops' / 'wf1' / 'topology_dispatch.json'
-    dispatch = json.loads(dispatch_path.read_text(encoding='utf-8'))
-    assert dispatch['dispatch_status'] == 'ok'
-    assert [edge['edge_id'] for edge in dispatch['edges']] == ['coder-ask', 'reviewer-ask', 'round-review']
-    assert all(Path(edge['artifact']).is_file() for edge in dispatch['edges'])
-    shown = plan_task(context, SimpleNamespace(action='task-show', task_id='task-topology'))
-    assert shown['task']['status'] == 'done'
+    assert payload['round_result'] == 'blocked'
+    assert payload['round_result_source'] == 'watch_failed'
+    assert payload['task_status'] == 'blocked'
+    assert payload['release']['released_count'] == 2
+    assert payload['release']['retained_count'] == 0
+    assert len(submitted) == 1
+    assert submitted[0].target.startswith(f'loop-{payload["loop_id"]}-coder-')
+    assert submitted[0].sender == 'system'
+    assert submitted[0].callback is False
+    assert submitted[0].silence is False
+    loop_dir = project_root / '.ccb' / 'runtime' / 'loops' / payload['loop_id']
+    asks = (loop_dir / 'asks.jsonl').read_text(encoding='utf-8').splitlines()
+    assert len(asks) == 1
+    summary_text = Path(str(payload['round']['round_path'])).read_text(encoding='utf-8')
+    assert 'round result: blocked' in summary_text
+    assert 'source: watch_failed' in summary_text
+    assert 'watch transport failed' in summary_text
+    round_json = json.loads(Path(str(payload['round']['round_json_path'])).read_text(encoding='utf-8'))
+    assert round_json['failure']['source'] == 'watch_failed'
+    assert round_json['failure']['stage'] == 'worker_ask'
+    assert round_json['failure']['reason'] == 'watch transport failed'
+    assert round_json['topology']['release']['released_count'] == 2
+    assert round_json['authority_import']['status'] == 'blocked'
+    shown = plan_task(context, SimpleNamespace(action='task-show', task_id='task-direct'))
+    assert shown['task']['status'] == 'blocked'
     assert shown['task']['current_loop'] is None
-    assert shown['task']['artifacts']['round_pass']['actor']['job_id'] == 'job-wf-ccb-round-reviewer'
+
+
+def test_loop_runner_direct_execution_missing_round_result_blocks_before_release(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = _project_with_loop_capacity(tmp_path, monkeypatch)
+    _add_ready_plan_task(project_root, task_id='task-direct')
+    command = ParsedLoopRunnerCommand(project=None, once=True, timeout_s=11.0, json_output=True)
+    context = CliContextBuilder().build(command, cwd=project_root, bootstrap_if_missing=False)
+    _import_orchestration_notes(context, project_root, task_id='task-direct', route='direct_execution')
+    release_seen: list[str] = []
+
+    def fake_ask_first_execution(_context, run_command, _services):
+        loop_dir = project_root / '.ccb' / 'runtime' / 'loops' / run_command.loop_id
+        loop_dir.mkdir(parents=True, exist_ok=True)
+        round_path = loop_dir / 'round_summary.md'
+        round_json_path = loop_dir / 'round.json'
+        _write(round_path, 'round checker completed without a machine result line\n')
+        payload = {
+            'schema_version': 1,
+            'record_type': 'ccb_loop_ask_first_execution_round',
+            'loop_run_status': 'ok',
+            'dispatch_source': 'ask_first_mount_topology',
+            'loop_id': run_command.loop_id,
+            'task_id': run_command.task_id,
+            'worker': {'job_id': 'job_worker'},
+            'ccb_round_reviewer': {'reply': 'round reviewer completed without a machine result line\n'},
+            'paths': {'round': str(round_path), 'round_json': str(round_json_path)},
+        }
+        _write(round_json_path, json.dumps(payload, ensure_ascii=False, indent=2) + '\n')
+        return payload
+
+    def fake_ask_first_release(_context, round_payload, _services):
+        shown = plan_task(context, SimpleNamespace(action='task-show', task_id='task-direct'))
+        assert shown['task']['status'] == 'blocked'
+        assert shown['task']['current_loop'] is None
+        release_seen.append(str(round_payload['loop_id']))
+        return {
+            'loop_topology_status': 'released',
+            'loop_id': round_payload['loop_id'],
+            'released_count': 2,
+            'retained_count': 0,
+            'released_agents': ['loop-x-code_reviewer-1', 'loop-x-coder-1'],
+        }
+
+    def forbidden_loop_run_once(*_args, **_kwargs):
+        raise AssertionError('direct_execution route must not run the legacy fixed bridge')
+
+    payload = loop_runner_once(
+        context,
+        command,
+        services=SimpleNamespace(
+            ask_first_execution=fake_ask_first_execution,
+            ask_first_release=fake_ask_first_release,
+            loop_run_once=forbidden_loop_run_once,
+            plan_task=plan_task,
+        ),
+    )
+
+    assert payload['loop_runner_status'] == 'ok'
+    assert payload['execution_mode'] == 'ask_first_direct_execution'
+    assert payload['round_result'] == 'blocked'
+    assert payload['round_result_source'] == 'missing_round_reviewer_result'
+    assert payload['task_status'] == 'blocked'
+    assert payload['release']['released_count'] == 2
+    assert release_seen == [payload['loop_id']]
+    shown = plan_task(context, SimpleNamespace(action='task-show', task_id='task-direct'))
+    assert shown['task']['status'] == 'blocked'
+    assert shown['task']['artifacts']['round_summary']['round_result'] == 'blocked'
+
+
+def test_loop_runner_direct_execution_unknown_round_result_blocks_and_releases(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = _project_with_workflow_topology(tmp_path, monkeypatch)
+    _write(project_root / 'lab_docs' / 'unknown_round_note.md', 'status: draft\n')
+    _add_ready_plan_task(
+        project_root,
+        task_id='task-direct',
+        execution_contract_text='execution contract text\nallowed_change_paths: lab_docs/unknown_round_note.md\n',
+    )
+    command = ParsedLoopRunnerCommand(project=None, once=True, timeout_s=11.0, json_output=True)
+    context = CliContextBuilder().build(command, cwd=project_root, bootstrap_if_missing=False)
+    _import_orchestration_notes(context, project_root, task_id='task-direct', route='direct_execution')
+    submitted: list[object] = []
+    targets_by_job: dict[str, str] = {}
+
+    def fake_submit_ask(_context, ask_command):
+        submitted.append(ask_command)
+        job_id = f'job_{len(submitted)}'
+        targets_by_job[job_id] = ask_command.target
+        return AskSummary(
+            project_id=context.project.project_id,
+            submission_id=f'sub_{len(submitted)}',
+            jobs=({'job_id': job_id, 'agent_name': ask_command.target, 'status': 'accepted'},),
+        )
+
+    def fake_watch_ask_job(_context, job_id, _out, *, timeout, emit_output):
+        assert timeout == 11.0
+        assert emit_output is False
+        target = targets_by_job[str(job_id)]
+        if target.startswith('loop-') and '-coder-' in target:
+            workspace = _seed_copy_workspace_binding(context, project_root, target)
+            _write(workspace / 'lab_docs' / 'unknown_round_note.md', 'status: reviewed\n')
+        reply = 'round result: mystery\n' if target == 'ccb_round_reviewer' else f'reply from {target}'
+        return WatchEventBatch(
+            target=job_id,
+            job_id=job_id,
+            agent_name=target,
+            target_kind='job',
+            target_name=job_id,
+            provider='codex',
+            provider_instance=None,
+            cursor=1,
+            generation=1,
+            terminal=True,
+            status='completed',
+            reply=reply,
+            events=(),
+        )
+
+    def forbidden_loop_run_once(*_args, **_kwargs):
+        raise AssertionError('direct_execution route must not run the legacy fixed bridge')
+
+    payload = loop_runner_once(
+        context,
+        command,
+        services=SimpleNamespace(
+            submit_ask=fake_submit_ask,
+            watch_ask_job=fake_watch_ask_job,
+            loop_run_once=forbidden_loop_run_once,
+            plan_task=plan_task,
+        ),
+    )
+
+    assert payload['loop_runner_status'] == 'ok'
+    assert payload['round_result'] == 'blocked'
+    assert payload['round_result_source'] == 'unknown_round_result'
+    assert payload['task_status'] == 'blocked'
+    assert payload['release']['released_count'] == 2
+    assert payload['release']['retained_count'] == 0
+    assert len(submitted) == 4
+    assert (project_root / 'lab_docs' / 'unknown_round_note.md').read_text(encoding='utf-8') == 'status: draft\n'
+    round_json = json.loads(Path(str(payload['round']['round_json_path'])).read_text(encoding='utf-8'))
+    assert round_json['failure']['source'] == 'unknown_round_result'
+    assert round_json['failure']['reason'] == "unknown round result 'mystery'"
+    assert round_json['failure']['unknown_round_result'] == 'mystery'
+    assert round_json['failure']['authority_rollback'] == 'restored_project_root'
+    assert round_json['authority_update']['authority_rollback'] == 'restored_project_root'
+    assert round_json['topology']['release']['released_count'] == 2
+    assert round_json['authority_import']['status'] == 'blocked'
+    shown = plan_task(context, SimpleNamespace(action='task-show', task_id='task-direct'))
+    assert shown['task']['status'] == 'blocked'
+    assert shown['task']['current_loop'] is None
+    assert shown['task']['artifacts']['round_summary']['round_result'] == 'blocked'
+
+
+def test_loop_runner_needs_detail_route_activates_detailer_only_after_route_import(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = _project_with_loop_capacity(tmp_path, monkeypatch)
+    _add_ready_plan_task(project_root, task_id='task-detail')
+    command = ParsedLoopRunnerCommand(project=None, once=True, timeout_s=11.0, json_output=True)
+    context = CliContextBuilder().build(command, cwd=project_root, bootstrap_if_missing=False)
+    seen: list[str] = []
+
+    def fake_submit_before_route(_context, ask_command):
+        seen.append(ask_command.target)
+        return AskSummary(
+            project_id=context.project.project_id,
+            submission_id=None,
+            jobs=({'job_id': 'job_orchestrator_before_route', 'agent_name': ask_command.target, 'status': 'submitted'},),
+        )
+
+    def forbidden_loop_run_once(*_args, **_kwargs):
+        raise AssertionError('needs_detail task must not execute before route import')
+
+    payload = loop_runner_once(
+        context,
+        command,
+        services=SimpleNamespace(submit_ask=fake_submit_before_route, loop_run_once=forbidden_loop_run_once),
+    )
+    assert payload['action'] == 'activated_orchestrator'
+    assert seen == ['orchestrator']
+
+    _import_orchestration_notes(context, project_root, task_id='task-detail', route='needs_detail')
+
+    def fake_submit_detailer(_context, ask_command):
+        seen.append(ask_command.target)
+        assert ask_command.target == 'task_detailer'
+        assert 'Artifact refs:' in ask_command.message
+        return AskSummary(
+            project_id=context.project.project_id,
+            submission_id=None,
+            jobs=({'job_id': 'job_task_detailer', 'agent_name': 'task_detailer', 'status': 'submitted'},),
+        )
+
+    payload = loop_runner_once(
+        context,
+        command,
+        services=SimpleNamespace(submit_ask=fake_submit_detailer, loop_run_once=forbidden_loop_run_once),
+    )
+    assert payload['loop_runner_status'] == 'ok'
+    assert payload['action'] == 'activated_task_detailer'
+    assert payload['reason'] == 'orchestrator_route_needs_detail'
+    assert payload['next_owner'] == 'orchestrator'
+    assert seen == ['orchestrator', 'task_detailer']
+
+    for kind, filename in (
+        ('detail_design', 'detail-design.md'),
+        ('detail_summary', 'detail-summary.md'),
+        ('detail_packet', 'detail-packet.json'),
+    ):
+        source = project_root / 'drafts' / filename
+        _write(source, f'{kind}\n')
+        plan_task(
+            context,
+            SimpleNamespace(action='task-artifact', task_id='task-detail', artifact_kind=kind, file_path=str(source)),
+        )
+
+    def fake_submit_orchestrator_after_detail(_context, ask_command):
+        seen.append(ask_command.target)
+        assert ask_command.target == 'orchestrator'
+        return AskSummary(
+            project_id=context.project.project_id,
+            submission_id=None,
+            jobs=({'job_id': 'job_orchestrator_after_detail', 'agent_name': 'orchestrator', 'status': 'submitted'},),
+        )
+
+    payload = loop_runner_once(
+        context,
+        command,
+        services=SimpleNamespace(submit_ask=fake_submit_orchestrator_after_detail, loop_run_once=forbidden_loop_run_once),
+    )
+    assert payload['action'] == 'activated_orchestrator'
+    assert payload['reason'] == 'orchestrator_route_needs_detail_detail_ready'
+    assert seen == ['orchestrator', 'task_detailer', 'orchestrator']
 
 
 @pytest.mark.parametrize(
-    ('edges', 'observed_kwargs', 'expected'),
-    [
+    ('route', 'expected_action', 'expected_reason', 'expected_owner', 'expected_next_activation'),
+    (
         (
-            [
-                {
-                    'id': 'bad-type',
-                    'from': 'wf-ccb-orchestrator',
-                    'to': 'wf-coder-1',
-                    'type': 'notify',
-                    'order': 10,
-                }
-            ],
-            {},
-            'unsupported type',
+            'macro_adjustment_request',
+            'planner_next_action_required',
+            'orchestrator_route_macro_adjustment_request',
+            'planner',
+            'planner_status_transition_required',
         ),
         (
-            [
-                {
-                    'id': 'missing-target',
-                    'from': 'wf-ccb-orchestrator',
-                    'to': 'missing-agent',
-                    'type': 'ask',
-                    'order': 10,
-                }
-            ],
-            {},
-            "target agent 'missing-agent' is not ready: missing",
+            'blocked',
+            'blocker_evidence_required',
+            'orchestrator_route_blocked',
+            'frontdesk',
+            'blocker_evidence_required',
         ),
-        (
-            [
-                {
-                    'id': 'cycle-a',
-                    'from': 'wf-ccb-orchestrator',
-                    'to': 'wf-coder-1',
-                    'type': 'ask_after',
-                    'after': ['cycle-b'],
-                    'order': 10,
-                },
-                {
-                    'id': 'cycle-b',
-                    'from': 'wf-coder-1',
-                    'to': 'wf-code-reviewer-1',
-                    'type': 'ask_after',
-                    'after': ['cycle-a'],
-                    'order': 20,
-                },
-            ],
-            {},
-            'dependency cycle detected',
-        ),
-        (
-            [
-                {
-                    'id': 'stale',
-                    'from': 'wf-ccb-orchestrator',
-                    'to': 'wf-coder-1',
-                    'type': 'ask',
-                    'order': 10,
-                }
-            ],
-            {'desired_revision': 0},
-            'observed revision 0 does not match desired revision 1',
-        ),
-        (
-            [
-                {
-                    'id': 'not-ready',
-                    'from': 'wf-ccb-orchestrator',
-                    'to': 'wf-coder-1',
-                    'type': 'ask',
-                    'order': 10,
-                }
-            ],
-            {'coder_state': 'parked'},
-            "target agent 'wf-coder-1' is not ready",
-        ),
-        (
-            [
-                {
-                    'id': 'hidden-target',
-                    'from': 'wf-ccb-orchestrator',
-                    'to': 'wf-coder-1',
-                    'type': 'ask',
-                    'order': 10,
-                }
-            ],
-            {'coder_state': 'hidden'},
-            "target agent 'wf-coder-1' is not ready",
-        ),
-    ],
+    ),
 )
-def test_loop_runner_topology_dispatch_rejects_invalid_runtime_graphs(
+def test_loop_runner_macro_and_blocked_routes_pause_without_mounting_workers(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-    edges: list[dict[str, object]],
-    observed_kwargs: dict[str, object],
-    expected: str,
+    route: str,
+    expected_action: str,
+    expected_reason: str,
+    expected_owner: str,
+    expected_next_activation: str,
 ) -> None:
-    project_root = _project_with_workflow_topology(tmp_path, monkeypatch)
-    _add_ready_plan_task(project_root, task_id='task-invalid-topology')
-    command = ParsedLoopRunnerCommand(project=None, once=True, timeout_s=3.0, json_output=True)
+    project_root = _project_with_loop_capacity(tmp_path, monkeypatch)
+    task_id = f'task-{route.replace("_", "-")}'
+    _add_ready_plan_task(project_root, task_id=task_id)
+    command = ParsedLoopRunnerCommand(project=None, once=True, timeout_s=11.0, json_output=True)
     context = CliContextBuilder().build(command, cwd=project_root, bootstrap_if_missing=False)
-    plan_task(context, SimpleNamespace(action='task-bind-loop', task_id='task-invalid-topology', loop_id='wf-bad'))
-    loop_dir = project_root / '.ccb' / 'runtime' / 'loops' / 'wf-bad'
-    _write_json(loop_dir / 'agent_topology.desired.json', _manual_dispatch_desired(loop_id='wf-bad', edges=edges))
-    _write_json(
-        loop_dir / 'agent_topology.observed.json',
-        _manual_dispatch_observed(loop_id='wf-bad', **observed_kwargs),
-    )
+    _import_orchestration_notes(context, project_root, task_id=task_id, route=route)
 
     def forbidden_submit_ask(*_args, **_kwargs):
-        raise AssertionError('invalid topology graph must fail before ask submission')
+        raise AssertionError(f'{route} route must not ask detailer, worker, or reviewer')
 
-    with pytest.raises(RuntimeError, match=expected):
-        loop_runner_once(
-            context,
-            command,
-            services=SimpleNamespace(submit_ask=forbidden_submit_ask, plan_task=plan_task),
-        )
+    def forbidden_loop_run_once(*_args, **_kwargs):
+        raise AssertionError(f'{route} route must not run the fixed bridge')
+
+    def forbidden_topology_dispatch(*_args, **_kwargs):
+        raise AssertionError(f'{route} route must not execute topology dispatch')
+
+    payload = loop_runner_once(
+        context,
+        command,
+        services=SimpleNamespace(
+            submit_ask=forbidden_submit_ask,
+            loop_run_once=forbidden_loop_run_once,
+            topology_dispatch=forbidden_topology_dispatch,
+            plan_task=plan_task,
+        ),
+    )
+
+    assert payload['loop_runner_status'] == 'paused'
+    assert payload['action'] == expected_action
+    assert payload['reason'] == expected_reason
+    assert payload['task_status'] == 'ready_for_orchestration'
+    assert payload['next_owner'] == expected_owner
+    assert payload['next_activation'] == expected_next_activation
+    shown = plan_task(context, SimpleNamespace(action='task-show', task_id=task_id))
+    assert shown['task']['status'] == 'ready_for_orchestration'
+    assert shown['task']['current_loop'] is None
+    assert shown['task']['artifacts']['orchestration_notes']['orchestrator_route'] == route
+    assert 'round_summary' not in shown['task']['artifacts']
 
 
 def test_loop_runner_once_does_not_infer_pass_without_round_checker_result(
@@ -1169,7 +3238,7 @@ def test_loop_runner_once_does_not_infer_pass_without_round_checker_result(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     project_root = _project_with_loop_capacity(tmp_path, monkeypatch)
-    _add_ready_plan_task(project_root, task_id='task-runner')
+    _add_legacy_ready_plan_task(project_root, task_id='task-runner')
     command = ParsedLoopRunnerCommand(project=None, once=True, timeout_s=11.0, json_output=True)
     context = CliContextBuilder().build(command, cwd=project_root, bootstrap_if_missing=False)
 
@@ -1201,7 +3270,40 @@ def test_loop_runner_once_does_not_infer_pass_without_round_checker_result(
     assert payload['task_status'] == 'blocked'
     shown = plan_task(context, SimpleNamespace(action='task-show', task_id='task-runner'))
     assert shown['task']['status'] == 'blocked'
-    assert shown['task']['artifacts']['round_blocker']['round_result'] == 'blocked'
+    assert shown['task']['artifacts']['round_summary']['round_result'] == 'blocked'
+
+
+def test_loop_runner_once_rejects_unknown_round_result(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = _project_with_loop_capacity(tmp_path, monkeypatch)
+    _add_legacy_ready_plan_task(project_root, task_id='task-runner')
+    command = ParsedLoopRunnerCommand(project=None, once=True, timeout_s=11.0, json_output=True)
+    context = CliContextBuilder().build(command, cwd=project_root, bootstrap_if_missing=False)
+
+    def fake_loop_run_once(_context, run_command, _services):
+        loop_dir = project_root / '.ccb' / 'runtime' / 'loops' / run_command.loop_id
+        loop_dir.mkdir(parents=True, exist_ok=True)
+        round_path = loop_dir / 'round.json'
+        payload = {
+            'schema_version': 1,
+            'record_type': 'ccb_loop_run_once_round',
+            'loop_run_status': 'ok',
+            'loop_id': run_command.loop_id,
+            'task_id': run_command.task_id,
+            'round_checker': {'reply': 'round result: mystery\n'},
+            'paths': {'round': str(round_path)},
+        }
+        _write(round_path, json.dumps(payload, ensure_ascii=False, indent=2) + '\n')
+        return payload
+
+    with pytest.raises(RuntimeError, match="unknown round result 'mystery'"):
+        loop_runner_once(
+            context,
+            command,
+            services=SimpleNamespace(loop_run_once=fake_loop_run_once, plan_task=plan_task),
+        )
 
 
 def test_loop_runner_once_returns_idle_when_no_ready_task(
@@ -1259,309 +3361,20 @@ def test_loop_runner_once_activates_planner_for_draft_task(
     assert seen['sender'] == 'system'
     assert seen['artifact_request'] is True
     assert 'Status: draft' in str(seen['message'])
+    assert 'Optional machine import bundle' not in str(seen['message'])
+    assert 'ccb.loop.planner_artifact_bundle/v1' not in str(seen['message'])
     activation = json.loads(Path(str(payload['activation_path'])).read_text(encoding='utf-8'))
     assert activation['task_id'] == 'task-draft'
     assert activation['ask']['job_id'] == 'job_planner'
     assert activation['script_write_rules']
 
 
-def test_loop_runner_once_consumes_planner_output_bundle(
+def test_loop_runner_new_activation_metadata_ignores_legacy_artifact_inference(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     project_root = _project_with_loop_capacity(tmp_path, monkeypatch)
-    _add_plan_task_record(project_root, task_id='task-draft', status='draft')
-    command = ParsedLoopRunnerCommand(
-        project=None,
-        once=True,
-        timeout_s=11.0,
-        consume_role_output=True,
-        json_output=True,
-    )
-    context = CliContextBuilder().build(command, cwd=project_root, bootstrap_if_missing=False)
-    seen: dict[str, object] = {}
-
-    def fake_submit_ask(_context, ask_command):
-        seen['target'] = ask_command.target
-        seen['message'] = ask_command.message
-        return AskSummary(
-            project_id=context.project.project_id,
-            submission_id=None,
-            jobs=({'job_id': 'job_planner', 'agent_name': 'planner', 'status': 'submitted'},),
-        )
-
-    def fake_watch_ask_job(_context, job_id, _out, *, timeout, emit_output):
-        seen['watch_job_id'] = job_id
-        seen['watch_timeout'] = timeout
-        seen['emit_output'] = emit_output
-        reply = json.dumps(
-            {
-                'schema': 'ccb.loop.planner_artifact_bundle/v1',
-                'task_id': 'task-draft',
-                'role_id': 'agentroles.planner_task',
-                'artifacts': {
-                    'requirements': 'requirements from planner\n',
-                    'acceptance_criteria': {'markdown': 'acceptance from planner\n'},
-                    'verification_contract': {'content': 'verification from planner\n'},
-                    'handoff': {'text': 'handoff from planner\n'},
-                },
-                'readiness': {'status': 'ready_for_review'},
-            },
-            ensure_ascii=False,
-        )
-        return WatchEventBatch(
-            target=job_id,
-            job_id=job_id,
-            agent_name='planner',
-            target_kind='job',
-            target_name=job_id,
-            provider='codex',
-            provider_instance=None,
-            cursor=1,
-            generation=1,
-            terminal=True,
-            status='completed',
-            reply=f'```json\n{reply}\n```',
-            events=(),
-        )
-
-    payload = loop_runner_once(
-        context,
-        command,
-        services=SimpleNamespace(submit_ask=fake_submit_ask, watch_ask_job=fake_watch_ask_job),
-    )
-
-    assert payload['loop_runner_status'] == 'ok'
-    assert payload['action'] == 'imported_planner_output'
-    assert payload['task_id'] == 'task-draft'
-    assert payload['task_status'] == 'draft'
-    assert payload['next_owner'] == 'plan_reviewer'
-    assert payload['next_activation'] == 'activate_plan_reviewer'
-    assert payload['role_output']['import_status'] == 'imported'
-    assert payload['role_output']['status_request'] == 'ready_for_review'
-    assert seen['target'] == 'planner'
-    assert seen['watch_job_id'] == 'job_planner'
-    assert seen['watch_timeout'] == 11.0
-    assert seen['emit_output'] is False
-    assert 'ccb.loop.planner_artifact_bundle/v1' in str(seen['message'])
-    assert {artifact['kind'] for artifact in payload['import']['imported_artifacts']} == {
-        'requirements',
-        'acceptance',
-        'verification',
-        'handoff',
-    }
-    shown = plan_task(context, SimpleNamespace(action='task-show', task_id='task-draft'))
-    assert shown['task']['status'] == 'draft'
-    assert set(shown['task']['artifacts']) == {'requirements', 'acceptance', 'verification', 'handoff'}
-    assert shown['task']['artifacts']['requirements']['actor'] == {
-        'source': 'loop_runner_role_output',
-        'actor': 'planner',
-        'role': 'agentroles.planner_task',
-        'job_id': 'job_planner',
-    }
-    activation = json.loads(Path(str(payload['activation_path'])).read_text(encoding='utf-8'))
-    assert activation['role_output']['import_status'] == 'imported'
-
-
-def test_loop_runner_once_consumes_planner_brief_then_task_detailer_bundle(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    project_root = _project_with_loop_capacity(tmp_path, monkeypatch)
-    _add_plan_task_record(project_root, task_id='task-detail', status='draft')
-    command = ParsedLoopRunnerCommand(
-        project=None,
-        once=True,
-        timeout_s=11.0,
-        consume_role_output=True,
-        json_output=True,
-    )
-    context = CliContextBuilder().build(command, cwd=project_root, bootstrap_if_missing=False)
-    seen_targets: list[str] = []
-
-    def fake_submit_ask(_context, ask_command):
-        seen_targets.append(ask_command.target)
-        assert ask_command.target in {'planner', 'task_detailer'}
-        if ask_command.target == 'planner':
-            assert 'do not include task_detailer detail bodies' in ask_command.message
-            job_id = 'job_planner'
-        else:
-            assert 'ccb.loop.task_detailer_artifact_bundle/v1' in ask_command.message
-            job_id = 'job_task_detailer'
-        return AskSummary(
-            project_id=context.project.project_id,
-            submission_id=None,
-            jobs=({'job_id': job_id, 'agent_name': ask_command.target, 'status': 'submitted'},),
-        )
-
-    def fake_watch_ask_job(_context, job_id, _out, *, timeout, emit_output):
-        assert timeout == 11.0
-        assert emit_output is False
-        if job_id == 'job_planner':
-            reply = json.dumps(
-                {
-                    'schema': 'ccb.loop.planner_artifact_bundle/v1',
-                    'task_id': 'task-detail',
-                    'role_id': 'agentroles.plan_steward',
-                    'artifacts': {
-                        'brief': 'planner brief\n',
-                        'requirements': 'requirements\n',
-                        'acceptance': 'acceptance\n',
-                        'verification': 'verification\n',
-                        'handoff': 'handoff\n',
-                    },
-                    'readiness': {'status': 'ready_for_review'},
-                },
-                ensure_ascii=False,
-            )
-            agent_name = 'planner'
-        elif job_id == 'job_task_detailer':
-            reply = json.dumps(
-                {
-                    'schema': 'ccb.loop.task_detailer_artifact_bundle/v1',
-                    'task_id': 'task-detail',
-                    'role_id': 'agentroles.task_detailer',
-                    'artifacts': {
-                        'detail_design': 'task-scoped detail design\n',
-                        'detail_summary': 'stable summary backfill\n',
-                        'detail_packet': json.dumps(
-                            {
-                                'schema': 'ccb.loop.detail_packet_manifest/v1',
-                                'status': 'ready_for_review',
-                            },
-                            ensure_ascii=False,
-                        ),
-                        'macro_adjustment_request': json.dumps(
-                            {
-                                'schema': 'ccb.loop.macro_adjustment_request/v1',
-                                'reason': 'macro assumption changed',
-                            },
-                            ensure_ascii=False,
-                        ),
-                    },
-                    'readiness': {'status': 'detail_ready'},
-                },
-                ensure_ascii=False,
-            )
-            agent_name = 'task_detailer'
-        else:
-            raise AssertionError(f'unexpected job id {job_id}')
-        return WatchEventBatch(
-            target=job_id,
-            job_id=job_id,
-            agent_name=agent_name,
-            target_kind='job',
-            target_name=job_id,
-            provider='codex',
-            provider_instance=None,
-            cursor=1,
-            generation=1,
-            terminal=True,
-            status='completed',
-            reply=f'```json\n{reply}\n```',
-            events=(),
-        )
-
-    first = loop_runner_once(
-        context,
-        command,
-        services=SimpleNamespace(submit_ask=fake_submit_ask, watch_ask_job=fake_watch_ask_job),
-    )
-
-    assert first['action'] == 'imported_planner_output'
-    assert first['next_activation'] == 'activate_task_detailer'
-    assert first['next_owner'] == 'task_detailer'
-    shown = plan_task(context, SimpleNamespace(action='task-show', task_id='task-detail'))
-    assert shown['task']['status'] == 'draft'
-    assert shown['task']['artifacts']['brief']['scope'] == 'plan'
-    assert shown['task']['artifacts']['brief']['path'] == 'docs/plantree/plans/demo-plan/brief.md'
-
-    second = loop_runner_once(
-        context,
-        command,
-        services=SimpleNamespace(submit_ask=fake_submit_ask, watch_ask_job=fake_watch_ask_job),
-    )
-
-    assert second['action'] == 'imported_task_detailer_output'
-    assert second['task_status'] == 'detail_ready'
-    assert second['next_activation'] == 'activate_plan_reviewer'
-    assert second['next_owner'] == 'plan_reviewer'
-    shown = plan_task(context, SimpleNamespace(action='task-show', task_id='task-detail'))
-    assert shown['task']['status'] == 'detail_ready'
-    assert shown['task']['owner'] == 'plan_reviewer'
-    assert shown['task']['artifacts']['detail_design']['path'].endswith('/details/task-detail-design.md')
-    assert shown['task']['artifacts']['detail_summary']['path'].endswith('/details/brief-update-summary.md')
-    assert shown['task']['artifacts']['detail_packet']['path'].endswith('/details/detail-packet.manifest.json')
-    assert shown['task']['artifacts']['macro_adjustment_request']['path'].endswith('/details/macro-adjustment-request.json')
-    assert seen_targets == ['planner', 'task_detailer']
-
-
-def test_loop_runner_rejects_planner_bundle_with_detail_body(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    project_root = _project_with_loop_capacity(tmp_path, monkeypatch)
-    _add_plan_task_record(project_root, task_id='task-draft', status='draft')
-    command = ParsedLoopRunnerCommand(
-        project=None,
-        once=True,
-        timeout_s=11.0,
-        consume_role_output=True,
-        json_output=True,
-    )
-    context = CliContextBuilder().build(command, cwd=project_root, bootstrap_if_missing=False)
-
-    def fake_submit_ask(_context, ask_command):
-        return AskSummary(
-            project_id=context.project.project_id,
-            submission_id=None,
-            jobs=({'job_id': 'job_planner', 'agent_name': ask_command.target, 'status': 'submitted'},),
-        )
-
-    def fake_watch_ask_job(_context, job_id, _out, *, timeout, emit_output):
-        reply = json.dumps(
-            {
-                'schema': 'ccb.loop.planner_artifact_bundle/v1',
-                'task_id': 'task-draft',
-                'role_id': 'agentroles.plan_steward',
-                'artifacts': {
-                    'requirements': 'requirements\n',
-                    'detail_design': 'planner must not write task detail body\n',
-                },
-                'readiness': {'status': 'ready_for_review'},
-            },
-            ensure_ascii=False,
-        )
-        return WatchEventBatch(
-            target=job_id,
-            job_id=job_id,
-            agent_name='planner',
-            target_kind='job',
-            target_name=job_id,
-            provider='codex',
-            provider_instance=None,
-            cursor=1,
-            generation=1,
-            terminal=True,
-            status='completed',
-            reply=reply,
-            events=(),
-        )
-
-    with pytest.raises(ValueError, match="planner output artifact kind 'detail_design' is not allowed"):
-        loop_runner_once(
-            context,
-            command,
-            services=SimpleNamespace(submit_ask=fake_submit_ask, watch_ask_job=fake_watch_ask_job),
-        )
-
-
-def test_loop_runner_once_consumes_plan_reviewer_output_bundle_and_marks_ready(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    project_root = _project_with_loop_capacity(tmp_path, monkeypatch)
-    task_root = project_root / 'docs' / 'plantree' / 'plans' / 'demo-plan' / 'tasks' / 'task-review'
+    task_root = project_root / 'docs' / 'plantree' / 'plans' / 'demo-plan' / 'tasks' / 'task-new-draft'
     artifacts: dict[str, dict[str, object]] = {}
     for kind, filename, text in (
         ('requirements', 'requirements.md', 'requirements text\n'),
@@ -1579,77 +3392,80 @@ def test_loop_runner_once_consumes_plan_reviewer_output_bundle_and_marks_ready(
             'bytes': len(text.encode('utf-8')),
             'imported_at': '2026-06-27T00:00:00Z',
         }
-    _add_plan_task_record(project_root, task_id='task-review', status='draft', artifacts=artifacts)
+    _add_plan_task_record(
+        project_root,
+        task_id='task-new-draft',
+        status='draft',
+        artifacts=artifacts,
+        next_owner='planner',
+        activation_reason='test_new_activation_contract',
+    )
+    command = ParsedLoopRunnerCommand(project=None, once=True, timeout_s=11.0, json_output=True)
+    context = CliContextBuilder().build(command, cwd=project_root, bootstrap_if_missing=False)
+
+    def fake_submit_ask(_context, ask_command):
+        assert ask_command.target == 'planner'
+        return AskSummary(
+            project_id=context.project.project_id,
+            submission_id=None,
+            jobs=({'job_id': 'job_planner_new', 'agent_name': 'planner', 'status': 'submitted'},),
+        )
+
+    payload = loop_runner_once(context, command, services=SimpleNamespace(submit_ask=fake_submit_ask))
+
+    assert payload['action'] == 'activated_planner'
+    assert payload['next_owner'] == 'planner'
+
+
+def test_loop_runner_once_rejects_consume_role_output_authority_import(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = _project_with_loop_capacity(tmp_path, monkeypatch)
+    _add_plan_task_record(project_root, task_id='task-draft', status='draft')
     command = ParsedLoopRunnerCommand(
         project=None,
         once=True,
-        timeout_s=13.0,
+        timeout_s=11.0,
         consume_role_output=True,
         json_output=True,
     )
     context = CliContextBuilder().build(command, cwd=project_root, bootstrap_if_missing=False)
+    submitted: list[str] = []
 
-    def fake_submit_ask(_context, ask_command):
-        assert ask_command.target == 'plan_reviewer'
-        assert 'ccb.loop.plan_reviewer_artifact_bundle/v1' in ask_command.message
-        return AskSummary(
-            project_id=context.project.project_id,
-            submission_id=None,
-            jobs=({'job_id': 'job_plan_reviewer', 'agent_name': 'plan_reviewer', 'status': 'submitted'},),
-        )
+    def forbidden_submit_ask(_context, ask_command):
+        submitted.append(ask_command.target)
+        raise AssertionError('--consume-role-output must fail before provider ask submission')
 
-    def fake_watch_ask_job(_context, job_id, _out, *, timeout, emit_output):
-        assert job_id == 'job_plan_reviewer'
-        assert timeout == 13.0
-        assert emit_output is False
-        return WatchEventBatch(
-            target=job_id,
-            job_id=job_id,
-            agent_name='plan_reviewer',
-            target_kind='job',
-            target_name=job_id,
-            provider='codex',
-            provider_instance=None,
-            cursor=1,
-            generation=1,
-            terminal=True,
-            status='completed',
-            reply=json.dumps(
-                {
-                    'schema': 'ccb.loop.plan_reviewer_artifact_bundle/v1',
-                    'task_id': 'task-review',
-                    'role_id': 'agentroles.reviewer_plan',
-                    'artifacts': {'review': {'content': 'review says ready\n'}},
-                    'readiness': {'status': 'ready'},
-                },
-                ensure_ascii=False,
-            ),
-            events=(),
-        )
+    def forbidden_watch_ask_job(*_args, **_kwargs):
+        raise AssertionError('--consume-role-output must not watch provider replies')
 
     payload = loop_runner_once(
         context,
         command,
-        services=SimpleNamespace(submit_ask=fake_submit_ask, watch_ask_job=fake_watch_ask_job),
+        services=SimpleNamespace(submit_ask=forbidden_submit_ask, watch_ask_job=forbidden_watch_ask_job),
     )
 
-    assert payload['loop_runner_status'] == 'ok'
-    assert payload['action'] == 'imported_plan_reviewer_output'
-    assert payload['task_id'] == 'task-review'
-    assert payload['task_status'] == 'ready'
-    assert payload['next_owner'] == 'orchestrator'
-    assert payload['next_activation'] == 'execute'
-    assert payload['import']['status']['status'] == 'ready'
-    assert payload['import']['imported_artifacts'][0]['kind'] == 'review'
-    shown = plan_task(context, SimpleNamespace(action='task-show', task_id='task-review'))
-    assert shown['task']['status'] == 'ready'
-    assert set(shown['task']['artifacts']) == {'requirements', 'acceptance', 'verification', 'handoff', 'review'}
-    assert shown['task']['artifacts']['review']['actor'] == {
-        'source': 'loop_runner_role_output',
-        'actor': 'plan_reviewer',
-        'role': 'agentroles.reviewer_plan',
-        'job_id': 'job_plan_reviewer',
-    }
+    assert payload['loop_runner_status'] == 'rejected'
+    assert payload['action'] == 'consume_role_output_disabled'
+    assert '--consume-role-output is legacy/disabled' in payload['reason']
+    assert 'script-owned artifact imports' in payload['reason']
+    assert payload['next_activation'] == 'none'
+    assert submitted == []
+    shown = plan_task(context, SimpleNamespace(action='task-show', task_id='task-draft'))
+    assert shown['task']['status'] == 'draft'
+    assert shown['task'].get('artifacts') == {}
+
+    result, cli_payload, stderr = _run_phase2(
+        ['loop', 'runner', '--once', '--consume-role-output', '--json'],
+        cwd=project_root,
+    )
+    assert result == 1, stderr
+    assert cli_payload['loop_runner_status'] == 'rejected'
+    assert cli_payload['action'] == 'consume_role_output_disabled'
+    shown = plan_task(context, SimpleNamespace(action='task-show', task_id='task-draft'))
+    assert shown['task']['status'] == 'draft'
+    assert shown['task'].get('artifacts') == {}
 
 
 def test_loop_runner_once_activates_planner_with_round_evidence_for_partial_task(
@@ -1709,8 +3525,8 @@ def test_loop_runner_once_activates_planner_with_round_evidence_for_partial_task
     ('status', 'expected_action', 'expected_runner_status', 'expected_owner'),
     (
         ('needs_clarification', 'paused', 'paused', 'frontdesk'),
-        ('blocked', 'blocked', 'blocked', 'frontdesk_or_recovery'),
-        ('done', 'terminal', 'terminal', 'none'),
+        ('blocked', 'blocked', 'blocked', 'terminal'),
+        ('done', 'terminal', 'terminal', 'terminal'),
     ),
 )
 def test_loop_runner_once_stops_without_provider_activation_for_paused_or_terminal_tasks(

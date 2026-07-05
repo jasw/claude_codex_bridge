@@ -554,6 +554,7 @@ def parse_plan(tokens: list[str], *, project: str | None, error_type) -> ParsedP
         parser.add_argument('--task', required=True)
         parser.add_argument('--kind', required=True)
         parser.add_argument('--file', required=True)
+        parser.add_argument('--route', default=None)
         parser.add_argument('--json', dest='json_output', action='store_true')
         namespace = parse_args(parser, rest, error_message='invalid plan task-artifact command', error_type=error_type)
         return ParsedPlanTaskCommand(
@@ -562,12 +563,15 @@ def parse_plan(tokens: list[str], *, project: str | None, error_type) -> ParsedP
             task_id=str(namespace.task),
             artifact_kind=str(namespace.kind),
             file_path=str(namespace.file),
+            route=str(namespace.route) if namespace.route is not None else None,
             json_output=bool(namespace.json_output),
         )
     if action == 'task-status':
         parser = argparse.ArgumentParser(prog='ccb plan task-status', add_help=False)
         parser.add_argument('--task', required=True)
         parser.add_argument('--status', required=True)
+        parser.add_argument('--next-owner', default=None)
+        parser.add_argument('--activation-reason', default=None)
         parser.add_argument('--json', dest='json_output', action='store_true')
         namespace = parse_args(parser, rest, error_message='invalid plan task-status command', error_type=error_type)
         return ParsedPlanTaskCommand(
@@ -575,6 +579,8 @@ def parse_plan(tokens: list[str], *, project: str | None, error_type) -> ParsedP
             action=action,
             task_id=str(namespace.task),
             status=str(namespace.status),
+            next_owner=str(namespace.next_owner) if namespace.next_owner is not None else None,
+            activation_reason=str(namespace.activation_reason) if namespace.activation_reason is not None else None,
             json_output=bool(namespace.json_output),
         )
     if action == 'task-bind-loop':

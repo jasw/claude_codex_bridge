@@ -124,6 +124,7 @@ max_instances = 1
 
 def _dispatch_proposal() -> dict[str, object]:
     return {
+        'dispatch_compatibility': 'legacy',
         'nodes': [
             {
                 'id': 'control',
@@ -171,6 +172,7 @@ def _dispatch_proposal() -> dict[str, object]:
             },
         ],
         'gates': [{'id': 'round-complete', 'type': 'all_edges_complete'}],
+        'artifacts': {'round': 'round-review.md'},
     }
 
 
@@ -182,7 +184,7 @@ def test_topology_records_dispatch_edge_order_and_fresh_observed_revision(
     proposal_path = project_root / 'dispatch-topology.json'
     _write_json(proposal_path, _dispatch_proposal())
 
-    result, _proposed, stderr = _run_phase2(
+    result, proposed, stderr = _run_phase2(
         [
             'loop',
             'topology',
@@ -198,6 +200,14 @@ def test_topology_records_dispatch_edge_order_and_fresh_observed_revision(
         cwd=project_root,
     )
     assert result == 0, stderr
+    normalized = json.loads(Path(proposed['proposal_path']).read_text(encoding='utf-8'))
+    assert [edge['id'] for edge in normalized['edges']] == [
+        'dispatch-coder',
+        'dispatch-reviewer',
+        'dispatch-round-review',
+    ]
+    assert normalized['gates'] == [{'id': 'round-complete', 'type': 'all_edges_complete'}]
+    assert normalized['artifacts'] == {'round': 'round-review.md'}
 
     result, committed, stderr = _run_phase2(
         ['loop', 'topology', 'commit', '--loop-id', 'dispatch1', '--proposal', 'dispatch1', '--apply', '--json'],
@@ -212,6 +222,8 @@ def test_topology_records_dispatch_edge_order_and_fresh_observed_revision(
         'dispatch-reviewer',
         'dispatch-round-review',
     ]
+    assert desired['gates'] == [{'id': 'round-complete', 'type': 'all_edges_complete'}]
+    assert desired['artifacts'] == {'round': 'round-review.md'}
     assert observed['desired_revision'] == desired['revision']
     assert [edge['id'] for edge in observed['edges']] == [edge['id'] for edge in desired['edges']]
     assert observed['retained_count'] == 0

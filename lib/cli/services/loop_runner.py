@@ -1,58 +1,28 @@
 from __future__ import annotations
 
-from io import StringIO
-import json
 from pathlib import Path
-import re
 from types import SimpleNamespace
 from uuid import uuid4
 
 from cli.models import ParsedAskCommand
-from storage.atomic import atomic_write_json, atomic_write_text
+from storage.atomic import atomic_write_json
 
-from .ask import submit_ask, watch_ask_job
+from .ask import submit_ask
+from .loop_ask_first import release_ask_first_execution_round, run_ask_first_execution_round
 from .loop_run_once import loop_run_once
-from .plan_tasks import _runner_action_for_record, find_first_actionable_task, plan_task
+from .plan_tasks import find_first_actionable_task, plan_task
 from .questions import question_refs
-from .topology_dispatch import find_first_topology_dispatch_task, maybe_run_topology_dispatch
 
-_PLANNER_BUNDLE_SCHEMA = 'ccb.loop.planner_artifact_bundle/v1'
-_TASK_DETAILER_BUNDLE_SCHEMA = 'ccb.loop.task_detailer_artifact_bundle/v1'
-_PLAN_REVIEWER_BUNDLE_SCHEMA = 'ccb.loop.plan_reviewer_artifact_bundle/v1'
-_PLANNER_ARTIFACT_KINDS = frozenset({'brief', 'requirements', 'acceptance', 'verification', 'risk', 'handoff'})
-_TASK_DETAILER_ARTIFACT_KINDS = frozenset(
-    {'detail_design', 'detail_summary', 'detail_packet', 'macro_adjustment_request'}
-)
-_PLAN_REVIEWER_ARTIFACT_KINDS = frozenset({'review'})
-_ARTIFACT_KIND_ALIASES = {
-    'plan_brief': 'brief',
-    'plan-brief': 'brief',
-    'acceptance_criteria': 'acceptance',
-    'acceptance-criteria': 'acceptance',
-    'verification_contract': 'verification',
-    'verification-contract': 'verification',
-    'risk_notes': 'risk',
-    'risk-notes': 'risk',
-    'task_detail_design': 'detail_design',
-    'task-detail-design': 'detail_design',
-    'detail-design': 'detail_design',
-    'brief_update_summary': 'detail_summary',
-    'brief-update-summary': 'detail_summary',
-    'detail-summary': 'detail_summary',
-    'detail-packet': 'detail_packet',
-    'detail_packet_manifest': 'detail_packet',
-    'detail-packet-manifest': 'detail_packet',
-    'macro_adjustment': 'macro_adjustment_request',
-    'macro-adjustment': 'macro_adjustment_request',
-    'macro-adjustment-request': 'macro_adjustment_request',
-}
+_ORCHESTRATOR_ROUTES = ('direct_execution', 'needs_detail', 'macro_adjustment_request', 'blocked', 'partial_completion')
+_ROUND_REVIEWER_FIELD = 'ccb_round_reviewer'
+_LEGACY_ROUND_CHECKER_FIELD = 'round_checker'
 
 
 def loop_runner_once(context, command, services=None) -> dict[str, object]:
+    if bool(getattr(command, 'consume_role_output', False)):
+        return _consume_role_output_disabled(context)
     deps = _deps(services)
-    task = deps.find_topology_dispatch_task(context)
-    if task is None:
-        task = find_first_actionable_task(context)
+    task = find_first_actionable_task(context)
     if task is None:
         return {
             'schema_version': 1,
@@ -65,6 +35,19 @@ def loop_runner_once(context, command, services=None) -> dict[str, object]:
         }
 
     runner_action = str(task.get('runner_action') or '')
+    if runner_action == 'activate_orchestrator':
+        return _activate_orchestrator(context, command, deps, task)
+    if runner_action == 'ask_first_execute':
+        return _run_ask_first_execution_round(context, command, deps, task)
+    if runner_action == 'ask_first_execution_not_ready':
+        record = task['record']
+        current_loop = str(record.get('current_loop') or '').strip()
+        return _phase4_not_ready(
+            context,
+            task,
+            reason=str(task.get('runner_reason') or 'phase4_not_ready'),
+            loop_id=current_loop or None,
+        )
     if runner_action == 'execute':
         return _run_execution_round(context, command, deps, task)
     if runner_action == 'activate_planner':
@@ -76,18 +59,89 @@ def loop_runner_once(context, command, services=None) -> dict[str, object]:
     return _stop_without_activation(context, task)
 
 
+def _run_ask_first_execution_round(context, command, deps, task: dict[str, object]) -> dict[str, object]:
+    record = task['record']
+    task_id = str(record.get('task_id') or '')
+    current_loop = str(record.get('current_loop') or '').strip()
+    if current_loop:
+        return _phase4_not_ready(
+            context,
+            task,
+            loop_id=current_loop,
+            reason='running_task_bound_to_loop',
+        )
+    loop_id = f'lp{uuid4().hex[:6]}'
+    bind = deps.plan_task(
+        context,
+        SimpleNamespace(action='task-bind-loop', task_id=task_id, loop_id=loop_id),
+    )
+    round_payload = deps.ask_first_execution(
+        context,
+        SimpleNamespace(
+            kind='loop-ask-first-execution',
+            project=None,
+            loop_id=loop_id,
+            task_id=task_id,
+            timeout_s=getattr(command, 'timeout_s', None),
+            json_output=True,
+        ),
+        deps.services,
+    )
+    round_result, round_result_source = _round_result(round_payload)
+    report_path = _round_report_path(round_payload)
+    imported = deps.plan_task(
+        context,
+        SimpleNamespace(
+            action='task-import-round',
+            task_id=task_id,
+            loop_id=loop_id,
+            result=round_result,
+            file_path=report_path,
+            actor_source='loop_runner',
+            actor='loop_runner',
+            job_id=str(_first_job_id(round_payload) or ''),
+        ),
+    )
+    release = deps.ask_first_release(context, round_payload, deps.services)
+    _record_round_import(round_payload, imported=imported, release=release)
+    return {
+        'schema_version': 1,
+        'record_type': 'ccb_loop_runner_once',
+        'loop_runner_status': 'ok',
+        'project_id': context.project.project_id,
+        'project_root': str(context.project.project_root),
+        'action': 'ran_one_round',
+        'dispatch_source': round_payload.get('dispatch_source') or 'ask_first_mount_topology',
+        'execution_mode': 'ask_first_direct_execution',
+        'task_id': task_id,
+        'loop_id': loop_id,
+        'round_result': round_result,
+        'round_result_source': round_result_source,
+        'task_status': imported.get('status'),
+        'bind': _compact_plan_payload(bind),
+        'round': {
+            'loop_run_status': round_payload.get('loop_run_status'),
+            'round_path': report_path,
+            'round_json_path': _round_json_path(round_payload),
+        },
+        'topology': _compact_topology_payload(round_payload.get('topology')),
+        'release': _compact_release_payload(release),
+        'import': _compact_plan_payload(imported),
+        'next_activation': _next_activation(imported.get('status')),
+    }
+
+
 def _run_execution_round(context, command, deps, task: dict[str, object]) -> dict[str, object]:
     record = task['record']
     task_id = str(record.get('task_id') or '')
     current_loop = str(record.get('current_loop') or '').strip()
     if current_loop:
-        loop_id = current_loop
-        bind = {'action': 'task-bind-loop', 'task_id': task_id, 'status': record.get('status'), 'idempotent': True}
-        round_payload = deps.topology_dispatch(context, command, deps, task=task, loop_id=loop_id)
-        if round_payload is None:
-            raise RuntimeError(
-                f'loop runner task {task_id} is bound to loop {loop_id}, but no topology dispatch graph exists'
-            )
+        return _phase4_not_ready(
+            context,
+            task,
+            loop_id=current_loop,
+            reason='running_task_bound_to_loop',
+        )
     else:
         loop_id = f'lp{uuid4().hex[:6]}'
         bind = deps.plan_task(
@@ -149,6 +203,83 @@ def _run_execution_round(context, command, deps, task: dict[str, object]) -> dic
     }
 
 
+def _phase4_not_ready(
+    context,
+    task: dict[str, object],
+    *,
+    reason: str,
+    loop_id: str | None = None,
+) -> dict[str, object]:
+    record = dict(task['record'])
+    resolved_loop_id = loop_id or str(record.get('current_loop') or '').strip() or None
+    return {
+        'schema_version': 1,
+        'record_type': 'ccb_loop_runner_once',
+        'loop_runner_status': 'paused',
+        'project_id': context.project.project_id,
+        'project_root': str(context.project.project_root),
+        'action': 'ask_first_execution_not_ready',
+        'reason': (
+            f'{reason}; Phase 4 ask-first execution can only start from an unbound '
+            'direct_execution task, and topology dispatch is legacy/disabled for loop runner mainline'
+        ),
+        'task_id': record.get('task_id'),
+        'loop_id': resolved_loop_id,
+        'task_status': record.get('status'),
+        'next_owner': record.get('next_owner') or task.get('next_owner'),
+        'next_activation': 'phase4_ask_first_runner_required',
+    }
+
+
+def _activate_orchestrator(context, command, deps, task: dict[str, object]) -> dict[str, object]:
+    record = dict(task['record'])
+    task_id = str(record.get('task_id') or '')
+    activation_id = f'act-{uuid4().hex[:12]}'
+    activation = _orchestrator_activation_packet(
+        context,
+        record,
+        activation_id=activation_id,
+        reason=str(task.get('runner_reason') or 'ready_for_orchestration'),
+    )
+    activation_path = _activation_path(context, activation_id)
+    atomic_write_json(activation_path, activation)
+    summary = deps.submit_ask(
+        context,
+        ParsedAskCommand(
+            project=None,
+            target='orchestrator',
+            sender='system',
+            message=_orchestrator_message(activation),
+            task_id=activation_id,
+            compact=True,
+            artifact_request=True,
+        ),
+    )
+    job = _single_job(summary.jobs, target='orchestrator')
+    activation['ask'] = {
+        'target': 'orchestrator',
+        'job_id': str(job['job_id']),
+        'status': job.get('status'),
+    }
+    atomic_write_json(activation_path, activation)
+    return {
+        'schema_version': 1,
+        'record_type': 'ccb_loop_runner_once',
+        'loop_runner_status': 'ok',
+        'project_id': context.project.project_id,
+        'project_root': str(context.project.project_root),
+        'action': 'activated_orchestrator',
+        'reason': activation['reason_for_activation'],
+        'task_id': task_id,
+        'task_status': record.get('status'),
+        'next_owner': 'orchestrator',
+        'activation_id': activation_id,
+        'activation_path': str(activation_path),
+        'ask': activation['ask'],
+        'next_activation': 'stop_after_one_activation',
+    }
+
+
 def _activate_planner(context, command, deps, task: dict[str, object]) -> dict[str, object]:
     record = dict(task['record'])
     task_id = str(record.get('task_id') or '')
@@ -168,10 +299,7 @@ def _activate_planner(context, command, deps, task: dict[str, object]) -> dict[s
             project=None,
             target='planner',
             sender='system',
-            message=_planner_message(
-                activation,
-                include_import_bundle=bool(getattr(command, 'consume_role_output', False)),
-            ),
+            message=_planner_message(activation),
             task_id=activation_id,
             compact=True,
             artifact_request=True,
@@ -184,21 +312,6 @@ def _activate_planner(context, command, deps, task: dict[str, object]) -> dict[s
         'status': job.get('status'),
     }
     atomic_write_json(activation_path, activation)
-    if bool(getattr(command, 'consume_role_output', False)):
-        imported = _consume_role_output(
-            context,
-            command,
-            deps,
-            activation=activation,
-            activation_path=activation_path,
-            task_id=task_id,
-            target='planner',
-            expected_schema=_PLANNER_BUNDLE_SCHEMA,
-            allowed_artifacts=_PLANNER_ARTIFACT_KINDS,
-            role_action='imported_planner_output',
-        )
-        if imported is not None:
-            return imported
     return {
         'schema_version': 1,
         'record_type': 'ccb_loop_runner_once',
@@ -235,10 +348,7 @@ def _activate_plan_reviewer(context, command, deps, task: dict[str, object]) -> 
             project=None,
             target='plan_reviewer',
             sender='system',
-            message=_plan_reviewer_message(
-                activation,
-                include_import_bundle=bool(getattr(command, 'consume_role_output', False)),
-            ),
+            message=_plan_reviewer_message(activation),
             task_id=activation_id,
             compact=True,
             artifact_request=True,
@@ -251,21 +361,6 @@ def _activate_plan_reviewer(context, command, deps, task: dict[str, object]) -> 
         'status': job.get('status'),
     }
     atomic_write_json(activation_path, activation)
-    if bool(getattr(command, 'consume_role_output', False)):
-        imported = _consume_role_output(
-            context,
-            command,
-            deps,
-            activation=activation,
-            activation_path=activation_path,
-            task_id=task_id,
-            target='plan_reviewer',
-            expected_schema=_PLAN_REVIEWER_BUNDLE_SCHEMA,
-            allowed_artifacts=_PLAN_REVIEWER_ARTIFACT_KINDS,
-            role_action='imported_plan_reviewer_output',
-        )
-        if imported is not None:
-            return imported
     return {
         'schema_version': 1,
         'record_type': 'ccb_loop_runner_once',
@@ -276,7 +371,7 @@ def _activate_plan_reviewer(context, command, deps, task: dict[str, object]) -> 
         'reason': activation['reason_for_activation'],
         'task_id': task_id,
         'task_status': record.get('status'),
-        'next_owner': 'plan_reviewer',
+        'next_owner': 'planner',
         'activation_id': activation_id,
         'activation_path': str(activation_path),
         'ask': activation['ask'],
@@ -287,6 +382,7 @@ def _activate_plan_reviewer(context, command, deps, task: dict[str, object]) -> 
 def _activate_task_detailer(context, command, deps, task: dict[str, object]) -> dict[str, object]:
     record = dict(task['record'])
     task_id = str(record.get('task_id') or '')
+    next_owner = str(task.get('next_owner') or record.get('next_owner') or 'planner')
     activation_id = f'act-{uuid4().hex[:12]}'
     activation = _task_detailer_activation_packet(
         context,
@@ -302,10 +398,7 @@ def _activate_task_detailer(context, command, deps, task: dict[str, object]) -> 
             project=None,
             target='task_detailer',
             sender='system',
-            message=_task_detailer_message(
-                activation,
-                include_import_bundle=bool(getattr(command, 'consume_role_output', False)),
-            ),
+            message=_task_detailer_message(activation),
             task_id=activation_id,
             compact=True,
             artifact_request=True,
@@ -318,21 +411,6 @@ def _activate_task_detailer(context, command, deps, task: dict[str, object]) -> 
         'status': job.get('status'),
     }
     atomic_write_json(activation_path, activation)
-    if bool(getattr(command, 'consume_role_output', False)):
-        imported = _consume_role_output(
-            context,
-            command,
-            deps,
-            activation=activation,
-            activation_path=activation_path,
-            task_id=task_id,
-            target='task_detailer',
-            expected_schema=_TASK_DETAILER_BUNDLE_SCHEMA,
-            allowed_artifacts=_TASK_DETAILER_ARTIFACT_KINDS,
-            role_action='imported_task_detailer_output',
-        )
-        if imported is not None:
-            return imported
     return {
         'schema_version': 1,
         'record_type': 'ccb_loop_runner_once',
@@ -343,7 +421,7 @@ def _activate_task_detailer(context, command, deps, task: dict[str, object]) -> 
         'reason': activation['reason_for_activation'],
         'task_id': task_id,
         'task_status': record.get('status'),
-        'next_owner': 'task_detailer',
+        'next_owner': next_owner,
         'activation_id': activation_id,
         'activation_path': str(activation_path),
         'ask': activation['ask'],
@@ -354,10 +432,16 @@ def _activate_task_detailer(context, command, deps, task: dict[str, object]) -> 
 def _stop_without_activation(context, task: dict[str, object]) -> dict[str, object]:
     record = dict(task['record'])
     action = str(task.get('runner_action') or 'stop')
+    paused_actions = {'paused', 'planner_next_action_required', 'blocker_evidence_required'}
+    next_activation = 'none'
+    if action == 'planner_next_action_required':
+        next_activation = 'planner_status_transition_required'
+    elif action == 'blocker_evidence_required':
+        next_activation = 'blocker_evidence_required'
     payload = {
         'schema_version': 1,
         'record_type': 'ccb_loop_runner_once',
-        'loop_runner_status': 'paused' if action == 'paused' else action,
+        'loop_runner_status': 'paused' if action in paused_actions else action,
         'project_id': context.project.project_id,
         'project_root': str(context.project.project_root),
         'action': action,
@@ -365,271 +449,74 @@ def _stop_without_activation(context, task: dict[str, object]) -> dict[str, obje
         'task_id': record.get('task_id'),
         'task_status': record.get('status'),
         'next_owner': task.get('next_owner'),
-        'next_activation': 'none',
+        'next_activation': next_activation,
     }
     if action == 'paused' and str(record.get('task_id') or '').strip():
         payload['question_refs'] = question_refs(context, record.get('task_id'))
     return payload
 
 
+def _consume_role_output_disabled(context) -> dict[str, object]:
+    return {
+        'schema_version': 1,
+        'record_type': 'ccb_loop_runner_once',
+        'loop_runner_status': 'rejected',
+        'project_id': context.project.project_id,
+        'project_root': str(context.project.project_root),
+        'action': 'consume_role_output_disabled',
+        'reason': (
+            '--consume-role-output is legacy/disabled for the Decision 020 mainline; '
+            'use script-owned artifact imports and explicit task status transitions instead'
+        ),
+        'next_activation': 'none',
+    }
+
+
 def _deps(services):
     services = services or SimpleNamespace()
     return SimpleNamespace(
+        ask_first_execution=getattr(services, 'ask_first_execution', run_ask_first_execution_round),
+        ask_first_release=getattr(services, 'ask_first_release', release_ask_first_execution_round),
         loop_run_once=getattr(services, 'loop_run_once', loop_run_once),
         plan_task=getattr(services, 'plan_task', plan_task),
         submit_ask=getattr(services, 'submit_ask', submit_ask),
-        watch_ask_job=getattr(services, 'watch_ask_job', watch_ask_job),
-        topology_dispatch=getattr(services, 'topology_dispatch', maybe_run_topology_dispatch),
-        find_topology_dispatch_task=getattr(services, 'find_topology_dispatch_task', find_first_topology_dispatch_task),
         services=services,
     )
 
 
-def _consume_role_output(
-    context,
-    command,
-    deps,
-    *,
-    activation: dict[str, object],
-    activation_path: Path,
-    task_id: str,
-    target: str,
-    expected_schema: str,
-    allowed_artifacts: frozenset[str],
-    role_action: str,
-) -> dict[str, object] | None:
-    ask = activation.get('ask') if isinstance(activation.get('ask'), dict) else {}
-    job_id = str(ask.get('job_id') or '').strip()
-    if not job_id:
-        return None
-    batch = deps.watch_ask_job(context, job_id, StringIO(), timeout=getattr(command, 'timeout_s', None), emit_output=False)
-    role_output = {
-        'target': target,
-        'job_id': job_id,
-        'status': batch.status,
-        'terminal': bool(batch.terminal),
-    }
-    activation['role_output'] = role_output
-    bundle = _extract_role_output_bundle(batch.reply, expected_schema=expected_schema)
-    if bundle is None:
-        role_output['import_status'] = 'no_import_bundle'
-        atomic_write_json(activation_path, activation)
-        return None
-
-    imported = _import_role_bundle(
-        context,
-        deps,
-        bundle,
-        activation_id=str(activation.get('activation_id') or ''),
-        task_id=task_id,
-        target=target,
-        job_id=job_id,
-        allowed_artifacts=allowed_artifacts,
-    )
-    role_output['import_status'] = imported['import_status']
-    role_output['imported_artifacts'] = imported['imported_artifacts']
-    if imported.get('status_request'):
-        role_output['status_request'] = imported['status_request']
-    activation['role_output'] = role_output
-    atomic_write_json(activation_path, activation)
-    return {
-        'schema_version': 1,
-        'record_type': 'ccb_loop_runner_once',
-        'loop_runner_status': 'ok',
-        'project_id': context.project.project_id,
-        'project_root': str(context.project.project_root),
-        'action': role_action,
-        'reason': activation.get('reason_for_activation'),
-        'task_id': task_id,
-        'task_status': imported.get('task_status'),
-        'next_owner': imported.get('next_owner'),
-        'activation_id': activation.get('activation_id'),
-        'activation_path': str(activation_path),
-        'ask': activation.get('ask'),
-        'role_output': role_output,
-        'import': imported,
-        'next_activation': imported.get('next_activation'),
-    }
-
-
-def _extract_role_output_bundle(reply: str, *, expected_schema: str) -> dict[str, object] | None:
-    for candidate in _json_candidates(reply):
-        try:
-            payload = json.loads(candidate)
-        except json.JSONDecodeError:
-            continue
-        if isinstance(payload, dict) and str(payload.get('schema') or '') == expected_schema:
-            return payload
-    return None
-
-
-def _json_candidates(text: str) -> tuple[str, ...]:
-    stripped = str(text or '').strip()
-    candidates: list[str] = []
-    if stripped.startswith('{') and stripped.endswith('}'):
-        candidates.append(stripped)
-    for match in re.finditer(r'```(?:json)?\s*(.*?)\s*```', stripped, re.DOTALL):
-        block = match.group(1).strip()
-        if block.startswith('{') and block.endswith('}'):
-            candidates.append(block)
-    marker = 'CCB_PLAN_IMPORT:'
-    if marker in stripped:
-        tail = stripped.split(marker, 1)[1].strip()
-        if tail.startswith('{') and tail.endswith('}'):
-            candidates.append(tail)
-    return tuple(candidates)
-
-
-def _import_role_bundle(
-    context,
-    deps,
-    bundle: dict[str, object],
-    *,
-    activation_id: str,
-    task_id: str,
-    target: str,
-    job_id: str,
-    allowed_artifacts: frozenset[str],
-) -> dict[str, object]:
-    bundle_task_id = str(bundle.get('task_id') or '').strip()
-    if bundle_task_id and bundle_task_id != task_id:
-        raise ValueError(f'{target} output task_id mismatch: {bundle_task_id} != {task_id}')
-    imported_artifacts: list[dict[str, object]] = []
-    import_root = _role_import_root(context, activation_id=activation_id, target=target)
-    role_id = str(bundle.get('role_id') or bundle.get('planner_role_id') or '').strip()
-    for kind, text in _bundle_artifacts(bundle):
-        normalized_kind = _normalize_artifact_kind(kind)
-        if normalized_kind not in allowed_artifacts:
-            allowed = ', '.join(sorted(allowed_artifacts))
-            raise ValueError(f'{target} output artifact kind {kind!r} is not allowed; expected one of: {allowed}')
-        artifact_path = import_root / f'{normalized_kind}.md'
-        atomic_write_text(artifact_path, text)
-        payload = deps.plan_task(
-            context,
-            SimpleNamespace(
-                action='task-artifact',
-                task_id=task_id,
-                artifact_kind=normalized_kind,
-                file_path=str(artifact_path),
-                actor_source='loop_runner_role_output',
-                actor=target,
-                actor_role=role_id,
-                job_id=job_id,
-            ),
-        )
-        imported_artifacts.append(_compact_artifact_payload(payload))
-
-    status_request = _status_request(bundle)
-    status_payload: dict[str, object] | None = None
-    if target == 'plan_reviewer' and status_request == 'ready':
-        status_payload = deps.plan_task(
-            context,
-            SimpleNamespace(action='task-status', task_id=task_id, status='ready'),
-        )
-    elif target == 'task_detailer' and status_request in {'detail_ready', 'ready_for_review'}:
-        status_payload = deps.plan_task(
-            context,
-            SimpleNamespace(action='task-status', task_id=task_id, status='detail_ready'),
-        )
-    elif target == 'task_detailer' and status_request in {'ready', 'running', 'done'}:
-        raise ValueError(f'task_detailer output cannot request authoritative status: {status_request}')
-    show = deps.plan_task(context, SimpleNamespace(action='task-show', task_id=task_id))
-    record = show.get('task') if isinstance(show.get('task'), dict) else {}
-    next_action = _runner_action_for_record(record)
-    return {
-        'import_status': 'imported',
-        'task_id': task_id,
-        'task_status': show.get('status'),
-        'status_request': status_request,
-        'status': _compact_plan_payload(status_payload or {}) if status_payload is not None else None,
-        'imported_artifacts': tuple(imported_artifacts),
-        'next_owner': (next_action or {}).get('next_owner'),
-        'next_activation': (next_action or {}).get('action') or 'none',
-    }
-
-
-def _role_import_root(context, *, activation_id: str, target: str) -> Path:
-    safe_activation = activation_id or f'act-{uuid4().hex[:12]}'
-    root = Path(context.paths.runtime_state_root) / 'runtime' / 'loops' / 'activations' / safe_activation / 'imports' / target
-    root.mkdir(parents=True, exist_ok=True)
-    return root
-
-
-def _bundle_artifacts(bundle: dict[str, object]) -> tuple[tuple[str, str], ...]:
-    raw = bundle.get('artifacts')
-    items: list[tuple[str, str]] = []
-    if isinstance(raw, dict):
-        for kind, value in raw.items():
-            text = _artifact_text(value)
-            if text is not None:
-                items.append((str(kind), text))
-    elif isinstance(raw, list):
-        for value in raw:
-            if not isinstance(value, dict):
-                continue
-            kind = str(value.get('kind') or '').strip()
-            text = _artifact_text(value)
-            if kind and text is not None:
-                items.append((kind, text))
-    if not items:
-        raise ValueError('role output bundle requires at least one artifact')
-    return tuple(items)
-
-
-def _artifact_text(value: object) -> str | None:
-    if isinstance(value, str):
-        return value
-    if isinstance(value, dict):
-        for key in ('content', 'text', 'markdown'):
-            raw = value.get(key)
-            if isinstance(raw, str):
-                return raw
-    return None
-
-
-def _normalize_artifact_kind(kind: str) -> str:
-    key = str(kind or '').strip().lower()
-    return _ARTIFACT_KIND_ALIASES.get(key, key)
-
-
-def _status_request(bundle: dict[str, object]) -> str:
-    raw = bundle.get('status_request')
-    if isinstance(raw, str) and raw.strip():
-        return raw.strip().lower()
-    readiness = bundle.get('readiness')
-    if isinstance(readiness, dict):
-        status = readiness.get('status')
-        if isinstance(status, str):
-            normalized = status.strip().lower()
-            if normalized == 'ready_for_review':
-                return 'ready_for_review'
-            return normalized
-    return ''
-
-
-def _compact_artifact_payload(payload: dict[str, object]) -> dict[str, object]:
-    artifact = payload.get('artifact') if isinstance(payload.get('artifact'), dict) else {}
-    return {
-        'kind': artifact.get('kind'),
-        'path': artifact.get('path'),
-        'sha256': artifact.get('sha256'),
-        'bytes': artifact.get('bytes'),
-        'actor': artifact.get('actor'),
-    }
-
-
 def _round_result(payload: dict[str, object]) -> tuple[str, str]:
-    declared = _declared_round_result(payload)
+    structured = str(payload.get('round_result') or '').strip().lower()
+    if structured:
+        mapping = {
+            'pass': 'pass',
+            'partial': 'partial',
+            'replan_required': 'replan_required',
+            'blocked': 'blocked',
+            'global_blocker': 'blocked',
+        }
+        if structured not in mapping:
+            known = ', '.join(('blocked', 'partial', 'pass', 'replan_required'))
+            raise RuntimeError(f'unknown round result {structured!r}; expected one of: {known}')
+        source = str(payload.get('round_result_source') or '').strip() or 'round_payload'
+        return mapping[structured], source
+    declared, source_field = _declared_round_result(payload)
     if declared is not None:
-        return declared, 'round_checker_reply'
+        source = 'round_checker_reply' if source_field == _LEGACY_ROUND_CHECKER_FIELD else 'round_reviewer_reply'
+        return declared, source
     if str(payload.get('loop_run_status') or '') == 'ok':
+        if isinstance(payload.get(_ROUND_REVIEWER_FIELD), dict):
+            return 'blocked', 'missing_round_reviewer_result'
         return 'blocked', 'missing_round_checker_result'
     return 'blocked', 'loop_run_status'
 
 
-def _declared_round_result(payload: dict[str, object]) -> str | None:
-    checker = payload.get('round_checker') if isinstance(payload.get('round_checker'), dict) else {}
-    reply = str(checker.get('reply') or '')
+def _declared_round_result(payload: dict[str, object]) -> tuple[str | None, str]:
+    reviewer = payload.get(_ROUND_REVIEWER_FIELD) if isinstance(payload.get(_ROUND_REVIEWER_FIELD), dict) else {}
+    source_field = _ROUND_REVIEWER_FIELD
+    if not reviewer and isinstance(payload.get(_LEGACY_ROUND_CHECKER_FIELD), dict):
+        reviewer = payload[_LEGACY_ROUND_CHECKER_FIELD]
+        source_field = _LEGACY_ROUND_CHECKER_FIELD
+    reply = str(reviewer.get('reply') or '')
     mapping = {
         'pass': 'pass',
         'partial': 'partial',
@@ -642,8 +529,11 @@ def _declared_round_result(payload: dict[str, object]) -> str | None:
         if not line.startswith('round result:'):
             continue
         value = line.split(':', 1)[1].strip().split()[0].strip('`.,;')
-        return mapping.get(value)
-    return None
+        if value not in mapping:
+            known = ', '.join(('blocked', 'partial', 'pass', 'replan_required'))
+            raise RuntimeError(f'unknown round result {value!r}; expected one of: {known}')
+        return mapping[value], source_field
+    return None, source_field
 
 
 def _round_report_path(payload: dict[str, object]) -> str:
@@ -667,15 +557,113 @@ def _compact_plan_payload(payload: dict[str, object]) -> dict[str, object]:
     }
 
 
+def _compact_topology_payload(payload: object) -> dict[str, object]:
+    topology = payload if isinstance(payload, dict) else {}
+    commit = topology.get('commit') if isinstance(topology.get('commit'), dict) else {}
+    reconcile = commit.get('reconcile') if isinstance(commit.get('reconcile'), dict) else {}
+    status = topology.get('status') if isinstance(topology.get('status'), dict) else {}
+    return {
+        'dispatch_source': 'ask_first_mount_topology',
+        'proposal_source_path': topology.get('proposal_source_path'),
+        'proposal_path': (topology.get('propose') or {}).get('proposal_path') if isinstance(topology.get('propose'), dict) else None,
+        'desired_path': commit.get('desired_path'),
+        'observed_path': reconcile.get('observed_path') or status.get('observed_path'),
+        'status': status.get('loop_topology_status'),
+        'agent_count': reconcile.get('agent_count'),
+        'released_count': (topology.get('release') or {}).get('released_count') if isinstance(topology.get('release'), dict) else None,
+        'retained_count': (topology.get('release') or {}).get('retained_count') if isinstance(topology.get('release'), dict) else None,
+    }
+
+
+def _compact_release_payload(payload: dict[str, object]) -> dict[str, object]:
+    return {
+        'loop_topology_status': payload.get('loop_topology_status'),
+        'loop_id': payload.get('loop_id'),
+        'desired_path': payload.get('desired_path'),
+        'observed_path': payload.get('observed_path'),
+        'released_count': payload.get('released_count'),
+        'retained_count': payload.get('retained_count'),
+        'released_agents': payload.get('released_agents'),
+    }
+
+
+def _record_round_import(
+    round_payload: dict[str, object],
+    *,
+    imported: dict[str, object],
+    release: dict[str, object],
+) -> None:
+    round_payload['authority_import'] = _compact_plan_payload(imported)
+    round_payload['release'] = _compact_release_payload(release)
+    path_text = _round_json_path(round_payload)
+    if path_text:
+        atomic_write_json(Path(path_text), round_payload)
+
+
+def _round_json_path(payload: dict[str, object]) -> str:
+    paths = payload.get('paths') if isinstance(payload.get('paths'), dict) else {}
+    return str(paths.get('round_json') or '').strip()
+
+
 def _next_activation(status: object) -> str:
     value = str(status or '')
     if value == 'done':
         return 'stop'
+    if value in {'ready_for_orchestration', 'ready'}:
+        return 'orchestrator'
     if value in {'partial', 'replan_required'}:
         return 'planner'
     if value == 'blocked':
-        return 'frontdesk_or_recovery'
+        return 'terminal'
     return 'inspect'
+
+
+def _orchestrator_activation_packet(
+    context,
+    record: dict[str, object],
+    *,
+    activation_id: str,
+    reason: str,
+) -> dict[str, object]:
+    artifacts = record.get('artifacts') if isinstance(record.get('artifacts'), dict) else {}
+    task_root = Path(context.project.project_root) / str(record.get('task_root') or '')
+    refs = {
+        kind: artifact.get('path')
+        for kind, artifact in sorted(artifacts.items())
+        if kind in {'task_packet', 'execution_contract', 'orchestration_notes'}
+        and isinstance(artifact, dict)
+        and artifact.get('path')
+    }
+    return {
+        'schema_version': 1,
+        'record_type': 'ccb_loop_orchestrator_activation',
+        'activation_id': activation_id,
+        'project_id': context.project.project_id,
+        'project_root': str(context.project.project_root),
+        'task_id': record.get('task_id'),
+        'task_status': record.get('status'),
+        'action': 'activate_orchestrator',
+        'reason_for_activation': reason,
+        'required_next_output': 'reply-only route decision and compact orchestration notes for supervisor-owned import',
+        'task_packet_root': str(task_root.relative_to(context.project.project_root)),
+        'artifact_refs': refs,
+        'compact_artifacts': _compact_artifacts(context, artifacts, refs.keys()),
+        'allowed_routes': _ORCHESTRATOR_ROUTES,
+        'script_write_rules': [
+            'Reply only; do not run ccb, ccb_test, artifact import commands, or wrapper commands.',
+            'Choose exactly one route: direct_execution, needs_detail, macro_adjustment_request, blocked, or partial_completion.',
+            'Provide compact orchestration notes with citations to task_packet and execution_contract refs.',
+            'Supervisor/script-owned import will record orchestration_notes with the selected route after reviewing this reply.',
+            'Do not edit task status, index, current_loop, runtime topology, or task artifacts directly.',
+            'Do not rely on provider reply text as durable route/status authority.',
+            'Do not start task_detailer, worker, reviewer, loop_run_once, or topology dispatch from this activation.',
+        ],
+        'stop_limits': [
+            'one orchestrator activation per loop runner --once',
+            'no recursive detail or execution activation inside orchestrator triage',
+            'artifact links preferred over pasted runtime logs',
+        ],
+    }
 
 
 def _planner_activation_packet(
@@ -843,8 +831,54 @@ def _planner_question_refs(context, record: dict[str, object]) -> dict[str, obje
     return tuple(_question_refs(artifacts))
 
 
-def _planner_message(activation: dict[str, object], *, include_import_bundle: bool = False) -> str:
-    message = (
+def _compact_artifacts(context, artifacts: dict[str, object], kinds) -> dict[str, dict[str, object]]:
+    root = Path(context.project.project_root)
+    compact: dict[str, dict[str, object]] = {}
+    for kind in sorted(kinds):
+        artifact = artifacts.get(kind) if isinstance(artifacts, dict) else None
+        if not isinstance(artifact, dict):
+            continue
+        relative_path = str(artifact.get('path') or '').strip()
+        if not relative_path:
+            continue
+        item: dict[str, object] = {'path': relative_path}
+        try:
+            text = (root / relative_path).read_text(encoding='utf-8').strip()
+        except FileNotFoundError:
+            text = ''
+        if text:
+            limit = 4000
+            item['content'] = text[:limit]
+            item['truncated'] = len(text) > limit
+        compact[kind] = item
+    return compact
+
+
+def _orchestrator_message(activation: dict[str, object]) -> str:
+    return (
+        'Role: ccb_orchestrator\n'
+        f"Activation id: {activation.get('activation_id')}\n"
+        f"Task: {activation.get('task_id')}\n"
+        f"Status: {activation.get('task_status')}\n"
+        f"Reason: {activation.get('reason_for_activation')}\n"
+        f"Task packet root: {activation.get('task_packet_root')}\n"
+        f"Artifact refs: {activation.get('artifact_refs')}\n"
+        f"Compact artifacts: {activation.get('compact_artifacts')}\n"
+        f"Allowed routes: {', '.join(_ORCHESTRATOR_ROUTES)}\n\n"
+        'Required reply-only output:\n'
+        '- route: <one of direct_execution|needs_detail|macro_adjustment_request|blocked|partial_completion>\n'
+        '- orchestration_notes: compact rationale and citations to task_packet and execution_contract refs\n\n'
+        'Authority boundary:\n'
+        '- Reply only; do not run ccb, ccb_test, artifact import commands, or wrapper commands.\n'
+        '- Supervisor/script-owned import will record orchestration_notes with the selected route after reviewing this reply.\n'
+        '- do not edit task index, status, current_loop, runtime capacity, topology, or task artifacts directly\n'
+        '- do not rely on provider reply text as durable route/status authority\n'
+        '- do not start task_detailer, worker, reviewer, loop_run_once, or topology dispatch from this activation'
+    )
+
+
+def _planner_message(activation: dict[str, object]) -> str:
+    return (
         'Role: planner\n'
         f"Activation id: {activation.get('activation_id')}\n"
         f"Task: {activation.get('task_id')}\n"
@@ -864,20 +898,10 @@ def _planner_message(activation: dict[str, object], *, include_import_bundle: bo
         '- do not edit task index, status, current_loop, runtime capacity, or tmux state directly\n'
         '- do not start worker/checker/orchestrator execution from this activation'
     )
-    if not include_import_bundle:
-        return message
+
+
+def _task_detailer_message(activation: dict[str, object]) -> str:
     return (
-        message
-        + '\n\n'
-        'Optional machine import bundle:\n'
-        '- If the host requested role-output consumption, return a single JSON object with schema '
-        f'"{_PLANNER_BUNDLE_SCHEMA}", task_id, artifacts, and readiness.\n'
-        '- artifacts may include brief, requirements, acceptance, verification, risk, and handoff only.'
-    )
-
-
-def _task_detailer_message(activation: dict[str, object], *, include_import_bundle: bool = False) -> str:
-    message = (
         'Role: task_detailer\n'
         f"Activation id: {activation.get('activation_id')}\n"
         f"Task: {activation.get('task_id')}\n"
@@ -896,20 +920,10 @@ def _task_detailer_message(activation: dict[str, object], *, include_import_bund
         '- do not edit roadmap, task index, status, current_loop, runtime capacity, or tmux state directly\n'
         '- do not start worker/checker/orchestrator execution from this activation'
     )
-    if not include_import_bundle:
-        return message
+
+
+def _plan_reviewer_message(activation: dict[str, object]) -> str:
     return (
-        message
-        + '\n\n'
-        'Optional machine import bundle:\n'
-        '- If the host requested role-output consumption, return a single JSON object with schema '
-        f'"{_TASK_DETAILER_BUNDLE_SCHEMA}", task_id, artifacts, and readiness.\n'
-        '- artifacts may include detail_design, detail_summary, detail_packet, and macro_adjustment_request only.'
-    )
-
-
-def _plan_reviewer_message(activation: dict[str, object], *, include_import_bundle: bool = False) -> str:
-    message = (
         'Role: plan_reviewer\n'
         f"Activation id: {activation.get('activation_id')}\n"
         f"Task: {activation.get('task_id')}\n"
@@ -924,16 +938,6 @@ def _plan_reviewer_message(activation: dict[str, object], *, include_import_bund
         '- use CCB plan commands or host-provided wrappers for authoritative writes\n'
         '- do not edit task index, status, current_loop, runtime capacity, or tmux state directly\n'
         '- do not start worker/checker/orchestrator execution from this activation'
-    )
-    if not include_import_bundle:
-        return message
-    return (
-        message
-        + '\n\n'
-        'Optional machine import bundle:\n'
-        '- If the host requested role-output consumption, return a single JSON object with schema '
-        f'"{_PLAN_REVIEWER_BUNDLE_SCHEMA}", task_id, artifacts.review, and readiness.status.\n'
-        '- The host may import review and commit ready only after script validation succeeds.'
     )
 
 

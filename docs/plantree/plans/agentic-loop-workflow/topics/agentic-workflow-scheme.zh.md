@@ -473,7 +473,7 @@ loop runner 根据状态决定：
 
 ```text
 1. planner 创建 macro task；orchestrator triage 判断 direct execution、
-   needs_detail、macro_adjustment_blocked 或 blocked；只有 needs_detail 时
+   needs_detail、macro_adjustment_request 或 blocked；只有 needs_detail 时
    `task_detailer` 生成 detail packet 并回到 orchestrator
 2. ccb loop runner --once 找到一个 ready task
 3. ccb plan task-bind-loop 原子写 current_loop，并把 task 置为 running

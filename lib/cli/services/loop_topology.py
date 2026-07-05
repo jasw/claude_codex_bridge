@@ -15,13 +15,17 @@ from storage.atomic import atomic_write_json
 from .agent_lifecycle import add_lifecycle_agents, agent_lifecycle
 from .layout import layout_command
 
-TOPOLOGY_SCHEMA = 'ccb.loop.agent_topology.v1'
-PROPOSAL_SCHEMA = 'ccb.loop.agent_topology.proposal.v1'
-OBSERVED_SCHEMA = 'ccb.loop.agent_topology.observed.v1'
+TOPOLOGY_SCHEMA = 'ccb.loop.agent_mount_topology.v1'
+PROPOSAL_SCHEMA = 'ccb.loop.agent_mount_topology.proposal.v1'
+OBSERVED_SCHEMA = 'ccb.loop.agent_mount_topology.observed.v1'
+LEGACY_TOPOLOGY_SCHEMA = 'ccb.loop.agent_topology.v1'
+LEGACY_PROPOSAL_SCHEMA = 'ccb.loop.agent_topology.proposal.v1'
+LEGACY_OBSERVED_SCHEMA = 'ccb.loop.agent_topology.observed.v1'
 DESIRED_STATES = frozenset({'present', 'hidden', 'parked', 'absent'})
 ACTIVE_DESIRED_STATES = frozenset({'present', 'hidden', 'parked'})
 RELEASE_POLICIES = frozenset({'auto', 'hide', 'park', 'unload'})
-SUPPORTED_EDGE_TYPES = frozenset({'ask', 'ask_after', 'artifact_read', 'handoff', 'status_report', 'group_ready', 'release_gate', 'release_when'})
+DRAINED_RELEASE_STATES = frozenset({'parked'})
+LEGACY_DISPATCH_EDGE_TYPES = frozenset({'ask', 'ask_after'})
 LEGACY_TOPOLOGY_PROFILES = frozenset({
     'worker',
     'checker',
@@ -106,7 +110,7 @@ def _commit(context, command) -> dict[str, object]:
     proposal_id = _normalize_proposal_id(getattr(command, 'proposal_id', None))
     proposal = _load_json_object(_proposal_path(context, loop_id, proposal_id))
     validation = _validate_topology(context, proposal, loop_id=loop_id)
-    previous = _load_json_optional(_desired_path(context, loop_id))
+    previous = _load_desired_optional(context, loop_id)
     previous_revision = int((previous or {}).get('revision') or 0)
     base_revision = proposal.get('base_revision')
     if base_revision is not None and int(base_revision) != previous_revision:
@@ -116,7 +120,7 @@ def _commit(context, command) -> dict[str, object]:
     revision = previous_revision + 1
     desired = {
         'schema': TOPOLOGY_SCHEMA,
-        'record_type': 'ccb_loop_agent_topology_desired',
+        'record_type': 'ccb_loop_agent_mount_topology_desired',
         'topology_status': 'committed',
         'project_id': context.project.project_id,
         'project_root': str(context.project.project_root),
@@ -125,13 +129,18 @@ def _commit(context, command) -> dict[str, object]:
         'base_revision': previous_revision,
         'proposal_id': proposal_id,
         'committed_at': _utc_now(),
+        'agents': proposal.get('agents') or [],
+        'windows': proposal.get('windows') or [],
         'nodes': proposal.get('nodes') or [],
-        'edges': proposal.get('edges') or [],
-        'artifacts': proposal.get('artifacts') or {},
-        'gates': proposal.get('gates') or [],
         'release_policy': proposal.get('release_policy') or {'policy': 'auto', 'idle_only': True},
         'validation': validation,
     }
+    if 'edges' in proposal:
+        desired['edges'] = proposal.get('edges') or []
+    if 'artifacts' in proposal:
+        desired['artifacts'] = proposal.get('artifacts') or {}
+    if 'gates' in proposal:
+        desired['gates'] = proposal.get('gates') or []
     atomic_write_json(_desired_path(context, loop_id), desired)
     _append_event(
         context,
@@ -153,7 +162,7 @@ def _commit(context, command) -> dict[str, object]:
 
 def _reconcile(context, command) -> dict[str, object]:
     loop_id = _normalize_loop_id(getattr(command, 'loop_id', None))
-    desired = _load_json_optional(_desired_path(context, loop_id))
+    desired = _load_desired_optional(context, loop_id)
     if desired is None:
         return {
             'loop_topology_status': 'missing',
@@ -168,8 +177,10 @@ def _reconcile(context, command) -> dict[str, object]:
 
 def _status(context, command) -> dict[str, object]:
     loop_id = _normalize_loop_id(getattr(command, 'loop_id', None))
-    desired = _load_json_optional(_desired_path(context, loop_id))
-    observed = _load_json_optional(_observed_path(context, loop_id))
+    desired_path = _desired_read_path(context, loop_id)
+    observed_path = _observed_read_path(context, loop_id)
+    desired = _load_json_optional(desired_path)
+    observed = _load_json_optional(observed_path)
     proposals = [
         path.stem
         for path in sorted(_proposal_dir(context, loop_id).glob('*.json'))
@@ -184,15 +195,19 @@ def _status(context, command) -> dict[str, object]:
         observed_status = str(observed.get('last_reconcile_status') or '')
         if observed_revision == desired_revision and observed_status == 'failed':
             status = 'failed'
+        elif observed_revision == desired_revision and observed_status == 'release_incomplete':
+            status = 'release_incomplete'
+        elif observed_revision == desired_revision and observed_status == 'retained_busy':
+            status = 'retained_busy'
+        elif observed_revision == desired_revision and str(desired.get('topology_status') or '') == 'released':
+            status = 'released'
         elif observed_revision < desired_revision:
             status = 'drift'
-        elif observed_status == 'retained_busy':
-            status = 'retained_busy'
     return {
         'loop_topology_status': status,
         'loop_id': loop_id,
-        'desired_path': str(_desired_path(context, loop_id)),
-        'observed_path': str(_observed_path(context, loop_id)),
+        'desired_path': str(desired_path),
+        'observed_path': str(observed_path),
         'proposal_dir': str(_proposal_dir(context, loop_id)),
         'proposal_ids': proposals,
         'desired': _status_summary(desired),
@@ -202,11 +217,11 @@ def _status(context, command) -> dict[str, object]:
 
 def _release(context, command) -> dict[str, object]:
     loop_id = _normalize_loop_id(getattr(command, 'loop_id', None))
-    desired = _load_json_optional(_desired_path(context, loop_id))
+    desired = _load_desired_optional(context, loop_id)
     if desired is None:
         desired = {
             'schema': TOPOLOGY_SCHEMA,
-            'record_type': 'ccb_loop_agent_topology_desired',
+            'record_type': 'ccb_loop_agent_mount_topology_desired',
             'topology_status': 'released',
             'project_id': context.project.project_id,
             'project_root': str(context.project.project_root),
@@ -215,15 +230,16 @@ def _release(context, command) -> dict[str, object]:
             'base_revision': 0,
             'proposal_id': None,
             'committed_at': _utc_now(),
+            'agents': [],
+            'windows': [],
             'nodes': [],
-            'edges': [],
-            'artifacts': {},
-            'gates': [],
             'release_policy': _release_policy_record(command),
             'validation': {'agent_count': 0, 'present_agent_count': 0, 'profile_counts': {}, 'edge_count': 0},
         }
     else:
         desired = json.loads(json.dumps(desired))
+        desired['schema'] = TOPOLOGY_SCHEMA
+        desired['record_type'] = 'ccb_loop_agent_mount_topology_desired'
         desired['revision'] = int(desired.get('revision') or 0) + 1
         desired['base_revision'] = int(desired.get('revision') or 1) - 1
         desired['topology_status'] = 'released'
@@ -232,7 +248,15 @@ def _release(context, command) -> dict[str, object]:
         _mark_all_agents_absent(desired)
     atomic_write_json(_desired_path(context, loop_id), desired)
     payload = _reconcile_desired(context, loop_id, desired=desired)
-    payload['loop_topology_status'] = 'released' if payload.get('retained_count', 0) == 0 else 'retained_busy'
+    payload = _prune_released_authority(context, loop_id, desired=desired, payload=payload)
+    payload = _prune_drained_release_authority(context, loop_id, payload=payload)
+    payload = _mark_release_residue(context, loop_id, payload=payload)
+    if payload.get('retained_count', 0) != 0:
+        payload['loop_topology_status'] = 'retained_busy'
+    elif payload.get('release_incomplete_count', 0) != 0:
+        payload['loop_topology_status'] = 'release_incomplete'
+    else:
+        payload['loop_topology_status'] = 'released'
     _append_event(
         context,
         loop_id,
@@ -241,6 +265,8 @@ def _release(context, command) -> dict[str, object]:
             'revision': desired.get('revision'),
             'retained_count': payload.get('retained_count', 0),
             'released_count': payload.get('released_count', 0),
+            'drained_count': payload.get('drained_count', 0),
+            'release_incomplete_count': payload.get('release_incomplete_count', 0),
         },
     )
     return payload
@@ -356,9 +382,19 @@ def _write_observed(
         record = _dynamic_record(context, name)
         observed_agents.append(_observed_agent(agent, record=record))
     released_agents = _released_agent_ids(observed_agents, actions)
+    retained_agents = sorted(
+        str(item.get('agent') or '')
+        for item in retained
+        if isinstance(item, Mapping) and str(item.get('agent') or '')
+    )
+    retain_reasons = {
+        str(item.get('agent') or ''): item.get('reason')
+        for item in retained
+        if isinstance(item, Mapping) and str(item.get('agent') or '') and item.get('reason') is not None
+    }
     observed = {
         'schema': OBSERVED_SCHEMA,
-        'record_type': 'ccb_loop_agent_topology_observed',
+        'record_type': 'ccb_loop_agent_mount_topology_observed',
         'last_reconcile_status': status,
         'project_id': context.project.project_id,
         'project_root': str(context.project.project_root),
@@ -366,9 +402,11 @@ def _write_observed(
         'desired_revision': int(desired.get('revision') or 0),
         'reconciled_at': _utc_now(),
         'agents': observed_agents,
-        'edges': list(desired.get('edges') or []),
+        'windows': list(desired.get('windows') or []),
         'actions': actions,
         'retained': retained,
+        'retained_agents': retained_agents,
+        'retain_reasons': retain_reasons,
         'retained_count': len(retained),
         'released_count': len(released_agents),
         'released_agents': released_agents,
@@ -376,6 +414,8 @@ def _write_observed(
         'config_source_kind': loaded.source_kind,
         'config_source': str(loaded.source_path) if loaded.source_path is not None else None,
     }
+    if 'edges' in desired:
+        observed['edges'] = list(desired.get('edges') or [])
     if error is not None:
         observed['error'] = error
     atomic_write_json(_observed_path(context, loop_id), observed)
@@ -398,6 +438,9 @@ def _write_observed(
         'observed_path': str(_observed_path(context, loop_id)),
         'agent_count': len(observed_agents),
         'retained_count': len(retained),
+        'retained_agents': observed['retained_agents'],
+        'retained': observed['retained'],
+        'retain_reasons': observed['retain_reasons'],
         'released_count': observed['released_count'],
         'released_agents': observed['released_agents'],
         'actions': actions,
@@ -441,15 +484,15 @@ def _add_agent_command(agent: Mapping[str, object], *, target_state: str) -> Sim
         agent_name=name,
         provider=str(agent.get('provider') or ''),
         profile=str(agent.get('profile') or ''),
-        role=None,
-        model=None,
-        thinking=None,
+        role=_optional_text(agent.get('role')),
+        model=_optional_text(agent.get('model')),
+        thinking=_optional_text(agent.get('thinking')),
         workspace_mode=None,
         window_name=_optional_text(agent.get('window_name')),
         window_class=_optional_text(agent.get('window_class')),
         loop_id=_optional_text(agent.get('loop_id')),
         node_id=_optional_text(agent.get('node_id')),
-        lifetime=str(agent.get('lifetime') or 'current_loop'),
+        lifetime=_lifetime_for_agent(agent),
         visibility='parked' if target_state == 'parked' else ('hidden' if target_state == 'hidden' else 'visible'),
         json_output=True,
     )
@@ -529,12 +572,14 @@ def _release_agent(context, name: str, *, policy: str) -> dict[str, object]:
     )
     payload = agent_lifecycle(context, command)
     status = str(payload.get('agent_lifecycle_status') or '')
+    retain_reason = payload.get('retain_reason') or payload.get('reason')
     return {
         'action': 'release',
         'agent': name,
         'status': status,
         'policy': command.policy,
-        'reason': payload.get('retain_reason') or payload.get('reason'),
+        'reason': retain_reason,
+        'retain_reason': retain_reason if status == 'retained_busy' else None,
         'apply_status': _apply_status(payload),
     }
 
@@ -555,18 +600,22 @@ def _release_agents(context, names: tuple[str, ...], *, policy: str) -> list[dic
     payload = agent_lifecycle(context, command)
     retained_agents = set(str(item) for item in tuple(payload.get('retained_agents') or ()))
     if retained_agents:
-        actions: list[dict[str, object]] = [
-            {
-                'action': 'release',
-                'agent': name,
-                'status': 'retained_busy',
-                'policy': policy,
-                'reason': _retained_reason(payload, name),
-                'apply_status': _apply_status(payload),
-            }
-            for name in names
-            if name in retained_agents
-        ]
+        actions: list[dict[str, object]] = []
+        for name in names:
+            if name not in retained_agents:
+                continue
+            retain_reason = _retained_reason(context, payload, name)
+            actions.append(
+                {
+                    'action': 'release',
+                    'agent': name,
+                    'status': 'retained_busy',
+                    'policy': policy,
+                    'reason': retain_reason,
+                    'retain_reason': retain_reason,
+                    'apply_status': _apply_status(payload),
+                }
+            )
         for name in names:
             if name not in retained_agents:
                 actions.append(_release_agent(context, name, policy=policy))
@@ -583,37 +632,71 @@ def _release_agents(context, names: tuple[str, ...], *, policy: str) -> list[dic
         status = 'retained_busy' if retained else str(payload.get('agent_lifecycle_status') or '')
         if not status:
             status = str(record.get('agent_lifecycle_status') or '') or 'ok'
+        retain_reason = record.get('retain_reason') or payload.get('reason')
         actions.append(
             {
                 'action': 'release',
                 'agent': name,
                 'status': status,
                 'policy': policy,
-                'reason': record.get('retain_reason') or payload.get('reason'),
+                'reason': retain_reason,
+                'retain_reason': retain_reason if retained else None,
                 'apply_status': _apply_status(payload),
             }
         )
     return actions
 
 
-def _retained_reason(payload: Mapping[str, object], name: str) -> object:
+def _retained_reason(context, payload: Mapping[str, object], name: str) -> object:
     for record in tuple(payload.get('agents') or ()):
         if not isinstance(record, Mapping):
             continue
         if str(record.get('agent') or '') == name:
-            return record.get('retain_reason') or payload.get('reason')
+            reason = record.get('retain_reason') or payload.get('reason')
+            if reason is not None:
+                return reason
+    record = _dynamic_record(context, name)
+    if record is not None:
+        reason = record.get('retain_reason') or payload.get('reason')
+        if reason is not None:
+            return reason
     return payload.get('reason')
 
 
 def _arrange_window(context, window_name: str) -> dict[str, object]:
     command = SimpleNamespace(action='arrange', window_name=window_name, timeout_s=5.0, json_output=True)
     payload = layout_command(context, command)
-    return {
+    action = {
         'action': 'reflow',
         'window_name': window_name,
         'status': payload.get('arrange_status') or payload.get('layout_status'),
         'reason': payload.get('reason'),
     }
+    if 'reflowed_windows' in payload:
+        action['reflowed_windows'] = list(payload.get('reflowed_windows') or ())
+    if 'reflow_errors' in payload:
+        action['reflow_errors'] = dict(payload.get('reflow_errors') or {})
+    preserved_agent_panes = _layout_agent_panes(payload)
+    if preserved_agent_panes:
+        action['preserved_agent_panes'] = preserved_agent_panes
+    if 'moved_agents' in payload:
+        action['moved_agents'] = list(payload.get('moved_agents') or ())
+    return action
+
+
+def _layout_agent_panes(payload: Mapping[str, object]) -> dict[str, str]:
+    panes: dict[str, str] = {}
+    for raw_window in tuple(payload.get('windows') or ()):
+        if not isinstance(raw_window, Mapping):
+            continue
+        for raw_agent in tuple(raw_window.get('agents') or ()):
+            if not isinstance(raw_agent, Mapping):
+                continue
+            name = str(raw_agent.get('agent') or '').strip()
+            pane_id = str(raw_agent.get('pane_id') or '').strip()
+            if name and pane_id:
+                panes[name] = pane_id
+    return dict(sorted(panes.items()))
 
 
 def _transition_action(current_state: str, target_state: str) -> str | None:
@@ -630,6 +713,8 @@ def _validate_topology(context, payload: Mapping[str, object], *, loop_id: str) 
     loaded = load_project_config(context.project.project_root, include_loop_overlays=False)
     capacity = loaded.config.loop_capacity or LoopCapacityConfig()
     agents = _desired_agents(payload, validate=True, loop_id=loop_id)
+    windows = _window_dicts(payload)
+    _validate_mount_placement(agents, windows=windows)
     if agents and not capacity.enabled:
         raise ValueError('loop topology requires [loop.capacity].enabled = true')
     default_release_policy = _topology_release_policy(payload)
@@ -646,6 +731,7 @@ def _validate_topology(context, payload: Mapping[str, object], *, loop_id: str) 
             raise ValueError(f'unknown loop topology profile {profile!r}; configured profiles: {known}')
         if count > spec.max_instances:
             raise ValueError(f'loop topology profile {profile} exceeds max_instances={spec.max_instances}: requested {count}')
+    _validate_no_mount_dispatch_dsl(payload)
     _validate_edges(payload, agents, configured_agents=set(getattr(loaded.config, 'agents', {}) or {}))
     return {
         'topology_validation_status': 'valid',
@@ -653,6 +739,7 @@ def _validate_topology(context, payload: Mapping[str, object], *, loop_id: str) 
         'agent_count': len(agents),
         'present_agent_count': sum(profile_counts.values()),
         'profile_counts': dict(sorted(profile_counts.items())),
+        'window_count': len(windows),
         'edge_count': len(tuple(payload.get('edges') or ())),
         'config_source_kind': loaded.source_kind,
         'config_source': str(loaded.source_path) if loaded.source_path is not None else None,
@@ -688,6 +775,11 @@ def _desired_agents(payload: Mapping[str, object], *, validate: bool = False, lo
             agent['desired_state'] = state
             agent['loop_id'] = str(agent.get('loop_id') or loop_id or '')
             agent['node_id'] = node_id
+            lifecycle = _optional_text(agent.get('lifecycle'))
+            if lifecycle is not None:
+                agent['lifecycle'] = lifecycle
+            if _optional_text(agent.get('lifetime')) is None:
+                agent['lifetime'] = _lifetime_for_lifecycle(lifecycle)
             if validate and _topology_profile_key(agent) in LEGACY_TOPOLOGY_PROFILES:
                 raise ValueError(
                     f'legacy workflow profile alias {profile!r} is not supported in topology; '
@@ -740,11 +832,19 @@ def _validate_edges(
     *,
     configured_agents: set[str],
 ) -> None:
+    edges = tuple(payload.get('edges') or ())
+    if not edges:
+        return
+    if not _legacy_dispatch_compatibility(payload):
+        raise ValueError(
+            'mount topology does not accept communication or dispatch edges; '
+            'use ask-first orchestration, or set dispatch_compatibility="legacy" for legacy graph dispatch'
+        )
     agent_ids = {str(agent.get('id') or '') for agent in agents}
     known_endpoints = agent_ids | configured_agents | {'user'}
     edge_ids: set[str] = set()
     dependencies: dict[str, set[str]] = {}
-    for index, raw_edge in enumerate(tuple(payload.get('edges') or ()), start=1):
+    for index, raw_edge in enumerate(edges, start=1):
         if not isinstance(raw_edge, Mapping):
             raise ValueError(f'topology edge #{index} must be an object')
         edge_id = str(raw_edge.get('id') or f'edge{index}').strip()
@@ -756,8 +856,8 @@ def _validate_edges(
         edge_type = str(raw_edge.get('type') or '').strip().lower()
         if not edge_type:
             raise ValueError(f'topology edge {edge_id} requires type')
-        if edge_type not in SUPPORTED_EDGE_TYPES:
-            supported = ', '.join(sorted(SUPPORTED_EDGE_TYPES))
+        if edge_type not in LEGACY_DISPATCH_EDGE_TYPES:
+            supported = ', '.join(sorted(LEGACY_DISPATCH_EDGE_TYPES))
             raise ValueError(f'unsupported topology edge type {edge_type!r} for edge {edge_id}; supported: {supported}')
         for endpoint in ('from', 'to'):
             value = str(raw_edge.get(endpoint) or '').strip()
@@ -792,6 +892,21 @@ def _assert_acyclic(dependencies: Mapping[str, set[str]]) -> None:
         visit(edge_id)
 
 
+def _validate_no_mount_dispatch_dsl(payload: Mapping[str, object]) -> None:
+    if _legacy_dispatch_compatibility(payload):
+        return
+    if payload.get('artifacts'):
+        raise ValueError(
+            'mount topology does not accept topology dispatch artifacts; '
+            'use task/round artifact imports, or set dispatch_compatibility="legacy" for legacy graph dispatch'
+        )
+    if tuple(payload.get('gates') or ()):
+        raise ValueError(
+            'mount topology does not accept topology dispatch gates; '
+            'use ask-first orchestration, or set dispatch_compatibility="legacy" for legacy graph dispatch'
+        )
+
+
 def _normalize_proposal(
     payload: Mapping[str, object],
     *,
@@ -801,15 +916,14 @@ def _normalize_proposal(
 ) -> dict[str, object]:
     proposal = dict(payload)
     proposal['schema'] = PROPOSAL_SCHEMA
-    proposal['record_type'] = 'ccb_loop_agent_topology_proposal'
+    proposal['record_type'] = 'ccb_loop_agent_mount_topology_proposal'
     proposal['loop_id'] = loop_id
     proposal['proposal_id'] = proposal_id
     proposal['proposed_at'] = str(proposal.get('proposed_at') or _utc_now())
     proposal['source_path'] = str(source_path)
+    proposal.setdefault('agents', [])
+    proposal.setdefault('windows', [])
     proposal.setdefault('nodes', [])
-    proposal.setdefault('edges', [])
-    proposal.setdefault('artifacts', {})
-    proposal.setdefault('gates', [])
     return proposal
 
 
@@ -817,15 +931,95 @@ def _node_dicts(payload: Mapping[str, object]) -> tuple[dict[str, object], ...]:
     nodes = payload.get('nodes') or []
     if not isinstance(nodes, list):
         raise ValueError('topology nodes must be a list')
+    top_level_agents = payload.get('agents') or []
+    if nodes:
+        if top_level_agents and not isinstance(top_level_agents, list):
+            raise ValueError('mount topology agents must be a list')
+        return tuple(_node_object(raw_node, index) for index, raw_node in enumerate(nodes, start=1))
+    if not isinstance(top_level_agents, list):
+        raise ValueError('mount topology agents must be a list')
+    if top_level_agents:
+        return ({'id': 'mount', 'agents': [dict(agent) if isinstance(agent, Mapping) else agent for agent in top_level_agents]},)
+    return ()
+
+
+def _node_object(raw_node: object, index: int) -> dict[str, object]:
+    if not isinstance(raw_node, Mapping):
+        raise ValueError(f'topology node #{index} must be an object')
+    return dict(raw_node)
+
+
+def _window_dicts(payload: Mapping[str, object]) -> tuple[dict[str, object], ...]:
+    raw_windows = payload.get('windows') or []
+    if not isinstance(raw_windows, list):
+        raise ValueError('mount topology windows must be a list')
     result = []
-    for index, raw_node in enumerate(nodes, start=1):
-        if not isinstance(raw_node, Mapping):
-            raise ValueError(f'topology node #{index} must be an object')
-        result.append(dict(raw_node))
+    seen: set[str] = set()
+    for index, raw_window in enumerate(raw_windows, start=1):
+        if not isinstance(raw_window, Mapping):
+            raise ValueError(f'mount topology window #{index} must be an object')
+        window = dict(raw_window)
+        name = _normalize_named_value(window.get('name'), field_name='window name')
+        if name in seen:
+            raise ValueError(f'duplicate mount topology window name: {name}')
+        seen.add(name)
+        window['name'] = name
+        max_panes = window.get('max_panes')
+        if max_panes is not None:
+            try:
+                normalized_max = int(max_panes)
+            except (TypeError, ValueError) as exc:
+                raise ValueError(f'mount topology window {name} max_panes must be an integer') from exc
+            if normalized_max < 1 or normalized_max > MAX_TOPOLOGY_PANES_PER_WINDOW:
+                raise ValueError(
+                    f'mount topology window {name} max_panes must be between 1 and {MAX_TOPOLOGY_PANES_PER_WINDOW}'
+                )
+            window['max_panes'] = normalized_max
+        result.append(window)
     return tuple(result)
 
 
+def _validate_mount_placement(agents: Iterable[Mapping[str, object]], *, windows: tuple[dict[str, object], ...]) -> None:
+    known_windows = {str(window.get('name') or '') for window in windows}
+    window_limits = {
+        str(window.get('name') or ''): int(window.get('max_panes') or MAX_TOPOLOGY_PANES_PER_WINDOW)
+        for window in windows
+    }
+    active_counts: Counter[str] = Counter()
+    pane_orders: dict[str, set[int]] = {}
+    for agent in agents:
+        if str(agent.get('desired_state') or 'present') not in ACTIVE_DESIRED_STATES:
+            continue
+        window_name = str(agent.get('window_name') or '').strip()
+        if not window_name:
+            continue
+        if known_windows and window_name not in known_windows:
+            raise ValueError(f'topology agent {agent.get("id")} references unknown mount topology window: {window_name}')
+        active_counts[window_name] += 1
+        pane_order = agent.get('pane_order')
+        if pane_order is not None:
+            try:
+                normalized_order = int(pane_order)
+            except (TypeError, ValueError) as exc:
+                raise ValueError(f'topology agent {agent.get("id")} pane_order must be an integer') from exc
+            if normalized_order < 0:
+                raise ValueError(f'topology agent {agent.get("id")} pane_order must be >= 0')
+            seen_orders = pane_orders.setdefault(window_name, set())
+            if normalized_order in seen_orders:
+                raise ValueError(f'duplicate pane_order {normalized_order} in mount topology window {window_name}')
+            seen_orders.add(normalized_order)
+    for window_name, count in sorted(active_counts.items()):
+        limit = window_limits.get(window_name, MAX_TOPOLOGY_PANES_PER_WINDOW)
+        if count > limit:
+            raise ValueError(f'mount topology window {window_name} exceeds max_panes={limit}: requested {count}')
+
+
 def _mark_all_agents_absent(payload: dict[str, object]) -> None:
+    top_level_agents = payload.get('agents') or []
+    if isinstance(top_level_agents, list):
+        for raw_agent in top_level_agents:
+            if isinstance(raw_agent, dict):
+                raw_agent['desired_state'] = 'absent'
     nodes = payload.get('nodes') or []
     if not isinstance(nodes, list):
         return
@@ -838,6 +1032,204 @@ def _mark_all_agents_absent(payload: dict[str, object]) -> None:
         for raw_agent in agents:
             if isinstance(raw_agent, dict):
                 raw_agent['desired_state'] = 'absent'
+
+
+def _prune_released_authority(
+    context,
+    loop_id: str,
+    *,
+    desired: Mapping[str, object],
+    payload: Mapping[str, object],
+) -> dict[str, object]:
+    released_names = frozenset(str(item) for item in tuple(payload.get('released_agents') or ()) if str(item))
+    return _prune_authority_agent_records(
+        context,
+        loop_id,
+        desired=desired,
+        payload=payload,
+        agent_names=released_names,
+    )
+
+
+def _prune_drained_release_authority(context, loop_id: str, *, payload: Mapping[str, object]) -> dict[str, object]:
+    observed = json.loads(json.dumps(payload.get('observed') or {}))
+    drained_names = frozenset(_drained_release_agent_ids(observed))
+    if not drained_names:
+        return dict(payload)
+    desired = _load_desired_optional(context, loop_id)
+    if desired is None:
+        return dict(payload)
+    updated = _prune_authority_agent_records(
+        context,
+        loop_id,
+        desired=desired,
+        payload=payload,
+        agent_names=drained_names,
+    )
+    observed = json.loads(json.dumps(updated.get('observed') or {}))
+    drained_agents = sorted(drained_names)
+    drain_reasons = {name: 'parked_after_release' for name in drained_agents}
+    observed['drained_agents'] = drained_agents
+    observed['drained_count'] = len(drained_agents)
+    observed['drain_reasons'] = drain_reasons
+    atomic_write_json(_observed_path(context, loop_id), observed)
+    updated['observed'] = observed
+    updated['drained_agents'] = drained_agents
+    updated['drained_count'] = len(drained_agents)
+    updated['drain_reasons'] = drain_reasons
+    return updated
+
+
+def _prune_authority_agent_records(
+    context,
+    loop_id: str,
+    *,
+    desired: Mapping[str, object],
+    payload: Mapping[str, object],
+    agent_names: frozenset[str],
+) -> dict[str, object]:
+    pruned_names = frozenset(str(item) for item in agent_names if str(item))
+    if not pruned_names:
+        return dict(payload)
+    pruned_desired = json.loads(json.dumps(desired))
+    _remove_agent_records(pruned_desired, released_names=pruned_names)
+    _refresh_desired_validation(pruned_desired, loop_id=loop_id)
+    atomic_write_json(_desired_path(context, loop_id), pruned_desired)
+
+    observed = json.loads(json.dumps(payload.get('observed') or {}))
+    observed_agents = [
+        agent
+        for agent in tuple(observed.get('agents') or ())
+        if isinstance(agent, Mapping) and str(agent.get('id') or '') not in pruned_names
+    ]
+    desired_agents = _desired_agents(pruned_desired, loop_id=loop_id)
+    observed['agents'] = observed_agents
+    observed['drift'] = _drift_for(desired_agents, observed_agents)
+    atomic_write_json(_observed_path(context, loop_id), observed)
+
+    updated = dict(payload)
+    updated['observed'] = observed
+    updated['agent_count'] = len(observed_agents)
+    return updated
+
+
+def _mark_release_residue(context, loop_id: str, *, payload: Mapping[str, object]) -> dict[str, object]:
+    updated = dict(payload)
+    if int(updated.get('retained_count') or 0) > 0:
+        return updated
+    observed = json.loads(json.dumps(updated.get('observed') or {}))
+    blockers = _release_residue_blockers(observed)
+    if not blockers:
+        return updated
+    names = sorted(blockers)
+    profile_counts = Counter(
+        str(item.get('profile') or '')
+        for item in blockers.values()
+        if str(item.get('profile') or '')
+    )
+    release_profile_counts = dict(sorted(profile_counts.items()))
+    observed['last_reconcile_status'] = 'release_incomplete'
+    observed['release_incomplete_agents'] = names
+    observed['release_incomplete_count'] = len(names)
+    observed['release_incomplete_profile_counts'] = release_profile_counts
+    observed['release_blockers'] = blockers
+    atomic_write_json(_observed_path(context, loop_id), observed)
+    updated['observed'] = observed
+    updated['release_incomplete_agents'] = names
+    updated['release_incomplete_count'] = len(names)
+    updated['release_incomplete_profile_counts'] = release_profile_counts
+    updated['release_blockers'] = blockers
+    return updated
+
+
+def _release_residue_blockers(observed: Mapping[str, object]) -> dict[str, dict[str, object]]:
+    blockers: dict[str, dict[str, object]] = {}
+    for raw_agent in tuple(observed.get('agents') or ()):
+        if not isinstance(raw_agent, Mapping):
+            continue
+        name = str(raw_agent.get('id') or '')
+        desired_state = str(raw_agent.get('desired_state') or '')
+        observed_state = str(raw_agent.get('observed_state') or '')
+        if not name or desired_state != 'absent' or observed_state == 'released':
+            continue
+        if _is_drained_release_agent(raw_agent):
+            continue
+        blockers[name] = {
+            'desired_state': desired_state,
+            'lifecycle_state': raw_agent.get('lifecycle_state'),
+            'observed_state': observed_state,
+            'profile': raw_agent.get('profile'),
+            'reason': 'active_after_release',
+        }
+    return dict(sorted(blockers.items()))
+
+
+def _drained_release_agent_ids(observed: Mapping[str, object]) -> list[str]:
+    return sorted(
+        str(agent.get('id') or '')
+        for agent in tuple(observed.get('agents') or ())
+        if isinstance(agent, Mapping) and _is_drained_release_agent(agent)
+    )
+
+
+def _is_drained_release_agent(agent: Mapping[str, object]) -> bool:
+    return (
+        str(agent.get('desired_state') or '') == 'absent'
+        and str(agent.get('observed_state') or '') in DRAINED_RELEASE_STATES
+        and str(agent.get('lifecycle_state') or '') in DRAINED_RELEASE_STATES
+    )
+
+
+def _remove_agent_records(payload: dict[str, object], *, released_names: frozenset[str]) -> None:
+    top_level_agents = payload.get('agents')
+    if isinstance(top_level_agents, list):
+        payload['agents'] = [
+            raw_agent
+            for raw_agent in top_level_agents
+            if _raw_agent_name(raw_agent) not in released_names
+        ]
+    nodes = payload.get('nodes')
+    if not isinstance(nodes, list):
+        return
+    pruned_nodes = []
+    for raw_node in nodes:
+        if not isinstance(raw_node, dict):
+            pruned_nodes.append(raw_node)
+            continue
+        node = dict(raw_node)
+        agents = node.get('agents')
+        if isinstance(agents, list):
+            node['agents'] = [
+                raw_agent
+                for raw_agent in agents
+                if _raw_agent_name(raw_agent) not in released_names
+            ]
+        if node.get('agents'):
+            pruned_nodes.append(node)
+    payload['nodes'] = pruned_nodes
+
+
+def _raw_agent_name(raw_agent: object) -> str | None:
+    if not isinstance(raw_agent, Mapping):
+        return None
+    value = raw_agent.get('id') or raw_agent.get('name')
+    if value is None:
+        return None
+    return str(value).strip() or None
+
+
+def _refresh_desired_validation(payload: dict[str, object], *, loop_id: str) -> None:
+    agents = _desired_agents(payload, loop_id=loop_id)
+    profile_counts = Counter(
+        str(agent.get('profile') or '')
+        for agent in agents
+        if str(agent.get('desired_state') or 'present') in ACTIVE_DESIRED_STATES
+    )
+    validation = dict(payload.get('validation') or {})
+    validation['agent_count'] = len(agents)
+    validation['present_agent_count'] = sum(profile_counts.values())
+    validation['profile_counts'] = dict(sorted(profile_counts.items()))
+    payload['validation'] = validation
 
 
 def _agent_dicts(node: Mapping[str, object]) -> tuple[dict[str, object], ...]:
@@ -901,8 +1293,17 @@ def _observed_agent(agent: Mapping[str, object], *, record: Mapping[str, object]
     return {
         'id': agent.get('id'),
         'profile': agent.get('profile'),
+        'role': agent.get('role') or (record or {}).get('role'),
+        'provider': agent.get('provider') or (record or {}).get('provider'),
+        'model': agent.get('model') or (record or {}).get('model'),
+        'thinking': agent.get('thinking') or (record or {}).get('thinking'),
+        'provider_profile': agent.get('provider_profile') or (record or {}).get('provider_profile'),
+        'lifecycle': agent.get('lifecycle'),
+        'lifetime': agent.get('lifetime') or (record or {}).get('lifetime'),
+        'release_policy': agent.get('release_policy'),
         'node_id': agent.get('node_id'),
         'window_name': agent.get('window_name'),
+        'pane_order': agent.get('pane_order'),
         'desired_state': desired_state,
         'observed_state': observed_state,
         'lifecycle_state': lifecycle_state or None,
@@ -971,6 +1372,30 @@ def _agent_release_policy(agent: Mapping[str, object] | None, *, default_policy:
     if agent is None:
         return default_policy
     return _normalize_release_policy_value(agent.get('release_policy'), default=default_policy)
+
+
+def _lifetime_for_agent(agent: Mapping[str, object]) -> str:
+    lifetime = _optional_text(agent.get('lifetime'))
+    if lifetime is not None:
+        return lifetime
+    return _lifetime_for_lifecycle(_optional_text(agent.get('lifecycle')))
+
+
+def _lifetime_for_lifecycle(lifecycle: str | None) -> str:
+    normalized = str(lifecycle or '').strip().lower().replace('-', '_')
+    if normalized in {'resident', 'long_lived', 'loop', 'current_loop', 'semi_resident'}:
+        return 'current_loop'
+    if normalized in {'ephemeral', 'round', 'current_round'}:
+        return 'current_round'
+    return 'current_loop'
+
+
+def _legacy_dispatch_compatibility(payload: Mapping[str, object]) -> bool:
+    return (
+        str(payload.get('dispatch_compatibility') or '').strip().lower() == 'legacy'
+        or str(payload.get('compatibility_mode') or '').strip().lower() == 'legacy_dispatch'
+        or payload.get('legacy_dispatch_compatibility') is True
+    )
 
 
 def _normalize_release_policy_value(value: object, *, default: str) -> str:
@@ -1060,22 +1485,54 @@ def _proposal_path(context, loop_id: str, proposal_id: str) -> Path:
     return _proposal_dir(context, loop_id) / f'{proposal_id}.json'
 
 
+def _load_desired_optional(context, loop_id: str) -> dict[str, object] | None:
+    return _load_json_optional(_desired_read_path(context, loop_id))
+
+
 def _desired_path(context, loop_id: str) -> Path:
+    return _loop_dir(context, loop_id) / 'agent_mount_topology.desired.json'
+
+
+def _legacy_desired_path(context, loop_id: str) -> Path:
     return _loop_dir(context, loop_id) / 'agent_topology.desired.json'
 
 
+def _desired_read_path(context, loop_id: str) -> Path:
+    path = _desired_path(context, loop_id)
+    if path.is_file():
+        return path
+    legacy_path = _legacy_desired_path(context, loop_id)
+    if legacy_path.is_file():
+        return legacy_path
+    return path
+
+
 def _observed_path(context, loop_id: str) -> Path:
+    return _loop_dir(context, loop_id) / 'agent_mount_topology.observed.json'
+
+
+def _legacy_observed_path(context, loop_id: str) -> Path:
     return _loop_dir(context, loop_id) / 'agent_topology.observed.json'
 
 
+def _observed_read_path(context, loop_id: str) -> Path:
+    path = _observed_path(context, loop_id)
+    if path.is_file():
+        return path
+    legacy_path = _legacy_observed_path(context, loop_id)
+    if legacy_path.is_file():
+        return legacy_path
+    return path
+
+
 def _events_path(context, loop_id: str) -> Path:
-    return _loop_dir(context, loop_id) / 'agent_topology.events.jsonl'
+    return _loop_dir(context, loop_id) / 'agent_mount_topology.events.jsonl'
 
 
 def _append_event(context, loop_id: str, payload: Mapping[str, object]) -> None:
     event = {
         'schema_version': 1,
-        'record_type': 'ccb_loop_agent_topology_event',
+        'record_type': 'ccb_loop_agent_mount_topology_event',
         'created_at': _utc_now(),
         'project_id': context.project.project_id,
         **dict(payload),

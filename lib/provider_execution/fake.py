@@ -180,6 +180,8 @@ def _reply_for_body(job: JobRecord) -> tuple[str, list[dict[str, object]]]:
     effective_body = _effective_request_body(job)
     workflow_reply = _workflow_role_bundle_reply(agent_name=agent_name, body=effective_body)
     if workflow_reply is None:
+        workflow_reply = _workflow_execution_reply(agent_name=agent_name, body=effective_body)
+    if workflow_reply is None:
         workflow_reply = _workflow_round_checker_reply(agent_name=agent_name, body=effective_body)
     if workflow_reply is not None:
         return (workflow_reply, [])
@@ -366,19 +368,75 @@ def _workflow_role_bundle_reply(*, agent_name: str, body: str) -> str | None:
     return None
 
 
+def _workflow_execution_reply(*, agent_name: str, body: str) -> str | None:
+    if 'Role: worker' in body:
+        status = 'done'
+        if 'Purpose: bounded_rework' in body:
+            return (
+                f'status: {status}\n'
+                'work summary: addressed the bounded reviewer rejection evidence\n'
+                'evidence refs: task_packet execution_contract reviewer_rejection\n'
+                'hidden degradation audit: no hidden fallback or scope shrink\n'
+            )
+        return (
+            f'status: {status}\n'
+            'work summary: fake provider deterministic execution completed\n'
+            'evidence refs: task_packet execution_contract\n'
+            'hidden degradation audit: no hidden fallback or scope shrink\n'
+        )
+    if 'Role: code_reviewer' not in body:
+        return None
+    recheck = 'Purpose: bounded_rework_recheck' in body
+    scenario = _phase6_scenario(body)
+    if scenario == 'reviewer_reject_rework' and not recheck:
+        return (
+            'status: rework_required\n'
+            'execution_contract audit: fail with evidence refs\n'
+            'verification checks performed: initial rejection for bounded rework smoke\n'
+            'risk notes: one bounded rework required\n'
+        )
+    if scenario == 'reviewer_cannot_accept':
+        return (
+            'status: rework_required\n'
+            'execution_contract audit: fail with evidence refs\n'
+            'verification checks performed: reviewer still cannot accept after bounded rework\n'
+            'risk notes: replan required; do not mark done\n'
+        )
+    return (
+        'status: pass\n'
+        'execution_contract audit: pass with evidence refs\n'
+        'verification checks performed: fake provider deterministic review\n'
+        'risk notes: none for deterministic smoke\n'
+    )
+
+
 def _workflow_round_checker_reply(*, agent_name: str, body: str) -> str | None:
     normalized_agent = agent_name.replace('-', '_')
     is_round_reviewer = agent_name == 'round_checker' or 'round_reviewer' in normalized_agent
     has_round_role = 'Role: round_checker' in body or 'Role: ccb_round_reviewer' in body
     if not is_round_reviewer or not has_round_role:
         return None
+    scenario = _phase6_scenario(body)
+    result = 'pass'
+    if scenario == 'partial_completion':
+        result = 'partial'
+    elif scenario == 'reviewer_cannot_accept':
+        result = 'replan_required'
     return (
-        'round result: pass\n'
+        f'round result: {result}\n'
         'verification performed: fake provider deterministic workflow smoke\n'
         'hidden degradation audit: no degradation requested\n'
         'evidence refs: fake-provider smoke artifacts\n'
         'recommended next owner: loop_runner\n'
     )
+
+
+def _phase6_scenario(body: str) -> str:
+    for raw_line in str(body or '').splitlines():
+        line = raw_line.strip()
+        if line.startswith('phase6_scenario:'):
+            return line.split(':', 1)[1].strip().lower()
+    return ''
 
 
 def _loop_activation_task_id(body: str) -> str:

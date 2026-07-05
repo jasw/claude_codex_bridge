@@ -1,3 +1,10 @@
+"""Legacy bounded compatibility for explicitly opted-in topology dispatch experiments.
+
+This module is not the Decision 020 ask-first runner mainline; ``loop runner
+--once`` must not use it to discover topology dispatch or execute topology
+graph edges.
+"""
+
 from __future__ import annotations
 
 from collections.abc import Mapping
@@ -34,6 +41,9 @@ def find_first_topology_dispatch_task(context) -> dict[str, object] | None:
             current_loop = str(record.get('current_loop') or '').strip()
             if str(record.get('status') or '').strip().lower() != 'running':
                 continue
+            next_owner = str(record.get('next_owner') or '').strip().lower()
+            if next_owner and next_owner != 'orchestrator':
+                continue
             if not current_loop or not topology_has_dispatch_graph(context, current_loop):
                 continue
             candidates.append(
@@ -52,7 +62,7 @@ def find_first_topology_dispatch_task(context) -> dict[str, object] | None:
 
 
 def topology_has_dispatch_graph(context, loop_id: str) -> bool:
-    desired = _load_json_optional(_desired_path(context, loop_id))
+    desired = _load_json_optional(_desired_read_path(context, loop_id))
     if desired is None:
         return False
     return bool(_edge_dicts(desired))
@@ -66,13 +76,13 @@ def maybe_run_topology_dispatch(
     task: dict[str, object],
     loop_id: str,
 ) -> dict[str, object] | None:
-    desired = _load_json_optional(_desired_path(context, loop_id))
+    desired = _load_json_optional(_desired_read_path(context, loop_id))
     if desired is None:
         return None
     edges = _edge_dicts(desired)
     if not edges:
         return None
-    observed = _load_json_object(_observed_path(context, loop_id))
+    observed = _load_json_object(_observed_read_path(context, loop_id))
     return _run_topology_dispatch(
         context,
         command,
@@ -122,8 +132,8 @@ def _run_topology_dispatch(
         'edge_count': len(ordered_edges),
         'edges': [],
         'paths': {
-            'desired': str(_desired_path(context, loop_id)),
-            'observed': str(_observed_path(context, loop_id)),
+            'desired': str(_desired_read_path(context, loop_id)),
+            'observed': str(_observed_read_path(context, loop_id)),
             'dispatch': str(dispatch_path),
             'events': str(events_path),
             'round': str(round_path),
@@ -596,11 +606,39 @@ def _safe_name(value: str) -> str:
 
 
 def _desired_path(context, loop_id: str) -> Path:
+    return _loop_dir(context, loop_id) / 'agent_mount_topology.desired.json'
+
+
+def _legacy_desired_path(context, loop_id: str) -> Path:
     return _loop_dir(context, loop_id) / 'agent_topology.desired.json'
 
 
+def _desired_read_path(context, loop_id: str) -> Path:
+    path = _desired_path(context, loop_id)
+    if path.is_file():
+        return path
+    legacy_path = _legacy_desired_path(context, loop_id)
+    if legacy_path.is_file():
+        return legacy_path
+    return path
+
+
 def _observed_path(context, loop_id: str) -> Path:
+    return _loop_dir(context, loop_id) / 'agent_mount_topology.observed.json'
+
+
+def _legacy_observed_path(context, loop_id: str) -> Path:
     return _loop_dir(context, loop_id) / 'agent_topology.observed.json'
+
+
+def _observed_read_path(context, loop_id: str) -> Path:
+    path = _observed_path(context, loop_id)
+    if path.is_file():
+        return path
+    legacy_path = _legacy_observed_path(context, loop_id)
+    if legacy_path.is_file():
+        return legacy_path
+    return path
 
 
 def _loop_dir(context, loop_id: str) -> Path:
@@ -625,4 +663,5 @@ def _utc_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace('+00:00', 'Z')
 
 
+# Legacy opt-in topology dispatch helpers, not mainline runner authority.
 __all__ = ['find_first_topology_dispatch_task', 'maybe_run_topology_dispatch', 'topology_has_dispatch_graph']

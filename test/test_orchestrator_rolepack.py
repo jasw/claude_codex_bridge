@@ -59,6 +59,26 @@ ROLE_EXPECTATIONS = {
             'templates/round-aggregation.md',
         ),
     },
+    'agentroles.ccb_task_detailer': {
+        'default': 'ccb_task_detailer',
+        'skill': 'skills/task-detail-packet',
+        'templates': ('templates/detail-packet.md',),
+    },
+    'agentroles.coder': {
+        'default': 'coder',
+        'skill': 'skills/bounded-work-item',
+        'templates': ('templates/node-work-result.md',),
+    },
+    'agentroles.code_reviewer': {
+        'default': 'code_reviewer',
+        'skill': 'skills/node-check',
+        'templates': ('templates/node-check-result.md',),
+    },
+    'agentroles.ccb_round_reviewer': {
+        'default': 'ccb_round_reviewer',
+        'skill': 'skills/round-verification',
+        'templates': ('templates/round-result.md',),
+    },
     'agentroles.ccb_worker': {
         'default': 'worker',
         'skill': 'skills/bounded-work-item',
@@ -117,7 +137,7 @@ def test_orchestrator_capacity_skill_declares_command_boundary() -> None:
     assert 'CCB-owned evidence only' in skill
     assert 'runtime layout manager owns window naming' in skill
     assert 'Do not use `ccb loop run-once`' in skill
-    assert 'command ask --callback "$WORKER_AGENT"' in skill
+    assert 'command ask --chain "$WORKER_AGENT"' in skill
     assert 'Never:' in skill
     assert 'edit `.ccb/ccb.config`' in skill
     assert 'ccb agent add --window' in skill
@@ -220,8 +240,14 @@ def test_workflow_rolepacks_include_common_authority_rule_and_templates() -> Non
             assert (root / template).is_file(), f'{role_id} missing {template}'
 
 
-def test_round_checker_and_orchestrator_templates_share_result_contract() -> None:
-    round_template = (
+def test_round_reviewer_and_orchestrator_templates_share_result_contract() -> None:
+    accepted_round_template = (
+        WORKFLOW_DRAFTS
+        / 'agentroles.ccb_round_reviewer'
+        / 'templates'
+        / 'round-result.md'
+    ).read_text(encoding='utf-8')
+    legacy_round_template = (
         WORKFLOW_DRAFTS
         / 'agentroles.ccb_round_checker'
         / 'templates'
@@ -236,7 +262,9 @@ def test_round_checker_and_orchestrator_templates_share_result_contract() -> Non
         encoding='utf-8'
     )
 
-    assert 'round result: pass|rework_node|partial|replan_required|global_blocker' in round_template
+    result_line = 'round result: pass|rework_node|partial|replan_required|global_blocker'
+    assert result_line in accepted_round_template
+    assert result_line in legacy_round_template
     assert 'aggregation result: complete|partial|blocked|replan_required' in aggregation_template
     assert 'pass`, `rework_required`, `blocked`, `non_converged' in checker_ask
 

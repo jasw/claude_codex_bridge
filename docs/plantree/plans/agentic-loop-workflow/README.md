@@ -34,6 +34,23 @@ recoverable workflow loops.
 - [implementation-status.md](implementation-status.md): current operational
   handoff, latest landed workflow slice, active TODO, blockers, and last
   verification.
+- [history/phase1-6-evidence-index.md](history/phase1-6-evidence-index.md):
+  compact index of accepted Phase 1-6 evidence, checklist-only artifacts,
+  planning inputs, real-provider B7 evidence, and final acceptance reports.
+- [history/phase1-6-acceptance-report-20260705.md](history/phase1-6-acceptance-report-20260705.md):
+  current final Phase 1-6 acceptance report; Phase 6A is accepted for
+  fake-provider program-matrix scope, and Phase 6B is accepted for initial
+  real-provider single-round capability with production/default enablement
+  still out of scope.
+- [topics/phase1-6-active-supervision-board-20260704.md](topics/phase1-6-active-supervision-board-20260704.md):
+  active `talk2` supervision lanes, current Phase 6B gates, and callback
+  handling rules for the Phase 1-6 acceptance goal.
+- [topics/phase6b-real-provider-claim-coverage-matrix.md](topics/phase6b-real-provider-claim-coverage-matrix.md):
+  Phase 6B real-provider claim requirements mapped to current evidence,
+  final aggregation state, and remaining non-production boundaries.
+- [topics/phase6b-repeat8-direct-execution-failure-note.md](topics/phase6b-repeat8-direct-execution-failure-note.md):
+  supervisor diagnosis for the consumed L1-L4 repeat8 run where worker copy
+  workspace success did not land in the lab project root.
 - [open-questions.md](open-questions.md): unresolved product, safety, and
   implementation questions.
 - [goals/orchestrator-dynamic-capacity-goal.md](goals/orchestrator-dynamic-capacity-goal.md):
@@ -77,6 +94,24 @@ recoverable workflow loops.
   narrow production-candidate gate for one scripted workflow closure using
   `ccb plan`, `ccb question`, `ccb loop runner --once`, dynamic worker/checker
   capacity, round-result import, and auto-release cleanup.
+- [goals/mount-topology-ask-first-landing-goal.md](goals/mount-topology-ask-first-landing-goal.md):
+  phased landing plan for Decision 020, including mount-topology schema split,
+  task document anchors, orchestrator triage, ask-first execution, release/
+  retain hardening, and stage-specific test/review gates.
+- [goals/phase6-single-round-task-matrix-goal.md](goals/phase6-single-round-task-matrix-goal.md):
+  Phase 6 acceptance target for single-round workflow success across different
+  task types, including direct execution, detail-needed, macro-adjustment, and
+  blocked routes.
+- [goals/phase6-real-capability-assessment-goal.md](goals/phase6-real-capability-assessment-goal.md):
+  extended Phase 6 capability assessment for real-provider task complexity,
+  abnormal-state injection, failure taxonomy, and deep post-run analysis.
+- [goals/phase6-build-stage-verification.zh.md](goals/phase6-build-stage-verification.zh.md):
+  Chinese build-stage verification and acceptance plan that maps Satinoos
+  documentation, fake-provider matrix, real-provider lab, abnormal injection,
+  and final analysis report into staged gates.
+- [goals/phase1-6-acceptance-goal.zh.md](goals/phase1-6-acceptance-goal.zh.md):
+  Chinese acceptance-goal summary for Phase 1-6 stage gates, post-completion
+  module-level acceptance, and final deep Phase 6A/6B testing claims.
 - [topics/architecture.md](topics/architecture.md): proposed role topology,
   loop lifecycle, handoff rules, and failure escalation model.
 - [topics/complete-workflow-design.md](topics/complete-workflow-design.md):
@@ -110,9 +145,63 @@ recoverable workflow loops.
   complexity slicing, runtime-agent request semantics, and task-dispatch
   constraints.
 - [topics/runtime-workflow-graph-and-reconciler.md](topics/runtime-workflow-graph-and-reconciler.md):
-  desired-state runtime workflow graph design, including agent topology,
-  information-flow edges, call order, artifact handoffs, lifecycle gates,
-  topology proposal/commit commands, and reconciler load/release behavior.
+  landed desired-state topology controller and earlier broader workflow-graph
+  direction; Decision 020 narrows the preferred future scope to mount
+  topology.
+- [topics/mount-topology-and-ask-first-orchestration.md](topics/mount-topology-and-ask-first-orchestration.md):
+  simplified landing direction where topology owns agent/window/pane/provider
+  lifecycle, normal collaboration uses `ask`, and small task/contract/summary
+  documents activate the next process.
+- [topics/phase6-real-provider-lab-task-packs.md](topics/phase6-real-provider-lab-task-packs.md):
+  accepted-as-planning-input Phase 6B real-provider lab task-pack catalog for
+  L0-L5; not a lab launch approval.
+- [topics/phase6b-l1-l4-launch-prep.md](topics/phase6b-l1-l4-launch-prep.md):
+  planning-only Phase 6B L1-L4 candidate task and B7 aggregation prep for a
+  future launch-review request after the L0 repeat6 runtime-sanity pass.
+- [topics/phase6b-l1-l4-launch-request-20260704.md](topics/phase6b-l1-l4-launch-request-20260704.md):
+  frozen L1-L4 real-provider launch request; reviewer2 accepted it as
+  doc-only, with no approval-to-run.
+- [topics/phase6b-l1-l4-launch-request-sequence10-20260704.md](topics/phase6b-l1-l4-launch-request-sequence10-20260704.md):
+  consumed L1-L4 sequence10 launch packet; reviewer1 fallback approved one run,
+  which stopped at L1 with copy-workspace-only changes and repeat10 B7
+  `not_claimable`; not a Phase 6B claim.
+- [topics/phase6b-l1-l4-launch-request-sequence11-20260704.md](topics/phase6b-l1-l4-launch-request-sequence11-20260704.md):
+  consumed L1-L4 sequence11 launch packet; reviewer1 approved one run, L1/L2
+  reached `done/pass`, L3 failed at detail packet import and `detail_ready`,
+  repeat11 B7 is `not_claimable`, and follow-up repairs are accepted for
+  future fresh packets.
+- [topics/phase6b-l1-l4-launch-request-sequence12-20260705.md](topics/phase6b-l1-l4-launch-request-sequence12-20260705.md):
+  consumed L1-L4 sequence12 launch/evidence record for root
+  `/home/bfly/yunwei/test_ccb2/phase6-real-lab-l1-l4-sequence12-20260705`
+  and B7 path
+  `docs/plantree/plans/agentic-loop-workflow/history/phase6b-real-provider-l1-l4-repeat12-b7-20260705.md`;
+  `Status: pass`, with L1/L2 pass and L3/L4 valid non-success rows.
+- [topics/phase6b-reviewer-rework-partial-observation-tranche.md](topics/phase6b-reviewer-rework-partial-observation-tranche.md):
+  planning-only L5 tranche packet for the remaining Phase 6B requirement to
+  observe reviewer rework or partial classification; not launch approval.
+- [topics/phase6b-l5-partial-launch-request-20260704.md](topics/phase6b-l5-partial-launch-request-20260704.md):
+  launch-specific Phase 6B L5 partial-only request packet for reviewer2
+  disposition; no runtime evidence or Phase 6B claim by itself.
+- [topics/phase6b-real-provider-lab-launch-checklist.md](topics/phase6b-real-provider-lab-launch-checklist.md):
+  Phase 6B launch-readiness checklist separating prerequisites closed by Phase
+  6A from still-open provider/profile/isolation/schema/reviewer launch gates.
+- [topics/phase6b-l0-launch-request-20260704.md](topics/phase6b-l0-launch-request-20260704.md):
+  consumed L0-only real-provider launch request history; B-only repeat6 passed
+  runtime sanity, but this remains L0 evidence and does not approve L1-L4 or
+  Phase 6B completion.
+- [topics/phase6b-l0-owner-decision-packet-20260704.md](topics/phase6b-l0-owner-decision-packet-20260704.md):
+  planning-only owner-decision packet for Phase 6B L0 provider profile,
+  provider-home, RolePack seed, command/schema, and B7 reporting choices; not
+  launch approval.
+- [topics/phase6a-fake-provider-matrix-closure-runbook.md](topics/phase6a-fake-provider-matrix-closure-runbook.md):
+  Phase 6A fake-provider matrix closure runbook and evidence/rerun guide; not
+  Phase 6B or production launch approval.
+- [topics/phase1-6-final-packaging-hygiene.md](topics/phase1-6-final-packaging-hygiene.md):
+  final source-control packaging hygiene checklist for generated artifacts,
+  shared README/topic edits, provider-pane files, and RolePack draft tracking.
+- [topics/phase1-6-module-level-audit-worksheet.md](topics/phase1-6-module-level-audit-worksheet.md):
+  worksheet for the post-matrix six-module audit required before the final
+  Phase 1-6 acceptance report.
 - [topics/orchestrator-rolepack-blueprint.md](topics/orchestrator-rolepack-blueprint.md):
   reviewed `mother` design for the `agentroles.ccb_orchestrator` RolePack,
   including identity, memory, skills, templates, package shape, and validation
@@ -226,6 +315,10 @@ recoverable workflow loops.
   decision that orchestrator triages planner macro packets before activating
   `task_detailer`, can dispatch direct execution, and routes macro adjustment
   requests back to planner.
+- [decisions/020-mount-topology-and-ask-first-orchestration.md](decisions/020-mount-topology-and-ask-first-orchestration.md):
+  decision to narrow topology to runtime mount state while keeping ordinary
+  agent collaboration on `ask` and importing only stable outcomes through
+  script-owned task/round artifacts.
 - [history/review-2026-06-26-loop-runner-readiness.md](history/review-2026-06-26-loop-runner-readiness.md):
   reviewer/coworker readiness review that narrowed the next implementation
   slice to task-loop binding, round-result import, `run-once --task-id`, and
@@ -272,9 +365,9 @@ In scope:
   or advances execution loops without relying on one agent's conversation
   memory.
 - An orchestrator role that decomposes a ready execution task into bounded
-  work items, selects the required execution-node topology, constrains worker
-  asks, and proposes a runtime workflow graph that CCB scripts validate,
-  commit, and reconcile.
+  work items, selects required execution agents, proposes mount topology for
+  CCB scripts to validate/commit/reconcile, and coordinates normal
+  worker/reviewer/detailer collaboration through `ask`.
 - A dynamic agent lifecycle layer where the V1 default visible baseline is
   four panes, `ccb_frontdesk + ccb_task_detailer` in `ccb-user` and
   `ccb_planner + ccb_orchestrator` in `ccb-plan`, while execution and
@@ -344,7 +437,9 @@ then read [topics/architecture.md](topics/architecture.md), then read
 [topics/state-and-script-contract.md](topics/state-and-script-contract.md) and
 [topics/plan-and-runtime-list-structure.md](topics/plan-and-runtime-list-structure.md),
 then [topics/orchestrator-role-capability.md](topics/orchestrator-role-capability.md),
-then [topics/runtime-workflow-graph-and-reconciler.md](topics/runtime-workflow-graph-and-reconciler.md),
+then [topics/mount-topology-and-ask-first-orchestration.md](topics/mount-topology-and-ask-first-orchestration.md),
+then [topics/runtime-workflow-graph-and-reconciler.md](topics/runtime-workflow-graph-and-reconciler.md)
+for landed topology-controller context,
 then [topics/orchestrator-rolepack-blueprint.md](topics/orchestrator-rolepack-blueprint.md),
 then [topics/role-profiles-and-capacity-skill.md](topics/role-profiles-and-capacity-skill.md),
 then [goals/orchestrator-dynamic-capacity-goal.md](goals/orchestrator-dynamic-capacity-goal.md),

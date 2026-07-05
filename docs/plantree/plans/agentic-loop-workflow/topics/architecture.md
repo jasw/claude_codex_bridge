@@ -232,7 +232,7 @@ The loop runner should be a CCB program/helper, not an agent conversation.
 Responsibilities:
 
 - Triage planner macro packets as `direct_execution`, `needs_detail`,
-  `macro_adjustment_blocked`, or `blocked`.
+  `macro_adjustment_request`, or `blocked`.
 - Request a short-lived `task_detailer` only when triage finds that source-
   backed task refinement is required.
 - Consume detail packets returned by `task_detailer` and dispatch from the

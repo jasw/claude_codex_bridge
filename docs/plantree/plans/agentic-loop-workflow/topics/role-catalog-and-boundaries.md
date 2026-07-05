@@ -470,14 +470,18 @@ The first CCB workflow RolePack draft set is now present under
 `drafts/`:
 
 - `_shared/authority-rule.md` and `_shared/templates/*`;
-- legacy `agentroles.ccb_planner`;
+- `agentroles.ccb_planner`;
+- `agentroles.ccb_task_detailer`;
 - `agentroles.ccb_plan_reviewer`;
 - `agentroles.ccb_clarification_broker`;
 - `agentroles.ccb_orchestrator`;
-- `agentroles.ccb_round_checker`;
 - `agentroles.ccb_frontdesk`;
-- `agentroles.ccb_worker`;
-- `agentroles.ccb_checker`.
+- `agentroles.coder`;
+- `agentroles.code_reviewer`;
+- `agentroles.ccb_round_reviewer`;
+- legacy compatibility/history packages:
+  `agentroles.ccb_worker`, `agentroles.ccb_checker`, and
+  `agentroles.ccb_round_checker`.
 
 Current targeted verification:
 

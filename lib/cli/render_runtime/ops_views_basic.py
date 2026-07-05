@@ -476,6 +476,8 @@ def render_plan_task(summary) -> tuple[str, ...]:
         f'action: {payload.get("action", "")}',
         f'task_id: {payload.get("task_id", "")}',
         f'status: {payload.get("status", "")}',
+        f'next_owner: {task.get("next_owner", "")}',
+        f'activation_reason: {task.get("activation_reason", "")}',
         f'plan_slug: {payload.get("plan_slug", "")}',
         f'task_root: {payload.get("task_root", "")}',
         f'readme_path: {payload.get("readme_path", "")}',

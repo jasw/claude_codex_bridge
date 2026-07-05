@@ -897,8 +897,8 @@ Hard requirements:
 - Use `ccb loop capacity ensure --loop-id {loop_id} --profile worker=1 --profile code_reviewer=1 --json`.
 - Treat `loop_capacity_status = ensured` and `apply.apply_status = applied` as live capacity success.
 - Parse the returned agent names; do not invent names from the template.
-- Ask the returned worker with `command ask --callback "$WORKER_AGENT"` and then stop until resumed.
-- After the worker callback resumes you, ask the returned reviewer with `command ask --callback "$REVIEWER_AGENT"` and then stop until resumed.
+- Ask the returned worker with `command ask --chain "$WORKER_AGENT"` and then stop until resumed.
+- After the worker callback resumes you, ask the returned reviewer with `command ask --chain "$REVIEWER_AGENT"` and then stop until resumed.
 - After the reviewer callback resumes you, run `ccb loop capacity status --loop-id {loop_id} --json`, then `ccb loop capacity release --loop-id {loop_id} --policy auto --json`, then final status if useful.
 
 Worker request:
