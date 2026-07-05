@@ -1242,10 +1242,6 @@ class MobileGatewayService:
             return summary, attempted_refresh
         fresh_summary = _project_activity_summary_from_view(view_payload)
         checked_at = self._clock()
-        if fresh_summary.get('has_working_agents'):
-            fresh_summary['last_activity_at'] = _latest_mobile_timestamp(
-                [fresh_summary.get('last_activity_at'), checked_at]
-            )
         if self._project_activity_store is not None:
             try:
                 self._project_activity_store.record_summary(
@@ -1348,21 +1344,23 @@ class MobileGatewayService:
         if frame_type == 'input':
             seq = _required_positive_int(frame.get('seq'), 'seq')
             data = base64.b64decode(str(frame.get('bytes_b64') or ''), validate=True)
-            self._require_pairing_store().record_terminal_input_sequence(
+            record = self._require_pairing_store().record_terminal_input_sequence(
                 terminal_id=terminal_id,
                 terminal_token=terminal_token,
                 sequence=seq,
             )
             session.write(data)
+            self._record_project_activity(str(record.get('project_id') or ''))
             return ''
         if frame_type == 'paste':
             seq = _required_positive_int(frame.get('seq'), 'seq')
-            self._require_pairing_store().record_terminal_input_sequence(
+            record = self._require_pairing_store().record_terminal_input_sequence(
                 terminal_id=terminal_id,
                 terminal_token=terminal_token,
                 sequence=seq,
             )
             session.paste(str(frame.get('text') or ''))
+            self._record_project_activity(str(record.get('project_id') or ''))
             return ''
         if frame_type == 'resize':
             session.resize(TerminalGeometry.from_mapping(frame))

@@ -288,6 +288,7 @@ def _service(
     terminal_session_factory=None,
     terminal_history_factory=None,
     terminal_message_sender=None,
+    clock=None,
 ) -> MobileGatewayService:
     return MobileGatewayService(
         project_id='proj-demo',
@@ -295,7 +296,7 @@ def _service(
         ccbd_client_factory=lambda: fake,
         mobile_dir=mobile_dir,
         project_registry=project_registry,
-        clock=lambda: '2026-06-18T00:00:00Z',
+        clock=clock or (lambda: '2026-06-18T00:00:00Z'),
         terminal_session_factory=terminal_session_factory,
         terminal_history_factory=terminal_history_factory,
         terminal_message_sender=terminal_message_sender,
@@ -427,6 +428,56 @@ def test_projects_payload_includes_project_activity_summary() -> None:
     assert projects['projects'][0]['working_agent_count'] == 1
     assert projects['projects'][0]['last_activity_at'] == '2026-07-04T09:04:00Z'
     assert fake.calls == [('ping', 'ccbd'), ('project_view', 1)]
+
+
+def test_working_project_refresh_does_not_overwrite_recent_send_activity(
+    tmp_path: Path,
+) -> None:
+    working = _FakeActivityCcbdClient(
+        project_id='proj-working',
+        project_root='/srv/working',
+        display_name='working',
+    )
+    recent = _FakeCcbdClient(
+        project_id='proj-recent',
+        project_root='/srv/recent',
+        display_name='recent',
+    )
+    service = _service(
+        working,
+        mobile_dir=tmp_path / 'mobile',
+        project_registry=MobileGatewayProjectRegistry(
+            [
+                MobileGatewayProject(
+                    project_id='proj-working',
+                    project_root=Path('/srv/working'),
+                    ccbd_client_factory=lambda: working,
+                ),
+                MobileGatewayProject(
+                    project_id='proj-recent',
+                    project_root=Path('/srv/recent'),
+                    ccbd_client_factory=lambda: recent,
+                ),
+            ]
+        ),
+        clock=lambda: '2026-07-05T00:00:00Z',
+    )
+    assert service._project_activity_store is not None
+    service._project_activity_store.record_summary(
+        project_id='proj-recent',
+        summary={'last_activity_at': '2026-07-04T09:10:00Z'},
+        checked_at='2026-07-04T09:10:00Z',
+    )
+
+    projects = service.projects_payload()
+
+    assert [item['id'] for item in projects['projects']] == [
+        'proj-recent',
+        'proj-working',
+    ]
+    working_payload = projects['projects'][1]
+    assert working_payload['has_working_agents'] is True
+    assert working_payload['last_activity_at'] == '2026-07-04T09:04:00Z'
 
 
 def test_projects_payload_reuses_cached_project_activity_summary(tmp_path: Path) -> None:
@@ -3242,6 +3293,8 @@ def test_terminal_websocket_streams_frames_and_rejects_replayed_input(tmp_path: 
         _wait_for(lambda: sessions[0].writes == [b'a'])
         _websocket_send_json(sock, {'type': 'paste', 'seq': 2, 'text': 'hello paste'})
         _wait_for(lambda: sessions[0].pastes == ['hello paste'])
+        projects = service.projects_payload()
+        assert projects['projects'][0]['last_activity_at'] == '2026-06-18T00:00:00Z'
         _websocket_send_json(sock, {'type': 'resize', 'columns': 120, 'rows': 36})
         _wait_for(lambda: len(sessions[0].resizes) == 1)
         assert sessions[0].resizes[0].columns == 120
