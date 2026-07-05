@@ -21,8 +21,8 @@ TAILSCALE_LOGIN_URL = "https://login.tailscale.com/start"
 DEFAULT_MOBILE_GATEWAY_LISTEN = "127.0.0.1:8787"
 CCB_MOBILE_APP_DOWNLOAD_URL_ENV = "CCB_MOBILE_APP_DOWNLOAD_URL"
 DEFAULT_CCB_MOBILE_APP_DOWNLOAD_URL = (
-    "https://github.com/bfly123/claude_code_bridge/releases/download/"
-    "v8.0.15/ccb-mobile-v8.0.15.apk"
+    "https://github.com/SeemSeam/claude_codex_bridge/releases/download/"
+    "v8.0.16/ccb-mobile-v8.0.16.apk"
 )
 TAILSCALE_LINUX_INSTALL_COMMAND = (
     "sh",

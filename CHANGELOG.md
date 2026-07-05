@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+## v8.0.16 (2026-07-05)
+
+### Mobile Reconnect And Activity
+
+- **Mobile Terminal Reconnect Hardened**: CCB Mobile terminal sessions now show
+  explicit reconnecting state, disable unsafe input while disconnected, and
+  recover through the existing fresh-handle path when the gateway comes back.
+- **Mobile Pane Activity Recorded**: gateway-side pane input now bumps project
+  activity so server-wide project recency can reflect Terminal-mode usage.
+- **Release Surface Synchronized**: VERSION, package.json, mobile app version
+  metadata, update links, mobile release manifest, and release workflow
+  defaults are aligned for 8.0.16.
+
 ## v8.0.15 (2026-07-05)
 
 ### Ask Routing And Mobile Runtime
