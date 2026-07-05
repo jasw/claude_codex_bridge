@@ -36,6 +36,10 @@ void main() {
 
     await tester.tap(find.byKey(const ValueKey('agent-lead')));
     await tester.pumpAndSettle();
+    expect(
+      find.byKey(const ValueKey('agent-workspace-mode-switch')),
+      findsNothing,
+    );
     await tester.tap(find.byKey(const ValueKey('open-agent-terminal-button')));
     await tester.pumpAndSettle();
 
@@ -48,6 +52,15 @@ void main() {
     expect(terminalTransport.requests, hasLength(1));
     expect(terminalTransport.requests.single.target.projectId, 'proj-focused');
     expect(terminalTransport.requests.single.target.agent, 'lead');
+    expect(
+      terminalTransport.requests.single.target.kind,
+      CcbTerminalTargetKind.agent,
+    );
+
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+
+    expect(find.byType(TerminalView), findsNothing);
   });
 
   testWidgets('paired stale focus does not navigate or open transport', (
@@ -133,6 +146,19 @@ void main() {
     expect(repository.focusAgentCalls, isEmpty);
     expect(find.byType(TerminalView), findsOneWidget);
     expect(find.text('demo / lead'), findsNWidgets(2));
+
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+
+    expect(find.byType(TerminalView), findsNothing);
+    expect(
+      find.byKey(const ValueKey('agent-message-composer')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('agent-workspace-mode-switch')),
+      findsNothing,
+    );
   });
 }
 

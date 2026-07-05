@@ -16,7 +16,6 @@ import '../../models/ccb_conversation_item.dart';
 import '../../models/ccb_project_view.dart';
 import '../../repository/mobile_ccb_repository.dart';
 import '../../transport/terminal_transport.dart';
-import '../terminal/agent_terminal_pane.dart';
 import 'agent_chat_controller.dart';
 import 'agent_chat_ui_controller_store.dart';
 import 'agent_conversation_refresh_coordinator.dart';
@@ -35,8 +34,6 @@ const agentMessageMaxAttachmentBytes = 25 * 1024 * 1024;
 const selectedAgentTabKeyBytes = [9];
 const selectedAgentEscapeKeyBytes = [27];
 const selectedAgentExpandScrollDuration = Duration(milliseconds: 220);
-
-enum SelectedAgentWorkspaceMode { chat, terminal }
 
 class SelectedAgentWorkspace extends StatefulWidget {
   const SelectedAgentWorkspace({
@@ -140,7 +137,6 @@ class _SelectedAgentWorkspaceState extends State<SelectedAgentWorkspace>
   final Set<String> _localExceptionStatusAgentNames = {};
   final Map<String, String> _recentPaneOutputText = {};
   final Set<String> _pendingClearNewMessageAgents = {};
-  SelectedAgentWorkspaceMode _mode = SelectedAgentWorkspaceMode.chat;
   FocusNode? _observedDraftFocusNode;
   String? _observedDraftFocusAgentName;
   var _nextDraftAttachmentIndex = 0;
@@ -164,10 +160,6 @@ class _SelectedAgentWorkspaceState extends State<SelectedAgentWorkspace>
     final projectOrAgentChanged =
         oldWidget.view.project.id != widget.view.project.id ||
         oldWidget.agent?.name != widget.agent?.name;
-    final terminalScopeChanged =
-        projectOrAgentChanged ||
-        oldWidget.view.namespaceEpoch != widget.view.namespaceEpoch ||
-        oldWidget.terminalTransport != widget.terminalTransport;
     if (oldWidget.repository != widget.repository ||
         oldWidget.terminalTransport != widget.terminalTransport ||
         oldWidget.view.project.id != widget.view.project.id ||
@@ -178,9 +170,6 @@ class _SelectedAgentWorkspaceState extends State<SelectedAgentWorkspace>
           oldWidget.view.namespaceEpoch != widget.view.namespaceEpoch) {
         unawaited(_paneMessageSubmitter.closeSessions());
         _chatController.clearRefreshedTerminalHistories();
-      }
-      if (terminalScopeChanged) {
-        _mode = SelectedAgentWorkspaceMode.chat;
       }
       if (projectOrAgentChanged) {
         _restoreLocalMessagesForSelectedAgent();
@@ -1138,39 +1127,6 @@ class _SelectedAgentWorkspaceState extends State<SelectedAgentWorkspace>
     if (selectedAgent == null) {
       return const NoSelectedAgentWorkspaceView();
     }
-    final modeSwitch = _SelectedAgentWorkspaceModeSwitch(
-      mode: _mode,
-      onChanged: (mode) {
-        if (_mode == mode) {
-          return;
-        }
-        setState(() {
-          _mode = mode;
-        });
-      },
-    );
-    if (_mode == SelectedAgentWorkspaceMode.terminal) {
-      return Column(
-        key: const ValueKey('selected-agent-workspace'),
-        children: [
-          modeSwitch,
-          const SizedBox(height: 2),
-          Expanded(
-            child: AgentTerminalPane(
-              key: ValueKey(
-                'agent-terminal-pane-${widget.view.project.id}-'
-                '${widget.view.namespaceEpoch}-${selectedAgent.name}',
-              ),
-              view: widget.view,
-              target: widget.view.terminalTargetForAgent(selectedAgent.name),
-              terminalTransport: widget.terminalTransport,
-              gatewayTerminal: widget.terminalTransport != null,
-              showHeader: true,
-            ),
-          ),
-        ],
-      );
-    }
     final model = selectedAgentWorkspaceModel(
       view: widget.view,
       agent: selectedAgent,
@@ -1186,8 +1142,6 @@ class _SelectedAgentWorkspaceState extends State<SelectedAgentWorkspace>
     _observeDraftFocusNode(selectedAgent.name, draftFocusNode);
     return Column(
       children: [
-        modeSwitch,
-        const SizedBox(height: 2),
         Expanded(
           child: SelectedAgentWorkspaceView(
             repository: widget.repository,
@@ -1284,51 +1238,6 @@ class _SelectedAgentWorkspaceState extends State<SelectedAgentWorkspace>
       }
       _draftFocusNode(agentName).requestFocus();
     });
-  }
-}
-
-class _SelectedAgentWorkspaceModeSwitch extends StatelessWidget {
-  const _SelectedAgentWorkspaceModeSwitch({
-    required this.mode,
-    required this.onChanged,
-  });
-
-  final SelectedAgentWorkspaceMode mode;
-  final ValueChanged<SelectedAgentWorkspaceMode> onChanged;
-
-  @override
-  Widget build(BuildContext context) {
-    return Align(
-      alignment: Alignment.centerLeft,
-      child: SegmentedButton<SelectedAgentWorkspaceMode>(
-        key: const ValueKey('agent-workspace-mode-switch'),
-        style: ButtonStyle(
-          visualDensity: VisualDensity.compact,
-          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-          padding: WidgetStateProperty.all(
-            const EdgeInsets.symmetric(horizontal: 10),
-          ),
-          minimumSize: WidgetStateProperty.all(const Size(0, 34)),
-        ),
-        segments: const [
-          ButtonSegment<SelectedAgentWorkspaceMode>(
-            value: SelectedAgentWorkspaceMode.chat,
-            label: Text('Chat'),
-            icon: Icon(Icons.chat_bubble_outline),
-          ),
-          ButtonSegment<SelectedAgentWorkspaceMode>(
-            value: SelectedAgentWorkspaceMode.terminal,
-            label: Text('Terminal'),
-            icon: Icon(Icons.terminal),
-          ),
-        ],
-        selected: {mode},
-        showSelectedIcon: false,
-        onSelectionChanged: (selection) {
-          onChanged(selection.single);
-        },
-      ),
-    );
   }
 }
 
