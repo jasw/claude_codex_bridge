@@ -617,6 +617,17 @@ class _ProjectHomeViewState extends State<_ProjectHomeView>
                     icon: const Icon(Icons.settings_outlined),
                     label: Text(strings.backToSetup),
                   ),
+                  if (_selectedProfile != null) ...[
+                    const SizedBox(height: 8),
+                    OutlinedButton.icon(
+                      key: const ValueKey(
+                        'project-list-route-diagnostics-button',
+                      ),
+                      onPressed: _checkingRoute ? null : _checkGatewayRoute,
+                      icon: const Icon(Icons.route_outlined),
+                      label: Text(strings.diagnostics),
+                    ),
+                  ],
                 ],
               ),
             ),

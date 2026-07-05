@@ -1,12 +1,18 @@
+import 'dart:async';
+import 'dart:io';
+
 import '../../models/ccb_project.dart';
 import '../../models/ccb_project_view.dart';
 import '../../pairing/gateway_pairing.dart';
+import '../../repository/gateway_mobile_ccb_repository.dart';
 import '../../repository/mobile_ccb_repository.dart';
+import '../../transport/http_gateway_transport.dart';
 import '../../transport/terminal_transport.dart';
 import '../../transport/route_provider.dart';
 
 const projectHomeRuntimeNoProfileSnack = 'Pair a gateway profile first';
 const projectHomeRuntimeViewLoadTimeout = Duration(seconds: 10);
+const projectHomeRuntimeGatewayHealthTimeout = Duration(seconds: 4);
 
 typedef ProjectHomeGatewayRepositoryFactory =
     MobileCcbRepository Function(GatewayPairedHost profile);
@@ -73,12 +79,107 @@ class ProjectHomeRuntimeSessionCoordinator {
       repository: repository,
       preferredProjectId: activation.activeProjectId,
       terminalTransport: terminalTransportFactory(profile),
-      projectsFuture: Future<List<CcbProject>>(
-        () async =>
-            sortCcbProjectsByRecentActivity(await repository.listProjects()),
-      ).timeout(projectListTimeout),
+      projectsFuture: Future<List<CcbProject>>(() async {
+        await verifyProjectHomeGatewayProfile(repository);
+        return sortCcbProjectsByRecentActivity(await repository.listProjects());
+      }).timeout(projectListTimeout),
     );
   }
+}
+
+enum ProjectHomeGatewayActivationFailureKind {
+  tokenInvalid,
+  gatewayUnreachable,
+  serverUnhealthy,
+}
+
+class ProjectHomeGatewayActivationException implements Exception {
+  const ProjectHomeGatewayActivationException({
+    required this.kind,
+    required this.message,
+    this.cause,
+  });
+
+  final ProjectHomeGatewayActivationFailureKind kind;
+  final String message;
+  final Object? cause;
+
+  @override
+  String toString() {
+    return message;
+  }
+}
+
+Future<void> verifyProjectHomeGatewayProfile(
+  MobileCcbRepository repository, {
+  Duration timeout = projectHomeRuntimeGatewayHealthTimeout,
+}) async {
+  final probe =
+      repository is MobileGatewayProfileHealthProbe
+          ? repository as MobileGatewayProfileHealthProbe
+          : null;
+  if (probe == null) {
+    return;
+  }
+  try {
+    final health = await probe.health().timeout(timeout);
+    if (health.status.trim().toLowerCase() != 'ok') {
+      throw ProjectHomeGatewayActivationException(
+        kind: ProjectHomeGatewayActivationFailureKind.serverUnhealthy,
+        message: 'Gateway health check failed: ${health.status}',
+      );
+    }
+    final device = await probe.device().timeout(timeout);
+    if (device.revoked) {
+      throw const ProjectHomeGatewayActivationException(
+        kind: ProjectHomeGatewayActivationFailureKind.tokenInvalid,
+        message:
+            'Gateway profile token is no longer valid. Re-pair this phone.',
+      );
+    }
+  } catch (error) {
+    if (error is ProjectHomeGatewayActivationException) {
+      rethrow;
+    }
+    throw _gatewayActivationExceptionFor(error);
+  }
+}
+
+ProjectHomeGatewayActivationException _gatewayActivationExceptionFor(
+  Object error,
+) {
+  if (error is GatewayHttpException &&
+      (error.statusCode == 401 || error.statusCode == 403)) {
+    return ProjectHomeGatewayActivationException(
+      kind: ProjectHomeGatewayActivationFailureKind.tokenInvalid,
+      message: 'Gateway profile token is invalid. Re-pair this phone.',
+      cause: error,
+    );
+  }
+  if (error is TimeoutException ||
+      error is SocketException ||
+      error is HttpException ||
+      error is HandshakeException ||
+      error is OSError) {
+    return ProjectHomeGatewayActivationException(
+      kind: ProjectHomeGatewayActivationFailureKind.gatewayUnreachable,
+      message:
+          'Gateway is unreachable. Check VPN, LAN, or route diagnostics, then retry.',
+      cause: error,
+    );
+  }
+  if (error is GatewayHttpException) {
+    return ProjectHomeGatewayActivationException(
+      kind: ProjectHomeGatewayActivationFailureKind.serverUnhealthy,
+      message: 'Gateway rejected health check: ${error.statusCode}',
+      cause: error,
+    );
+  }
+  return ProjectHomeGatewayActivationException(
+    kind: ProjectHomeGatewayActivationFailureKind.serverUnhealthy,
+    message: 'Gateway health check failed: $error',
+    cause: error,
+  );
 }
 
 enum ProjectHomePairedRuntimeSelectionKind { noProfile, activate }

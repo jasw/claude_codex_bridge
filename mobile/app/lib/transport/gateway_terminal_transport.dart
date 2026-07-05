@@ -36,7 +36,13 @@ class _GatewayTerminalSession implements TerminalSession {
        _request = request,
        _handle = handle,
        _geometry = request.geometry {
-    _connect();
+    unawaited(
+      _connect().catchError((Object error, StackTrace stackTrace) {
+        if (!_closed) {
+          _output.addError(error, stackTrace);
+        }
+      }),
+    );
   }
 
   final GatewayTransport _transport;
@@ -46,6 +52,7 @@ class _GatewayTerminalSession implements TerminalSession {
   final _output = StreamController<Uint8List>.broadcast();
   StreamSubscription<GatewayTerminalFrame>? _subscription;
   Future<void>? _renewal;
+  Completer<void>? _connectionReady;
   int _nextInputSequence = 1;
   int _resumeCursor = 0;
   bool _closed = false;
@@ -93,7 +100,7 @@ class _GatewayTerminalSession implements TerminalSession {
       return;
     }
     await _cancelSubscription();
-    _connect(resumeCursor: _resumeCursor);
+    await _connect(resumeCursor: _resumeCursor);
   }
 
   @override
@@ -110,11 +117,17 @@ class _GatewayTerminalSession implements TerminalSession {
     await _closeOutput();
   }
 
-  Future<void> _sendSequenced(GatewayTerminalFrame frame) {
+  Future<void> _sendSequenced(GatewayTerminalFrame frame) async {
+    final renewal = _renewal;
+    if (renewal != null) {
+      await renewal;
+    }
     return _transport.sendTerminalFrame(_handle, frame);
   }
 
-  void _connect({int? resumeCursor}) {
+  Future<void> _connect({int? resumeCursor}) {
+    final ready = Completer<void>();
+    _connectionReady = ready;
     _subscription = _transport
         .terminalFrames(_handle, resumeCursor: resumeCursor)
         .listen(
@@ -122,6 +135,14 @@ class _GatewayTerminalSession implements TerminalSession {
           onError: _handleTransportError,
           onDone: _handleDone,
         );
+    return ready.future.timeout(
+      const Duration(seconds: 5),
+      onTimeout:
+          () =>
+              throw const TerminalTransportException(
+                'terminal stream connect timeout',
+              ),
+    );
   }
 
   void _handleFrame(GatewayTerminalFrame frame) {
@@ -142,14 +163,19 @@ class _GatewayTerminalSession implements TerminalSession {
           _scheduleRenewTerminalHandle();
           return;
         }
+        _completeConnectionError(TerminalTransportException(code));
         _output.addError(TerminalTransportException(code));
       case GatewayTerminalFrameType.closed:
+        _completeConnectionError(
+          const TerminalTransportException('terminal stream closed'),
+        );
         _closeOutput();
       case GatewayTerminalFrameType.open:
         final sequence = _int(frame.payload['last_input_seq']);
         if (sequence >= _nextInputSequence) {
           _nextInputSequence = sequence + 1;
         }
+        _completeConnectionReady();
       case GatewayTerminalFrameType.input:
       case GatewayTerminalFrameType.paste:
       case GatewayTerminalFrameType.resize:
@@ -158,9 +184,9 @@ class _GatewayTerminalSession implements TerminalSession {
 
   void _handleDone() {
     if (!_closed && !_output.isClosed) {
-      _output.addError(
-        const TerminalTransportException('terminal stream disconnected'),
-      );
+      const error = TerminalTransportException('terminal stream disconnected');
+      _completeConnectionError(error);
+      _output.addError(error);
     }
   }
 
@@ -169,15 +195,27 @@ class _GatewayTerminalSession implements TerminalSession {
       _scheduleRenewTerminalHandle();
       return;
     }
+    _completeConnectionError(error, stackTrace);
     _output.addError(error, stackTrace);
   }
 
   void _scheduleRenewTerminalHandle() {
-    _renewTerminalHandle().catchError((Object error, StackTrace stackTrace) {
-      if (!_closed) {
-        _output.addError(error, stackTrace);
-      }
-    });
+    final connection = _connectionReady;
+    final renewal = _renewTerminalHandle();
+    renewal
+        .then((_) {
+          if (connection != null && !connection.isCompleted) {
+            connection.complete();
+          }
+        })
+        .catchError((Object error, StackTrace stackTrace) {
+          if (connection != null && !connection.isCompleted) {
+            connection.completeError(error, stackTrace);
+          }
+          if (!_closed) {
+            _output.addError(error, stackTrace);
+          }
+        });
   }
 
   Future<void> _renewTerminalHandle() {
@@ -210,7 +248,25 @@ class _GatewayTerminalSession implements TerminalSession {
     }
     _handle = handle;
     _resumeCursor = 0;
-    _connect();
+    await _connect();
+  }
+
+  void _completeConnectionReady() {
+    final connection = _connectionReady;
+    if (connection != null && !connection.isCompleted) {
+      connection.complete();
+    }
+  }
+
+  void _completeConnectionError(Object error, [StackTrace? stackTrace]) {
+    final connection = _connectionReady;
+    if (connection != null && !connection.isCompleted) {
+      if (stackTrace == null) {
+        connection.completeError(error);
+      } else {
+        connection.completeError(error, stackTrace);
+      }
+    }
   }
 
   Future<void> _closeOutput() async {
@@ -234,8 +290,12 @@ class _GatewayTerminalSession implements TerminalSession {
 }
 
 bool _isRenewableTerminalException(Object error) {
-  return error is TerminalTransportException &&
-      _isRenewableTerminalError(error.message);
+  if (error is TerminalTransportException) {
+    return _isRenewableTerminalError(error.message);
+  }
+  final text = error.toString().toLowerCase();
+  return text.contains('connection closed before full header') ||
+      (text.contains('websocket') && text.contains('/v1/terminals/'));
 }
 
 bool _isRenewableTerminalError(String code) {
@@ -243,7 +303,9 @@ bool _isRenewableTerminalError(String code) {
   return normalized == 'expired' ||
       normalized == 'terminal_token_expired' ||
       normalized == 'token_expired' ||
-      normalized == 'stale_resume_cursor';
+      normalized == 'stale_resume_cursor' ||
+      normalized == 'invalid_token' ||
+      normalized == 'terminal_token_denied';
 }
 
 int _int(Object? value) {

@@ -160,11 +160,21 @@ class _LiveTerminalPane extends StatefulWidget {
 
 class _LiveTerminalPaneState extends State<_LiveTerminalPane>
     with WidgetsBindingObserver {
+  static const _autoReconnectBackoff = <Duration>[
+    Duration(seconds: 1),
+    Duration(seconds: 2),
+    Duration(seconds: 4),
+    Duration(seconds: 8),
+  ];
+
   late final Terminal _terminal;
   Future<TerminalSession>? _sessionFuture;
   TerminalSession? _session;
   StreamSubscription<String>? _outputSubscription;
+  Timer? _autoReconnectTimer;
   var _openGeneration = 0;
+  var _autoReconnectAttempt = 0;
+  var _autoReconnectBlocked = false;
   TerminalGeometry _lastGeometry = const TerminalGeometry(
     columns: 100,
     rows: 30,
@@ -210,15 +220,27 @@ class _LiveTerminalPaneState extends State<_LiveTerminalPane>
     }
   }
 
-  void _startSession({required bool clearTerminal}) {
+  void _startSession({
+    required bool clearTerminal,
+    bool resetReconnect = true,
+  }) {
     _openGeneration += 1;
     final generation = _openGeneration;
+    if (resetReconnect) {
+      _resetAutoReconnect();
+    } else {
+      _cancelAutoReconnectTimer();
+    }
     unawaited(_closeCurrentSession());
     if (clearTerminal) {
       _terminal.write('\x1b[2J\x1b[H');
     }
     _setControlStatus('Connecting');
-    final future = _openSession(generation);
+    final rawFuture = _openSession(generation);
+    final future =
+        resetReconnect
+            ? rawFuture
+            : rawFuture.catchError((_) => Completer<TerminalSession>().future);
     setState(() {
       _sessionFuture = future;
     });
@@ -235,12 +257,22 @@ class _LiveTerminalPaneState extends State<_LiveTerminalPane>
               target: widget.model.target,
               geometry: _lastGeometry,
             );
-    final session = await widget.transport.open(request);
+    late final TerminalSession session;
+    try {
+      session = await widget.transport.open(request);
+    } catch (error) {
+      if (mounted && generation == _openGeneration) {
+        _terminal.write('\r\n\x1b[33m$error\x1b[0m\r\n');
+        _handleReconnectFailure(generation, error);
+      }
+      rethrow;
+    }
     if (!mounted || generation != _openGeneration) {
       await session.close();
       throw const TerminalTransportException('stale terminal session');
     }
     _session = session;
+    _resetAutoReconnect();
     _setControlStatus('Connected');
     _outputSubscription = session.output
         .map<List<int>>((bytes) => bytes)
@@ -252,14 +284,14 @@ class _LiveTerminalPaneState extends State<_LiveTerminalPane>
               return;
             }
             _terminal.write('\r\n\x1b[31m$error\x1b[0m\r\n');
-            _setControlStatus('Stream error');
+            _scheduleAutoReconnect(generation, error: error);
           },
           onDone: () {
             if (generation != _openGeneration) {
               return;
             }
             _session = null;
-            _setControlStatus('Closed');
+            _scheduleAutoReconnect(generation);
           },
         );
     return session;
@@ -267,8 +299,10 @@ class _LiveTerminalPaneState extends State<_LiveTerminalPane>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed) {
-      _reconnect();
+    if (state == AppLifecycleState.resumed &&
+        _isReconnectableStatus(_controlStatus) &&
+        !_autoReconnectBlocked) {
+      unawaited(_reconnect());
     }
   }
 
@@ -276,6 +310,7 @@ class _LiveTerminalPaneState extends State<_LiveTerminalPane>
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _openGeneration += 1;
+    _cancelAutoReconnectTimer();
     unawaited(_closeCurrentSession());
     super.dispose();
   }
@@ -354,6 +389,7 @@ class _LiveTerminalPaneState extends State<_LiveTerminalPane>
   }
 
   Future<void> _reconnect() async {
+    _cancelAutoReconnectTimer();
     final session = _session;
     if (session == null) {
       _startSession(clearTerminal: false);
@@ -362,11 +398,120 @@ class _LiveTerminalPaneState extends State<_LiveTerminalPane>
     try {
       _setControlStatus('Reconnecting');
       await session.reconnect();
+      _resetAutoReconnect();
       _setControlStatus('Reconnected');
     } catch (error) {
-      _setControlStatus('Reconnect failed');
       _terminal.write('\r\n\x1b[33m$error\x1b[0m\r\n');
+      _handleReconnectFailure(_openGeneration, error);
     }
+  }
+
+  void _scheduleAutoReconnect(int generation, {Object? error}) {
+    if (!mounted || generation != _openGeneration || _autoReconnectBlocked) {
+      return;
+    }
+    final failure = error;
+    if (failure != null && _isTerminalTargetStaleError(failure)) {
+      _failTerminalReconnect(failure);
+      return;
+    }
+    final attemptIndex =
+        _autoReconnectAttempt < _autoReconnectBackoff.length
+            ? _autoReconnectAttempt
+            : _autoReconnectBackoff.length - 1;
+    final delay = _autoReconnectBackoff[attemptIndex];
+    if (_autoReconnectAttempt < _autoReconnectBackoff.length - 1) {
+      _autoReconnectAttempt += 1;
+    }
+    _cancelAutoReconnectTimer();
+    _setControlStatus('Reconnecting');
+    _autoReconnectTimer = Timer(delay, () {
+      if (!mounted || generation != _openGeneration || _autoReconnectBlocked) {
+        return;
+      }
+      unawaited(_runAutoReconnect(generation));
+    });
+  }
+
+  Future<void> _runAutoReconnect(int generation) async {
+    if (!mounted || generation != _openGeneration) {
+      return;
+    }
+    final session = _session;
+    if (session == null) {
+      _startSession(clearTerminal: false, resetReconnect: false);
+      return;
+    }
+    try {
+      _setControlStatus('Reconnecting');
+      await session.reconnect();
+      if (!mounted || generation != _openGeneration) {
+        return;
+      }
+      _resetAutoReconnect();
+      _setControlStatus('Reconnected');
+    } catch (error) {
+      _terminal.write('\r\n\x1b[33m$error\x1b[0m\r\n');
+      _handleReconnectFailure(generation, error);
+    }
+  }
+
+  void _handleReconnectFailure(int generation, Object error) {
+    if (!mounted || generation != _openGeneration) {
+      return;
+    }
+    if (_isTerminalTargetStaleError(error)) {
+      _failTerminalReconnect(error);
+      return;
+    }
+    _scheduleAutoReconnect(generation, error: error);
+  }
+
+  void _failTerminalReconnect(Object error) {
+    _autoReconnectBlocked = true;
+    _cancelAutoReconnectTimer();
+    _terminal.write(
+      '\r\n\x1b[33mTerminal target changed. Reopen Terminal from the project header.\x1b[0m\r\n',
+    );
+    _setControlStatus('Failed');
+  }
+
+  void _resetAutoReconnect() {
+    _autoReconnectAttempt = 0;
+    _autoReconnectBlocked = false;
+    _cancelAutoReconnectTimer();
+  }
+
+  void _cancelAutoReconnectTimer() {
+    _autoReconnectTimer?.cancel();
+    _autoReconnectTimer = null;
+  }
+
+  bool _isReconnectableStatus(String status) {
+    return status == 'Closed' ||
+        status == 'Stream error' ||
+        status == 'Reconnect failed' ||
+        status == 'Failed' ||
+        status == 'Reconnecting';
+  }
+
+  bool _isTerminalControlsDisabled(String status) {
+    return status == 'Connecting' ||
+        status == 'Closed' ||
+        status == 'Stream error' ||
+        status == 'Reconnect failed' ||
+        status == 'Failed' ||
+        status == 'Reconnecting';
+  }
+
+  bool _isTerminalTargetStaleError(Object error) {
+    final text = error.toString().toLowerCase();
+    return text.contains('stale namespace') ||
+        text.contains('namespace epoch') ||
+        text.contains('pane evidence') ||
+        text.contains('unknown terminal target') ||
+        (text.contains('terminal target') && text.contains('not found')) ||
+        text.contains('stale terminal session');
   }
 
   void _setControlStatus(String status) {
@@ -383,8 +528,7 @@ class _LiveTerminalPaneState extends State<_LiveTerminalPane>
     return FutureBuilder<TerminalSession>(
       future: _sessionFuture,
       builder: (context, snapshot) {
-        final disconnected =
-            _controlStatus == 'Stream error' || _controlStatus == 'Closed';
+        final disconnected = _isTerminalControlsDisabled(_controlStatus);
         final connected =
             snapshot.connectionState == ConnectionState.done &&
             snapshot.hasData &&
@@ -392,11 +536,11 @@ class _LiveTerminalPaneState extends State<_LiveTerminalPane>
             !disconnected;
         final opened =
             snapshot.connectionState == ConnectionState.done &&
-            snapshot.hasData;
-        final status =
-            snapshot.connectionState == ConnectionState.done
-                ? _controlStatus
-                : 'Connecting';
+                snapshot.hasData ||
+            _session != null ||
+            disconnected;
+        final canReconnect = opened && !_autoReconnectBlocked;
+        final status = _controlStatus;
         return Column(
           children: [
             if (widget.showHeader)
@@ -407,7 +551,7 @@ class _LiveTerminalPaneState extends State<_LiveTerminalPane>
               ),
             TerminalControlToolbar(
               enabled: connected,
-              reconnectEnabled: opened,
+              reconnectEnabled: canReconnect,
               status: status,
               onEscape: () => _sendKey(const [27], 'Esc'),
               onTab: () => _sendKey(const [9], 'Tab'),

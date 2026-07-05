@@ -8,18 +8,29 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:ccb_mobile/ccb_mobile.dart';
 
 class RecordingTerminalTransport implements TerminalTransport {
-  RecordingTerminalTransport({this.writeError});
+  RecordingTerminalTransport({
+    this.writeError,
+    List<Object>? openErrors,
+    List<Object>? reconnectErrors,
+  }) : openErrors = openErrors ?? <Object>[],
+       reconnectErrors = reconnectErrors ?? <Object>[];
 
   final Object? writeError;
+  final List<Object> openErrors;
+  final List<Object> reconnectErrors;
   final requests = <TerminalOpenRequest>[];
   final sessions = <RecordingTerminalSession>[];
 
   @override
   Future<TerminalSession> open(TerminalOpenRequest request) async {
     requests.add(request);
+    if (openErrors.isNotEmpty) {
+      throw openErrors.removeAt(0);
+    }
     final session = RecordingTerminalSession(
       request.attachCommand,
       writeError: writeError,
+      reconnectErrors: reconnectErrors,
     );
     sessions.add(session);
     return session;
@@ -27,10 +38,15 @@ class RecordingTerminalTransport implements TerminalTransport {
 }
 
 class RecordingTerminalSession implements TerminalSession {
-  RecordingTerminalSession(this.launchedCommand, {this.writeError});
+  RecordingTerminalSession(
+    this.launchedCommand, {
+    this.writeError,
+    List<Object>? reconnectErrors,
+  }) : reconnectErrors = reconnectErrors ?? <Object>[];
 
   final _output = StreamController<Uint8List>.broadcast();
   final Object? writeError;
+  final List<Object> reconnectErrors;
 
   @override
   final String launchedCommand;
@@ -70,6 +86,9 @@ class RecordingTerminalSession implements TerminalSession {
   @override
   Future<void> reconnect() async {
     reconnectCount += 1;
+    if (reconnectErrors.isNotEmpty) {
+      throw reconnectErrors.removeAt(0);
+    }
   }
 
   @override

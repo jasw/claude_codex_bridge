@@ -8,8 +8,17 @@ import '../models/readable_terminal_history.dart';
 import '../transport/gateway_transport.dart';
 import 'mobile_ccb_repository.dart';
 
+abstract interface class MobileGatewayProfileHealthProbe {
+  Future<GatewayHealth> health();
+
+  Future<GatewayDevice> device();
+}
+
 class GatewayMobileCcbRepository
-    implements MobileCcbRepository, MobileCcbRepositoryFileUploader {
+    implements
+        MobileCcbRepository,
+        MobileCcbRepositoryFileUploader,
+        MobileGatewayProfileHealthProbe {
   const GatewayMobileCcbRepository({required GatewayTransport transport})
     : _transport = transport;
 
@@ -18,6 +27,16 @@ class GatewayMobileCcbRepository
   @override
   Future<List<CcbProject>> listProjects() {
     return _transport.listProjects();
+  }
+
+  @override
+  Future<GatewayHealth> health() {
+    return _transport.health();
+  }
+
+  @override
+  Future<GatewayDevice> device() {
+    return _transport.device();
   }
 
   @override

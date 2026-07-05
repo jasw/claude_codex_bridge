@@ -171,7 +171,7 @@ void main() {
     );
   });
 
-  testWidgets('live terminal pane can reconnect after output stream error', (
+  testWidgets('live terminal pane auto reconnects after output stream error', (
     tester,
   ) async {
     final transport = RecordingTerminalTransport();
@@ -200,8 +200,9 @@ void main() {
       const TerminalTransportException('terminal stream disconnected'),
     );
     await tester.pump();
+    await tester.pump();
 
-    expect(find.text('Stream error'), findsWidgets);
+    expect(find.text('Reconnecting'), findsWidgets);
     final ctrlC = tester.widget<TextButton>(
       find.descendant(
         of: find.byKey(const ValueKey('terminal-key-ctrl-c')),
@@ -214,7 +215,7 @@ void main() {
     expect(ctrlC.onPressed, isNull);
     expect(reconnect.onPressed, isNotNull);
 
-    await tester.tap(find.byKey(const ValueKey('terminal-reconnect-button')));
+    await tester.pump(const Duration(seconds: 1));
     await tester.pump();
 
     expect(session.reconnectCount, 1);
@@ -225,7 +226,95 @@ void main() {
     expect(session.hasOutputListener, isTrue);
   });
 
-  testWidgets('live terminal pane can reopen after output stream closes', (
+  testWidgets(
+    'live terminal pane keeps retrying transient reconnect failures',
+    (tester) async {
+      final transport = RecordingTerminalTransport();
+      final view = _view(namespaceEpoch: 4);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: AgentTerminalPane(
+              view: view,
+              target: view.terminalTargetForAgent('mobile'),
+              terminalTransport: transport,
+              gatewayTerminal: true,
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final session = transport.sessions.single;
+      transport.openErrors.addAll([
+        const TerminalTransportException('gateway unreachable'),
+        const TerminalTransportException('gateway unreachable'),
+      ]);
+      await session.endOutput();
+      await tester.pump();
+
+      expect(find.text('Reconnecting'), findsWidgets);
+      await tester.pump(const Duration(seconds: 1));
+      await tester.pump();
+
+      expect(transport.requests, hasLength(2));
+      expect(find.text('Reconnecting'), findsWidgets);
+      expect(find.text('Failed'), findsNothing);
+
+      await tester.pump(const Duration(seconds: 2));
+      await tester.pump();
+
+      expect(transport.requests, hasLength(3));
+      expect(find.text('Reconnecting'), findsWidgets);
+      expect(find.text('Failed'), findsNothing);
+
+      await tester.pump(const Duration(seconds: 4));
+      await tester.pumpAndSettle();
+
+      expect(transport.requests, hasLength(4));
+      expect(transport.sessions, hasLength(2));
+      expect(find.text('Connected'), findsWidgets);
+    },
+  );
+
+  testWidgets('live terminal pane can still reconnect manually while pending', (
+    tester,
+  ) async {
+    final transport = RecordingTerminalTransport();
+    final view = _view(namespaceEpoch: 4);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: AgentTerminalPane(
+            view: view,
+            target: view.terminalTargetForAgent('mobile'),
+            terminalTransport: transport,
+            gatewayTerminal: true,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final session = transport.sessions.single;
+    session.addOutputError(
+      const TerminalTransportException('terminal stream disconnected'),
+    );
+    await tester.pump();
+
+    await tester.tap(find.byKey(const ValueKey('terminal-reconnect-button')));
+    await tester.pump();
+
+    expect(session.reconnectCount, 1);
+    expect(find.text('Reconnected'), findsWidgets);
+
+    await tester.pump(const Duration(seconds: 2));
+    expect(session.reconnectCount, 1);
+  });
+
+  testWidgets('live terminal pane auto reopens after output stream closes', (
     tester,
   ) async {
     final transport = RecordingTerminalTransport();
@@ -248,7 +337,7 @@ void main() {
     await transport.sessions.single.endOutput();
     await tester.pump();
 
-    expect(find.text('Closed'), findsWidgets);
+    expect(find.text('Reconnecting'), findsWidgets);
     final ctrlC = tester.widget<TextButton>(
       find.descendant(
         of: find.byKey(const ValueKey('terminal-key-ctrl-c')),
@@ -261,7 +350,7 @@ void main() {
     expect(ctrlC.onPressed, isNull);
     expect(reconnect.onPressed, isNotNull);
 
-    await tester.tap(find.byKey(const ValueKey('terminal-reconnect-button')));
+    await tester.pump(const Duration(seconds: 1));
     await tester.pumpAndSettle();
 
     expect(transport.sessions, hasLength(2));
@@ -269,6 +358,51 @@ void main() {
     transport.sessions.last.addOutput('after reopen');
     await tester.pump();
     expect(transport.sessions.last.hasOutputListener, isTrue);
+  });
+
+  testWidgets('live terminal pane stops reconnecting on stale target errors', (
+    tester,
+  ) async {
+    final transport = RecordingTerminalTransport();
+    final view = _view(namespaceEpoch: 4);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: AgentTerminalPane(
+            view: view,
+            target: view.terminalTargetForAgent('mobile'),
+            terminalTransport: transport,
+            gatewayTerminal: true,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final session = transport.sessions.single;
+    session.addOutputError(
+      const TerminalTransportException('stale namespace epoch'),
+    );
+    await tester.pump();
+    await tester.pump();
+
+    expect(find.text('Failed'), findsWidgets);
+    final ctrlC = tester.widget<TextButton>(
+      find.descendant(
+        of: find.byKey(const ValueKey('terminal-key-ctrl-c')),
+        matching: find.byType(TextButton),
+      ),
+    );
+    final reconnect = tester.widget<IconButton>(
+      find.byKey(const ValueKey('terminal-reconnect-button')),
+    );
+    expect(ctrlC.onPressed, isNull);
+    expect(reconnect.onPressed, isNull);
+
+    await tester.pump(const Duration(seconds: 9));
+    expect(session.reconnectCount, 0);
+    expect(transport.sessions, hasLength(1));
   });
 }
 

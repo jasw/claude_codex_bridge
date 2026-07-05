@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:ccb_mobile/ccb_mobile.dart';
 import 'package:test/test.dart';
@@ -242,6 +243,75 @@ void main() {
     expect(errors, isEmpty);
     await subscription.cancel();
   });
+
+  test(
+    'gateway terminal renews handle when reconnect token is invalid',
+    () async {
+      final gateway = _FakeGatewayTransport();
+      final session = await GatewayTerminalTransport(transport: gateway).open(
+        TerminalOpenRequest.gateway(
+          target: CcbTerminalTarget.agent(
+            projectId: 'proj-demo',
+            namespaceEpoch: 4,
+            agent: 'mobile',
+            scopes: {CcbScope.view, CcbScope.terminalInput},
+          ),
+        ),
+      );
+
+      gateway.emit(
+        GatewayTerminalFrame.output(sequence: 7, bytes: utf8.encode('before')),
+      );
+      await pumpEventQueue();
+      gateway.invalidTerminalIds.add(gateway.frameHandles.last.terminalId);
+
+      await session.reconnect();
+
+      expect(gateway.resumeCursors, [null, 7, null]);
+      expect(gateway.openRequests, hasLength(2));
+      expect(gateway.frameHandles.last.terminalId, 'term_demo_mobile_2');
+
+      await session.writeBytes([0x7a]);
+      expect(gateway.sentFrameHandles.last.terminalId, 'term_demo_mobile_2');
+      expect(gateway.sentFrames.last.toJson(), {
+        'type': 'input',
+        'seq': 1,
+        'bytes_b64': base64Encode([0x7a]),
+      });
+    },
+  );
+
+  test(
+    'gateway terminal renews handle after websocket handshake closes',
+    () async {
+      final gateway = _FakeGatewayTransport();
+      final session = await GatewayTerminalTransport(transport: gateway).open(
+        TerminalOpenRequest.gateway(
+          target: CcbTerminalTarget.agent(
+            projectId: 'proj-demo',
+            namespaceEpoch: 4,
+            agent: 'mobile',
+            scopes: {CcbScope.view, CcbScope.terminalInput},
+          ),
+        ),
+      );
+
+      gateway.emit(
+        GatewayTerminalFrame.output(sequence: 3, bytes: utf8.encode('before')),
+      );
+      await pumpEventQueue();
+      gateway.handshakeClosedTerminalIds.add(
+        gateway.frameHandles.last.terminalId,
+      );
+
+      await session.reconnect();
+
+      expect(gateway.resumeCursors, [null, 3, null]);
+      expect(gateway.openRequests, hasLength(2));
+      await session.writeBytes([0x6b]);
+      expect(gateway.sentFrameHandles.last.terminalId, 'term_demo_mobile_2');
+    },
+  );
 }
 
 class _FakeGatewayTransport implements GatewayTransport {
@@ -265,8 +335,11 @@ class _FakeGatewayTransport implements GatewayTransport {
 
   final openRequests = <GatewayTerminalOpenRequest>[];
   final sentFrames = <GatewayTerminalFrame>[];
+  final sentFrameHandles = <GatewayTerminalHandle>[];
   final resumeCursors = <int?>[];
   final rejectedResumeCursors = <int>[];
+  final invalidTerminalIds = <String>{};
+  final handshakeClosedTerminalIds = <String>{};
   final _frameControllers = <StreamController<GatewayTerminalFrame>>[];
   final _frameHandles = <GatewayTerminalHandle>[];
   final _lastOutputByTerminalId = <String, int>{};
@@ -291,6 +364,9 @@ class _FakeGatewayTransport implements GatewayTransport {
     }
     _frameControllers.last.add(frame);
   }
+
+  List<GatewayTerminalHandle> get frameHandles =>
+      List.unmodifiable(_frameHandles);
 
   Future<void> closeCurrentStream() {
     return _frameControllers.last.close();
@@ -397,6 +473,7 @@ class _FakeGatewayTransport implements GatewayTransport {
     GatewayTerminalHandle handle,
     GatewayTerminalFrame frame,
   ) async {
+    sentFrameHandles.add(handle);
     sentFrames.add(frame);
   }
 
@@ -410,12 +487,45 @@ class _FakeGatewayTransport implements GatewayTransport {
     _frameControllers.add(controller);
     _frameHandles.add(handle);
     final lastOutput = _lastOutputByTerminalId[handle.terminalId] ?? 0;
-    if (resumeCursor != null && resumeCursor > lastOutput) {
+    if (handshakeClosedTerminalIds.contains(handle.terminalId)) {
+      scheduleMicrotask(() {
+        if (!controller.isClosed) {
+          controller.addError(
+            HttpException(
+              'Connection closed before full header was received',
+              uri: Uri.parse(
+                'http://127.0.0.1:8787/v1/terminals/${handle.terminalId}',
+              ),
+            ),
+          );
+          controller.close();
+        }
+      });
+    } else if (invalidTerminalIds.contains(handle.terminalId)) {
+      scheduleMicrotask(() {
+        if (!controller.isClosed) {
+          controller.add(GatewayTerminalFrame.error('invalid_token'));
+          controller.close();
+        }
+      });
+    } else if (resumeCursor != null && resumeCursor > lastOutput) {
       rejectedResumeCursors.add(resumeCursor);
       scheduleMicrotask(() {
         if (!controller.isClosed) {
           controller.add(GatewayTerminalFrame.error('stale_resume_cursor'));
           controller.close();
+        }
+      });
+    } else {
+      scheduleMicrotask(() {
+        if (!controller.isClosed) {
+          controller.add(
+            GatewayTerminalFrame.open(
+              terminalId: handle.terminalId,
+              token: '',
+              lastInputSequence: 0,
+            ),
+          );
         }
       });
     }

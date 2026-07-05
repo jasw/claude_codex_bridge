@@ -131,6 +131,8 @@ void main() {
       expect(session.terminalTransport, same(terminalTransport));
       await session.projectsFuture;
       expect(repository.listProjectsCalls, 1);
+      expect(repository.healthCalls, 1);
+      expect(repository.deviceCalls, 1);
       expect(repository.getProjectViewCalls, isEmpty);
     },
   );
@@ -151,7 +153,81 @@ void main() {
       expect(session.preferredProjectId, 'host-id');
       await session.projectsFuture;
       expect(repository.listProjectsCalls, 1);
+      expect(repository.healthCalls, 1);
+      expect(repository.deviceCalls, 1);
       expect(repository.getProjectViewCalls, isEmpty);
+    },
+  );
+
+  test(
+    'gateway runtime fails invalid profile token before project list',
+    () async {
+      final profile = _pairedHost(hostId: 'host-id', deviceId: 'phone');
+      final repository =
+          _RecordingRepository()
+            ..deviceError = GatewayHttpException(
+              Uri.parse('http://host-id.local:8787/v1/devices/me'),
+              401,
+              'unauthorized',
+            );
+
+      final session = const ProjectHomeRuntimeSessionCoordinator()
+          .activateGateway(
+            activation: activateProjectHomeGatewayProfile(profile),
+            repositoryFactory: (_) => repository,
+            terminalTransportFactory: (_) => _RecordingTerminalTransport(),
+          );
+
+      await expectLater(
+        session.projectsFuture,
+        throwsA(
+          isA<ProjectHomeGatewayActivationException>()
+              .having(
+                (error) => error.kind,
+                'kind',
+                ProjectHomeGatewayActivationFailureKind.tokenInvalid,
+              )
+              .having(
+                (error) => error.toString(),
+                'message',
+                contains('Re-pair'),
+              ),
+        ),
+      );
+      expect(repository.healthCalls, 1);
+      expect(repository.deviceCalls, 1);
+      expect(repository.listProjectsCalls, 0);
+    },
+  );
+
+  test(
+    'gateway runtime reports unreachable profile before project list',
+    () async {
+      final profile = _pairedHost(hostId: 'host-id', deviceId: 'phone');
+      final repository =
+          _RecordingRepository()
+            ..healthError = TimeoutException('route timed out');
+
+      final session = const ProjectHomeRuntimeSessionCoordinator()
+          .activateGateway(
+            activation: activateProjectHomeGatewayProfile(profile),
+            repositoryFactory: (_) => repository,
+            terminalTransportFactory: (_) => _RecordingTerminalTransport(),
+          );
+
+      await expectLater(
+        session.projectsFuture,
+        throwsA(
+          isA<ProjectHomeGatewayActivationException>().having(
+            (error) => error.kind,
+            'kind',
+            ProjectHomeGatewayActivationFailureKind.gatewayUnreachable,
+          ),
+        ),
+      );
+      expect(repository.healthCalls, 1);
+      expect(repository.deviceCalls, 0);
+      expect(repository.listProjectsCalls, 0);
     },
   );
 
@@ -173,6 +249,8 @@ void main() {
 
     await expectLater(session.projectsFuture, throwsA(isA<TimeoutException>()));
     expect(repository.listProjectsCalls, 1);
+    expect(repository.healthCalls, 1);
+    expect(repository.deviceCalls, 1);
     expect(repository.getProjectViewCalls, isEmpty);
   });
 }
@@ -199,9 +277,44 @@ GatewayPairedHost _pairedHost({
   );
 }
 
-class _RecordingRepository implements MobileCcbRepository {
+class _RecordingRepository
+    implements MobileCcbRepository, MobileGatewayProfileHealthProbe {
   final getProjectViewCalls = <String>[];
   var listProjectsCalls = 0;
+  var healthCalls = 0;
+  var deviceCalls = 0;
+  Object? healthError;
+  Object? deviceError;
+  String healthStatus = 'ok';
+
+  @override
+  Future<GatewayHealth> health() async {
+    healthCalls += 1;
+    final error = healthError;
+    if (error != null) {
+      throw error;
+    }
+    return GatewayHealth(
+      status: healthStatus,
+      serverTime: DateTime.utc(2026, 7, 5, 12),
+    );
+  }
+
+  @override
+  Future<GatewayDevice> device() async {
+    deviceCalls += 1;
+    final error = deviceError;
+    if (error != null) {
+      throw error;
+    }
+    return GatewayDevice(
+      deviceId: 'phone',
+      projectId: 'project-id',
+      scopes: const {'view', 'focus', 'terminal_input'},
+      routeProvider: RouteProviderKind.lan,
+      revoked: false,
+    );
+  }
 
   @override
   Future<CcbProjectView> getProjectView(String projectId) async {
