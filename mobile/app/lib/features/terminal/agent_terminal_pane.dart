@@ -190,6 +190,9 @@ class _LiveTerminalPaneState extends State<_LiveTerminalPane>
     _terminal = Terminal(
       maxLines: 4000,
       onOutput: (data) {
+        if (_isTerminalAutoReportReply(data)) {
+          return;
+        }
         _writeTerminalBytes(utf8.encode(data));
       },
       onResize: (width, height, pixelWidth, pixelHeight) {
@@ -336,6 +339,27 @@ class _LiveTerminalPaneState extends State<_LiveTerminalPane>
       // Keep those best-effort writes from replacing explicit toolbar status.
     });
   }
+
+  static bool _isTerminalAutoReportReply(String data) {
+    if (data == '\x1b[?1;2c' ||
+        data == '\x1b[0n' ||
+        data == '\x1bP!|00000000\x1b\\') {
+      return true;
+    }
+    return _secondaryDeviceAttributesPattern.hasMatch(data) ||
+        _cursorPositionReportPattern.hasMatch(data) ||
+        _windowSizeReportPattern.hasMatch(data);
+  }
+
+  static final _secondaryDeviceAttributesPattern = RegExp(
+    r'^\x1B\[>\d+;\d+;\d+c$',
+  );
+  static final _cursorPositionReportPattern = RegExp(
+    r'^\x1B\[\d+;\d+R$',
+  );
+  static final _windowSizeReportPattern = RegExp(
+    r'^\x1B\[8;\d+;\d+t$',
+  );
 
   Future<void> _sendKey(List<int> bytes, String status) async {
     final session = _session;

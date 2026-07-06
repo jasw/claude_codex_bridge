@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -6,6 +8,8 @@ import 'package:ccb_mobile/ccb_mobile.dart';
 import 'support/project_home_test_fakes.dart';
 
 void main() {
+  final binding = TestWidgetsFlutterBinding.ensureInitialized();
+
   testWidgets('terminal toolbar exposes direct pane controls on phone width', (
     tester,
   ) async {
@@ -112,6 +116,96 @@ void main() {
     expect(escape.onPressed, isNull);
     expect(paste.onPressed, isNull);
     expect(called, isFalse);
+  });
+
+  testWidgets('live terminal pane does not echo terminal report replies', (
+    tester,
+  ) async {
+    final transport = RecordingTerminalTransport();
+    final view = _view(namespaceEpoch: 4);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: AgentTerminalPane(
+            view: view,
+            target: view.terminalTargetForAgent('mobile'),
+            terminalTransport: transport,
+            gatewayTerminal: true,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final session = transport.sessions.single;
+    session.addOutput('\x1b[>c');
+    session.addOutput('\x1b[c');
+    session.addOutput('\x1b[5n');
+    session.addOutput('\x1b[6n');
+    await tester.pump();
+
+    expect(session.written, isEmpty);
+  });
+
+  testWidgets('live terminal pane still sends explicit terminal controls', (
+    tester,
+  ) async {
+    final transport = RecordingTerminalTransport();
+    final view = _view(namespaceEpoch: 4);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: AgentTerminalPane(
+            view: view,
+            target: view.terminalTargetForAgent('mobile'),
+            terminalTransport: transport,
+            gatewayTerminal: true,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final session = transport.sessions.single;
+    await tester.tap(find.byKey(const ValueKey('terminal-key-tab')));
+    await tester.tap(find.byKey(const ValueKey('terminal-key-escape')));
+    await tester.pump();
+
+    expect(session.written, [
+      [9],
+      [27],
+    ]);
+  });
+
+  testWidgets('live terminal pane still sends typed terminal text', (
+    tester,
+  ) async {
+    final transport = RecordingTerminalTransport();
+    final view = _view(namespaceEpoch: 4);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: AgentTerminalPane(
+            view: view,
+            target: view.terminalTargetForAgent('mobile'),
+            terminalTransport: transport,
+            gatewayTerminal: true,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final session = transport.sessions.single;
+    await tester.tap(find.byKey(const ValueKey('ccb-live-terminal-view')));
+    await tester.pump(const Duration(seconds: 1));
+    binding.testTextInput.enterText('plain input');
+    await binding.idle();
+
+    expect(session.written.map(utf8.decode), contains('plain input'));
   });
 
   testWidgets('live terminal pane reopens when target epoch changes', (
