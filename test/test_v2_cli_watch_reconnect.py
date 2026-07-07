@@ -368,6 +368,98 @@ def test_watch_target_preserves_cursor_across_reconnect(monkeypatch: pytest.Monk
     assert seen == [False, False]
 
 
+def test_watch_target_without_explicit_timeout_waits_until_terminal(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    project_root = tmp_path / 'repo-watch-no-default-timeout'
+    project_root.mkdir()
+    context = _context(project_root)
+    stream = _StreamingWatchClient(
+        {
+            'job_id': 'job_demo',
+            'agent_name': 'codex',
+            'cursor': 1,
+            'generation': 1,
+            'terminal': False,
+            'status': 'running',
+            'reply': '',
+            'events': [],
+        },
+        {
+            'job_id': 'job_demo',
+            'agent_name': 'codex',
+            'cursor': 2,
+            'generation': 1,
+            'terminal': True,
+            'status': 'completed',
+            'reply': 'done',
+            'events': [],
+        },
+    )
+    seen: list[bool] = []
+    times = iter([0.0, 11.0, 12.0])
+
+    def _connect(context, allow_restart_stale):
+        del context
+        seen.append(allow_restart_stale)
+        return SimpleNamespace(client=stream)
+
+    monkeypatch.setattr(watch_service, 'connect_mounted_daemon', _connect)
+    monkeypatch.delenv('CCB_WATCH_TIMEOUT_S', raising=False)
+    monkeypatch.setenv('CCB_WATCH_POLL_INTERVAL_S', '0')
+    monkeypatch.setattr(watch_service.time, 'time', lambda: next(times))
+    monkeypatch.setattr(watch_service.time, 'sleep', lambda seconds: None)
+
+    batches = list(watch_service.watch_target(context, ParsedWatchCommand(project=None, target='job_demo')))
+
+    assert len(batches) == 1
+    assert batches[0].terminal is True
+    assert batches[0].reply == 'done'
+    assert stream.calls == [0, 1]
+    assert seen == [False]
+
+
+def test_watch_target_honors_explicit_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    project_root = tmp_path / 'repo-watch-explicit-timeout'
+    project_root.mkdir()
+    context = _context(project_root)
+    stream = _StreamingWatchClient(
+        {
+            'job_id': 'job_demo',
+            'agent_name': 'codex',
+            'cursor': 1,
+            'generation': 1,
+            'terminal': False,
+            'status': 'running',
+            'reply': '',
+            'events': [],
+        },
+    )
+    seen: list[bool] = []
+    times = iter([0.0, 1.1])
+
+    def _connect(context, allow_restart_stale):
+        del context
+        seen.append(allow_restart_stale)
+        return SimpleNamespace(client=stream)
+
+    monkeypatch.setattr(watch_service, 'connect_mounted_daemon', _connect)
+    monkeypatch.setenv('CCB_WATCH_TIMEOUT_S', '1')
+    monkeypatch.setenv('CCB_WATCH_POLL_INTERVAL_S', '0')
+    monkeypatch.setattr(watch_service.time, 'time', lambda: next(times))
+    monkeypatch.setattr(watch_service.time, 'sleep', lambda seconds: None)
+
+    with pytest.raises(RuntimeError, match='watch timed out for target job_demo'):
+        list(watch_service.watch_target(context, ParsedWatchCommand(project=None, target='job_demo')))
+
+    assert stream.calls == [0]
+    assert seen == [False]
+
+
 def test_watch_target_retries_when_reconnect_attempt_temporarily_fails(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

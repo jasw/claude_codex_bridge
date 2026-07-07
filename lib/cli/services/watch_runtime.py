@@ -6,7 +6,7 @@ from .watch_fallback import load_persisted_terminal_watch_payload
 
 
 _DEFAULT_POLL_INTERVAL_S = 0.1
-_DEFAULT_TIMEOUT_S = 10.0
+_DEFAULT_TIMEOUT_S: float | None = None
 
 
 @dataclass(frozen=True)
@@ -26,7 +26,7 @@ class WatchEventBatch:
     events: tuple[dict, ...]
 
 
-def default_watch_timeout_seconds() -> float:
+def default_watch_timeout_seconds() -> float | None:
     return _DEFAULT_TIMEOUT_S
 
 
@@ -46,7 +46,7 @@ def watch_target(
     poll_interval_seconds_fn,
 ):
     cursor = 0
-    deadline = time_fn() + timeout_seconds_fn()
+    deadline = _watch_deadline(timeout_seconds_fn(), time_fn=time_fn)
     try:
         handle = connect_mounted_daemon_fn(context, allow_restart_stale=False)
     except reconnect_error_classes:
@@ -103,8 +103,17 @@ def watch_target(
         sleep_fn(poll_interval)
 
 
-def _deadline_exceeded(deadline: float, *, time_fn) -> bool:
-    return time_fn() > deadline
+def _watch_deadline(timeout_s: float | None, *, time_fn) -> float | None:
+    if timeout_s is None:
+        return None
+    timeout = float(timeout_s)
+    if timeout <= 0:
+        return None
+    return time_fn() + timeout
+
+
+def _deadline_exceeded(deadline: float | None, *, time_fn) -> bool:
+    return deadline is not None and time_fn() > deadline
 
 
 def _watch_batch_from_payload(target: str, payload: dict) -> WatchEventBatch:

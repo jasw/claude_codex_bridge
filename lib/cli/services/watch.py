@@ -14,8 +14,14 @@ from .watch_runtime import (
 )
 
 
-def _watch_timeout_seconds() -> float:
-    return float(os.environ.get('CCB_WATCH_TIMEOUT_S', default_watch_timeout_seconds()))
+def _watch_timeout_seconds() -> float | None:
+    raw = os.environ.get('CCB_WATCH_TIMEOUT_S')
+    if raw is None or str(raw).strip() == '':
+        return default_watch_timeout_seconds()
+    timeout = float(str(raw).strip())
+    if timeout <= 0:
+        return None
+    return timeout
 
 
 def _watch_poll_interval_seconds() -> float:
