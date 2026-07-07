@@ -12,9 +12,9 @@ notifications, local/Tailnet gateway access, and file transfer.
 
 ## Android Alpha Release
 
-CCB Mobile v8.0.18 is published as an Android APK:
+CCB Mobile v8.0.19 is published as an Android APK:
 
-- [Download ccb-mobile-v8.0.18.apk](https://github.com/SeemSeam/claude_codex_bridge/releases/download/v8.0.18/ccb-mobile-v8.0.18.apk)
+- [Download ccb-mobile-v8.0.19.apk](https://github.com/SeemSeam/claude_codex_bridge/releases/download/v8.0.19/ccb-mobile-v8.0.19.apk)
 - Server setup entrypoint: `ccb update mobile`
 - App source: [`app/`](app/)
 
@@ -38,5 +38,5 @@ docs/plantree/       Planning tree and design decisions
 tools/               Emulator, gateway, and acceptance helpers
 ```
 
-iOS/iPadOS remain source-supported targets, but v8.0.18 release validation is
+iOS/iPadOS remain source-supported targets, but v8.0.19 release validation is
 Android-focused.

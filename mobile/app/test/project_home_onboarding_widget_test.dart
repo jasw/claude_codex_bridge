@@ -35,7 +35,7 @@ void main() {
       find.byKey(const ValueKey('project-home-update-panel')),
       findsOneWidget,
     );
-    expect(find.text('Current version: 8.0.18+8000018'), findsOneWidget);
+    expect(find.text('Current version: 8.0.19+8000019'), findsOneWidget);
     expect(
       find.byKey(const ValueKey('project-home-onboarding-scan-button')),
       findsOneWidget,

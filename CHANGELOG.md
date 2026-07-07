@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+## v8.0.19 (2026-07-07)
+
+### Mobile Host Startup
+
+- **Mobile Host Health Window Extended**: `ccb update mobile` now gives
+  the server-wide loopback health endpoint a longer per-request and overall
+  startup window before declaring the mobile host unhealthy. This prevents
+  false failures when many mounted projects make `/v1/health` take longer than
+  the previous 0.5 second request timeout.
+- **Mobile Host Health Regression Covered**: tests now cover a healthy
+  mobile host whose health response arrives after the old too-short timeout.
+- **Release Surface Synchronized**: VERSION, package.json, mobile app version
+  metadata, update links, README variants, and release workflow defaults are
+  aligned for 8.0.19.
+
 ## v8.0.18 (2026-07-07)
 
 ### Codex Auth Projection And Mobile Host Health
