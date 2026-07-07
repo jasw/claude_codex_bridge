@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Documentation
+
+- Fold the README role list and refresh the contact WeChat image.
+
 ## v8.0.17 (2026-07-07)
 
 ### Ask Stability And Mobile Update
