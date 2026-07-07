@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import shlex
 from pathlib import Path
 
@@ -18,6 +19,11 @@ def caller_context_env(*, actor: str, runtime_dir: Path, launch_session_id: str)
     if project_root is not None:
         env['CCB_CALLER_PROJECT_ROOT'] = str(project_root)
         env['CCB_CALLER_PROJECT_ID'] = compute_project_id(project_root)
+        source_test_bin = project_root / '.ccb' / 'bin'
+        source_test_ccb = source_test_bin / 'ccb'
+        if os.environ.get('CCB_TEST_ENTRYPOINT') == '1' and source_test_ccb.is_file():
+            current_path = os.environ.get('PATH') or ''
+            env['PATH'] = str(source_test_bin) + (os.pathsep + current_path if current_path else '')
     return env
 
 

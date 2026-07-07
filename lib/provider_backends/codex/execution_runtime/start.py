@@ -79,6 +79,7 @@ def start_active_submission(
             'no_wrap': no_wrap,
             'delivery_state': 'not_required' if no_wrap else 'pending_anchor',
             'delivery_started_at': '' if no_wrap else now,
+            'delivery_last_progress_at': '' if no_wrap else now,
             'delivery_timeout_s': 0.0 if no_wrap else resolved_delivery_timeout_s(),
             'delivery_target_pane_id': prepared.pane_id,
             'delivery_target_session_path': session_path,

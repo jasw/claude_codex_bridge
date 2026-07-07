@@ -19,6 +19,7 @@ from typing import Callable, Mapping
 from uuid import uuid4
 from urllib.parse import parse_qs, unquote, urlparse
 
+from ccbd.api_models import DeliveryScope, MessageEnvelope
 from ccbd.socket_client import CcbdClientError
 from .notifications import MobileNotificationSnapshot, MobileNotificationStore, encode_sse_event
 from .pairing import MobileGatewayPairingError, MobileGatewayPairingStore
@@ -764,6 +765,44 @@ class MobileGatewayService:
             agent=agent,
             namespace_epoch=_optional_int(payload.get('namespace_epoch')),
         )
+        if str(target['agent']) == 'frontdesk':
+            receipt = self._submit_frontdesk_message(
+                project=project,
+                body=submit_body,
+                idempotency_key=idempotency_key,
+            )
+            job_id = _optional_text(receipt.get('job_id'))
+            if not job_id:
+                raise MobileGatewayError('ccbd submit did not return job_id', status_code=503)
+            state = _optional_text(receipt.get('status')) or 'accepted'
+            created_at = _optional_text(receipt.get('accepted_at')) or self._clock()
+            message_id = idempotency_key
+            self._record_project_activity(project.project_id, activity_at=created_at)
+            return {
+                'schema_version': _SCHEMA_VERSION,
+                'status': 'ok',
+                'project_id': project.project_id,
+                'agent': target['agent'],
+                'message_submit': {
+                    'accepted': True,
+                    'idempotency_key': idempotency_key,
+                    'message_id': message_id,
+                    'job_id': job_id,
+                    'state': state,
+                    'created_at': created_at,
+                    'message': {
+                        'id': message_id,
+                        'agent': target['agent'],
+                        'kind': 'user_message',
+                        'title': 'You',
+                        'body': body,
+                        'format': message_format,
+                        'state': state,
+                        'source': 'mobile',
+                        'attachments': attachments,
+                    },
+                },
+            }
         message_target = _pane_message_target(
             project_id=project.project_id,
             view_payload=view_payload,
@@ -801,6 +840,39 @@ class MobileGatewayService:
                 },
             },
         }
+
+    def _submit_frontdesk_message(
+        self,
+        *,
+        project: MobileGatewayProject,
+        body: str,
+        idempotency_key: str,
+    ) -> dict[str, object]:
+        request = MessageEnvelope(
+            project_id=project.project_id,
+            to_agent='frontdesk',
+            from_actor='user',
+            body=body,
+            task_id=idempotency_key,
+            reply_to=None,
+            message_type='ask',
+            delivery_scope=DeliveryScope.SINGLE,
+            silence_on_success=False,
+            route_options={
+                'source': 'mobile_gateway',
+                'entry': 'frontdesk_message_submit',
+                'idempotency_key': idempotency_key,
+            },
+        )
+        try:
+            receipt = project.client().submit(request)
+        except CcbdClientError as exc:
+            raise MobileGatewayError(str(exc), status_code=503) from exc
+        except Exception as exc:
+            raise MobileGatewayError(_error_text(exc), status_code=503) from exc
+        if not isinstance(receipt, Mapping):
+            raise MobileGatewayError('ccbd submit returned invalid receipt', status_code=503)
+        return dict(receipt)
 
     def terminal_id_from_path(self, path: str) -> str | None:
         parsed = urlparse(path)

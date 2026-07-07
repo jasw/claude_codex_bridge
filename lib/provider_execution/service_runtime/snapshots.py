@@ -24,7 +24,11 @@ _RUNTIME_STATE_KEYS = (
     'ready_timeout_s',
     'delivery_state',
     'delivery_started_at',
+    'delivery_last_progress_at',
+    'delivery_progress_kind',
+    'delivery_session_missing_since',
     'delivery_timeout_s',
+    'delivery_no_progress_deadline_at',
     'delivery_target_pane_id',
     'delivery_target_session_path',
     'delivery_confirmed_at',
@@ -45,11 +49,14 @@ def active_runtime_snapshots(service) -> tuple[dict[str, object], ...]:
         runtime_state = _safe_runtime_state(submission.runtime_state)
         delivery_timeout_s = _optional_float(runtime_state.get('delivery_timeout_s'))
         delivery_started_at = str(runtime_state.get('delivery_started_at') or '').strip()
-        if delivery_started_at and delivery_timeout_s is not None:
+        delivery_last_progress_at = str(runtime_state.get('delivery_last_progress_at') or '').strip()
+        delivery_deadline_base = delivery_last_progress_at or delivery_started_at
+        if delivery_deadline_base and delivery_timeout_s is not None:
             runtime_state['delivery_timeout_deadline_at'] = deadline_at(
-                delivery_started_at,
+                delivery_deadline_base,
                 timeout_s=delivery_timeout_s,
             )
+            runtime_state['delivery_no_progress_deadline_at'] = runtime_state['delivery_timeout_deadline_at']
 
         last_progress_at = last_progress_timestamp(submission)
         no_terminal_timeout_s = policy.effective_no_terminal_timeout_s() if policy is not None else None

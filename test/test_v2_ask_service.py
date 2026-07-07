@@ -10,7 +10,7 @@ import pytest
 from ccbd.api_models import DeliveryScope, JobRecord, JobStatus, MessageEnvelope
 from ccbd.socket_client import CcbdClientError
 from cli.context import CliContextBuilder
-from cli.models import ParsedAskCommand
+from cli.models import ParsedAskCommand, ParsedLoopRunnerCommand
 from cli.services import ask as ask_service
 from cli.services.watch_fallback import load_persisted_terminal_watch_payload
 from cli.services.ask_runtime.submission import message_with_reply_guidance
@@ -84,6 +84,98 @@ def test_submit_ask_rejects_explicit_cross_project_target(
 
     with pytest.raises(ValueError, match='ask is project-local'):
         ask_service.submit_ask(context, command)
+
+
+def test_submit_ask_allows_internal_explicit_project_context_from_outer_project(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = tmp_path / 'repo'
+    outer_project = tmp_path / 'outer'
+    project_root.mkdir()
+    outer_project.mkdir()
+    _write_config(project_root)
+    _write_config(outer_project)
+    context = CliContextBuilder().build(
+        ParsedLoopRunnerCommand(project=str(project_root), once=True, json_output=True),
+        cwd=outer_project,
+        bootstrap_if_missing=False,
+    )
+    captured: dict[str, object] = {}
+
+    class _FakeClient:
+        def submit(self, envelope) -> dict:
+            captured['project_id'] = envelope.project_id
+            captured['to_agent'] = envelope.to_agent
+            captured['from_actor'] = envelope.from_actor
+            return {
+                'job_id': 'job_1',
+                'agent_name': envelope.to_agent,
+                'target_name': envelope.to_agent,
+                'status': 'accepted',
+            }
+
+    monkeypatch.setattr(
+        ask_service,
+        'invoke_mounted_daemon',
+        lambda context, allow_restart_stale, request_fn: request_fn(_FakeClient()),
+    )
+
+    summary = ask_service.submit_ask(
+        context,
+        ParsedAskCommand(project=None, target='agent1', sender='system', message='hello'),
+    )
+
+    assert context.project.source == 'explicit'
+    assert context.cwd == outer_project
+    assert captured == {
+        'project_id': context.project.project_id,
+        'to_agent': 'agent1',
+        'from_actor': 'system',
+    }
+    assert summary.jobs[0]['job_id'] == 'job_1'
+
+
+def test_submit_ask_allows_source_test_explicit_project_from_allowed_test_root(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    test_root = tmp_path / 'test-root'
+    outer_project = test_root / 'outer'
+    project_root = test_root / 'target'
+    outer_project.mkdir(parents=True)
+    project_root.mkdir(parents=True)
+    _write_config(outer_project)
+    _write_config(project_root)
+    monkeypatch.setenv('CCB_TEST_ENTRYPOINT', '1')
+    monkeypatch.setenv('CCB_SOURCE_ALLOWED_ROOTS', str(test_root))
+    command = ParsedAskCommand(project=str(project_root), target='agent1', sender=None, message='hello')
+    context = CliContextBuilder().build(command, cwd=outer_project, bootstrap_if_missing=False)
+    captured: dict[str, object] = {}
+
+    class _FakeClient:
+        def submit(self, envelope) -> dict:
+            captured['project_id'] = envelope.project_id
+            captured['to_agent'] = envelope.to_agent
+            return {
+                'job_id': 'job_1',
+                'agent_name': envelope.to_agent,
+                'target_name': envelope.to_agent,
+                'status': 'accepted',
+            }
+
+    monkeypatch.setattr(
+        ask_service,
+        'invoke_mounted_daemon',
+        lambda context, allow_restart_stale, request_fn: request_fn(_FakeClient()),
+    )
+
+    summary = ask_service.submit_ask(context, command)
+
+    assert context.project.source == 'explicit'
+    assert context.cwd == outer_project
+    assert captured == {'project_id': context.project.project_id, 'to_agent': 'agent1'}
+    assert summary.jobs[0]['job_id'] == 'job_1'
 
 
 def test_submit_ask_rejects_workspace_binding_that_escapes_current_project(

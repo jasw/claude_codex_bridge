@@ -46,11 +46,24 @@ class CodexProviderAdapter:
         )
 
     def poll(self, submission: ProviderSubmission, *, now: str) -> ProviderPollResult | None:
+        original_submission = submission
         submission = _refresh_reader_for_current_session_binding(submission)
+        submission = _record_delivery_progress(submission, now=now)
         delivery_failure = _delivery_acceptance_guard(submission, now=now)
         if delivery_failure is not None:
             return delivery_failure
-        return _poll_submission(submission, now=now)
+        result = _poll_submission(submission, now=now)
+        if result is not None:
+            updated_submission = _record_delivery_progress(result.submission, now=now)
+            if updated_submission is not result.submission:
+                return ProviderPollResult(
+                    submission=updated_submission,
+                    items=result.items,
+                    decision=result.decision,
+                )
+        if result is None and submission is not original_submission:
+            return ProviderPollResult(submission=submission)
+        return result
 
     def export_runtime_state(self, submission: ProviderSubmission) -> dict[str, object]:
         return {
@@ -72,6 +85,8 @@ class CodexProviderAdapter:
             'workspace_path': submission.runtime_state.get('workspace_path'),
             'delivery_state': submission.runtime_state.get('delivery_state'),
             'delivery_started_at': submission.runtime_state.get('delivery_started_at'),
+            'delivery_last_progress_at': submission.runtime_state.get('delivery_last_progress_at'),
+            'delivery_progress_kind': submission.runtime_state.get('delivery_progress_kind'),
             'delivery_timeout_s': submission.runtime_state.get('delivery_timeout_s'),
             'delivery_target_pane_id': submission.runtime_state.get('delivery_target_pane_id'),
             'delivery_target_session_path': submission.runtime_state.get('delivery_target_session_path'),
@@ -157,46 +172,36 @@ def _refresh_reader_for_current_session_binding(submission: ProviderSubmission) 
     reader_filter = str(getattr(reader, '_session_id_filter', '') or '').strip()
     current_filter = str(getattr(session, 'codex_session_id', '') or '').strip()
 
-    fallback_log = _active_anchor_fallback_log(state)
-    if fallback_log is not None:
-        updated = _submission_with_locked_reader(
-            submission,
-            state=state,
-            poll_state=poll_state,
-            session=session,
-            work_dir=work_dir,
-            log_path=fallback_log,
-            fallback=True,
-        )
-        if updated is not None:
-            return updated
-
-    anchor_fallback = _anchor_fallback_log(
-        submission,
-        state=state,
-        poll_state=poll_state,
-        session=session,
-        work_dir=work_dir,
-        current_log=current_log,
-    )
-    if anchor_fallback is not None:
-        updated = _submission_with_locked_reader(
-            submission,
-            state=state,
-            poll_state=poll_state,
-            session=session,
-            work_dir=work_dir,
-            log_path=anchor_fallback,
-            fallback=True,
-        )
-        if updated is not None:
-            return updated
-
     if (
         current_log_str == poll_state_log_str
         and current_log_str == reader_log_str
         and (not current_filter or current_filter == reader_filter)
     ):
+        fallback_log = _active_anchor_fallback_log(state)
+        if fallback_log is not None and _normalized_resolved_path(fallback_log) != _normalized_resolved_path(current_log):
+            return _submission_with_anchor_fallback_diagnostics(
+                submission,
+                state=state,
+                log_path=fallback_log,
+                session_id=str(state.get('codex_anchor_fallback_session_id') or ''),
+            )
+
+        anchor_fallback = _anchor_fallback_log(
+            submission,
+            state=state,
+            poll_state=poll_state,
+            session=session,
+            work_dir=work_dir,
+            current_log=current_log,
+        )
+        if anchor_fallback is not None:
+            reader = _locked_reader_for_log(session, anchor_fallback, work_dir=work_dir)
+            return _submission_with_anchor_fallback_diagnostics(
+                submission,
+                state=state,
+                log_path=anchor_fallback,
+                session_id=str(getattr(reader, '_session_id_filter', '') or '') if reader is not None else '',
+            )
         return submission
 
     updated_state = {
@@ -204,6 +209,9 @@ def _refresh_reader_for_current_session_binding(submission: ProviderSubmission) 
         'reader': _reader_factory(session, current_log),
         'workspace_path': str(work_dir),
     }
+    _clear_anchor_fallback_diagnostics(updated_state)
+    if current_log_str == poll_state_log_str:
+        updated_state['session_path'] = current_log_str
     if current_log_str != poll_state_log_str:
         updated_state['state'] = {
             **poll_state,
@@ -212,6 +220,103 @@ def _refresh_reader_for_current_session_binding(submission: ProviderSubmission) 
             'last_rescan': 0.0,
         }
     return replace(submission, runtime_state=updated_state)
+
+
+def _record_delivery_progress(submission: ProviderSubmission, *, now: str) -> ProviderSubmission:
+    state = dict(submission.runtime_state)
+    if not _delivery_progress_tracking_required(state):
+        return submission
+
+    marker, progress_kind = _delivery_progress_marker(submission, state)
+    if marker is None:
+        return submission
+    previous_marker = state.get('delivery_progress_marker')
+    if previous_marker == marker:
+        return submission
+
+    updated_state = {
+        **state,
+        'delivery_progress_marker': marker,
+        'delivery_progress_kind': progress_kind,
+    }
+    previous_progress = str(
+        state.get('delivery_last_progress_at')
+        or state.get('delivery_started_at')
+        or submission.ready_at
+        or submission.accepted_at
+        or now
+    )
+    if previous_marker is not None or progress_kind in {'session_binding', 'session_unread'}:
+        updated_state['delivery_last_progress_at'] = now
+    else:
+        updated_state['delivery_last_progress_at'] = previous_progress
+    if progress_kind == 'session_missing':
+        updated_state.setdefault('delivery_session_missing_since', updated_state['delivery_last_progress_at'])
+    else:
+        updated_state.pop('delivery_session_missing_since', None)
+    return replace(submission, runtime_state=updated_state)
+
+
+def _delivery_progress_tracking_required(state: dict[str, object]) -> bool:
+    if str(state.get('mode') or '').strip().lower() != 'active':
+        return False
+    if bool(state.get('anchor_seen') or state.get('no_wrap')):
+        return False
+    return str(state.get('delivery_state') or '').strip() == 'pending_anchor'
+
+
+def _delivery_progress_marker(
+    submission: ProviderSubmission,
+    state: dict[str, object],
+) -> tuple[dict[str, object] | None, str]:
+    work_dir = _submission_work_dir(submission, state)
+    if work_dir is None:
+        return None, ''
+
+    session = _load_session(work_dir, submission.agent_name)
+    current_log = _current_session_log(session) if session is not None else None
+    current_log_str = _normalized_path_string(current_log)
+    current_session_id = str(getattr(session, 'codex_session_id', '') or '').strip() if session is not None else ''
+    stat_marker = _delivery_log_stat_marker(current_log)
+    poll_state = dict(state.get('state') or {})
+    poll_log_str = _normalized_path_string(poll_state.get('log_path'))
+    poll_offset = poll_state.get('offset')
+    offset = poll_offset if isinstance(poll_offset, int) and poll_offset >= 0 else -1
+
+    marker: dict[str, object] = {
+        'current_session_id': current_session_id,
+        'current_log_path': current_log_str,
+        'current_log_exists': bool(stat_marker.get('exists')),
+        'current_log_size': stat_marker.get('size', -1),
+        'current_log_mtime_ns': stat_marker.get('mtime_ns', -1),
+        'poll_log_path': poll_log_str,
+        'poll_offset': offset,
+        'fallback_log_path': str(state.get('codex_anchor_fallback_log') or '').strip(),
+        'fallback_session_id': str(state.get('codex_anchor_fallback_session_id') or '').strip(),
+        'fallback_quarantined': bool(state.get('codex_anchor_fallback_quarantined')),
+    }
+
+    if not current_log_str or not bool(stat_marker.get('exists')):
+        return marker, 'session_missing'
+    if current_log_str != poll_log_str:
+        return marker, 'session_binding'
+    if isinstance(poll_offset, int) and int(stat_marker.get('size', -1)) > poll_offset:
+        return marker, 'session_unread'
+    return marker, 'session_present'
+
+
+def _delivery_log_stat_marker(log_path: Path | None) -> dict[str, object]:
+    if log_path is None:
+        return {'exists': False}
+    try:
+        stat = log_path.stat()
+    except OSError:
+        return {'exists': False}
+    return {
+        'exists': True,
+        'size': int(stat.st_size),
+        'mtime_ns': int(stat.st_mtime_ns),
+    }
 
 
 def _delivery_acceptance_guard(submission: ProviderSubmission, *, now: str) -> ProviderPollResult | None:
@@ -234,25 +339,30 @@ def _delivery_acceptance_guard(submission: ProviderSubmission, *, now: str) -> P
         return None
     session = _load_session(work_dir, submission.agent_name)
     if session is None:
-        return None
+        return _delivery_session_missing_result(
+            submission,
+            now=now,
+            failure_kind=_delivery_missing_failure_kind(failure_kind),
+            current_log=None,
+            current_session_id='',
+            checked_root=None,
+            work_dir=work_dir,
+        )
     current_log = _current_session_log(session)
     if current_log is None or not current_log.exists():
-        return None
+        return _delivery_session_missing_result(
+            submission,
+            now=now,
+            failure_kind=_delivery_missing_failure_kind(failure_kind),
+            current_log=current_log,
+            current_session_id=str(getattr(session, 'codex_session_id', '') or '').strip(),
+            checked_root=codex_session_root_path(getattr(session, 'data', None)),
+            work_dir=work_dir,
+        )
     checked_root = codex_session_root_path(getattr(session, 'data', None))
 
     poll_state = dict(state.get('state') or {})
     if not _current_log_is_drained(current_log, poll_state.get('offset')):
-        return None
-    if _active_anchor_fallback_log(state) is not None:
-        return None
-    if _anchor_fallback_log(
-        submission,
-        state=state,
-        poll_state=poll_state,
-        session=session,
-        work_dir=work_dir,
-        current_log=current_log,
-    ) is not None:
         return None
 
     return _delivery_failure_result(
@@ -273,6 +383,12 @@ def _delivery_failure_kind(state: dict[str, object], *, submission: ProviderSubm
     return None
 
 
+def _delivery_missing_failure_kind(failure_kind: str) -> str:
+    if failure_kind == 'delivery_shutdown':
+        return failure_kind
+    return 'delivery_session_missing'
+
+
 def _delivery_pane_looks_unusable(state: dict[str, object]) -> bool:
     backend = state.get('backend')
     pane_id = str(state.get('pane_id') or state.get('delivery_target_pane_id') or '').strip()
@@ -289,11 +405,17 @@ def _delivery_timeout_elapsed(state: dict[str, object], *, submission: ProviderS
     timeout_s = _delivery_timeout_s(state)
     if timeout_s <= 0:
         return False
-    started_at = str(state.get('delivery_started_at') or submission.ready_at or submission.accepted_at or '').strip()
-    if not started_at:
+    progress_at = str(
+        state.get('delivery_last_progress_at')
+        or state.get('delivery_started_at')
+        or submission.ready_at
+        or submission.accepted_at
+        or ''
+    ).strip()
+    if not progress_at:
         return False
     try:
-        elapsed = (parse_utc_timestamp(now) - parse_utc_timestamp(started_at)).total_seconds()
+        elapsed = (parse_utc_timestamp(now) - parse_utc_timestamp(progress_at)).total_seconds()
     except Exception:
         return False
     return elapsed >= timeout_s
@@ -329,12 +451,22 @@ def _delivery_failure_result(
         'delivery_retryable': True,
         'delivery_state': 'failed',
         'delivery_started_at': str(state.get('delivery_started_at') or ''),
+        'delivery_last_progress_at': str(state.get('delivery_last_progress_at') or ''),
         'delivery_timeout_s': _delivery_timeout_s(state),
         'delivery_checked_session_root': str(checked_root or current_log.parent),
         'delivery_current_log_path': str(current_log),
         'delivery_workspace_path': str(work_dir),
         'delivery_anchor_seen': False,
     }
+    fallback_log = str(state.get('codex_anchor_fallback_log') or '').strip()
+    if fallback_log:
+        diagnostics['delivery_anchor_fallback_log'] = fallback_log
+        diagnostics['delivery_anchor_fallback_session_id'] = str(
+            state.get('codex_anchor_fallback_session_id') or ''
+        ).strip()
+        diagnostics['delivery_anchor_fallback_quarantined'] = bool(
+            state.get('codex_anchor_fallback_quarantined')
+        )
     item = build_item(
         submission,
         kind=CompletionItemKind.ERROR,
@@ -365,6 +497,90 @@ def _delivery_failure_result(
         decision=CompletionDecision(
             terminal=True,
             status=CompletionStatus.FAILED,
+            reason=reason,
+            confidence=CompletionConfidence.DEGRADED,
+            reply='',
+            anchor_seen=False,
+            reply_started=False,
+            reply_stable=False,
+            provider_turn_ref=request_anchor or submission.job_id,
+            source_cursor=item.cursor,
+            finished_at=now,
+            diagnostics=diagnostics,
+        ),
+    )
+
+
+def _delivery_session_missing_result(
+    submission: ProviderSubmission,
+    *,
+    now: str,
+    failure_kind: str,
+    current_log: Path | None,
+    current_session_id: str,
+    checked_root: Path | None,
+    work_dir: Path,
+) -> ProviderPollResult:
+    shutdown = failure_kind == 'delivery_shutdown'
+    reason = 'codex_prompt_delivery_failed' if shutdown else 'codex_session_file_missing'
+    no_reply_reason = 'provider_crashed' if shutdown else 'completion_detection_gap'
+    state = dict(submission.runtime_state)
+    seq = int(state.get('next_seq', 1))
+    request_anchor = request_anchor_from_runtime_state(state, fallback=submission.job_id)
+    current_log_path = str(current_log or '').strip()
+    diagnostics = {
+        **dict(submission.diagnostics or {}),
+        'reason': reason,
+        'delivery_failure_kind': failure_kind,
+        'delivery_retryable': True,
+        'delivery_state': 'failed',
+        'delivery_started_at': str(state.get('delivery_started_at') or ''),
+        'delivery_last_progress_at': str(state.get('delivery_last_progress_at') or ''),
+        'delivery_timeout_s': _delivery_timeout_s(state),
+        'delivery_session_missing_since': str(
+            state.get('delivery_session_missing_since')
+            or state.get('delivery_last_progress_at')
+            or state.get('delivery_started_at')
+            or ''
+        ),
+        'delivery_checked_session_root': str(checked_root or ''),
+        'delivery_current_log_path': current_log_path,
+        'delivery_current_session_id': str(current_session_id or ''),
+        'delivery_workspace_path': str(work_dir),
+        'delivery_anchor_seen': False,
+        'no_reply_reason': no_reply_reason,
+    }
+    item = build_item(
+        submission,
+        kind=CompletionItemKind.ERROR,
+        timestamp=now,
+        seq=seq,
+        payload={
+            'reason': reason,
+            'delivery_failure_kind': failure_kind,
+            'delivery_retryable': True,
+            'no_reply_reason': no_reply_reason,
+        },
+    )
+    updated_state = {
+        **state,
+        'mode': 'passive',
+        'next_seq': item.cursor.event_seq + 1,
+        'delivery_state': 'failed',
+        'delivery_failure_kind': failure_kind,
+        'delivery_failed_at': now,
+    }
+    updated = replace(
+        submission,
+        runtime_state=updated_state,
+        diagnostics=diagnostics,
+    )
+    return ProviderPollResult(
+        submission=updated,
+        items=(item,),
+        decision=CompletionDecision(
+            terminal=True,
+            status=CompletionStatus.FAILED if shutdown else CompletionStatus.INCOMPLETE,
             reason=reason,
             confidence=CompletionConfidence.DEGRADED,
             reply='',
@@ -418,6 +634,39 @@ def _submission_with_locked_reader(
             'last_rescan': 0.0,
         }
     return replace(submission, runtime_state=updated_state)
+
+
+def _submission_with_anchor_fallback_diagnostics(
+    submission: ProviderSubmission,
+    *,
+    state: dict[str, object],
+    log_path: Path,
+    session_id: str,
+) -> ProviderSubmission:
+    log_str = _normalized_path_string(log_path)
+    normalized_session_id = str(session_id or '').strip()
+    if (
+        str(state.get('codex_anchor_fallback_log') or '').strip() == log_str
+        and str(state.get('codex_anchor_fallback_session_id') or '').strip() == normalized_session_id
+        and bool(state.get('codex_anchor_fallback_quarantined'))
+    ):
+        return submission
+    updated_state = {
+        **state,
+        'codex_anchor_fallback_log': log_str,
+        'codex_anchor_fallback_session_id': normalized_session_id,
+        'codex_anchor_fallback_quarantined': True,
+    }
+    return replace(submission, runtime_state=updated_state)
+
+
+def _clear_anchor_fallback_diagnostics(state: dict[str, object]) -> None:
+    for key in (
+        'codex_anchor_fallback_log',
+        'codex_anchor_fallback_session_id',
+        'codex_anchor_fallback_quarantined',
+    ):
+        state.pop(key, None)
 
 
 def _active_anchor_fallback_log(state: dict[str, object]) -> Path | None:

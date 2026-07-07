@@ -332,9 +332,30 @@ def test_project_focus_agent_uses_pane_options_when_tmux_window_name_differs(tmp
     ]
 
 
+def test_project_focus_window_uses_agent_pane_when_tmux_window_name_differs(tmp_path: Path) -> None:
+    backend = _FakeTmuxBackend()
+    backend.missing_windows.add('ops')
+    service = _service(tmp_path, backend)
+
+    result = service.focus_window(window='ops')
+
+    assert result == {
+        'focused': True,
+        'kind': 'window',
+        'window': 'ops',
+        'agent': 'agent2',
+        'namespace_epoch': 4,
+    }
+    assert backend.calls[:2] == [
+        ['select-window', '-t', 'ccb-test:ops'],
+        ['select-pane', '-t', '%2'],
+    ]
+
+
 def test_project_focus_window_reports_missing_window(tmp_path: Path) -> None:
     backend = _FakeTmuxBackend()
     backend.missing_windows.add('ops')
+    backend.missing_panes.add('%2')
     service = _service(tmp_path, backend)
 
     with pytest.raises(ProjectFocusError, match='target_missing'):

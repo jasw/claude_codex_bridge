@@ -149,6 +149,20 @@ class _FakeCcbdClient:
         }
 
 
+class _FakeFrontdeskCcbdClient(_FakeCcbdClient):
+    def project_view(self, *, schema_version: int = 1) -> dict[str, object]:
+        payload = super().project_view(schema_version=schema_version)
+        payload['view']['windows'][0]['agents'] = ['frontdesk']
+        payload['view']['agents'][0] = {
+            'name': 'frontdesk',
+            'provider': 'codex',
+            'window': 'main',
+            'order': 0,
+            'active': True,
+        }
+        return payload
+
+
 class _FailingCcbdClient:
     def __init__(self, message: str = 'ccbd unavailable at /tmp/private.sock') -> None:
         self.message = message
@@ -2629,6 +2643,59 @@ def test_agent_message_submit_sends_plain_text_to_agent_pane(tmp_path: Path) -> 
     assert 'tmux.sock' not in response_json
     projects = service.projects_payload()
     assert projects['projects'][0]['last_activity_at'] == '2026-06-18T00:00:00Z'
+
+
+def test_frontdesk_message_submit_uses_ccbd_ask_job_not_pane(tmp_path: Path) -> None:
+    fake = _FakeFrontdeskCcbdClient()
+    sent: list[tuple[object, str]] = []
+    service = _service(
+        fake,
+        mobile_dir=tmp_path / 'mobile',
+        terminal_message_sender=lambda target, text: sent.append((target, text)) or {},
+    )
+    pairing = service.create_pairing_payload(
+        gateway_url='http://127.0.0.1:8787',
+        scopes=('view', 'message_submit'),
+    )
+    _, claim = service.dispatch_post(
+        '/v1/pairing/claim',
+        {'pairing_code': str(pairing['pairing_code'])},
+    )
+
+    status, payload = service.dispatch_post(
+        '/v1/projects/proj-demo/agents/frontdesk/messages',
+        {
+            'schema_version': 1,
+            'project_id': 'proj-demo',
+            'agent': 'frontdesk',
+            'namespace_epoch': 4,
+            'idempotency_key': 'frontdesk-intake-1',
+            'body': 'Build a small Python utility with focused tests.',
+            'format': 'markdown',
+        },
+        {'Authorization': f'Bearer {claim["device_token"]}'},
+    )
+
+    assert status == 202
+    result = payload['message_submit']
+    assert result['accepted'] is True
+    assert result['idempotency_key'] == 'frontdesk-intake-1'
+    assert result['job_id'] == 'job_mobile_1'
+    assert result['message_id'] == 'frontdesk-intake-1'
+    assert result['state'] == 'queued'
+    assert result['message']['state'] == 'queued'
+    assert result['message']['agent'] == 'frontdesk'
+    assert sent == []
+    submit_calls = [call for call in fake.calls if call[0] == 'submit']
+    assert len(submit_calls) == 1
+    record = submit_calls[0][1]
+    assert record['to_agent'] == 'frontdesk'
+    assert record['from_actor'] == 'user'
+    assert record['message_type'] == 'ask'
+    assert record['delivery_scope'] == 'single'
+    assert record['task_id'] == 'frontdesk-intake-1'
+    assert record['route_options']['entry'] == 'frontdesk_message_submit'
+    assert record['route_options']['source'] == 'mobile_gateway'
 
 
 def test_agent_message_submit_accepts_attachment_only_message(tmp_path: Path) -> None:

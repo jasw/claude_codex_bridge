@@ -2085,6 +2085,440 @@ def test_execution_service_codex_adapter_follows_rebound_session_binding(
     assert update.decision is None
 
 
+def test_execution_service_codex_adapter_quarantines_anchor_fallback_without_rebind(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from provider_execution import codex as codex_adapter_module
+
+    fixed_req_id = '20260318-000000-000-1-fallback-quarantine'
+    work_dir = tmp_path / 'repo'
+    old_session_id = '11111111-1111-1111-1111-111111111111'
+    fallback_session_id = '22222222-2222-2222-2222-222222222222'
+    old_log = tmp_path / 'home' / 'sessions' / old_session_id / f'{old_session_id}.jsonl'
+    fallback_log = tmp_path / 'home' / 'sessions' / fallback_session_id / f'{fallback_session_id}.jsonl'
+    for path in (old_log, fallback_log):
+        path.parent.mkdir(parents=True, exist_ok=True)
+    old_log.write_text(
+        json.dumps({"type": "session_meta", "payload": {"cwd": str(work_dir)}}) + "\n",
+        encoding='utf-8',
+    )
+    fallback_log.write_text(
+        "\n".join(
+            [
+                json.dumps({"type": "session_meta", "payload": {"cwd": str(work_dir)}}),
+                json.dumps(
+                    {
+                        "timestamp": "2026-03-18T00:00:01Z",
+                        "type": "response_item",
+                        "payload": {
+                            "type": "message",
+                            "role": "user",
+                            "turn_id": f"turn-{fixed_req_id}",
+                            "task_id": f"task-{fixed_req_id}",
+                            "content": [{"type": "input_text", "text": f"CCB_REQ_ID: {fixed_req_id}\n\nprompt"}],
+                        },
+                    }
+                ),
+                json.dumps(
+                    {
+                        "timestamp": "2026-03-18T00:00:02Z",
+                        "type": "event_msg",
+                        "payload": {
+                            "type": "agent_message",
+                            "role": "assistant",
+                            "turn_id": f"turn-{fixed_req_id}",
+                            "task_id": f"task-{fixed_req_id}",
+                            "phase": "final_answer",
+                            "message": "fallback reply",
+                        },
+                    }
+                ),
+                json.dumps(
+                    {
+                        "timestamp": "2026-03-18T00:00:03Z",
+                        "type": "event_msg",
+                        "payload": {
+                            "type": "task_complete",
+                            "turn_id": f"turn-{fixed_req_id}",
+                            "task_id": f"task-{fixed_req_id}",
+                            "reason": "task_complete",
+                            "last_agent_message": "fallback reply",
+                        },
+                    }
+                ),
+            ]
+        )
+        + "\n",
+        encoding='utf-8',
+    )
+    work_dir_str = str(work_dir)
+
+    class FakeBackend:
+        def send_text_to_pane(self, pane_id: str, text: str) -> None:
+            assert pane_id == '%34'
+            assert fixed_req_id in text
+
+        def is_tmux_pane_alive(self, pane_id: str) -> bool:
+            return pane_id == '%34'
+
+    class FakeSession:
+        data = {
+            'terminal': 'tmux',
+            'codex_session_root': str(tmp_path / 'home' / 'sessions'),
+            'codex_session_path': str(old_log),
+            'codex_session_id': old_session_id,
+        }
+        codex_session_path = str(old_log)
+        codex_session_id = old_session_id
+        work_dir = work_dir_str
+
+        def ensure_pane(self):
+            return True, '%34'
+
+    monkeypatch.setattr(codex_adapter_module, 'load_project_session', lambda work_dir, instance=None: FakeSession())
+    monkeypatch.setattr(codex_adapter_module, 'get_backend_for_session', lambda data: FakeBackend())
+
+    service = ExecutionService(build_default_execution_registry(), clock=lambda: '2026-03-18T00:00:00Z')
+    job = _anchored_job_for_provider('codex', fixed_req_id, body='prompt')
+    service.start(job, runtime_context=_runtime_context(work_dir))
+
+    assert service.poll() == ()
+    active = service._active[job.job_id]
+    assert active.runtime_state['session_path'] == str(old_log)
+    assert active.runtime_state['state']['log_path'] == old_log
+    assert active.runtime_state['codex_anchor_fallback_quarantined'] is True
+    assert active.runtime_state['codex_anchor_fallback_log'] == str(fallback_log)
+    assert active.runtime_state['codex_anchor_fallback_session_id'] == fallback_session_id
+
+
+def test_execution_service_codex_adapter_adopts_new_session_after_delayed_fallback_quarantine(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from provider_execution import codex as codex_adapter_module
+
+    fixed_req_id = '20260318-000000-000-1-delayed-new-session'
+    work_dir = tmp_path / 'repo'
+    old_session_id = '11111111-1111-1111-1111-111111111111'
+    fallback_session_id = '22222222-2222-2222-2222-222222222222'
+    new_session_id = '33333333-3333-3333-3333-333333333333'
+    old_log = tmp_path / 'home' / 'sessions' / old_session_id / f'{old_session_id}.jsonl'
+    fallback_log = tmp_path / 'home' / 'sessions' / fallback_session_id / f'{fallback_session_id}.jsonl'
+    new_log = tmp_path / 'home' / 'sessions' / new_session_id / f'{new_session_id}.jsonl'
+    for path in (old_log, fallback_log, new_log):
+        path.parent.mkdir(parents=True, exist_ok=True)
+    old_log.write_text(
+        json.dumps({"type": "session_meta", "payload": {"cwd": str(work_dir)}}) + "\n",
+        encoding='utf-8',
+    )
+    fallback_log.write_text(
+        "\n".join(
+            [
+                json.dumps({"type": "session_meta", "payload": {"cwd": str(work_dir)}}),
+                json.dumps(
+                    {
+                        "timestamp": "2026-03-18T00:05:00Z",
+                        "type": "response_item",
+                        "payload": {
+                            "type": "message",
+                            "role": "user",
+                            "turn_id": f"turn-{fixed_req_id}",
+                            "task_id": f"task-{fixed_req_id}",
+                            "content": [{"type": "input_text", "text": f"CCB_REQ_ID: {fixed_req_id}\n\nold"}],
+                        },
+                    }
+                ),
+                json.dumps(
+                    {
+                        "timestamp": "2026-03-18T00:05:01Z",
+                        "type": "event_msg",
+                        "payload": {
+                            "type": "task_complete",
+                            "turn_id": f"turn-{fixed_req_id}",
+                            "task_id": f"task-{fixed_req_id}",
+                            "reason": "task_complete",
+                            "last_agent_message": "fallback reply must not win",
+                        },
+                    }
+                ),
+            ]
+        )
+        + "\n",
+        encoding='utf-8',
+    )
+    work_dir_str = str(work_dir)
+    current_now = {'value': '2026-03-18T00:00:00Z'}
+
+    class FakeBackend:
+        def send_text_to_pane(self, pane_id: str, text: str) -> None:
+            assert pane_id == '%35'
+            assert fixed_req_id in text
+
+        def is_tmux_pane_alive(self, pane_id: str) -> bool:
+            return pane_id == '%35'
+
+    class FakeSession:
+        data = {
+            'terminal': 'tmux',
+            'codex_session_root': str(tmp_path / 'home' / 'sessions'),
+            'codex_session_path': str(old_log),
+            'codex_session_id': old_session_id,
+        }
+        codex_session_path = str(old_log)
+        codex_session_id = old_session_id
+        work_dir = work_dir_str
+
+        def ensure_pane(self):
+            return True, '%35'
+
+    session = FakeSession()
+
+    def load_session(work_dir_arg, instance=None):
+        del work_dir_arg, instance
+        return session
+
+    monkeypatch.setenv('CCB_CODEX_DELIVERY_TIMEOUT_S', '7200')
+    monkeypatch.setattr(codex_adapter_module, 'load_project_session', load_session)
+    monkeypatch.setattr(codex_adapter_module, 'get_backend_for_session', lambda data: FakeBackend())
+
+    service = ExecutionService(build_default_execution_registry(), clock=lambda: current_now['value'])
+    job = _anchored_job_for_provider('codex', fixed_req_id, body='prompt')
+    service.start(job, runtime_context=_runtime_context(work_dir))
+
+    current_now['value'] = '2026-03-18T00:10:00Z'
+    assert service.poll() == ()
+    active = service._active[job.job_id]
+    assert active.runtime_state['codex_anchor_fallback_quarantined'] is True
+    assert active.runtime_state['codex_anchor_fallback_log'] == str(fallback_log)
+    assert active.runtime_state['delivery_state'] == 'pending_anchor'
+
+    current_now['value'] = '2026-03-18T00:30:00Z'
+    assert service.poll() == ()
+    active = service._active[job.job_id]
+    assert active.runtime_state['session_path'] == str(old_log)
+    assert active.runtime_state['delivery_state'] == 'pending_anchor'
+
+    new_log.write_text(
+        "\n".join(
+            [
+                json.dumps({"type": "session_meta", "payload": {"cwd": str(work_dir)}}),
+                json.dumps(
+                    {
+                        "timestamp": "2026-03-18T00:31:00Z",
+                        "type": "response_item",
+                        "payload": {
+                            "type": "message",
+                            "role": "user",
+                            "turn_id": f"turn-{fixed_req_id}",
+                            "task_id": f"task-{fixed_req_id}",
+                            "content": [{"type": "input_text", "text": f"CCB_REQ_ID: {fixed_req_id}\n\nnew"}],
+                        },
+                    }
+                ),
+                json.dumps(
+                    {
+                        "timestamp": "2026-03-18T00:31:01Z",
+                        "type": "event_msg",
+                        "payload": {
+                            "type": "agent_message",
+                            "role": "assistant",
+                            "turn_id": f"turn-{fixed_req_id}",
+                            "task_id": f"task-{fixed_req_id}",
+                            "phase": "final_answer",
+                            "message": "new session reply",
+                        },
+                    }
+                ),
+                json.dumps(
+                    {
+                        "timestamp": "2026-03-18T00:31:02Z",
+                        "type": "event_msg",
+                        "payload": {
+                            "type": "task_complete",
+                            "turn_id": f"turn-{fixed_req_id}",
+                            "task_id": f"task-{fixed_req_id}",
+                            "reason": "task_complete",
+                            "last_agent_message": "new session reply",
+                        },
+                    }
+                ),
+            ]
+        )
+        + "\n",
+        encoding='utf-8',
+    )
+    session.codex_session_path = str(new_log)
+    session.codex_session_id = new_session_id
+    session.data = {**session.data, 'codex_session_path': str(new_log), 'codex_session_id': new_session_id}
+    current_now['value'] = '2026-03-18T00:31:00Z'
+
+    update = service.poll()[0]
+
+    assert [item.kind for item in update.items] == [
+        CompletionItemKind.SESSION_ROTATE,
+        CompletionItemKind.ANCHOR_SEEN,
+        CompletionItemKind.ASSISTANT_CHUNK,
+        CompletionItemKind.TURN_BOUNDARY,
+    ]
+    assert update.items[-1].payload['last_agent_message'] == 'new session reply'
+    assert update.submission.runtime_state['delivery_state'] == 'accepted'
+    assert update.submission.runtime_state['session_path'] == str(new_log)
+    assert 'codex_anchor_fallback_log' not in update.submission.runtime_state
+    assert update.decision is None
+
+
+def test_execution_service_codex_delivery_timeout_uses_last_session_progress(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from provider_execution import codex as codex_adapter_module
+
+    fixed_req_id = '20260318-000000-000-1-no-progress'
+    work_dir = tmp_path / 'repo'
+    session_id = '44444444-4444-4444-4444-444444444444'
+    log_path = tmp_path / 'home' / 'sessions' / session_id / f'{session_id}.jsonl'
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    log_path.write_text(
+        json.dumps({"type": "session_meta", "payload": {"cwd": str(work_dir)}}) + "\n",
+        encoding='utf-8',
+    )
+    work_dir_str = str(work_dir)
+    current_now = {'value': '2026-03-18T00:00:00Z'}
+
+    class FakeBackend:
+        def send_text_to_pane(self, pane_id: str, text: str) -> None:
+            assert pane_id == '%36'
+            assert fixed_req_id in text
+
+        def is_tmux_pane_alive(self, pane_id: str) -> bool:
+            return pane_id == '%36'
+
+    class FakeSession:
+        data = {
+            'terminal': 'tmux',
+            'codex_session_root': str(tmp_path / 'home' / 'sessions'),
+            'codex_session_path': str(log_path),
+            'codex_session_id': session_id,
+        }
+        codex_session_path = str(log_path)
+        codex_session_id = session_id
+        work_dir = work_dir_str
+
+        def ensure_pane(self):
+            return True, '%36'
+
+    monkeypatch.setenv('CCB_CODEX_DELIVERY_TIMEOUT_S', '120')
+    monkeypatch.setattr(codex_adapter_module, 'load_project_session', lambda work_dir, instance=None: FakeSession())
+    monkeypatch.setattr(codex_adapter_module, 'get_backend_for_session', lambda data: FakeBackend())
+
+    service = ExecutionService(build_default_execution_registry(), clock=lambda: current_now['value'])
+    job = _anchored_job_for_provider('codex', fixed_req_id, body='prompt')
+    service.start(job, runtime_context=_runtime_context(work_dir))
+
+    assert service.poll() == ()
+    active = service._active[job.job_id]
+    assert active.runtime_state['delivery_last_progress_at'] == '2026-03-18T00:00:00Z'
+
+    current_now['value'] = '2026-03-18T00:01:00Z'
+    with log_path.open('a', encoding='utf-8') as handle:
+        handle.write(
+            json.dumps(
+                {
+                    "timestamp": "2026-03-18T00:01:00Z",
+                    "type": "event_msg",
+                    "payload": {
+                        "type": "agent_message",
+                        "role": "assistant",
+                        "turn_id": "turn-unowned",
+                        "task_id": "task-unowned",
+                        "phase": "thinking",
+                        "message": "still processing",
+                    },
+                }
+            )
+            + "\n"
+        )
+
+    assert service.poll() == ()
+    active = service._active[job.job_id]
+    assert active.runtime_state['delivery_state'] == 'pending_anchor'
+    assert active.runtime_state['delivery_last_progress_at'] == '2026-03-18T00:01:00Z'
+
+    current_now['value'] = '2026-03-18T00:02:30Z'
+    assert service.poll() == ()
+    active = service._active[job.job_id]
+    assert active.runtime_state['delivery_state'] == 'pending_anchor'
+    assert active.runtime_state['delivery_last_progress_at'] == '2026-03-18T00:01:00Z'
+
+
+def test_execution_service_codex_delivery_missing_session_file_degrades_after_no_progress(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from provider_execution import codex as codex_adapter_module
+
+    fixed_req_id = '20260318-000000-000-1-missing-session'
+    work_dir = tmp_path / 'repo'
+    session_id = '55555555-5555-5555-5555-555555555555'
+    missing_log = tmp_path / 'home' / 'sessions' / session_id / f'{session_id}.jsonl'
+    work_dir_str = str(work_dir)
+    current_now = {'value': '2026-03-18T00:00:00Z'}
+
+    class FakeBackend:
+        def send_text_to_pane(self, pane_id: str, text: str) -> None:
+            assert pane_id == '%37'
+            assert fixed_req_id in text
+
+        def is_tmux_pane_alive(self, pane_id: str) -> bool:
+            return pane_id == '%37'
+
+    class FakeSession:
+        data = {
+            'terminal': 'tmux',
+            'codex_session_root': str(tmp_path / 'home' / 'sessions'),
+            'codex_session_path': str(missing_log),
+            'codex_session_id': session_id,
+        }
+        codex_session_path = str(missing_log)
+        codex_session_id = session_id
+        work_dir = work_dir_str
+
+        def ensure_pane(self):
+            return True, '%37'
+
+    monkeypatch.setenv('CCB_CODEX_DELIVERY_TIMEOUT_S', '120')
+    monkeypatch.setattr(codex_adapter_module, 'load_project_session', lambda work_dir, instance=None: FakeSession())
+    monkeypatch.setattr(codex_adapter_module, 'get_backend_for_session', lambda data: FakeBackend())
+
+    service = ExecutionService(build_default_execution_registry(), clock=lambda: current_now['value'])
+    job = _anchored_job_for_provider('codex', fixed_req_id, body='prompt')
+    service.start(job, runtime_context=_runtime_context(work_dir))
+
+    assert service.poll() == ()
+    assert service._active[job.job_id].runtime_state['delivery_progress_kind'] == 'session_missing'
+
+    current_now['value'] = '2026-03-18T00:01:59Z'
+    assert service.poll() == ()
+    assert service._active[job.job_id].runtime_state['delivery_state'] == 'pending_anchor'
+
+    current_now['value'] = '2026-03-18T00:02:01Z'
+    updates = service.poll()
+
+    assert len(updates) == 1
+    update = updates[0]
+    assert [item.kind for item in update.items] == [CompletionItemKind.ERROR]
+    assert update.items[0].payload['reason'] == 'codex_session_file_missing'
+    assert update.items[0].payload['no_reply_reason'] == 'completion_detection_gap'
+    assert update.decision is not None
+    assert update.decision.status is CompletionStatus.INCOMPLETE
+    assert update.decision.reason == 'codex_session_file_missing'
+    assert update.decision.diagnostics['delivery_failure_kind'] == 'delivery_session_missing'
+    assert update.decision.diagnostics['delivery_current_log_path'] == str(missing_log)
+    assert update.decision.diagnostics['delivery_current_session_id'] == session_id
+    assert update.decision.diagnostics['no_reply_reason'] == 'completion_detection_gap'
+
+
 def test_execution_service_gemini_adapter_fails_without_session(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     from provider_execution import gemini as gemini_adapter_module
 

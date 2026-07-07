@@ -311,12 +311,23 @@ def _validate_project_local_ask_context(context, command, *, configured_agents: 
             raise ValueError(
                 'ask is project-local; --project cannot select a CCB project from outside that project'
             )
-        if local_anchor != project_root:
+        if local_anchor != project_root and not _is_source_test_explicit_project_ask(
+            context,
+            command,
+            project_root=project_root,
+            cwd=cwd,
+        ):
             raise ValueError(
                 'ask is project-local; --project cannot target another .ccb project'
             )
 
-    if local_anchor is not None and local_anchor != project_root and source != 'caller-runtime':
+    if (
+        local_anchor is not None
+        and local_anchor != project_root
+        and source != 'caller-runtime'
+        and not _is_internal_explicit_project_ask(context, command)
+        and not _is_source_test_explicit_project_ask(context, command, project_root=project_root, cwd=cwd)
+    ):
         raise ValueError(
             'ask is project-local; workspace or cwd resolved to another .ccb project'
         )
@@ -325,6 +336,46 @@ def _validate_project_local_ask_context(context, command, *, configured_agents: 
         _validate_workspace_binding_project(context, project_root)
 
     _validate_caller_runtime_project(project_root, configured_agents=configured_agents)
+
+
+def _is_internal_explicit_project_ask(context, command) -> bool:
+    if str(getattr(context.project, 'source', '') or '') != 'explicit':
+        return False
+    if str(getattr(command, 'project', '') or '').strip():
+        return False
+    parent_kind = str(getattr(getattr(context, 'command', None), 'kind', '') or '')
+    return parent_kind not in {'', 'ask'}
+
+
+def _is_source_test_explicit_project_ask(context, command, *, project_root: Path, cwd: Path) -> bool:
+    if os.environ.get('CCB_TEST_ENTRYPOINT') != '1':
+        return False
+    if str(getattr(context.project, 'source', '') or '') != 'explicit':
+        return False
+    if not str(getattr(command, 'project', '') or '').strip():
+        return False
+    allowed_roots = _source_test_allowed_roots()
+    if not allowed_roots:
+        return False
+    return _path_under_any(cwd, allowed_roots) and _path_under_any(project_root, allowed_roots)
+
+
+def _source_test_allowed_roots() -> tuple[Path, ...]:
+    roots: list[Path] = []
+    for env_name in ('CCB_SOURCE_ALLOWED_ROOTS', 'CCB_TEST_ROOTS'):
+        for item in os.environ.get(env_name, '').split(os.pathsep):
+            text = item.strip()
+            if text:
+                roots.append(_resolve_path(Path(text)))
+    return tuple(roots)
+
+
+def _path_under_any(path: Path, roots: tuple[Path, ...]) -> bool:
+    resolved = _resolve_path(path)
+    for root in roots:
+        if resolved == root or root in resolved.parents:
+            return True
+    return False
 
 
 def _validate_workspace_binding_project(context, project_root: Path) -> None:

@@ -28,7 +28,6 @@ class ProjectFocusService:
         namespace = _namespace(self._deps.namespace_controller)
         _validate_epoch(namespace_epoch, namespace.namespace_epoch)
         backend = backend_for_namespace(self._deps.namespace_controller._backend_factory, namespace)
-        select_window(backend, session_name=namespace.tmux_session_name, window_name=window_name)
         agent_names = tuple(getattr(window_spec, 'agent_names', ()) or ())
         agent_name = agent_names[0] if agent_names else None
         pane_id = (
@@ -36,6 +35,11 @@ class ProjectFocusService:
             if agent_name is not None
             else None
         )
+        try:
+            select_window(backend, session_name=namespace.tmux_session_name, window_name=window_name)
+        except ProjectFocusError as exc:
+            if exc.code != FocusErrorCode.TARGET_MISSING or pane_id is None:
+                raise
         if pane_id is not None:
             select_pane(backend, pane_id=pane_id)
         _invalidate_and_refresh_project_view(self._deps, backend, namespace)

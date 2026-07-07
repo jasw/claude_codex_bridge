@@ -224,7 +224,7 @@ def test_codex_execution_reader_factory_enables_workspace_follow_for_unbound_ses
     assert captured["follow_workspace_sessions"] is True
 
 
-def test_codex_execution_recovers_when_bound_log_misses_anchor(
+def test_codex_execution_quarantines_matching_fallback_until_official_binding_moves(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
@@ -268,16 +268,15 @@ def test_codex_execution_recovers_when_bound_log_misses_anchor(
     result = codex_adapter_module.CodexProviderAdapter().poll(submission, now="2026-04-04T10:00:00Z")
 
     assert result is not None
-    assert result.submission.runtime_state["session_path"] == str(new_log)
+    assert result.submission.runtime_state["session_path"] == str(old_log)
+    assert result.submission.runtime_state["state"]["log_path"] == old_log
     assert result.submission.runtime_state["codex_anchor_fallback_log"] == str(new_log)
-    assert result.submission.runtime_state["anchor_seen"] is True
-    assert result.submission.reply == "done"
-    assert [item.kind for item in result.items] == [
-        CompletionItemKind.SESSION_ROTATE,
-        CompletionItemKind.ANCHOR_SEEN,
-        CompletionItemKind.ASSISTANT_CHUNK,
-        CompletionItemKind.TURN_BOUNDARY,
-    ]
+    assert result.submission.runtime_state["codex_anchor_fallback_session_id"] == new_id
+    assert result.submission.runtime_state["codex_anchor_fallback_quarantined"] is True
+    assert result.submission.runtime_state["anchor_seen"] is False
+    assert result.submission.reply == ""
+    assert result.items == ()
+    assert result.decision is None
 
 
 def test_codex_execution_does_not_switch_without_current_anchor(
@@ -357,6 +356,48 @@ def test_codex_delivery_guard_fails_on_shutdown_text_without_anchor(
     assert result.decision.diagnostics["delivery_failure_kind"] == "delivery_shutdown"
     assert result.items[0].kind is CompletionItemKind.ERROR
     assert result.items[0].payload["delivery_failure_kind"] == "delivery_shutdown"
+
+
+def test_codex_delivery_guard_fails_on_shutdown_text_with_missing_session_file(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    from provider_execution import codex as codex_adapter_module
+
+    work_dir = tmp_path / "repo"
+    root = tmp_path / "sessions"
+    session_id = "11111111-1111-1111-1111-111111111111"
+    missing_log = root / "2026" / "04" / "04" / f"rollout-{session_id}.jsonl"
+
+    monkeypatch.setattr(
+        codex_adapter_module,
+        "_load_session",
+        lambda work_dir_arg, agent_name: _CodexSession(
+            work_dir=work_dir_arg,
+            root=root,
+            log_path=missing_log,
+            session_id=session_id,
+        ),
+    )
+
+    submission = _codex_submission(
+        reader=CodexLogReader(root=root, log_path=missing_log, session_id_filter=session_id, work_dir=work_dir),
+        state={"log_path": missing_log, "offset": 0},
+        work_dir=work_dir,
+        backend=_Backend(pane_content=">_ OpenAI Codex\nShutting down...\nPane is dead"),
+        delivery=True,
+    )
+
+    result = codex_adapter_module.CodexProviderAdapter().poll(submission, now="2026-04-04T10:00:10Z")
+
+    assert result is not None
+    assert result.decision is not None
+    assert result.decision.status is CompletionStatus.FAILED
+    assert result.decision.reason == "codex_prompt_delivery_failed"
+    assert result.decision.diagnostics["delivery_failure_kind"] == "delivery_shutdown"
+    assert result.decision.diagnostics["no_reply_reason"] == "provider_crashed"
+    assert result.items[0].kind is CompletionItemKind.ERROR
+    assert result.items[0].payload["no_reply_reason"] == "provider_crashed"
 
 
 def test_codex_delivery_guard_waits_for_slow_anchor_without_evidence(

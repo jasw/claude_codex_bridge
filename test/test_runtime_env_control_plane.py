@@ -54,6 +54,20 @@ def test_control_plane_env_keeps_agent_roles_store_pin(monkeypatch) -> None:
     assert env['AGENT_ROLES_STORE'] == '/home/demo/.roles'
 
 
+def test_control_plane_env_keeps_source_test_wrapper_signals(monkeypatch) -> None:
+    monkeypatch.setenv('CCB_TEST_ENTRYPOINT', '1')
+    monkeypatch.setenv('CCB_SOURCE_ALLOWED_ROOTS', '/tmp/source-test-root')
+    monkeypatch.setenv('CCB_TEST_ROOTS', '/tmp/extra-test-root')
+    monkeypatch.setenv('CCB_CALLER_ACTOR', 'stale-agent')
+
+    env = control_plane_env()
+
+    assert env['CCB_TEST_ENTRYPOINT'] == '1'
+    assert env['CCB_SOURCE_ALLOWED_ROOTS'] == '/tmp/source-test-root'
+    assert env['CCB_TEST_ROOTS'] == '/tmp/extra-test-root'
+    assert 'CCB_CALLER_ACTOR' not in env
+
+
 def test_control_plane_env_keeps_mobile_host_state_override(monkeypatch) -> None:
     monkeypatch.setenv('CCB_MOBILE_HOST_STATE_HOME', '/tmp/ccb-mobile-state')
 
