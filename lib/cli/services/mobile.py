@@ -14,6 +14,7 @@ from mobile_gateway import (
     build_mobile_gateway_server,
     discover_running_mobile_gateway_projects,
     load_mobile_gateway_project_registry,
+    mobile_host_project_registry_path,
     mobile_host_state_dir,
     parse_listen_address,
 )
@@ -155,10 +156,23 @@ def prepare_server_mobile_gateway(
 
 
 def _running_server_project_registry() -> MobileGatewayProjectRegistry:
-    projects = discover_running_mobile_gateway_projects()
-    if not projects:
+    projects_by_id = {}
+    try:
+        registry = load_mobile_gateway_project_registry(
+            registry_path=mobile_host_project_registry_path(
+                state_dir=mobile_host_state_dir(),
+            ),
+        )
+        projects_by_id.update(
+            {project.project_id: project for project in registry.projects()}
+        )
+    except ValueError:
+        pass
+    for project in discover_running_mobile_gateway_projects():
+        projects_by_id[project.project_id] = project
+    if not projects_by_id:
         raise ValueError('no running CCB projects found for mobile server setup')
-    return MobileGatewayProjectRegistry(list(projects))
+    return MobileGatewayProjectRegistry(list(projects_by_id.values()))
 
 
 def mobile_devices_status(context, command) -> dict[str, object]:

@@ -229,6 +229,85 @@ def test_prepare_server_mobile_gateway_uses_running_projects(tmp_path: Path, mon
         handle.close()
 
 
+def test_prepare_server_mobile_gateway_uses_published_registry_without_proc(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    state_dir = tmp_path / 'mobile-state'
+    registry_path = state_dir / 'projects.json'
+    project_root = tmp_path / 'mac-running-project'
+    project_root.mkdir()
+    project_id = compute_project_id(project_root)
+
+    class _RegistryCcbdClient:
+        def __init__(self, _socket_path: Path) -> None:
+            pass
+
+        def ping(self, target: str) -> dict[str, object]:
+            return {
+                'status': 'ok',
+                'project_id': project_id,
+                'project_root': str(project_root),
+                'display_name': 'mac-running-project',
+                'health': 'healthy',
+                'mount_state': 'mounted',
+            }
+
+    with tempfile.TemporaryDirectory(prefix='ccb-sock-', dir='/tmp') as socket_dir:
+        socket_path = Path(socket_dir) / 'ccbd.sock'
+        unix_socket = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        unix_socket.bind(str(socket_path))
+        publish_mobile_gateway_project(
+            project_id=project_id,
+            project_root=project_root,
+            ccbd_socket_path=socket_path,
+            display_name='mac-running-project',
+            registry_path=registry_path,
+        )
+        monkeypatch.setattr(
+            'cli.services.mobile.discover_running_mobile_gateway_projects',
+            lambda: (),
+        )
+        monkeypatch.setattr(
+            'mobile_gateway.project_registry.discover_running_mobile_gateway_projects',
+            lambda: (),
+        )
+        monkeypatch.setattr(
+            'mobile_gateway.project_registry.mobile_host_state_dir',
+            lambda: state_dir,
+        )
+        monkeypatch.setattr(
+            'mobile_gateway.project_registry.CcbdClient',
+            _RegistryCcbdClient,
+        )
+        monkeypatch.setattr(
+            'cli.services.mobile.mobile_host_state_dir',
+            lambda: state_dir,
+        )
+
+        try:
+            handle = prepare_server_mobile_gateway(
+                SimpleNamespace(
+                    listen='127.0.0.1:0',
+                    public_url=None,
+                    route_provider='lan',
+                ),
+                host_id='host-test',
+            )
+            try:
+                assert handle.summary['project_count'] == 1
+                assert handle.summary['projects'][0]['id'] == project_id
+                assert (
+                    handle.summary['projects'][0]['display_name']
+                    == 'mac-running-project'
+                )
+            finally:
+                handle.close()
+        finally:
+            unix_socket.close()
+            socket_path.unlink(missing_ok=True)
+
+
 def test_prepare_server_mobile_gateway_fails_without_running_projects(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr('cli.services.mobile.discover_running_mobile_gateway_projects', lambda: ())
     monkeypatch.setattr('cli.services.mobile.mobile_host_state_dir', lambda: tmp_path / 'mobile-state')
