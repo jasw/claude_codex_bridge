@@ -2,11 +2,11 @@
 
 # CCB - وصل تطبيق الهاتف!
 
-**مصمم لتعاون متعدد الوكلاء بطريقة لامركزية**  
-**مساحة عمل TUI مرئية وقابلة للتحكم لعدة وكلاء**
+**واجهة TUI خفيفة لعدة وكلاء، مع طبقة تعاون مستقرة عبر المزوّدين**<br>
+**نسّق Codex وClaude وGemini وغيرهم من وكلاء CLI ضمن سير عمل مرئي وقابل للتحكم والتدخل المباشر**
 
 <p>
-  <img src="https://img.shields.io/badge/version-8.0.15-orange.svg" alt="version">
+  <img src="https://img.shields.io/badge/version-8.0.19-orange.svg" alt="version">
   <img src="https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20WSL-lightgrey.svg" alt="platform">
   <img src="https://img.shields.io/badge/providers-15%20CLI%20families-0B7285.svg" alt="providers">
 </p>
@@ -29,12 +29,12 @@
   <img src="https://img.shields.io/badge/Droid-3DDC84?style=flat-square&logo=android&logoColor=white" alt="Droid">
 </p>
 
-[中文](README.md) | [English](readme_en.md) | [日本語](readme_ja.md) | [Français](readme_fr.md) | [Deutsch](readme_de.md) | **العربية** | [Español](readme_es.md) | [Português](readme_pt.md) | [한국어](readme_ko.md) | [Русский](readme_ru.md)
+[中文](zh.md) | [English](../README.md) | [日本語](ja.md) | [Français](fr.md) | [Deutsch](de.md) | **العربية** | [Español](es.md) | [Português](pt.md) | [한국어](ko.md) | [Русский](ru.md)
 
-[البدء السريع](#quick-start) · [Mobile App](#mobile-app) · [وضع Rich](#rich-mode) · [إعداد الوكلاء](#configure-agents) · [دليل المستخدم](docs/manuals/user-guide/) · [دليل المطور](docs/manuals/developer-guide/)
+[البدء السريع](#quick-start) · [Mobile App](#mobile-app) · [وضع Rich](#rich-mode) · [إعداد الوكلاء](#configure-agents) · [دليل المستخدم](../docs/manuals/user-guide/) · [دليل المطور](../docs/manuals/developer-guide/)
 
 <p align="center">
-  <img src="assets/readme_v7/ccb-hero-en-light.png" alt="مساحة عمل CLI مرئية متعددة الوكلاء في CCB" width="960">
+  <img src="../assets/readme_v7/ccb-hero-en-light.png" alt="مساحة عمل CLI مرئية متعددة الوكلاء في CCB" width="960">
 </p>
 
 </div>
@@ -160,20 +160,20 @@ ccb update mobile
 يرشدك هذا الأمر خلال التثبيت والإعداد.
 
 <p align="center">
-  <img src="assets/readme_v7/mobile-control-chat.jpg" alt="محادثة agent في CCB Mobile" width="180">
-  <img src="assets/readme_v7/mobile-control-terminal.jpg" alt="تحكم terminal في CCB Mobile" width="180">
-  <img src="assets/readme_v7/mobile-control-files.jpg" alt="نقل ملفات CCB Mobile" width="180">
-  <img src="assets/readme_v7/mobile-control-pairing.jpg" alt="اقتران واتصال CCB Mobile" width="180">
+  <img src="../assets/readme_v7/mobile-control-chat.jpg" alt="محادثة agent في CCB Mobile" width="180">
+  <img src="../assets/readme_v7/mobile-control-terminal.jpg" alt="تحكم terminal في CCB Mobile" width="180">
+  <img src="../assets/readme_v7/mobile-control-files.jpg" alt="نقل ملفات CCB Mobile" width="180">
+  <img src="../assets/readme_v7/mobile-control-pairing.jpg" alt="اقتران واتصال CCB Mobile" width="180">
 </p>
 
 <details>
 <summary><b>تفاصيل Mobile App وحدود الأمان والمصدر</b></summary>
 
-يتضمن CCB 8.0.15 مصدر Flutter الخاص بـ CCB Mobile داخل [`mobile/`](mobile/) وينشر Android APK عبر GitHub Releases:
+يتضمن CCB 8.0.19 مصدر Flutter الخاص بـ CCB Mobile داخل [`mobile/`](../mobile/) وينشر Android APK عبر GitHub Releases:
 
-- [تنزيل CCB Mobile v8.0.15 APK](https://github.com/bfly123/claude_code_bridge/releases/download/v8.0.15/ccb-mobile-v8.0.15.apk)
-- مصدر التطبيق: [`mobile/app`](mobile/app)
-- مصدر gateway الخادم: [`lib/mobile_gateway`](lib/mobile_gateway)
+- [تنزيل CCB Mobile v8.0.19 APK](https://github.com/SeemSeam/claude_codex_bridge/releases/download/v8.0.19/ccb-mobile-v8.0.19.apk)
+- مصدر التطبيق: [`mobile/app`](../mobile/app)
+- مصدر gateway الخادم: [`lib/mobile_gateway`](../lib/mobile_gateway)
 
 تطبيق الهاتف هو متحكم بعيد لمشاريع CCB حقيقية تعمل على خادم. يمكنه اكتشاف المشاريع المركبة من server-wide mobile gateway، والتبديل بين windows و agents، وعرض سياق محادثة agent، وإرسال النص عبر pane-native input، وفتح terminal view، ورفع/تنزيل الصور والمستندات عبر gateway موثق.
 
@@ -193,7 +193,7 @@ ccb update mobile
 تصفح شجرة الملفات، وافتح الملفات، وحرر المستندات، واعرض الوسائط داخل الطرفية.
 
 <p align="center">
-  <img src="assets/readme_v7/rich-workbench.png" alt="منضدة CCB rich media مع معاينة Yazi داخل WezTerm" width="860">
+  <img src="../assets/readme_v7/rich-workbench.png" alt="منضدة CCB rich media مع معاينة Yazi داخل WezTerm" width="860">
 </p>
 
 ```bash
@@ -234,7 +234,7 @@ ccb update rich
 - WeChat: `seemseam-com`
 
 <p align="center">
-  <img src="assets/weixin.jpg" alt="مجموعة WeChat" width="240">
+  <img src="../assets/weixin.jpg" alt="مجموعة WeChat" width="240">
 </p>
 
 <a id="community"></a>
@@ -250,11 +250,20 @@ ccb update rich
 ## ملاحظات الإصدار
 
 <details open>
+<summary><b>v8.0.14</b> - ترتيب دليل README ومزامنة سطح إصدار الهاتف</summary>
+
+- عاد `README.md` في الجذر ليكون صفحة GitHub الإنجليزية.
+- أصبحت ملفات README المترجمة داخل [`README/`](./)، والنسخة الصينية في [`zh.md`](zh.md).
+- أصبحت روابط Mobile App و package metadata و release notes تشير إلى APK الإصدار 8.0.14.
+
+</details>
+
+<details>
 <summary><b>v8.0.12</b> - قابلية نقل Release CI وتعريب README متعدد اللغات</summary>
 
 - اختبارات mobile host registry تضع الآن Unix sockets المؤقتة تحت مسار قصير `/tmp/ccb-sock-*` لتجنب فشل `AF_UNIX path too long` في macOS CI.
 - أصبحت `ccb update mobile` وروابط README و package metadata و mobile release manifest تشير إلى APK الإصدار 8.0.12.
-- أصبح README الصيني هو README الرئيسي على GitHub؛ وانتقل الإنجليزي إلى `readme_en.md`، وأضيفت نسخ اليابانية والفرنسية والألمانية والعربية والإسبانية والبرتغالية والكورية والروسية بنفس بنية الأقسام.
+- قدم v8.0.12 مجموعة README متعددة اللغات ببنية أقسام مشتركة؛ وتوجد الملفات المترجمة الحالية داخل دليل `README/`.
 
 </details>
 
@@ -285,4 +294,4 @@ ccb update rich
 
 </details>
 
-راجع التاريخ الكامل في [CHANGELOG.md](CHANGELOG.md).
+راجع التاريخ الكامل في [CHANGELOG.md](../CHANGELOG.md).

@@ -2,11 +2,11 @@
 
 # CCB - мобильное приложение уже здесь!
 
-**Спроектировано для децентрализованной multi-agent совместной работы**  
-**Видимое и управляемое multi-agent TUI рабочее пространство**
+**Легкий multi-agent TUI со стабильным слоем взаимодействия между провайдерами**<br>
+**Координируйте Codex, Claude, Gemini и другие CLI Agent в видимых и управляемых процессах, которые можно напрямую взять под контроль**
 
 <p>
-  <img src="https://img.shields.io/badge/version-8.0.15-orange.svg" alt="version">
+  <img src="https://img.shields.io/badge/version-8.0.19-orange.svg" alt="version">
   <img src="https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20WSL-lightgrey.svg" alt="platform">
   <img src="https://img.shields.io/badge/providers-15%20CLI%20families-0B7285.svg" alt="providers">
 </p>
@@ -29,12 +29,12 @@
   <img src="https://img.shields.io/badge/Droid-3DDC84?style=flat-square&logo=android&logoColor=white" alt="Droid">
 </p>
 
-[中文](README.md) | [English](readme_en.md) | [日本語](readme_ja.md) | [Français](readme_fr.md) | [Deutsch](readme_de.md) | [العربية](readme_ar.md) | [Español](readme_es.md) | [Português](readme_pt.md) | [한국어](readme_ko.md) | **Русский**
+[中文](zh.md) | [English](../README.md) | [日本語](ja.md) | [Français](fr.md) | [Deutsch](de.md) | [العربية](ar.md) | [Español](es.md) | [Português](pt.md) | [한국어](ko.md) | **Русский**
 
-[Быстрый старт](#quick-start) · [Mobile App](#mobile-app) · [Rich-режим](#rich-mode) · [Настройка agents](#configure-agents) · [Руководство пользователя](docs/manuals/user-guide/) · [Руководство разработчика](docs/manuals/developer-guide/)
+[Быстрый старт](#quick-start) · [Mobile App](#mobile-app) · [Rich-режим](#rich-mode) · [Настройка agents](#configure-agents) · [Руководство пользователя](../docs/manuals/user-guide/) · [Руководство разработчика](../docs/manuals/developer-guide/)
 
 <p align="center">
-  <img src="assets/readme_v7/ccb-hero-en-light.png" alt="Видимое multi-agent CLI рабочее пространство CCB" width="960">
+  <img src="../assets/readme_v7/ccb-hero-en-light.png" alt="Видимое multi-agent CLI рабочее пространство CCB" width="960">
 </p>
 
 </div>
@@ -160,20 +160,20 @@ ccb update mobile
 Эта команда проведет через установку и настройку.
 
 <p align="center">
-  <img src="assets/readme_v7/mobile-control-chat.jpg" alt="Чат agent в CCB Mobile" width="180">
-  <img src="assets/readme_v7/mobile-control-terminal.jpg" alt="Управление терминалом в CCB Mobile" width="180">
-  <img src="assets/readme_v7/mobile-control-files.jpg" alt="Передача файлов в CCB Mobile" width="180">
-  <img src="assets/readme_v7/mobile-control-pairing.jpg" alt="Pairing и подключение в CCB Mobile" width="180">
+  <img src="../assets/readme_v7/mobile-control-chat.jpg" alt="Чат agent в CCB Mobile" width="180">
+  <img src="../assets/readme_v7/mobile-control-terminal.jpg" alt="Управление терминалом в CCB Mobile" width="180">
+  <img src="../assets/readme_v7/mobile-control-files.jpg" alt="Передача файлов в CCB Mobile" width="180">
+  <img src="../assets/readme_v7/mobile-control-pairing.jpg" alt="Pairing и подключение в CCB Mobile" width="180">
 </p>
 
 <details>
 <summary><b>Детали Mobile App, граница безопасности и исходники</b></summary>
 
-CCB 8.0.15 включает Flutter source CCB Mobile в [`mobile/`](mobile/) и публикует Android APK через GitHub Releases:
+CCB 8.0.19 включает Flutter source CCB Mobile в [`mobile/`](../mobile/) и публикует Android APK через GitHub Releases:
 
-- [Скачать CCB Mobile v8.0.15 APK](https://github.com/bfly123/claude_code_bridge/releases/download/v8.0.15/ccb-mobile-v8.0.15.apk)
-- Исходники app: [`mobile/app`](mobile/app)
-- Исходники server gateway: [`lib/mobile_gateway`](lib/mobile_gateway)
+- [Скачать CCB Mobile v8.0.19 APK](https://github.com/SeemSeam/claude_codex_bridge/releases/download/v8.0.19/ccb-mobile-v8.0.19.apk)
+- Исходники app: [`mobile/app`](../mobile/app)
+- Исходники server gateway: [`lib/mobile_gateway`](../lib/mobile_gateway)
 
 Телефонное приложение является удаленным контроллером для реальных CCB projects, работающих на сервере. Оно может находить mounted projects через server-wide mobile gateway, переключать windows и agents, отображать контекст разговоров agents, отправлять текст через pane-native input, открывать terminal view и загружать/скачивать изображения и документы через authenticated gateway.
 
@@ -193,7 +193,7 @@ CCB 8.0.15 включает Flutter source CCB Mobile в [`mobile/`](mobile/) и
 Просматривайте деревья файлов, открывайте файлы, редактируйте документы и preview медиа внутри терминала.
 
 <p align="center">
-  <img src="assets/readme_v7/rich-workbench.png" alt="CCB rich media workbench с Yazi preview в WezTerm" width="860">
+  <img src="../assets/readme_v7/rich-workbench.png" alt="CCB rich media workbench с Yazi preview в WezTerm" width="860">
 </p>
 
 ```bash
@@ -234,7 +234,7 @@ CCB поддерживает [Agent Roles Spec](https://github.com/SeemSeam/agen
 - WeChat: `seemseam-com`
 
 <p align="center">
-  <img src="assets/weixin.jpg" alt="Группа WeChat" width="240">
+  <img src="../assets/weixin.jpg" alt="Группа WeChat" width="240">
 </p>
 
 <a id="community"></a>
@@ -250,11 +250,20 @@ CCB поддерживает [Agent Roles Spec](https://github.com/SeemSeam/agen
 ## Release Notes
 
 <details open>
+<summary><b>v8.0.14</b> - Упорядочен каталог README и mobile release surface</summary>
+
+- Корневой `README.md` снова является английской страницей GitHub.
+- Локализованные README теперь находятся в [`README/`](./), китайская версия - [`zh.md`](zh.md).
+- Ссылки Mobile App, package metadata и release notes указывают на APK 8.0.14.
+
+</details>
+
+<details>
 <summary><b>v8.0.12</b> - Переносимость Release CI и локализация README</summary>
 
 - Тесты mobile host registry теперь размещают временные Unix sockets в коротком пути `/tmp/ccb-sock-*`, чтобы избежать ошибок `AF_UNIX path too long` в macOS CI.
 - `ccb update mobile`, ссылки README, package metadata и mobile release manifest теперь указывают на APK 8.0.12.
-- Китайский README теперь является основным README GitHub; английский перенесен в `readme_en.md`, а японская, французская, немецкая, арабская, испанская, португальская, корейская и русская версии добавлены с той же структурой разделов.
+- v8.0.12 добавил многоязычный набор README с общей структурой разделов; текущие локализованные файлы находятся в каталоге `README/`.
 
 </details>
 
@@ -285,4 +294,4 @@ CCB поддерживает [Agent Roles Spec](https://github.com/SeemSeam/agen
 
 </details>
 
-Полная история находится в [CHANGELOG.md](CHANGELOG.md).
+Полная история находится в [CHANGELOG.md](../CHANGELOG.md).

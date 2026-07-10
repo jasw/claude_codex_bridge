@@ -43,8 +43,8 @@
     "bin/ctx-transfer.js",
     "bin/ccb-npm-install.js",
     "bin/ccb-npm-runner.js",
-    "README*.md",
-    "readme_*.md",
+    "README.md",
+    "README/*.md",
     "LICENSE",
     "VERSION"
   ],

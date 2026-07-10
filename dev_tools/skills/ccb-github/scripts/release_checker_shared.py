@@ -33,7 +33,7 @@ DEV_RELEASE_TRIGGER_PATHS = {
 }
 DEV_HOMEPAGE_PATHS = {
     "README.md",
-    "README_zh.md",
+    "README/zh.md",
 }
 
 

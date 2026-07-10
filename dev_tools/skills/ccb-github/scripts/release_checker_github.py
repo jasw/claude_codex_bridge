@@ -95,7 +95,7 @@ def check_readme_surface(
 
     owner, name = repo.split("/", 1)
     expected_clone = f"https://github.com/{owner}/{name}.git"
-    install_heading = "如何安装" if readme_name == "README_zh.md" else "How to Install"
+    install_heading = "如何安装" if readme_name == "README/zh.md" else "How to Install"
     install_body = install_section(body, install_heading)
     clone_urls = sorted(set(re.findall(r"git\s+clone\s+(https://github\.com/[^\s`]+\.git)", install_body)))
     wrong_urls = [url for url in clone_urls if url != expected_clone]
@@ -136,7 +136,7 @@ def check_remote_homepage(
     if not default_branch:
         warn(warnings, "Could not determine GitHub default branch; homepage README was not checked")
         return
-    for readme_name in ("README.md", "README_zh.md"):
+    for readme_name in ("README.md", "README/zh.md"):
         body = gh_api_text(root, f"repos/{repo}/contents/{readme_name}?ref={default_branch}")
         if body is None:
             fail(

@@ -172,7 +172,7 @@ def test_full_ccb_config_skill_is_not_inherited() -> None:
 def test_public_readme_routes_config_work_to_ccb_self() -> None:
     repo_root = Path(__file__).resolve().parents[1]
     readme = (repo_root / "README.md").read_text(encoding="utf-8")
-    readme_zh = (repo_root / "README_zh.md").read_text(encoding="utf-8")
+    readme_zh = (repo_root / "README" / "zh.md").read_text(encoding="utf-8")
 
     assert "ccb_self" in readme
     assert "agentroles.ccb_self" in readme

@@ -167,8 +167,10 @@ def test_check_local_files_accepts_ccb_py_version_for_shell_launcher(tmp_path: P
         "- Rich launcher closure release notes.\n\n"
         "</details>\n\n"
     )
-    for name, heading in (("README.md", "How to Install"), ("README_zh.md", "如何安装")):
-        (repo / name).write_text(
+    for name, heading in (("README.md", "How to Install"), ("README/zh.md", "如何安装")):
+        path = repo / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
             f"https://img.shields.io/badge/version-9.9.9-orange.svg\n\n"
             f"## Release Notes\n\n{release_block}"
             f"## {heading}\n\n"

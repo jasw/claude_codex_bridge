@@ -185,7 +185,7 @@ def check_local_files(root: Path, version: str, repo: str, issues: list[str], wa
         "ccb.py": read(root / "ccb.py"),
         "CHANGELOG.md": read(root / "CHANGELOG.md"),
         "README.md": read(root / "README.md"),
-        "README_zh.md": read(root / "README_zh.md"),
+        "README/zh.md": read(root / "README" / "zh.md"),
     }
 
     if files["VERSION"].strip() != bare_version:
@@ -199,7 +199,7 @@ def check_local_files(root: Path, version: str, repo: str, issues: list[str], wa
     elif not has_substantive_release_text(changelog_section):
         fail(issues, f"CHANGELOG.md {version} section is empty", fix="add concrete user-facing release bullets before publishing")
 
-    for readme_name in ("README.md", "README_zh.md"):
+    for readme_name in ("README.md", "README/zh.md"):
         body = files[readme_name]
         versions = release_note_versions(body)
         if versions:
@@ -230,7 +230,7 @@ def check_local_files(root: Path, version: str, repo: str, issues: list[str], wa
     expected_clone = f"https://github.com/{owner}/{name}.git"
     readme_install_headings = {
         "README.md": "How to Install",
-        "README_zh.md": "如何安装",
+        "README/zh.md": "如何安装",
     }
     for readme_name, heading in readme_install_headings.items():
         body = files[readme_name]
@@ -240,7 +240,7 @@ def check_local_files(root: Path, version: str, repo: str, issues: list[str], wa
         if wrong_urls:
             fail(issues, f"{readme_name} has clone URL(s) not matching {expected_clone}: {', '.join(wrong_urls)}", fix=f"replace README clone URLs with {expected_clone}")
 
-    if "CCB.md" in files["README.md"] or "CCB.md" in files["README_zh.md"]:
+    if "CCB.md" in files["README.md"] or "CCB.md" in files["README/zh.md"]:
         fail(issues, "README mentions current CCB.md support; current design must only use .ccb/ccb_memory.md", fix="remove current-feature references to CCB.md; keep only .ccb/ccb_memory.md")
 
     warn(warnings, "Manually inspect README What's New / 最新亮点 for stale prose; this cannot be proven by version regex alone")

@@ -2,11 +2,11 @@
 
 # CCB - L'application mobile est arrivée !
 
-**Conçu pour la collaboration multi-agent décentralisée**  
-**Un espace de travail TUI multi-agent visible et contrôlable**
+**Un TUI multi-agent léger avec une couche de collaboration stable entre fournisseurs**<br>
+**Coordonne Codex, Claude, Gemini et d'autres agents CLI dans des workflows visibles, contrôlables et reprenables directement**
 
 <p>
-  <img src="https://img.shields.io/badge/version-8.0.15-orange.svg" alt="version">
+  <img src="https://img.shields.io/badge/version-8.0.19-orange.svg" alt="version">
   <img src="https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20WSL-lightgrey.svg" alt="platform">
   <img src="https://img.shields.io/badge/providers-15%20CLI%20families-0B7285.svg" alt="providers">
 </p>
@@ -29,12 +29,12 @@
   <img src="https://img.shields.io/badge/Droid-3DDC84?style=flat-square&logo=android&logoColor=white" alt="Droid">
 </p>
 
-[中文](README.md) | [English](readme_en.md) | [日本語](readme_ja.md) | **Français** | [Deutsch](readme_de.md) | [العربية](readme_ar.md) | [Español](readme_es.md) | [Português](readme_pt.md) | [한국어](readme_ko.md) | [Русский](readme_ru.md)
+[中文](zh.md) | [English](../README.md) | [日本語](ja.md) | **Français** | [Deutsch](de.md) | [العربية](ar.md) | [Español](es.md) | [Português](pt.md) | [한국어](ko.md) | [Русский](ru.md)
 
-[Démarrage rapide](#quick-start) · [Mobile App](#mobile-app) · [Mode Rich](#rich-mode) · [Configurer les agents](#configure-agents) · [Guide utilisateur](docs/manuals/user-guide/) · [Guide développeur](docs/manuals/developer-guide/)
+[Démarrage rapide](#quick-start) · [Mobile App](#mobile-app) · [Mode Rich](#rich-mode) · [Configurer les agents](#configure-agents) · [Guide utilisateur](../docs/manuals/user-guide/) · [Guide développeur](../docs/manuals/developer-guide/)
 
 <p align="center">
-  <img src="assets/readme_v7/ccb-hero-en-light.png" alt="Espace de travail CLI multi-agent visible de CCB" width="960">
+  <img src="../assets/readme_v7/ccb-hero-en-light.png" alt="Espace de travail CLI multi-agent visible de CCB" width="960">
 </p>
 
 </div>
@@ -160,20 +160,20 @@ ccb update mobile
 Cette commande guide l'installation et la configuration.
 
 <p align="center">
-  <img src="assets/readme_v7/mobile-control-chat.jpg" alt="Conversation agent CCB Mobile" width="180">
-  <img src="assets/readme_v7/mobile-control-terminal.jpg" alt="Contrôle terminal CCB Mobile" width="180">
-  <img src="assets/readme_v7/mobile-control-files.jpg" alt="Transfert de fichiers CCB Mobile" width="180">
-  <img src="assets/readme_v7/mobile-control-pairing.jpg" alt="Appairage et connexion CCB Mobile" width="180">
+  <img src="../assets/readme_v7/mobile-control-chat.jpg" alt="Conversation agent CCB Mobile" width="180">
+  <img src="../assets/readme_v7/mobile-control-terminal.jpg" alt="Contrôle terminal CCB Mobile" width="180">
+  <img src="../assets/readme_v7/mobile-control-files.jpg" alt="Transfert de fichiers CCB Mobile" width="180">
+  <img src="../assets/readme_v7/mobile-control-pairing.jpg" alt="Appairage et connexion CCB Mobile" width="180">
 </p>
 
 <details>
 <summary><b>Détails de l'app mobile, frontière de sécurité et source</b></summary>
 
-CCB 8.0.15 inclut le code source Flutter de CCB Mobile dans [`mobile/`](mobile/) et publie l'APK Android via GitHub Releases :
+CCB 8.0.19 inclut le code source Flutter de CCB Mobile dans [`mobile/`](../mobile/) et publie l'APK Android via GitHub Releases :
 
-- [Télécharger l'APK CCB Mobile v8.0.15](https://github.com/bfly123/claude_code_bridge/releases/download/v8.0.15/ccb-mobile-v8.0.15.apk)
-- Source de l'app : [`mobile/app`](mobile/app)
-- Source du gateway serveur : [`lib/mobile_gateway`](lib/mobile_gateway)
+- [Télécharger l'APK CCB Mobile v8.0.19](https://github.com/SeemSeam/claude_codex_bridge/releases/download/v8.0.19/ccb-mobile-v8.0.19.apk)
+- Source de l'app : [`mobile/app`](../mobile/app)
+- Source du gateway serveur : [`lib/mobile_gateway`](../lib/mobile_gateway)
 
 L'application mobile est un contrôleur distant pour de vrais projets CCB exécutés sur un serveur. Elle peut découvrir les projets montés depuis le mobile gateway server-wide, changer de window/agent, afficher le contexte de conversation des agents, envoyer du texte via l'entrée pane-native, ouvrir une vue terminal, et charger/télécharger images et documents via le gateway authentifié.
 
@@ -193,7 +193,7 @@ Frontière de sécurité :
 Parcourez l'arborescence, ouvrez des fichiers, modifiez des documents et prévisualisez des médias dans le terminal.
 
 <p align="center">
-  <img src="assets/readme_v7/rich-workbench.png" alt="Workbench média Rich de CCB avec aperçu Yazi dans WezTerm" width="860">
+  <img src="../assets/readme_v7/rich-workbench.png" alt="Workbench média Rich de CCB avec aperçu Yazi dans WezTerm" width="860">
 </p>
 
 ```bash
@@ -234,7 +234,7 @@ Si vous ne savez pas comment regrouper les windows, combien de workers utiliser,
 - WeChat: `seemseam-com`
 
 <p align="center">
-  <img src="assets/weixin.jpg" alt="Groupe WeChat" width="240">
+  <img src="../assets/weixin.jpg" alt="Groupe WeChat" width="240">
 </p>
 
 <a id="community"></a>
@@ -250,11 +250,20 @@ Merci à [tmux-agent-sidebar](https://github.com/hiroppy/tmux-agent-sidebar) pou
 ## Notes de version
 
 <details open>
+<summary><b>v8.0.14</b> - Rangement du dossier README et surface mobile</summary>
+
+- Le `README.md` racine redevient la page GitHub en anglais.
+- Les README localisés vivent maintenant dans [`README/`](./), avec le chinois dans [`zh.md`](zh.md).
+- Les liens Mobile App, les métadonnées package et les notes de version pointent vers l'APK 8.0.14.
+
+</details>
+
+<details>
 <summary><b>v8.0.12</b> - Portabilité CI de release et localisation du README</summary>
 
 - Les tests mobile host registry placent maintenant leurs sockets Unix temporaires sous un chemin court `/tmp/ccb-sock-*`, ce qui évite les échecs `AF_UNIX path too long` sur la CI macOS.
 - `ccb update mobile`, les liens README, les métadonnées package et le mobile release manifest pointent maintenant vers l'APK 8.0.12.
-- Le README chinois devient le README principal GitHub ; l'anglais passe dans `readme_en.md`, et les versions japonaise, française, allemande, arabe, espagnole, portugaise, coréenne et russe sont ajoutées avec la même structure de sections.
+- v8.0.12 a introduit les README multilingues avec une structure commune ; les fichiers localisés actuels vivent dans le dossier `README/`.
 
 </details>
 
@@ -285,4 +294,4 @@ Merci à [tmux-agent-sidebar](https://github.com/hiroppy/tmux-agent-sidebar) pou
 
 </details>
 
-Voir l'historique complet dans [CHANGELOG.md](CHANGELOG.md).
+Voir l'historique complet dans [CHANGELOG.md](../CHANGELOG.md).
