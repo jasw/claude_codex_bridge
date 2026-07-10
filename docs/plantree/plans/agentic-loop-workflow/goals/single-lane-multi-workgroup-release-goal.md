@@ -1,7 +1,7 @@
 # Single-Lane Multi-Workgroup Release Goal
 
 Date: 2026-07-11
-Status: In progress; Wave 1 F1/R1/C1/P1 landed, Wave 2 active
+Status: In progress; Wave 2 R2/T1/E1 landed, Wave 3 G3 active
 
 ## Goal
 
@@ -55,21 +55,22 @@ Already available and preserved:
   complete RolePack/provider validation, adaptive bundle/node role contracts,
   and install/projection tests. Evidence is recorded in
   [../history/single-lane-wave1-config-rolepack-closure-20260711.md](../history/single-lane-wave1-config-rolepack-closure-20260711.md).
+- commits `f3b6b7a6`, `bd7bcbd7`, `64f95b1b`, `912764f6`, `502cc3e1`,
+  and `c64ab341` close Wave 2: exact controller-owned Git transactions,
+  one-to-four-workgroup topology/capacity, and strict deterministic evidence.
+  Evidence is recorded in
+  [../history/single-lane-wave2-git-topology-evidence-closure-20260711.md](../history/single-lane-wave2-git-topology-evidence-closure-20260711.md).
 
 Blocking gaps:
 
 - the direct engine deliberately pauses multi-node bundles before bind; the
   ready-frontier scheduler is not landed;
-- one-node execution uses node-map authority, but multi-node result synthesis,
-  integration, promotion, rollback, and lifecycle scheduling are absent;
-- existing multi-node tests stop at mount/layout/release and do not execute one
-  task through several reviewed workgroups;
-- parallel workers cannot safely promote their deltas independently to the
-  shared project root;
-- `max_nodes` currently counts physical profile instances, not semantic
-  workgroups;
+- multi-node result synthesis and scheduler wiring are absent even though Git
+  integration, promotion/rollback, topology/capacity, and evidence APIs exist;
+- existing multi-node tests prove component contracts and deterministic
+  fixtures, but do not execute one task through several reviewed workgroups;
 - Config V3 is implemented but remains runtime-gated until multi-node bind,
-  integration, scheduling, and acceptance are complete.
+  scheduling, and acceptance are complete.
 
 ## Scope
 
@@ -187,7 +188,7 @@ Implementation must update the decision first if it discovers a contradiction.
 wave closes only after focused suites and the non-Gemini repository gate pass
 on the combined branch.
 
-### Wave 2: Three Parallel Whole Blocks
+### Wave 2: Three Parallel Whole Blocks - Landed
 
 | Package | Scope | Primary ownership | Depends on |
 | :--- | :--- | :--- | :--- |
@@ -198,6 +199,9 @@ on the combined branch.
 `talk2` integrates R2 before T1 and E1, then runs the combined Git/topology/
 evidence matrix. A package that requires another package's private helper must
 stop and request an interface decision instead of copying the helper.
+
+The required order is complete through `c64ab341`; the combined gate passed
+`249` tests. This closes component readiness only, not live scheduler behavior.
 
 ### Wave 3: Central Scheduler Closure
 
@@ -287,7 +291,7 @@ Direct evidence: commit `0c2f19ef`, `195` owned tests, `117` adjacent tests,
 and the non-Gemini portion of the full repository run passed. Multi-node
 execution remains blocked intentionally at the G2/G3 boundary.
 
-### G2 Worktree And Integration Kernel - Pending
+### G2 Worktree And Integration Kernel - Complete
 
 - Add clean-Git/scope preflight, node worktree/branch creation, tree-digest
   capture, reviewer-pass commit, deterministic integration worktree, merge,
@@ -297,6 +301,10 @@ execution remains blocked intentionally at the G2/G3 boundary.
 
 Gate: deterministic two-node synthetic tests prove disjoint merge, dependency
 wave, conflict failure, rollback, and preservation of unrelated files.
+
+Direct evidence: commits `f3b6b7a6` and `bd7bcbd7`; `42` focused real-Git
+tests, `61` adjacent tests, exact intent/lookalike rejection, failed-root-test
+quarantine and rollback, recovery, and cleanup passed.
 
 ### G3 Multi-Workgroup Scheduler And Lifecycle - Pending
 
@@ -311,7 +319,7 @@ wave, conflict failure, rollback, and preservation of unrelated files.
 Gate: exact-once crash-window tests and fake-provider 2/3/4-workgroup flows
 pass, including callback permutations and full cleanup.
 
-### G4 Config V3 - Pending
+### G4 Config V3 - Complete, Runtime Enablement Gated
 
 - Implement V3 version dispatch, models, validator, effective compiler,
   `config validate --json`, effective-config reporting, and migration dry-run.
@@ -323,6 +331,10 @@ pass, including callback permutations and full cleanup.
 
 Gate: V2 corpus is unchanged; valid V3 opens a generated dynamic project;
 invalid V3 fails before provider or tmux startup.
+
+Source/config evidence: commits `6c2a15ad` and `fcf07b3a`; parser, effective
+config, diagnostics, migration preview, provider/model/RolePack/capacity, and
+V2 compatibility gates passed. Opened-project enablement remains gated by G3.
 
 ### G5 Direct Source And Fake-Provider Acceptance - Pending
 
@@ -459,3 +471,6 @@ The canonical evidence fields and test matrix are defined in
 [../topics/single-lane-multi-workgroup-modification-and-test-plan.md](../topics/single-lane-multi-workgroup-modification-and-test-plan.md).
 Release evidence belongs under `history/` and must link to the exact commit,
 config digest, package hash, project root, and raw runtime paths.
+
+Wave 2 component evidence:
+[../history/single-lane-wave2-git-topology-evidence-closure-20260711.md](../history/single-lane-wave2-git-topology-evidence-closure-20260711.md).

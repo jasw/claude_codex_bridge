@@ -10,8 +10,10 @@ Date: 2026-06-24
 - C1 Config V3 and P1 adaptive RolePack projection are integrated in
   `6c2a15ad`/`fcf07b3a` and `615460ec`/`95d9a409`. Direct evidence is in
   [history/single-lane-wave1-config-rolepack-closure-20260711.md](history/single-lane-wave1-config-rolepack-closure-20260711.md).
-- Current work is Wave 2: G2 Git integration, topology/capacity generalization,
-  and evidence/failure harnesses, before the central G3 scheduler.
+- Wave 2 R2/T1/E1 is integrated through `c64ab341`; direct evidence is in
+  [history/single-lane-wave2-git-topology-evidence-closure-20260711.md](history/single-lane-wave2-git-topology-evidence-closure-20260711.md).
+- Current work is Wave 3: the central G3 ready-frontier scheduler and lifecycle
+  wiring across the landed Git, topology/capacity, Config V3, and evidence APIs.
 - Real one-to-four workgroup provider runs are intentionally unopened until
   multi-node bind, integration, recovery, lifecycle, and result gates exist.
 
@@ -1249,9 +1251,15 @@ capacity snapshots, semantic bundle/provenance boundaries, adaptive one-to-four
 selection, node state, exact-once intent, and result ownership. R1 landed in
 `0c2f19ef` and closes item 2 with sole node-map one-group execution,
 node-keyed intent/recovery, strict immaculate freshness, and no normal
-post-worker orchestrator call. C1/P1 remain active; real multi-workgroup
-execution remains gated until G2/G3 are integrated and directly tested. See
+post-worker orchestrator call. C1/P1 are integrated. See
 [history/single-lane-r1-authority-runtime-closure-20260711.md](history/single-lane-r1-authority-runtime-closure-20260711.md).
+
+2026-07-11 Wave 2 checkpoint: item 3 and the physical topology/evidence parts
+of items 5-6 are landed through `c64ab341`. R2 exact Git transactions, T1
+one-to-four-workgroup placement/capacity, and E1 strict evidence classification
+passed `249` combined tests. Real multi-workgroup execution remains gated only
+on item 4/G3 and direct source/fake acceptance. See
+[history/single-lane-wave2-git-topology-evidence-closure-20260711.md](history/single-lane-wave2-git-topology-evidence-closure-20260711.md).
 
 1. Freeze the current one-workgroup and Config V2 source/test baselines and
    land the orchestration-bundle/node-state/evidence contracts from

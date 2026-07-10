@@ -12,13 +12,12 @@ frontdesk-started macro task, one semantic orchestration bundle, and one to
 four independently reviewed `Worker + Reviewer` workgroups. Multi-lane
 Roadmap scheduling remains out of scope.
 
-G0/F1, R1/G1, C1, and P1 are complete. Commit `0c2f19ef` adds semantic task revision
-fencing, canonical effective-capacity binding, adaptive selection evidence,
-node-keyed exact-once intent/recovery, sole node-map one-group execution,
-strict immaculate freshness, V2 replan-safe compatibility, and removal of the
-normal post-worker orchestrator call. Multi-node bundles still pause before
-bind. Config V3 and adaptive RolePack contracts are now integrated; the
-current phase is Wave 2 Git integration, topology/capacity, and evidence work.
+G0/F1, R1/G1, C1/P1, and Wave 2 R2/T1/E1 are complete. The branch now has the
+controller-owned Git transaction kernel, one-to-four-workgroup physical
+topology/capacity compiler, and strict deterministic evidence harness. The
+direct engine still pauses multi-node bundles before bind, so the current
+phase is Wave 3: one owner must wire the G3 ready-frontier scheduler across
+the landed authority, Git, topology, capacity, and recovery interfaces.
 
 ## Authority
 
@@ -37,6 +36,15 @@ physical placement/lifecycle state, not a semantic dispatch graph.
 
 ## Last Landed
 
+- `c64ab341`: strict E1 campaign classification, malformed-input handling,
+  complete dynamic-role accounting, and real JSON Schema validation.
+- `502cc3e1`: deterministic 19-case E1 evidence harness and schemas.
+- `912764f6`: bounded generated topology placement and pane-order validation.
+- `64f95b1b`: one-to-four-workgroup topology/capacity and lifecycle substrate.
+- `bd7bcbd7`: durable Git authority intents, verification quarantine,
+  rollback recovery, and idempotent cleanup.
+- `f3b6b7a6`: controller-owned node/integration worktrees, reviewed commits,
+  deterministic integration, promotion, and rollback.
 - `fcf07b3a`: strict RolePack schema/provider compatibility in Config V3.
 - `6c2a15ad`: C1 Config V3 core, effective config, diagnostics, and migration preview.
 - `95d9a409`: parser-stable coder/reviewer RolePack result fields.
@@ -58,36 +66,42 @@ R1 closure evidence:
 Wave 1 closure evidence:
 [history/single-lane-wave1-config-rolepack-closure-20260711.md](history/single-lane-wave1-config-rolepack-closure-20260711.md).
 
+Wave 2 closure evidence:
+[history/single-lane-wave2-git-topology-evidence-closure-20260711.md](history/single-lane-wave2-git-topology-evidence-closure-20260711.md).
+
 ## Next Target
 
-Implement Wave 2 R2 Git integration first, then integrate T1 topology/capacity
-and E1 evidence/failure harness against the landed Wave 1 contracts.
+Implement the single-owner G3 ready-frontier scheduler. It must consume the
+landed R2/T1 APIs directly, use T1-returned compacted agent names, pass the
+latest active-workspace set to R2 cleanup, and preserve R1 exact-once intent
+and recovery semantics.
 
 ## Execution Queue
 
 - Wave 0, complete: F1 is frozen by Decision 026.
 - Wave 1, complete: R1, C1, and P1 are integrated and the combined repository
   gate is green.
-- Wave 2, active: R2 Git integration, T1 topology/capacity, and E1 evidence/
-  fake harness use separate worktrees; integration order is R2, T1, then E1.
-- Wave 3, gated: one owner closes the central ready-frontier scheduler; it is
-  not split across workers.
+- Wave 2, complete: R2, T1, and E1 were integrated in that order and passed the
+  combined Git/topology/config/workspace/evidence gate.
+- Wave 3, active: one owner closes the central ready-frontier scheduler; its
+  state transitions and crash windows are not split across workers.
 - G5-G7 acceptance: `talk2` directly owns source/fake, visible real-provider,
   UI/lifecycle, package/install/update/rollback, and final readiness decisions.
 
 ## Active TODO
 
-1. Dispatch bounded R2, T1, and E1 packages from the combined Wave 1 base.
-2. Directly audit R2 Git transactions before integrating T1 and E1.
-3. Close the single-owner G3 ready-frontier scheduler after Wave 2 is green.
+1. Freeze the G3 adapter boundary across R1, R2, T1, Config V3, and E1.
+2. Implement submit-all-ready, per-node review/rework, dependency unblocking,
+   deterministic integration, final round review, and complete release.
+3. Run source/fake crash-window and two/three/four-workgroup matrices directly.
 4. Keep real 1-4 group roots unopened until the multi-node runtime gate passes.
 
 ## Blocked By
 
-No external dependency blocks Wave 2. Internal gates intentionally block
+No external dependency blocks G3. Internal gates intentionally block real
 multi-workgroup execution, Config V3 runtime enablement, package publication,
-and multi-lane work until their predecessor phases pass. Exact package version,
-registry, tag, and publication remain explicit release-time decisions.
+and multi-lane work until G3 and its direct source/fake acceptance pass. Exact
+package version, registry, tag, and publication remain release-time decisions.
 
 ## Validation And Acceptance
 
@@ -105,17 +119,21 @@ agree with B7; script output cannot substitute for the opened project.
 
 ## Last Verified
 
+- R2+T1 combined integration gate: `180 passed`.
+- Wave 2 R2+T1+E1 and adjacent smoke gate: `249 passed`.
+- R2 real-Git P0 recovery, rollback, intent, and cleanup suite: `42 passed`;
+  adjacent workspace/lifecycle/hygiene suite: `61 passed`.
+- Changed-source `py_compile`, `git diff --check`, and clean worktree: passed.
 - Wave 1 focused gates: `176`, `270`, and `218` passed.
 - Repository non-provider-blackbox gate: `4033 passed, 2 skipped, 21 deselected`.
-- Temporary process-test residue was released project by project; automatic
-  harness cleanup remains an explicit E1/G5 issue.
-- Wave 1 evidence links, changed-file `py_compile`, and `git diff --check`: passed.
 
 ## Non-Claims And History
 
-The branch is not production-ready: multi-node bundles pause before execution,
-Git integration and the ready-frontier scheduler are absent, and no
-multi-workgroup real-provider or packed-candidate acceptance exists.
+The branch is not production-ready: multi-node bundles still pause before
+execution because the ready-frontier scheduler is absent, and no
+multi-workgroup real-provider or packed-candidate acceptance exists. Wave 2
+fixtures prove evidence classification and component contracts, not live
+multi-workgroup execution.
 
 The superseded detailed status log is preserved at
 [history/implementation-status-through-g1-foundation-20260710.md](history/implementation-status-through-g1-foundation-20260710.md).
