@@ -2,24 +2,24 @@
 
 Date: 2026-06-27
 
-## Realtime Recovery Package A — Complete (2026-07-10)
+## Realtime Recovery Package A — In Progress (review correction, 2026-07-10)
 
-The default Chat path is now provider/native transcript plus local optimistic
-turns and one stable current-reply placeholder. Tmux scrollback, completion
-snapshots, and comms are explicit Terminal/Diagnostics paths only. The gateway
-has one bounded invalidation SSE journal (project/activity/conversation
-signals; REST remains authoritative); the app consumes it with bounded
-reconnect, read-only snapshots, re-pair handling, and no send-follow or active
-view polling. Native invalidation, failure priority, stale-send no-replay,
-snapshot corruption/budget, reconnect, and no-idle-polling coverage are in the
-focused and full test suites.
+The prior `6be6a172` completion claim and its AVD record are not acceptance
+evidence: reviewer found an SSE keepalive path that scanned every registered
+project, a shared completion/invalidation journal, missing persistent SSE
+resume, and missing non-native-provider fallback/cache lifecycle gates. This
+correction is in progress until fresh source tests and a same-APK real AVD
+audit prove zero internal ProjectView/conversation requests during 180 seconds
+idle, durable offline completion recovery, resume/resync, safe fallback, and
+stale snapshot recovery. The deleted send-refresh scheduler must remain marked
+unproven until those gates complete.
 
-Fresh real AVD evidence used one installed profile APK against the server-wide
-gateway and a dedicated `test_ccb2_alpha` project: cold empty native history,
-automatic selected-agent invalidation, reconnect-banner/automatic recovery
-with project-and-agent retention, Android notification delivery, and a
-259-second zero-view-request idle audit. See
-[realtime recovery evidence](/tmp/ccb-mobile-realtime-recovery-20260710/README.md).
+Product boundary: this package does not provide unconditional global background
+completion notifications for every mounted project. Completion events are
+authoritative only after explicit ProjectView/conversation observation, plus
+selected-target native invalidation watches. Kimi/OpenCode/unknown provider
+structured fallback remains an explicit conversation-load path unless a later
+provider-specific fingerprint source is added.
 
 ## Current Phase
 

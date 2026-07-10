@@ -61,6 +61,7 @@ class ProjectHomeScreen extends StatelessWidget {
     this.taskCompletionLocalNotifications,
     this.taskCompletionSeenStore,
     this.taskCompletionUnreadStore,
+    this.invalidationCursorStore,
     super.key,
   });
 
@@ -80,6 +81,7 @@ class ProjectHomeScreen extends StatelessWidget {
   final TaskCompletionLocalNotifications? taskCompletionLocalNotifications;
   final TaskCompletionSeenDedupeStore? taskCompletionSeenStore;
   final TaskCompletionUnreadStore? taskCompletionUnreadStore;
+  final GatewayInvalidationCursorStore? invalidationCursorStore;
 
   @override
   Widget build(BuildContext context) {
@@ -99,6 +101,7 @@ class ProjectHomeScreen extends StatelessWidget {
       taskCompletionLocalNotifications: taskCompletionLocalNotifications,
       taskCompletionSeenStore: taskCompletionSeenStore,
       taskCompletionUnreadStore: taskCompletionUnreadStore,
+      invalidationCursorStore: invalidationCursorStore,
     );
   }
 }
@@ -120,6 +123,7 @@ class _ProjectHomeView extends StatefulWidget {
     required this.taskCompletionLocalNotifications,
     required this.taskCompletionSeenStore,
     required this.taskCompletionUnreadStore,
+    required this.invalidationCursorStore,
   });
 
   final MobileCcbRepository repository;
@@ -138,6 +142,7 @@ class _ProjectHomeView extends StatefulWidget {
   final TaskCompletionLocalNotifications? taskCompletionLocalNotifications;
   final TaskCompletionSeenDedupeStore? taskCompletionSeenStore;
   final TaskCompletionUnreadStore? taskCompletionUnreadStore;
+  final GatewayInvalidationCursorStore? invalidationCursorStore;
 
   @override
   State<_ProjectHomeView> createState() => _ProjectHomeViewState();
@@ -177,6 +182,7 @@ class _ProjectHomeViewState extends State<_ProjectHomeView>
   double _wideSidebarDragDelta = 0;
   bool _mobileAgentsCollapsed = false;
   late final MobileSnapshotStore _snapshotStore = MobileSnapshotStore();
+  late final GatewayInvalidationCursorStore _invalidationCursorStore;
   GatewayInvalidationConnectionState _gatewayConnectionState =
       GatewayInvalidationConnectionState.connected;
   Duration? _gatewayReconnectRetryIn;
@@ -213,6 +219,8 @@ class _ProjectHomeViewState extends State<_ProjectHomeView>
     WidgetsBinding.instance.addObserver(this);
     _taskCompletionUnreadStore =
         widget.taskCompletionUnreadStore ?? TaskCompletionUnreadStore();
+    _invalidationCursorStore =
+        widget.invalidationCursorStore ?? GatewayInvalidationCursorStore();
     _taskNotifications = TaskCompletionNotificationController(
       streamClient:
           widget.taskNotificationStreamClient ??
@@ -222,6 +230,7 @@ class _ProjectHomeViewState extends State<_ProjectHomeView>
           MethodChannelTaskCompletionLocalNotifications(),
       seenStore:
           widget.taskCompletionSeenStore ?? TaskCompletionSeenDedupeStore(),
+      cursorStore: _invalidationCursorStore,
       onTap: _handleTaskCompletionNotificationTap,
       onLiveEvent: _handleLiveTaskCompletionEvent,
       onInvalidationEvent: _handleGatewayInvalidationEvent,
@@ -408,6 +417,7 @@ class _ProjectHomeViewState extends State<_ProjectHomeView>
             .timeout(projectHomeRuntimeViewLoadTimeout);
         _rememberProjectActivity(view);
         _persistProjectViewSnapshot(view);
+        _updateNotificationWatch(view);
         return view;
       } catch (error) {
         throw await _gatewayRequestFailure(profile, error);
@@ -896,10 +906,30 @@ class _ProjectHomeViewState extends State<_ProjectHomeView>
     setState(() {
       _selectedAgentName = outcome.selectedAgentName;
     });
+    unawaited(_viewFuture.then(_updateNotificationWatch));
     unawaited(
       _clearTaskCompletionUnreadForAgent(
         projectId: _activeProjectId,
         agent: agentName,
+      ),
+    );
+  }
+
+  void _updateNotificationWatch(CcbProjectView view) {
+    if (_mode != AppRuntimeMode.pairedGateway || _activeProjectId.isEmpty) {
+      return;
+    }
+    final selected = _selectedAgentFor(view);
+    if (selected == null) {
+      _taskNotifications.updateWatch(null);
+      return;
+    }
+    _taskNotifications.updateWatch(
+      GatewayInvalidationWatch(
+        projectId: view.project.id,
+        agent: selected.name,
+        namespaceEpoch: view.namespaceEpoch,
+        provider: selected.provider,
       ),
     );
   }
@@ -949,13 +979,13 @@ class _ProjectHomeViewState extends State<_ProjectHomeView>
       hostId: profile.profile.hostId,
       deviceId: profile.profile.deviceId,
     );
-    final payload = await _snapshotStore.read(
+    final record = await _snapshotStore.readRecord(
       mobileProjectsSnapshotKey(namespace),
     );
     final projects =
-        payload == null
+        record == null
             ? const <CcbProject>[]
-            : projectsFromSnapshotPayload(payload);
+            : projectsFromSnapshotPayload(record.payload);
     if (!mounted || !_isActiveGatewayProfile(profile) || projects.isEmpty) {
       return;
     }
@@ -964,6 +994,9 @@ class _ProjectHomeViewState extends State<_ProjectHomeView>
         _serverProjectsFuture = SynchronousFuture(projects);
       }
     });
+    if (record?.isStale == true) {
+      _showSnack('Showing cached project list while reconnecting');
+    }
     // The cached list is only a startup frame. Authoritative data replaces it
     // in the background without requiring a user tap.
     try {
@@ -983,14 +1016,14 @@ class _ProjectHomeViewState extends State<_ProjectHomeView>
     if (namespace == null) {
       return;
     }
-    final payload = await _snapshotStore.readLatestWithPrefix(
+    final record = await _snapshotStore.readLatestRecordWithPrefix(
       mobileProjectViewSnapshotPrefix(
         namespace: namespace,
         projectId: projectId,
       ),
     );
     final snapshot =
-        payload == null ? null : projectViewFromSnapshotPayload(payload);
+        record == null ? null : projectViewFromSnapshotPayload(record.payload);
     if (!mounted ||
         snapshot == null ||
         snapshot.project.id != projectId ||
@@ -1002,6 +1035,9 @@ class _ProjectHomeViewState extends State<_ProjectHomeView>
       _selectedAgentName ??=
           snapshot.agents.isEmpty ? null : snapshot.agents.first.name;
     });
+    if (record?.isStale == true) {
+      _showSnack('Showing cached snapshot while reconnecting');
+    }
     unawaited(_refreshActiveView());
   }
 
@@ -1138,7 +1174,6 @@ class _ProjectHomeViewState extends State<_ProjectHomeView>
 
   void _activateGateway(ProjectHomeGatewayActivationData activation) {
     _gatewayProfileActivationSucceeded = false;
-    unawaited(_taskNotifications.stop());
     _pairingForm.applyGatewayActivation(
       gatewayUrlText: activation.gatewayUrlText,
       routeKind: activation.routeKind,
@@ -1149,9 +1184,6 @@ class _ProjectHomeViewState extends State<_ProjectHomeView>
       terminalTransportFactory: widget.gatewayTerminalTransportFactory,
     );
     final profile = session.activation.profile;
-    if (!profile.profile.scopes.contains('notify')) {
-      _startTaskCompletionNotifications(profile);
-    }
     unawaited(
       _completeGatewayProfileActivation(profile, session.projectsFuture),
     );
@@ -1169,6 +1201,7 @@ class _ProjectHomeViewState extends State<_ProjectHomeView>
       _gatewayConnectionState = GatewayInvalidationConnectionState.connected;
       _gatewayReconnectRetryIn = null;
     });
+    _startTaskCompletionNotifications(profile);
     _lifecycleResultNotifier.value = null;
     unawaited(_restoreGatewayProjectListSnapshot(profile));
   }
@@ -1188,10 +1221,6 @@ class _ProjectHomeViewState extends State<_ProjectHomeView>
     }
     _gatewayProfileActivationSucceeded = true;
     await widget.profileStore.markSuccessful(profile);
-    if (_isActiveGatewayProfile(profile) &&
-        profile.profile.scopes.contains('notify')) {
-      _startTaskCompletionNotifications(profile);
-    }
   }
 
   bool _isActiveGatewayProfile(GatewayPairedHost profile) {
@@ -1206,6 +1235,14 @@ class _ProjectHomeViewState extends State<_ProjectHomeView>
     if (profile == null) {
       return;
     }
+    final namespace = mobileSnapshotNamespace(
+      hostId: profile.profile.hostId,
+      deviceId: profile.profile.deviceId,
+    );
+    // Local app-private cleanup must not delay security fail-closed profile
+    // revocation when a platform storage plugin is unavailable.
+    unawaited(_snapshotStore.clearNamespace(namespace));
+    unawaited(_invalidationCursorStore.clear(profile));
     try {
       await widget.profileStore.delete(
         hostId: profile.profile.hostId,
@@ -1427,6 +1464,7 @@ class _ProjectHomeViewState extends State<_ProjectHomeView>
       }
       final refreshed = outcome.refreshedView!;
       _persistProjectViewSnapshot(refreshed);
+      _updateNotificationWatch(refreshed);
       setState(() {
         _viewFuture = SynchronousFuture(refreshed);
         _selectedAgentName = outcome.selectedAgentName;
@@ -1502,7 +1540,9 @@ class _ProjectHomeViewState extends State<_ProjectHomeView>
     }());
   }
 
-  Future<void> _refreshAfterGatewayReconnect() async {
+  Future<void> _refreshAfterGatewayReconnect({
+    bool requireSuccess = false,
+  }) async {
     if (_activeProjectId.isEmpty) {
       try {
         final projects = await _loadServerProjects();
@@ -1511,7 +1551,23 @@ class _ProjectHomeViewState extends State<_ProjectHomeView>
             _serverProjectsFuture = SynchronousFuture(projects);
           });
         }
-      } catch (_) {}
+      } catch (_) {
+        if (requireSuccess) {
+          rethrow;
+        }
+      }
+      return;
+    }
+    if (requireSuccess) {
+      final refreshed = await _refreshActiveView();
+      if (refreshed == null) {
+        throw StateError('gateway resync refresh did not complete');
+      }
+      if (mounted) {
+        setState(() {
+          _conversationInvalidationRevision += 1;
+        });
+      }
       return;
     }
     await _scheduleInvalidationRefresh(conversationChanged: true);
@@ -1521,6 +1577,10 @@ class _ProjectHomeViewState extends State<_ProjectHomeView>
     TaskCompletionNotificationEvent event,
   ) async {
     if (!event.isInvalidation || _mode != AppRuntimeMode.pairedGateway) {
+      return;
+    }
+    if (event.isResyncRequired) {
+      await _refreshAfterGatewayReconnect(requireSuccess: true);
       return;
     }
     if (event.kind ==
@@ -1772,8 +1832,14 @@ class _ProjectHomeViewState extends State<_ProjectHomeView>
   Future<void> _startTaskCompletionNotificationsAfterUnreadLoad(
     GatewayPairedHost profile,
   ) async {
-    await _loadTaskCompletionUnread();
     final status = await _taskNotifications.start(profile);
+    // Subscription should not wait for opportunistic local unread-cache IO.
+    // A stream event remains durable in its own unread store if this load is
+    // slow/corrupt, and the UI refreshes it independently.
+    unawaited(_loadTaskCompletionUnread());
+    if (_activeProjectId.isNotEmpty) {
+      unawaited(_viewFuture.then(_updateNotificationWatch));
+    }
     if (!mounted) {
       return;
     }

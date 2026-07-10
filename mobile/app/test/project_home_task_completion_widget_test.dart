@@ -31,6 +31,7 @@ void main() {
             taskCompletionUnreadStore: TaskCompletionUnreadStore(
               secureStore: MemorySecureStore(),
             ),
+            invalidationCursorStore: _cursorStore(),
           ),
         ),
       );
@@ -70,6 +71,7 @@ void main() {
           taskCompletionUnreadStore: TaskCompletionUnreadStore(
             secureStore: MemorySecureStore(),
           ),
+          invalidationCursorStore: _cursorStore(),
         ),
       ),
     );
@@ -119,10 +121,12 @@ void main() {
             taskCompletionUnreadStore: TaskCompletionUnreadStore(
               secureStore: MemorySecureStore(),
             ),
+            invalidationCursorStore: _cursorStore(),
           ),
         ),
       );
       await tester.pumpAndSettle();
+      await _pumpUntilSubscribed(tester, streamClient);
 
       streamClient.add(
         _completionEvent(
@@ -131,7 +135,7 @@ void main() {
           completedAt: DateTime.utc(2020),
         ),
       );
-      await tester.pumpAndSettle();
+      await _pumpNotificationEvent(tester);
 
       expect(localNotifications.shown, isEmpty);
       expect(
@@ -166,14 +170,19 @@ void main() {
           taskCompletionUnreadStore: TaskCompletionUnreadStore(
             secureStore: MemorySecureStore(),
           ),
+          invalidationCursorStore: _cursorStore(),
         ),
       ),
     );
     await tester.pumpAndSettle();
+    await _pumpUntilSubscribed(tester, streamClient);
 
     streamClient.add(_completionEvent(dedupeKey: 'live-lead', agent: 'lead'));
-    await tester.pumpAndSettle();
+    await _pumpNotificationEvent(tester);
 
+    expect(streamClient.delivered.map((event) => event.dedupeKey), [
+      'live-lead',
+    ]);
     expect(localNotifications.shown.map((event) => event.dedupeKey), [
       'live-lead',
     ]);
@@ -181,6 +190,98 @@ void main() {
       find.byKey(const ValueKey('project-unread-star-proj-demo')),
       findsOneWidget,
     );
+  });
+
+  testWidgets('resync invalidation refreshes the server project list', (
+    tester,
+  ) async {
+    final streamClient = _FakeTaskCompletionStreamClient();
+    final localNotifications = _FakeTaskCompletionLocalNotifications();
+    final repository = _ResyncRecordingGatewayRepository();
+    final profileStore = await _profileStoreWith([
+      _pairedHost(scopes: const {'view', 'focus', 'notify'}),
+    ]);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ProjectHomeScreen(
+          repository: FakeMobileCcbRepository.demo(),
+          profileStore: profileStore,
+          autoActivateStoredProfile: true,
+          gatewayRepositoryFactory: (_) => repository,
+          gatewayTerminalTransportFactory: (_) => RecordingTerminalTransport(),
+          taskNotificationStreamClient: streamClient,
+          taskCompletionLocalNotifications: localNotifications,
+          taskCompletionSeenStore: TaskCompletionSeenDedupeStore(
+            secureStore: MemorySecureStore(),
+          ),
+          taskCompletionUnreadStore: TaskCompletionUnreadStore(
+            secureStore: MemorySecureStore(),
+          ),
+          invalidationCursorStore: _cursorStore(),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await _pumpUntilSubscribed(tester, streamClient);
+    final callsBefore = repository.listProjectsCalls;
+
+    streamClient.add(
+      _invalidationEvent(
+        kind: TaskCompletionNotificationEvent.resyncRequiredKind,
+      ),
+    );
+    await _pumpNotificationEvent(tester);
+
+    expect(repository.listProjectsCalls, greaterThan(callsBefore));
+    expect(localNotifications.shown, isEmpty);
+  });
+
+  testWidgets('resync invalidation refreshes the active project view', (
+    tester,
+  ) async {
+    final streamClient = _FakeTaskCompletionStreamClient();
+    final localNotifications = _FakeTaskCompletionLocalNotifications();
+    final repository = _ResyncRecordingGatewayRepository();
+    final profileStore = await _profileStoreWith([
+      _pairedHost(scopes: const {'view', 'focus', 'notify'}),
+    ]);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ProjectHomeScreen(
+          repository: FakeMobileCcbRepository.demo(),
+          profileStore: profileStore,
+          autoActivateStoredProfile: true,
+          gatewayRepositoryFactory: (_) => repository,
+          gatewayTerminalTransportFactory: (_) => RecordingTerminalTransport(),
+          taskNotificationStreamClient: streamClient,
+          taskCompletionLocalNotifications: localNotifications,
+          taskCompletionSeenStore: TaskCompletionSeenDedupeStore(
+            secureStore: MemorySecureStore(),
+          ),
+          taskCompletionUnreadStore: TaskCompletionUnreadStore(
+            secureStore: MemorySecureStore(),
+          ),
+          invalidationCursorStore: _cursorStore(),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await _pumpUntilSubscribed(tester, streamClient);
+    await tester.tap(find.byKey(const ValueKey('project-open-proj-demo')));
+    await tester.pumpAndSettle();
+    final callsBefore = repository.getProjectViewCalls;
+
+    streamClient.add(
+      _invalidationEvent(
+        kind: TaskCompletionNotificationEvent.resyncRequiredKind,
+      ),
+    );
+    await _pumpNotificationEvent(tester);
+
+    expect(repository.getProjectViewCalls, greaterThan(callsBefore));
+    expect(localNotifications.shown, isEmpty);
   });
 
   testWidgets('visible target completion is consumed without notification', (
@@ -208,17 +309,19 @@ void main() {
           taskCompletionUnreadStore: TaskCompletionUnreadStore(
             secureStore: MemorySecureStore(),
           ),
+          invalidationCursorStore: _cursorStore(),
         ),
       ),
     );
     await tester.pumpAndSettle();
+    await _pumpUntilSubscribed(tester, streamClient);
     await tester.tap(find.byKey(const ValueKey('project-open-proj-demo')));
     await tester.pumpAndSettle();
 
     streamClient.add(
       _completionEvent(dedupeKey: 'visible-mobile', agent: 'mobile'),
     );
-    await tester.pumpAndSettle();
+    await _pumpNotificationEvent(tester);
 
     expect(localNotifications.shown, isEmpty);
     expect(
@@ -252,16 +355,21 @@ void main() {
           taskCompletionUnreadStore: TaskCompletionUnreadStore(
             secureStore: MemorySecureStore(),
           ),
+          invalidationCursorStore: _cursorStore(),
         ),
       ),
     );
     await tester.pumpAndSettle();
+    await _pumpUntilSubscribed(tester, streamClient);
     await tester.tap(find.byKey(const ValueKey('project-open-proj-demo')));
     await tester.pumpAndSettle();
 
     streamClient.add(_completionEvent(dedupeKey: 'lead-unread', agent: 'lead'));
-    await tester.pumpAndSettle();
+    await _pumpNotificationEvent(tester);
 
+    expect(streamClient.delivered.map((event) => event.dedupeKey), [
+      'lead-unread',
+    ]);
     expect(localNotifications.shown.map((event) => event.dedupeKey), [
       'lead-unread',
     ]);
@@ -302,15 +410,17 @@ void main() {
             taskCompletionUnreadStore: TaskCompletionUnreadStore(
               secureStore: MemorySecureStore(),
             ),
+            invalidationCursorStore: _cursorStore(),
           ),
         ),
       );
       await tester.pumpAndSettle();
+      await _pumpUntilSubscribed(tester, streamClient);
 
       streamClient.add(
         _completionEvent(dedupeKey: 'mobile-unread', agent: 'mobile'),
       );
-      await tester.pumpAndSettle();
+      await _pumpNotificationEvent(tester);
 
       expect(
         find.byKey(const ValueKey('project-unread-star-proj-demo')),
@@ -330,6 +440,30 @@ void main() {
       );
     },
   );
+}
+
+Future<void> _pumpNotificationEvent(WidgetTester tester) async {
+  await tester.pump();
+  await tester.pump();
+  await tester.pumpAndSettle();
+}
+
+GatewayInvalidationCursorStore _cursorStore() =>
+    GatewayInvalidationCursorStore(secureStore: MemorySecureStore());
+
+Future<void> _pumpUntilSubscribed(
+  WidgetTester tester,
+  _FakeTaskCompletionStreamClient streamClient,
+) async {
+  for (
+    var attempt = 0;
+    attempt < 8 && !streamClient.hasListener;
+    attempt += 1
+  ) {
+    await tester.pump();
+  }
+  expect(streamClient.subscribeCalls, greaterThan(0));
+  expect(streamClient.hasListener, isTrue);
 }
 
 Future<GatewayHostProfileStore> _profileStoreWith(
@@ -363,15 +497,24 @@ class _FakeTaskCompletionStreamClient
   final _controller =
       StreamController<TaskCompletionNotificationEvent>.broadcast();
   var subscribeCalls = 0;
+  final delivered = <TaskCompletionNotificationEvent>[];
+  bool get hasListener => _controller.hasListener;
 
   void add(TaskCompletionNotificationEvent event) {
     _controller.add(event);
   }
 
   @override
-  Stream<TaskCompletionNotificationEvent> subscribe(GatewayPairedHost host) {
+  Stream<TaskCompletionNotificationEvent> subscribe(
+    GatewayPairedHost host, [
+    String? lastEventId,
+    GatewayInvalidationWatch? watch,
+  ]) {
     subscribeCalls += 1;
-    return _controller.stream;
+    return _controller.stream.map((event) {
+      delivered.add(event);
+      return event;
+    });
   }
 }
 
@@ -402,6 +545,23 @@ class _FakeTaskCompletionLocalNotifications
   }
 }
 
+class _ResyncRecordingGatewayRepository extends RecordingGatewayRepository {
+  var listProjectsCalls = 0;
+  var getProjectViewCalls = 0;
+
+  @override
+  Future<List<CcbProject>> listProjects() {
+    listProjectsCalls += 1;
+    return super.listProjects();
+  }
+
+  @override
+  Future<CcbProjectView> getProjectView(String projectId) {
+    getProjectViewCalls += 1;
+    return super.getProjectView(projectId);
+  }
+}
+
 TaskCompletionNotificationEvent _completionEvent({
   required String dedupeKey,
   required String agent,
@@ -413,8 +573,19 @@ TaskCompletionNotificationEvent _completionEvent({
     projectId: 'proj-demo',
     projectShortName: 'demo',
     agent: agent,
-    completedAt:
-        completedAt ?? DateTime.now().toUtc().add(const Duration(seconds: 5)),
+    completedAt: completedAt ?? DateTime.utc(2099),
     dedupeKey: dedupeKey,
+  );
+}
+
+TaskCompletionNotificationEvent _invalidationEvent({required String kind}) {
+  return TaskCompletionNotificationEvent(
+    id: 'event-$kind',
+    kind: kind,
+    projectId: '',
+    projectShortName: '',
+    agent: '',
+    completedAt: DateTime.utc(2099),
+    dedupeKey: 'invalidation:$kind',
   );
 }

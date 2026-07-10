@@ -2,18 +2,27 @@
 
 Date: 2026-06-18
 
-## Phase 4G: Realtime Authority, Recovery, and Bounded Cache
+## Phase 4G: Realtime Authority, Recovery, and Bounded Cache — In Progress (review correction)
 
-Status: Complete (2026-07-10).
+Status: In Progress (review correction, 2026-07-10).
 
 - provider/native Chat authority replaces automatic terminal-history fallback;
-- one gateway invalidation SSE journal signals project/activity/conversation
-  changes without per-client registry scans;
+- one gateway invalidation SSE journal signals explicitly observed
+  project/activity/conversation changes without per-client registry scans;
 - app refreshes from invalidations, uses bounded reconnect and offline-safe
   sends, and retains bounded read-only snapshots by host/project/agent/epoch;
 - active-send scheduler and active-project 2-second polling are removed;
 - real emulator evidence covers cold startup, automatic recovery, notification
-  delivery, and a 259-second zero-view-request idle window.
+  delivery, and a 259-second zero-view-request idle window, but final acceptance
+  remains blocked until `resync_required`, cursor confirmation, stale snapshot
+  UI, and HTTP audit evidence corrections are reviewed.
+
+Product boundary for this package: completion notifications are generated from
+explicit ProjectView/conversation observations and selected-target native
+invalidation watches. They are not yet an unconditional all-project background
+completion detector. Kimi/OpenCode/unknown-provider structured fallback is
+visible on explicit conversation loads; it does not currently produce selected
+SSE fingerprints unless a provider-native file fingerprint exists.
 
 Evidence: [realtime recovery packet](/tmp/ccb-mobile-realtime-recovery-20260710/README.md).
 

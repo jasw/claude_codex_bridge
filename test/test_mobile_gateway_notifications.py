@@ -202,13 +202,35 @@ def test_notification_watcher_is_shared_across_sse_clients(tmp_path: Path) -> No
     _, claim = service.dispatch_post('/v1/pairing/claim', {'pairing_code': pairing['pairing_code']})
     headers = {'Authorization': f'Bearer {claim["device_token"]}'}
 
-    service.notification_events_since('/v1/mobile/notifications', headers)
+    path = ('/v1/mobile/notifications?watch_project_id=proj-demo&watch_agent=mobile'
+            '&watch_namespace_epoch=7&watch_provider=codex')
+    service.notification_events_since(path, headers)
     first_scan_count = len([call for call in client.calls if call[0] == 'project_view'])
-    service.notification_events_since('/v1/mobile/notifications', headers)
+    service.notification_events_since(path, headers)
     second_scan_count = len([call for call in client.calls if call[0] == 'project_view'])
 
-    assert first_scan_count == 1
+    assert first_scan_count == 0
     assert second_scan_count == first_scan_count
+    audit = service.invalidation_audit_payload()
+    assert audit['watch_project_view_calls'] == 0
+    assert audit['ccbd_project_view_requests'] == 0
+    assert audit['mobile_conversation_requests'] == 0
+
+
+def test_notification_audit_http_route_exposes_low_sensitive_counters(tmp_path: Path) -> None:
+    client = _ActivityCcbdClient(project_id='proj-demo', project_root='/srv/demo', display_name='demo')
+    service = _service(client, mobile_dir=tmp_path / 'mobile')
+    pairing = service.create_pairing_payload(gateway_url='http://127.0.0.1:8787')
+    _, claim = service.dispatch_post('/v1/pairing/claim', {'pairing_code': pairing['pairing_code']})
+    headers = {'Authorization': f'Bearer {claim["device_token"]}'}
+
+    service.notification_events_since('/v1/mobile/notifications?once=1', headers)
+    status, payload = service.dispatch_get('/v1/mobile/notifications/audit', headers)
+
+    assert status == 200
+    assert payload['status'] == 'ok'
+    assert payload['audit']['watch_refreshes'] >= 1
+    assert 'ccbd_project_view_requests' in payload['audit']
 
 
 def test_notification_service_requires_notify_scope_and_default_pairing_grants_it(tmp_path: Path) -> None:
@@ -237,7 +259,7 @@ def test_notification_service_requires_notify_scope_and_default_pairing_grants_i
     assert denied.value.status_code == 403
 
 
-def test_notification_service_scans_all_registered_projects(tmp_path: Path) -> None:
+def test_notification_service_observes_only_explicit_project_views(tmp_path: Path) -> None:
     first = _ActivityCcbdClient(project_id='proj-one', project_root='/srv/one', display_name='one')
     second = _ActivityCcbdClient(project_id='proj-two', project_root='/srv/two', display_name='two')
     registry = MobileGatewayProjectRegistry(
@@ -252,8 +274,12 @@ def test_notification_service_scans_all_registered_projects(tmp_path: Path) -> N
     headers = {'Authorization': f'Bearer {claim["device_token"]}'}
 
     assert service.notification_events_since('/v1/mobile/notifications?once=1', headers) == []
+    service.project_view_payload('proj-one')
+    service.project_view_payload('proj-two')
     first.activity_state = 'idle'
     second.activity_state = 'idle'
+    service.project_view_payload('proj-one')
+    service.project_view_payload('proj-two')
     events = service.notification_events_since('/v1/mobile/notifications?once=1', headers)
 
     completion_events = [event for event in events if event['kind'] == 'task_completed']
@@ -284,7 +310,9 @@ def test_notification_completion_records_project_activity(tmp_path: Path) -> Non
     headers = {'Authorization': f'Bearer {claim["device_token"]}'}
 
     assert service.notification_events_since('/v1/mobile/notifications?once=1', headers) == []
+    service.project_view_payload('proj-demo')
     client.activity_state = 'idle'
+    service.project_view_payload('proj-demo')
     events = service.notification_events_since('/v1/mobile/notifications?once=1', headers)
     projects = service.projects_payload()
 
@@ -300,7 +328,9 @@ def test_notification_http_sse_once_stream_smoke(tmp_path: Path) -> None:
     token = str(claim['device_token'])
     headers = {'Authorization': f'Bearer {token}'}
     assert service.notification_events_since('/v1/mobile/notifications?once=1', headers) == []
+    service.project_view_payload('proj-demo')
     client.activity_state = 'idle'
+    service.project_view_payload('proj-demo')
 
     server = build_mobile_gateway_server(parse_listen_address('127.0.0.1:0'), service)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -323,3 +353,36 @@ def test_notification_http_sse_once_stream_smoke(tmp_path: Path) -> None:
     assert 'data: ' in body
     assert 'proj-demo:7:mobile:1' in body
     assert '/tmp/private.sock' not in body
+
+
+def test_completion_survives_more_than_one_hundred_invalidation_updates(tmp_path: Path) -> None:
+    store = MobileNotificationStore(tmp_path / 'mobile', recent_limit=8, completion_limit=128)
+    active = MobileNotificationSnapshot('p', 'p', 1, 'agent', 'active', '2026-07-10T00:00:00Z')
+    done = MobileNotificationSnapshot('p', 'p', 1, 'agent', 'idle', '2026-07-10T00:00:01Z')
+    store.sync_snapshots([active])
+    completion = store.sync_snapshots([done])[0]
+    baseline = MobileInvalidationSnapshot('p', 'p', 1, 'agent', 'idle', 'a', '2026-07-10T00:00:02Z')
+    store.sync_invalidations([baseline])
+    for index in range(140):
+        store.sync_invalidations([
+            MobileInvalidationSnapshot(
+                'p', 'p', 1, 'agent', 'idle', f'fingerprint-{index}',
+                f'2026-07-10T00:03:{index % 60:02d}Z',
+            )
+        ])
+    events = store.events_since('mnotif_000000000000')
+    assert any(event.id == completion.id and event.kind == 'task_completed' for event in events)
+    assert len(store._invalidation_events()) <= 8
+
+
+def test_trimmed_cursor_returns_explicit_resync(tmp_path: Path) -> None:
+    store = MobileNotificationStore(tmp_path / 'mobile', recent_limit=1, completion_limit=1)
+    first = MobileNotificationSnapshot('p', 'p', 1, 'a', 'active', '2026-07-10T00:00:00Z')
+    done = MobileNotificationSnapshot('p', 'p', 1, 'a', 'idle', '2026-07-10T00:00:01Z')
+    again = MobileNotificationSnapshot('p', 'p', 1, 'a', 'active', '2026-07-10T00:00:02Z')
+    final = MobileNotificationSnapshot('p', 'p', 1, 'a', 'idle', '2026-07-10T00:00:03Z')
+    store.sync_snapshots([first, done, again, final])
+    events = store.events_since('mnotif_000000000001')
+    assert events[-1].kind == 'resync_required'
+    assert events[-1].id.startswith('mnotif_resync_')
+    assert store.events_since(events[-1].id) == []

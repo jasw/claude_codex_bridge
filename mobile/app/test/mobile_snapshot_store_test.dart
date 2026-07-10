@@ -85,4 +85,74 @@ void main() {
     await file.writeAsString('{not json');
     expect(await store.read('three'), isNull);
   });
+
+  test(
+    'serializes concurrent writes, marks TTL stale, and clears a profile',
+    () async {
+      final directory = await Directory.systemTemp.createTemp(
+        'ccb-snapshot-test',
+      );
+      addTearDown(() => directory.delete(recursive: true));
+      final file = File('${directory.path}/snapshots.json');
+      var now = DateTime.utc(2026, 7, 10, 0, 0);
+      final store = MobileSnapshotStore(
+        fileFactory: () async => file,
+        maxAge: const Duration(minutes: 5),
+        clock: () => now,
+      );
+      const namespace = 'host:device';
+      await Future.wait([
+        store.write(mobileProjectsSnapshotKey(namespace), {
+          'projects': ['one'],
+        }),
+        store.write(
+          mobileProjectViewSnapshotKey(
+            namespace: namespace,
+            projectId: 'one',
+            namespaceEpoch: 7,
+          ),
+          {
+            'view': {'project': 'one'},
+          },
+        ),
+        store.write(
+          mobileConversationSnapshotKey(
+            namespace: namespace,
+            projectId: 'one',
+            agent: 'lead',
+            namespaceEpoch: 7,
+          ),
+          {
+            'conversation': ['hello'],
+          },
+        ),
+      ]);
+      expect(await store.read(mobileProjectsSnapshotKey(namespace)), isNotNull);
+      expect(
+        await store.readLatestWithPrefix(
+          mobileProjectViewSnapshotPrefix(
+            namespace: namespace,
+            projectId: 'one',
+          ),
+        ),
+        isNotNull,
+      );
+      now = now.add(const Duration(minutes: 6));
+      expect(
+        (await store.readRecord(mobileProjectsSnapshotKey(namespace)))?.isStale,
+        isTrue,
+      );
+      await store.clearNamespace(namespace);
+      expect(await store.read(mobileProjectsSnapshotKey(namespace)), isNull);
+      expect(
+        await store.readLatestWithPrefix(
+          mobileProjectViewSnapshotPrefix(
+            namespace: namespace,
+            projectId: 'one',
+          ),
+        ),
+        isNull,
+      );
+    },
+  );
 }

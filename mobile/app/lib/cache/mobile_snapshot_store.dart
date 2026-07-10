@@ -4,13 +4,28 @@ import 'dart:io';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
-/// Bounded, read-only startup snapshots. Pairing credentials intentionally
-/// never enter this file: callers provide a stable host namespace, not a token.
+/// A cached payload is always visibly distinguishable from live gateway data.
+class MobileSnapshotRead {
+  const MobileSnapshotRead({
+    required this.payload,
+    required this.capturedAt,
+    required this.isStale,
+  });
+
+  final Map<String, Object?> payload;
+  final DateTime capturedAt;
+  final bool isStale;
+}
+
+/// Bounded app-private startup snapshots. Device tokens never enter this file:
+/// callers pass only a stable host/device namespace. Every operation is
+/// serialized so concurrent project and conversation writes cannot lose data.
 class MobileSnapshotStore {
   MobileSnapshotStore({
     Future<File> Function()? fileFactory,
     this.maxEntries = 48,
     this.maxBytes = 2 * 1024 * 1024,
+    this.maxAge = const Duration(minutes: 15),
     DateTime Function()? clock,
   }) : _fileFactory = fileFactory ?? _defaultFile,
        _clock = clock ?? DateTime.now;
@@ -21,66 +36,119 @@ class MobileSnapshotStore {
   final DateTime Function() _clock;
   final int maxEntries;
   final int maxBytes;
+  final Duration maxAge;
+  Future<void> _tail = Future<void>.value();
 
   static Future<File> _defaultFile() async {
     final directory = await getApplicationDocumentsDirectory();
     return File(p.join(directory.path, 'mobile_readonly_snapshots.json'));
   }
 
-  Future<Map<String, Object?>?> read(String key) async {
-    final data = await _readData();
-    final entries = _entries(data);
-    final raw = entries[key];
-    if (raw is! Map) {
-      return null;
-    }
-    final payload = raw['payload'];
-    if (payload is! Map) {
-      return null;
-    }
-    return {
-      for (final item in payload.entries) item.key.toString(): item.value,
-    };
+  Future<Map<String, Object?>?> read(String key) async =>
+      (await readRecord(key))?.payload;
+
+  Future<Map<String, Object?>?> readLatestWithPrefix(String prefix) async =>
+      (await readLatestRecordWithPrefix(prefix))?.payload;
+
+  Future<MobileSnapshotRead?> readRecord(String key) {
+    return _serialize(() async => _recordFor(_entries(await _readData())[key]));
   }
 
-  Future<Map<String, Object?>?> readLatestWithPrefix(String prefix) async {
-    final entries = _entries(await _readData());
-    MapEntry<String, Object?>? latest;
-    for (final entry in entries.entries) {
-      if (!entry.key.startsWith(prefix) || entry.value is! Map) {
-        continue;
+  Future<MobileSnapshotRead?> readLatestRecordWithPrefix(String prefix) {
+    return _serialize(() async {
+      final entries = _entries(await _readData());
+      MapEntry<String, Object?>? latest;
+      for (final entry in entries.entries) {
+        if (!entry.key.startsWith(prefix) || entry.value is! Map) {
+          continue;
+        }
+        if (latest == null ||
+            _capturedAt(entry.value).isAfter(_capturedAt(latest.value))) {
+          latest = entry;
+        }
       }
-      if (latest == null ||
-          _updatedAt(entry.value).isAfter(_updatedAt(latest.value))) {
-        latest = entry;
-      }
-    }
-    final raw = latest?.value;
-    final payload = raw is Map ? raw['payload'] : null;
-    if (payload is! Map) {
-      return null;
-    }
-    return {
-      for (final item in payload.entries) item.key.toString(): item.value,
-    };
+      return _recordFor(latest?.value);
+    });
   }
 
-  Future<void> write(String key, Map<String, Object?> payload) async {
-    final normalized = key.trim();
-    if (normalized.isEmpty) {
-      return;
+  Future<void> write(String key, Map<String, Object?> payload) {
+    return _serialize(() async {
+      final normalized = key.trim();
+      if (normalized.isEmpty) {
+        return;
+      }
+      final data = await _readData();
+      final entries = _entries(data);
+      final captured = _clock().toUtc().toIso8601String();
+      entries[normalized] = {
+        'captured_at': captured,
+        // Keep the old name for forward compatibility with cache inspectors.
+        'updated_at': captured,
+        'payload': payload,
+      };
+      data
+        ..['schema_version'] = schemaVersion
+        ..['entries'] = _boundedEntries(entries);
+      await _writeData(data);
+    });
+  }
+
+  Future<void> clearPrefix(String prefix) {
+    return _serialize(() async {
+      final data = await _readData();
+      final entries = _entries(data);
+      entries.removeWhere((key, _) => key.startsWith(prefix));
+      data
+        ..['schema_version'] = schemaVersion
+        ..['entries'] = entries;
+      await _writeData(data);
+    });
+  }
+
+  Future<void> clearNamespace(String namespace) async {
+    // Queue as one operation; calling three public methods concurrently would
+    // be correct but needlessly permits a reader between individual clears.
+    await _serialize(() async {
+      final data = await _readData();
+      final entries = _entries(data);
+      entries.removeWhere(
+        (key, _) =>
+            key == 'projects:$namespace' ||
+            key.startsWith('view:$namespace:') ||
+            key.startsWith('conversation:$namespace:'),
+      );
+      data
+        ..['schema_version'] = schemaVersion
+        ..['entries'] = entries;
+      await _writeData(data);
+    });
+  }
+
+  Future<T> _serialize<T>(Future<T> Function() action) {
+    final next = _tail.then<T>((_) => action());
+    _tail = next.then<void>(
+      (_) {},
+      onError: (Object error, StackTrace stackTrace) {},
+    );
+    return next;
+  }
+
+  MobileSnapshotRead? _recordFor(Object? raw) {
+    if (raw is! Map || raw['payload'] is! Map) {
+      return null;
     }
-    final data = await _readData();
-    final entries = _entries(data);
-    entries[normalized] = {
-      'updated_at': _clock().toUtc().toIso8601String(),
-      'payload': payload,
-    };
-    final bounded = _boundedEntries(entries);
-    data
-      ..['schema_version'] = schemaVersion
-      ..['entries'] = bounded;
-    await _writeData(data);
+    final capturedAt = _capturedAt(raw);
+    if (capturedAt.millisecondsSinceEpoch == 0) {
+      return null;
+    }
+    final payload = raw['payload'] as Map;
+    return MobileSnapshotRead(
+      payload: {
+        for (final item in payload.entries) item.key.toString(): item.value,
+      },
+      capturedAt: capturedAt,
+      isStale: _clock().toUtc().difference(capturedAt) > maxAge,
+    );
   }
 
   Future<Map<String, Object?>> _readData() async {
@@ -96,7 +164,7 @@ class MobileSnapshotStore {
         };
       }
     } catch (_) {
-      // A partial/corrupt cache must never block a real gateway load.
+      // Corrupt/interrupted local data is ignored; live gateway recovery wins.
     }
     return _emptyData();
   }
@@ -109,8 +177,6 @@ class MobileSnapshotStore {
       await temp.writeAsString(jsonEncode(data));
       await temp.rename(file.path);
     } catch (_) {
-      // Snapshots are opportunistic. Do not surface local storage failures as
-      // connection failures, and leave a later write free to recover.
       try {
         if (await temp.exists()) {
           await temp.delete();
@@ -121,13 +187,14 @@ class MobileSnapshotStore {
 
   Map<String, Object?> _boundedEntries(Map<String, Object?> entries) {
     final ordered =
-        entries.entries.where((entry) => entry.value is Map).toList()
-          ..sort((a, b) => _updatedAt(a.value).compareTo(_updatedAt(b.value)));
+        entries.entries.where((entry) => entry.value is Map).toList()..sort(
+          (a, b) => _capturedAt(a.value).compareTo(_capturedAt(b.value)),
+        );
     final result = <String, Object?>{};
     var usedBytes = 0;
     for (final entry in ordered.reversed) {
-      final encoded = jsonEncode({entry.key: entry.value});
-      final byteCount = utf8.encode(encoded).length;
+      final byteCount =
+          utf8.encode(jsonEncode({entry.key: entry.value})).length;
       if (result.length >= maxEntries || usedBytes + byteCount > maxBytes) {
         continue;
       }
@@ -144,15 +211,16 @@ class MobileSnapshotStore {
 
   static Map<String, Object?> _entries(Map<String, Object?> data) {
     final raw = data['entries'];
-    if (raw is Map) {
-      return {for (final item in raw.entries) item.key.toString(): item.value};
-    }
-    return <String, Object?>{};
+    return raw is Map
+        ? {for (final item in raw.entries) item.key.toString(): item.value}
+        : <String, Object?>{};
   }
 
-  static DateTime _updatedAt(Object? value) {
+  static DateTime _capturedAt(Object? value) {
     if (value is Map) {
-      return DateTime.tryParse((value['updated_at'] ?? '').toString()) ??
+      return DateTime.tryParse(
+            (value['captured_at'] ?? value['updated_at'] ?? '').toString(),
+          )?.toUtc() ??
           DateTime.fromMillisecondsSinceEpoch(0, isUtc: true);
     }
     return DateTime.fromMillisecondsSinceEpoch(0, isUtc: true);
@@ -184,5 +252,4 @@ String mobileConversationSnapshotKey({
   required String agent,
   required int namespaceEpoch,
 }) =>
-    'conversation:$namespace:${Uri.encodeComponent(projectId)}:'
-    '${Uri.encodeComponent(agent)}:$namespaceEpoch';
+    'conversation:$namespace:${Uri.encodeComponent(projectId)}:${Uri.encodeComponent(agent)}:$namespaceEpoch';

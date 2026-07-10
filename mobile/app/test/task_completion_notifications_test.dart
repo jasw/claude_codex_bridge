@@ -262,6 +262,158 @@ void main() {
       },
     );
 
+    test(
+      'persists SSE id and resumes it after a normal controller restart',
+      () async {
+        final secureStore = MemorySecureStore();
+        final cursorStore = GatewayInvalidationCursorStore(
+          secureStore: secureStore,
+        );
+        final host = _host(scopes: const {'notify'});
+        final firstClient = _FakeTaskCompletionStreamClient();
+        final first = _controller(
+          streamClient: firstClient,
+          localNotifications: _FakeTaskCompletionLocalNotifications(),
+          cursorStore: cursorStore,
+        );
+        await first.start(host);
+        firstClient.add(_event(id: 'mnotif_000000000042', dedupeKey: 'cursor'));
+        await _drain();
+        expect(await cursorStore.read(host), 'mnotif_000000000042');
+        await first.dispose();
+
+        final resumedClient = _FakeTaskCompletionStreamClient();
+        final resumed = _controller(
+          streamClient: resumedClient,
+          localNotifications: _FakeTaskCompletionLocalNotifications(),
+          cursorStore: cursorStore,
+        );
+        await resumed.start(host);
+        expect(resumedClient.lastEventIds, ['mnotif_000000000042']);
+        await resumed.dispose();
+      },
+    );
+
+    test(
+      'handles streamed events sequentially before confirming the cursor',
+      () async {
+        final secureStore = MemorySecureStore();
+        final cursorStore = GatewayInvalidationCursorStore(
+          secureStore: secureStore,
+        );
+        final streamClient = _FakeTaskCompletionStreamClient();
+        final handled = <String>[];
+        final releaseFirst = Completer<void>();
+        var blockedFirst = false;
+        final controller = _controller(
+          streamClient: streamClient,
+          localNotifications: _FakeTaskCompletionLocalNotifications(),
+          cursorStore: cursorStore,
+          onInvalidationEvent: (event) async {
+            handled.add(event.id);
+            if (event.id == 'mnotif_000000000001' && !blockedFirst) {
+              blockedFirst = true;
+              await releaseFirst.future;
+            }
+          },
+        );
+        final host = _host(scopes: const {'notify'});
+
+        await controller.start(host);
+        streamClient
+          ..add(
+            _invalidation(
+              id: 'mnotif_000000000001',
+              kind: TaskCompletionNotificationEvent.conversationChangedKind,
+            ),
+          )
+          ..add(
+            _invalidation(
+              id: 'mnotif_000000000002',
+              kind: TaskCompletionNotificationEvent.conversationChangedKind,
+            ),
+          );
+        await _drain();
+        releaseFirst.complete();
+        await _drain();
+        await _drain();
+
+        expect(handled, ['mnotif_000000000001', 'mnotif_000000000002']);
+        expect(await cursorStore.read(host), 'mnotif_000000000002');
+
+        await controller.dispose();
+      },
+    );
+
+    test(
+      'stopped controller drops queued events before cursor or notification side effects',
+      () async {
+        final secureStore = MemorySecureStore();
+        final cursorStore = GatewayInvalidationCursorStore(
+          secureStore: secureStore,
+        );
+        final streamClient = _FakeTaskCompletionStreamClient();
+        final localNotifications = _FakeTaskCompletionLocalNotifications();
+        final releaseEvent = Completer<void>();
+        final controller = _controller(
+          streamClient: streamClient,
+          localNotifications: localNotifications,
+          cursorStore: cursorStore,
+          onInvalidationEvent: (_) => releaseEvent.future,
+        );
+        final host = _host(scopes: const {'notify'});
+
+        await controller.start(host);
+        streamClient.add(
+          _event(id: 'mnotif_000000000099', dedupeKey: 'stopped'),
+        );
+        await _drain();
+
+        await controller.stop();
+        releaseEvent.complete();
+        await _drain();
+        await _drain();
+
+        expect(await cursorStore.read(host), isNull);
+        expect(localNotifications.shown, isEmpty);
+
+        await controller.dispose();
+      },
+    );
+
+    test('invalidation handler failure leaves cursor unconfirmed', () async {
+      final secureStore = MemorySecureStore();
+      final cursorStore = GatewayInvalidationCursorStore(
+        secureStore: secureStore,
+      );
+      final streamClient = _FakeTaskCompletionStreamClient();
+      final errors = <Object>[];
+      final controller = _controller(
+        streamClient: streamClient,
+        localNotifications: _FakeTaskCompletionLocalNotifications(),
+        cursorStore: cursorStore,
+        onInvalidationEvent:
+            (_) => Future<void>.error(StateError('resync failed')),
+        onStreamError: errors.add,
+      );
+      final host = _host(scopes: const {'notify'});
+
+      await controller.start(host);
+      streamClient.add(
+        _invalidation(
+          id: 'mnotif_000000000123',
+          kind: TaskCompletionNotificationEvent.resyncRequiredKind,
+        ),
+      );
+      await _drain();
+      await _drain();
+
+      expect(await cursorStore.read(host), isNull);
+      expect(errors, hasLength(1));
+
+      await controller.dispose();
+    });
+
     test('HTTP client uses gateway notification SSE contract', () async {
       final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
       addTearDown(() => server.close(force: true));
@@ -306,6 +458,13 @@ void main() {
                   deviceToken: 'device-token',
                   projectId: 'proj-demo',
                 ),
+                'mnotif_000000000041',
+                const GatewayInvalidationWatch(
+                  projectId: 'proj-demo',
+                  agent: 'mobile',
+                  namespaceEpoch: 7,
+                  provider: 'codex',
+                ),
               )
               .first;
       final request = await requestSeen.future;
@@ -315,7 +474,56 @@ void main() {
         request.headers.value(HttpHeaders.authorizationHeader),
         'Bearer device-token',
       );
+      expect(request.headers.value('last-event-id'), 'mnotif_000000000041');
+      expect(request.uri.queryParameters['watch_project_id'], 'proj-demo');
+      expect(request.uri.queryParameters['watch_agent'], 'mobile');
       expect(event.dedupeKey, 'sse');
+    });
+
+    test('HTTP client accepts raw NDJSON event streams line by line', () async {
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      addTearDown(() => server.close(force: true));
+      unawaited(
+        server.first.then((request) async {
+          request.response
+            ..statusCode = HttpStatus.ok
+            ..headers.contentType = ContentType(
+              'application',
+              'x-ndjson',
+              charset: 'utf-8',
+            )
+            ..write('${jsonEncode(_event(dedupeKey: 'raw-1').toJson())}\n')
+            ..write('${jsonEncode(_event(dedupeKey: 'raw-2').toJson())}\n');
+          await request.response.close();
+        }),
+      );
+      final client = HttpGatewayTaskCompletionNotificationStreamClient(
+        timeout: const Duration(seconds: 2),
+      );
+      addTearDown(client.close);
+
+      final events =
+          await client
+              .subscribe(
+                GatewayPairedHost(
+                  profile: GatewayHostProfile(
+                    hostId: 'host-demo',
+                    deviceId: 'device-demo',
+                    routeProvider: RouteProvider(
+                      kind: RouteProviderKind.lan,
+                      gatewayUrl: Uri.parse(
+                        'http://${server.address.address}:${server.port}',
+                      ),
+                    ),
+                    scopes: const {'notify'},
+                  ),
+                  deviceToken: 'device-token',
+                  projectId: 'proj-demo',
+                ),
+              )
+              .toList();
+
+      expect(events.map((event) => event.dedupeKey), ['raw-1', 'raw-2']);
     });
 
     test(
@@ -375,6 +583,8 @@ TaskCompletionNotificationController _controller({
   TaskCompletionNotificationEventHandler? onLiveEvent,
   TaskCompletionNotificationEventHandler? onInvalidationEvent,
   TaskCompletionNotificationPredicate? shouldShowNotification,
+  GatewayInvalidationStreamErrorHandler? onStreamError,
+  GatewayInvalidationCursorStore? cursorStore,
   DateTime Function()? clock,
 }) {
   return TaskCompletionNotificationController(
@@ -383,20 +593,23 @@ TaskCompletionNotificationController _controller({
     seenStore:
         seenStore ??
         TaskCompletionSeenDedupeStore(secureStore: MemorySecureStore()),
+    cursorStore: cursorStore,
     onTap: (_) {},
     onLiveEvent: onLiveEvent,
     onInvalidationEvent: onInvalidationEvent,
     shouldShowNotification: shouldShowNotification,
+    onStreamError: onStreamError,
     clock: clock ?? () => DateTime.utc(2026, 6, 30, 11, 59),
   );
 }
 
 TaskCompletionNotificationEvent _event({
   required String dedupeKey,
+  String? id,
   DateTime? completedAt,
 }) {
   return TaskCompletionNotificationEvent(
-    id: 'event-$dedupeKey',
+    id: id ?? 'event-$dedupeKey',
     kind: TaskCompletionNotificationEvent.taskCompletedKind,
     projectId: 'proj-demo',
     projectShortName: 'demo',
@@ -487,14 +700,20 @@ class _FakeTaskCompletionStreamClient
   final _controller =
       StreamController<TaskCompletionNotificationEvent>.broadcast();
   var subscribeCalls = 0;
+  final lastEventIds = <String?>[];
 
   void add(TaskCompletionNotificationEvent event) {
     _controller.add(event);
   }
 
   @override
-  Stream<TaskCompletionNotificationEvent> subscribe(GatewayPairedHost host) {
+  Stream<TaskCompletionNotificationEvent> subscribe(
+    GatewayPairedHost host, [
+    String? lastEventId,
+    GatewayInvalidationWatch? watch,
+  ]) {
     subscribeCalls += 1;
+    lastEventIds.add(lastEventId);
     return _controller.stream;
   }
 }
@@ -513,7 +732,11 @@ class _ReconnectTaskCompletionStreamClient
   }
 
   @override
-  Stream<TaskCompletionNotificationEvent> subscribe(GatewayPairedHost host) {
+  Stream<TaskCompletionNotificationEvent> subscribe(
+    GatewayPairedHost host, [
+    String? lastEventId,
+    GatewayInvalidationWatch? watch,
+  ]) {
     subscribeCalls += 1;
     final controller = StreamController<TaskCompletionNotificationEvent>();
     _controllers.add(controller);

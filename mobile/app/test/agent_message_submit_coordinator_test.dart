@@ -39,7 +39,6 @@ void main() {
         );
         final acceptedDrafts = <String>[];
         final loads = <String>[];
-        final scheduled = <String>[];
         final scrolled = <String>[];
         final coordinator = _coordinator(
           chatController: chatController,
@@ -47,7 +46,6 @@ void main() {
             loads.add(agentName);
             return Future.value();
           },
-          scheduleConversationRefresh: scheduled.add,
           scrollTimelineToEnd: scrolled.add,
         );
 
@@ -77,7 +75,6 @@ void main() {
         ]);
         expect(scrolled, ['lead']);
         expect(loads, ['lead']);
-        expect(scheduled, isEmpty);
       },
     );
 
@@ -102,7 +99,6 @@ void main() {
         );
         final transport = _RecordingTerminalTransport();
         final loads = <String>[];
-        final scheduled = <String>[];
         final coordinator = _coordinator(
           chatController: chatController,
           paneSubmitter: AgentPaneMessageSubmitter(onEvent: (_) {}),
@@ -110,7 +106,6 @@ void main() {
             loads.add(agentName);
             return Future.value();
           },
-          scheduleConversationRefresh: scheduled.add,
         );
 
         await coordinator.send(
@@ -131,7 +126,6 @@ void main() {
           CcbConversationDeliveryState.sent,
         );
         expect(loads, ['lead']);
-        expect(scheduled, isEmpty);
       },
     );
 
@@ -142,7 +136,6 @@ void main() {
         final repository = _SubmitRepository();
         final transport = _RecordingTerminalTransport();
         final loads = <String>[];
-        final scheduled = <String>[];
         final coordinator = _coordinator(
           chatController: chatController,
           paneSubmitter: AgentPaneMessageSubmitter(onEvent: (_) {}),
@@ -150,7 +143,6 @@ void main() {
             loads.add(agentName);
             return Future.value();
           },
-          scheduleConversationRefresh: scheduled.add,
         );
 
         await coordinator.send(
@@ -175,7 +167,6 @@ void main() {
           CcbConversationDeliveryState.sent,
         );
         expect(loads, ['lead']);
-        expect(scheduled, isEmpty);
       },
     );
 
@@ -224,7 +215,6 @@ void main() {
           ],
         );
         final loads = <String>[];
-        final scheduled = <String>[];
         final scrolled = <String>[];
         final coordinator = _coordinator(
           chatController: chatController,
@@ -233,7 +223,6 @@ void main() {
             loads.add(agentName);
             return Future.value();
           },
-          scheduleConversationRefresh: scheduled.add,
           scrollTimelineToEnd: scrolled.add,
         );
 
@@ -263,7 +252,6 @@ void main() {
         expect(chatController.hasNewMessages('lead'), isFalse);
         expect(scrolled, ['lead', 'lead']);
         expect(loads, isEmpty);
-        expect(scheduled, isEmpty);
       },
     );
 
@@ -552,7 +540,6 @@ AgentMessageSubmitCoordinator _coordinator({
   bool Function(String agentName)? isTimelineNearEnd,
   void Function(String agentName)? scrollTimelineToEnd,
   Future<void> Function(String agentName)? loadConversation,
-  void Function(String agentName)? scheduleConversationRefresh,
   AgentPaneMessageSubmitter? paneSubmitter,
 }) {
   return AgentMessageSubmitCoordinator(
@@ -564,7 +551,6 @@ AgentMessageSubmitCoordinator _coordinator({
     isTimelineNearEnd: isTimelineNearEnd ?? (_) => true,
     scrollTimelineToEnd: scrollTimelineToEnd ?? (_) {},
     loadConversation: loadConversation ?? (_) => Future.value(),
-    scheduleConversationRefresh: scheduleConversationRefresh ?? (_) {},
     paneSubmitter: paneSubmitter,
   );
 }

@@ -1255,6 +1255,49 @@ def test_agent_conversation_includes_completed_comms_reply_preview(tmp_path: Pat
     assert 'wrong target' not in json.dumps(payload)
 
 
+@pytest.mark.parametrize('provider', ['kimi', 'opencode', 'unknown-provider'])
+def test_non_native_provider_keeps_safe_structured_conversation_fallback(
+    tmp_path: Path,
+    provider: str,
+) -> None:
+    project_root = tmp_path / 'repo'
+    snapshot_dir = project_root / '.ccb' / 'ccbd' / 'snapshots'
+    snapshot_dir.mkdir(parents=True)
+    (snapshot_dir / 'job_mobile_reply.json').write_text(
+        json.dumps({'latest_decision': {'reply': 'structured completion'}}),
+        encoding='utf-8',
+    )
+    (snapshot_dir / 'job_mobile_old_reply.json').write_text(
+        json.dumps({'latest_decision': {'reply': 'older structured completion'}}),
+        encoding='utf-8',
+    )
+
+    class _ProviderClient(_FakeCcbdClientWithConversationComms):
+        def project_view(self, *, schema_version: int = 1) -> dict[str, object]:
+            payload = super().project_view(schema_version=schema_version)
+            payload['view']['agents'][0]['provider'] = provider
+            return payload
+
+    service = _service(_ProviderClient(), project_root=project_root, mobile_dir=tmp_path / 'mobile')
+    pairing = service.create_pairing_payload(gateway_url='http://127.0.0.1:8787', scopes=('view',))
+    _, claim = service.dispatch_post('/v1/pairing/claim', {'pairing_code': str(pairing['pairing_code'])})
+    _, payload = service.dispatch_get(
+        '/v1/projects/proj-demo/agents/mobile/conversation?namespace_epoch=4&limit=20',
+        {'Authorization': f'Bearer {claim["device_token"]}'},
+    )
+
+    items = payload['conversation']['items']
+    assert [item['kind'] for item in items] == [
+        'user_message', 'agent_reply', 'user_message', 'agent_reply',
+    ]
+    assert [item['body'] for item in items] == [
+        'older question from phone', 'older structured completion',
+        'question from phone', 'structured completion',
+    ]
+    assert all('terminal' not in str(item.get('source') or '') for item in items)
+    assert all(item.get('kind') not in {'log', 'diff'} for item in items)
+
+
 def test_agent_conversation_prefers_terminal_scrollback_over_comms(tmp_path: Path) -> None:
     project_root = tmp_path / 'repo'
     snapshot_dir = project_root / '.ccb' / 'ccbd' / 'snapshots'

@@ -13,11 +13,13 @@ NOTIFICATION_KIND_TASK_COMPLETED = 'task_completed'
 INVALIDATION_KIND_PROJECT_SUMMARY = 'project_summary_changed'
 INVALIDATION_KIND_AGENT_ACTIVITY = 'agent_activity_changed'
 INVALIDATION_KIND_CONVERSATION = 'conversation_changed'
+INVALIDATION_KIND_RESYNC = 'resync_required'
 
 _STATE_RECORD_TYPE = 'ccb_mobile_notification_state'
 _BUSY_STATES = frozenset({'active'})
 _COMPLETED_STATES = frozenset({'idle', 'failed'})
 _DEFAULT_RECENT_LIMIT = 100
+_DEFAULT_COMPLETION_LIMIT = 1024
 
 
 @dataclass(frozen=True)
@@ -32,12 +34,7 @@ class MobileNotificationSnapshot:
 
 @dataclass(frozen=True)
 class MobileInvalidationSnapshot:
-    """A redacted, change-detection-only view of a mobile agent.
-
-    The SSE stream deliberately carries no conversation body, terminal output,
-    route detail, or credential.  Clients use these records only as a signal to
-    fetch the normal REST snapshot that remains authoritative.
-    """
+    """Redacted change detector. It never contains conversation content."""
 
     project_id: str
     project_short_name: str
@@ -78,14 +75,39 @@ class MobileNotificationEvent:
 
 
 class MobileNotificationStore:
-    def __init__(self, mobile_dir: Path, *, recent_limit: int = _DEFAULT_RECENT_LIMIT) -> None:
+    """Bounded event store with durable completion priority.
+
+    Completion events and fast invalidations intentionally never share a
+    journal. Invalidation records are a compact latest-state map keyed by
+    project/agent/kind/epoch, while completions retain a larger independent
+    bounded history. A trimmed/missing cursor yields an explicit resync event
+    rather than pretending the client is current.
+    """
+
+    def __init__(
+        self,
+        mobile_dir: Path,
+        *,
+        recent_limit: int = _DEFAULT_RECENT_LIMIT,
+        completion_limit: int = _DEFAULT_COMPLETION_LIMIT,
+    ) -> None:
         self._mobile_dir = Path(mobile_dir)
         self._recent_limit = max(1, int(recent_limit))
+        self._completion_limit = max(self._recent_limit, int(completion_limit))
         self._lock = threading.RLock()
 
     @property
     def events_path(self) -> Path:
+        """Compatibility location for pre-8.1.1 mixed journals (read-only)."""
         return self._mobile_dir / 'notifications.jsonl'
+
+    @property
+    def completion_events_path(self) -> Path:
+        return self._mobile_dir / 'completion-notifications.jsonl'
+
+    @property
+    def invalidation_events_path(self) -> Path:
+        return self._mobile_dir / 'invalidation-notifications.jsonl'
 
     @property
     def state_path(self) -> Path:
@@ -95,16 +117,12 @@ class MobileNotificationStore:
         with self._lock:
             state = self._load_state()
             agent_states = _state_agents(state)
-            event_records = _read_jsonl(self.events_path)
+            completions = self._completion_events()
             state['next_event_sequence'] = max(
                 _int(state.get('next_event_sequence'), 1),
-                _next_sequence_after(event_records),
+                _next_sequence_after(completions + self._invalidation_events()),
             )
-            existing_dedupe_keys = {
-                str(record.get('dedupe_key') or '')
-                for record in event_records
-                if str(record.get('dedupe_key') or '').strip()
-            }
+            existing = {event.dedupe_key for event in completions}
             emitted: list[MobileNotificationEvent] = []
             for snapshot in snapshots:
                 key = _snapshot_key(snapshot)
@@ -113,52 +131,38 @@ class MobileNotificationStore:
                 if _is_task_completion_transition(prior, snapshot):
                     completion_sequence += 1
                     dedupe_key = _dedupe_key(snapshot, completion_sequence=completion_sequence)
-                    if dedupe_key not in existing_dedupe_keys:
-                        event = self._next_event(
-                            state,
-                            snapshot=snapshot,
-                            dedupe_key=dedupe_key,
-                        )
-                        self._append_event(event)
-                        existing_dedupe_keys.add(dedupe_key)
+                    if dedupe_key not in existing:
+                        event = self._next_completion_event(state, snapshot, dedupe_key)
+                        completions.append(event)
+                        existing.add(dedupe_key)
                         emitted.append(event)
                 agent_states[key] = _snapshot_state(snapshot, completion_sequence=completion_sequence)
             state['agents'] = agent_states
+            self._write_completion_events(completions)
             self._write_state(state)
             return emitted
 
-    def sync_invalidations(
-        self,
-        snapshots: list[MobileInvalidationSnapshot],
-    ) -> list[MobileNotificationEvent]:
-        """Append only meaningful invalidations and retain a bounded journal.
-
-        The first observation is a baseline.  A new subscriber already makes
-        an authoritative REST load, so replaying a full server inventory would
-        only cause unnecessary requests and retained completion noise.
-        """
+    def sync_invalidations(self, snapshots: list[MobileInvalidationSnapshot]) -> list[MobileNotificationEvent]:
         with self._lock:
             state = self._load_state()
             agents = _state_invalidation_agents(state)
-            event_records = _read_jsonl(self.events_path)
+            records = {
+                _invalidation_record_key(event): event
+                for event in self._invalidation_events()
+                if _invalidation_record_key(event)
+            }
             state['next_event_sequence'] = max(
                 _int(state.get('next_event_sequence'), 1),
-                _next_sequence_after(event_records),
+                _next_sequence_after(self._completion_events() + list(records.values())),
             )
-            existing_dedupe_keys = {
-                str(record.get('dedupe_key') or '')
-                for record in event_records
-                if str(record.get('dedupe_key') or '').strip()
-            }
             emitted: list[MobileNotificationEvent] = []
-            summary_changed_projects: set[str] = set()
+            summary_changed: dict[str, MobileInvalidationSnapshot] = {}
             for snapshot in snapshots:
                 key = _snapshot_key_for_invalidation(snapshot)
                 prior = agents.get(key)
                 if prior:
                     activity_changed = (
-                        str(prior.get('activity_state') or '')
-                        != snapshot.activity_state
+                        str(prior.get('activity_state') or '') != snapshot.activity_state
                         or prior.get('namespace_epoch') != snapshot.namespace_epoch
                     )
                     conversation_changed = (
@@ -167,133 +171,124 @@ class MobileNotificationStore:
                     )
                     if activity_changed:
                         event = self._next_invalidation_event(
-                            state,
-                            snapshot=snapshot,
-                            kind=INVALIDATION_KIND_AGENT_ACTIVITY,
-                            scope='agent',
-                            dedupe_key=_invalidation_dedupe_key(
-                                snapshot,
-                                kind=INVALIDATION_KIND_AGENT_ACTIVITY,
-                            ),
+                            state, snapshot, INVALIDATION_KIND_AGENT_ACTIVITY, 'agent'
                         )
-                        if event.dedupe_key not in existing_dedupe_keys:
-                            self._append_event(event)
-                            existing_dedupe_keys.add(event.dedupe_key)
-                            emitted.append(event)
-                        summary_changed_projects.add(snapshot.project_id)
+                        records[_invalidation_record_key(event)] = event
+                        emitted.append(event)
+                        summary_changed[snapshot.project_id] = snapshot
                     if conversation_changed:
                         event = self._next_invalidation_event(
-                            state,
-                            snapshot=snapshot,
-                            kind=INVALIDATION_KIND_CONVERSATION,
-                            scope='conversation',
-                            dedupe_key=_invalidation_dedupe_key(
-                                snapshot,
-                                kind=INVALIDATION_KIND_CONVERSATION,
-                            ),
+                            state, snapshot, INVALIDATION_KIND_CONVERSATION, 'conversation'
                         )
-                        if event.dedupe_key not in existing_dedupe_keys:
-                            self._append_event(event)
-                            existing_dedupe_keys.add(event.dedupe_key)
-                            emitted.append(event)
+                        records[_invalidation_record_key(event)] = event
+                        emitted.append(event)
                 agents[key] = _invalidation_snapshot_state(snapshot)
-            for project_id in sorted(summary_changed_projects):
-                matching = next(
-                    (item for item in snapshots if item.project_id == project_id),
-                    None,
-                )
-                if matching is None:
-                    continue
+            for snapshot in summary_changed.values():
                 event = self._next_invalidation_event(
-                    state,
-                    snapshot=matching,
-                    kind=INVALIDATION_KIND_PROJECT_SUMMARY,
-                    scope='project',
-                    agent='',
-                    dedupe_key=_project_summary_dedupe_key(matching),
+                    state, snapshot, INVALIDATION_KIND_PROJECT_SUMMARY, 'project', agent=''
                 )
-                if event.dedupe_key not in existing_dedupe_keys:
-                    self._append_event(event)
-                    existing_dedupe_keys.add(event.dedupe_key)
-                    emitted.append(event)
+                records[_invalidation_record_key(event)] = event
+                emitted.append(event)
             state['invalidations'] = agents
+            self._write_invalidation_events(list(records.values()))
             self._write_state(state)
             return emitted
 
     def events_since(self, last_event_id: str | None = None) -> list[MobileNotificationEvent]:
-        records = _read_jsonl(self.events_path)
-        start_index = 0
-        cursor = str(last_event_id or '').strip()
-        if cursor:
-            for index, record in enumerate(records):
-                if str(record.get('id') or '') == cursor:
-                    start_index = index + 1
-                    break
-            else:
-                start_index = len(records)
-        else:
-            start_index = max(0, len(records) - self._recent_limit)
-        return [
-            event
-            for record in records[start_index:]
-            if (event := _event_from_record(record)) is not None
-        ]
+        with self._lock:
+            events = sorted(
+                self._completion_events() + self._invalidation_events(), key=_event_sequence
+            )
+            cursor = str(last_event_id or '').strip()
+            if not cursor:
+                # A new subscription gets only bounded invalidation state and
+                # no historical completion popups; REST remains authoritative.
+                return events[-self._recent_limit :]
+            sequence = _event_sequence_from_id(cursor)
+            known = any(event.id == cursor for event in events)
+            if known or cursor.startswith('mnotif_resync_'):
+                return [event for event in events if _event_sequence(event) > sequence]
+            # A cursor can be absent because the compact invalidation key was
+            # overwritten, a legacy journal was retired, or completion history
+            # was bounded. Make recovery explicit and advance the cursor so the
+            # client does not receive a resync loop.
+            newest = max(_int(self._load_state().get('next_event_sequence'), 1) - 1, sequence)
+            return [
+                *[event for event in events if _event_sequence(event) > sequence],
+                MobileNotificationEvent(
+                    id=f'mnotif_resync_{newest:012d}',
+                    kind=INVALIDATION_KIND_RESYNC,
+                    project_id='',
+                    project_short_name='',
+                    agent='',
+                    completed_at='1970-01-01T00:00:00Z',
+                    dedupe_key=f'resync:{newest}',
+                    scope='resync',
+                ),
+            ]
 
-    def _next_event(
-        self,
-        state: dict[str, object],
-        *,
-        snapshot: MobileNotificationSnapshot,
-        dedupe_key: str,
+    def _next_completion_event(
+        self, state: dict[str, object], snapshot: MobileNotificationSnapshot, dedupe_key: str
     ) -> MobileNotificationEvent:
-        sequence = max(1, _int(state.get('next_event_sequence'), 1))
-        state['next_event_sequence'] = sequence + 1
         return MobileNotificationEvent(
-            id=f'mnotif_{sequence:012d}',
-            kind=NOTIFICATION_KIND_TASK_COMPLETED,
-            project_id=snapshot.project_id,
-            project_short_name=snapshot.project_short_name,
-            agent=snapshot.agent,
-            completed_at=snapshot.observed_at,
-            dedupe_key=dedupe_key,
+            id=_next_event_id(state), kind=NOTIFICATION_KIND_TASK_COMPLETED,
+            project_id=snapshot.project_id, project_short_name=snapshot.project_short_name,
+            agent=snapshot.agent, completed_at=snapshot.observed_at, dedupe_key=dedupe_key,
         )
 
     def _next_invalidation_event(
         self,
         state: dict[str, object],
-        *,
         snapshot: MobileInvalidationSnapshot,
         kind: str,
         scope: str,
-        dedupe_key: str,
+        *,
         agent: str | None = None,
     ) -> MobileNotificationEvent:
-        sequence = max(1, _int(state.get('next_event_sequence'), 1))
-        state['next_event_sequence'] = sequence + 1
+        selected_agent = snapshot.agent if agent is None else agent
+        fingerprint = snapshot.activity_state if kind == INVALIDATION_KIND_AGENT_ACTIVITY else snapshot.conversation_fingerprint
+        digest = hashlib.sha256(fingerprint.encode('utf-8')).hexdigest()[:16]
         return MobileNotificationEvent(
-            id=f'mnotif_{sequence:012d}',
-            kind=kind,
-            project_id=snapshot.project_id,
-            project_short_name=snapshot.project_short_name,
-            agent=snapshot.agent if agent is None else agent,
+            id=_next_event_id(state), kind=kind, project_id=snapshot.project_id,
+            project_short_name=snapshot.project_short_name, agent=selected_agent,
             completed_at=snapshot.observed_at,
-            dedupe_key=dedupe_key,
-            namespace_epoch=snapshot.namespace_epoch,
-            scope=scope,
+            dedupe_key=':'.join(('invalidation', kind, snapshot.project_id, str(snapshot.namespace_epoch), selected_agent, digest)),
+            namespace_epoch=snapshot.namespace_epoch, scope=scope,
         )
 
-    def _append_event(self, event: MobileNotificationEvent) -> None:
-        _append_jsonl(self.events_path, event.to_payload())
-        _trim_jsonl(self.events_path, limit=self._recent_limit)
+    def _completion_events(self) -> list[MobileNotificationEvent]:
+        current = _events_from_records(_read_jsonl(self.completion_events_path))
+        if current:
+            return current
+        # Upgrade in place without throwing away notifications written by the
+        # previous mixed-journal implementation.
+        return [
+            event for event in _events_from_records(_read_jsonl(self.events_path))
+            if event.kind == NOTIFICATION_KIND_TASK_COMPLETED
+        ]
+
+    def _invalidation_events(self) -> list[MobileNotificationEvent]:
+        current = _events_from_records(_read_jsonl(self.invalidation_events_path))
+        if current:
+            return current
+        return [
+            event for event in _events_from_records(_read_jsonl(self.events_path))
+            if event.kind != NOTIFICATION_KIND_TASK_COMPLETED
+        ]
+
+    def _write_completion_events(self, events: list[MobileNotificationEvent]) -> None:
+        _write_jsonl(self.completion_events_path, events[-self._completion_limit :])
+
+    def _write_invalidation_events(self, events: list[MobileNotificationEvent]) -> None:
+        ordered = sorted(events, key=_event_sequence)[-self._recent_limit :]
+        _write_jsonl(self.invalidation_events_path, ordered)
 
     def _load_state(self) -> dict[str, object]:
         try:
             payload = json.loads(self.state_path.read_text(encoding='utf-8'))
         except Exception:
             payload = {}
-        if not isinstance(payload, dict):
-            payload = {}
-        if str(payload.get('record_type') or '') != _STATE_RECORD_TYPE:
+        if not isinstance(payload, dict) or str(payload.get('record_type') or '') != _STATE_RECORD_TYPE:
             payload = {}
         payload.setdefault('schema_version', SCHEMA_VERSION)
         payload.setdefault('record_type', _STATE_RECORD_TYPE)
@@ -309,22 +304,22 @@ class MobileNotificationStore:
 
 def encode_sse_event(event: MobileNotificationEvent | dict[str, object]) -> bytes:
     payload = event.to_payload() if isinstance(event, MobileNotificationEvent) else dict(event)
-    event_id = str(payload.get('id') or '').strip()
-    event_kind = str(payload.get('kind') or 'message').strip() or 'message'
-    body = json.dumps(payload, ensure_ascii=False, sort_keys=True)
-    return f'id: {event_id}\nevent: {event_kind}\ndata: {body}\n\n'.encode('utf-8')
+    return (
+        f"id: {str(payload.get('id') or '').strip()}\n"
+        f"event: {str(payload.get('kind') or 'message').strip() or 'message'}\n"
+        f"data: {json.dumps(payload, ensure_ascii=False, sort_keys=True)}\n\n"
+    ).encode('utf-8')
 
 
 def _is_task_completion_transition(prior: object, snapshot: MobileNotificationSnapshot) -> bool:
     prior_record = _map(prior)
-    if not prior_record:
-        return False
-    if str(prior_record.get('activity_state') or '').strip().lower() not in _BUSY_STATES:
-        return False
-    if snapshot.activity_state not in _COMPLETED_STATES:
-        return False
-    prior_epoch = prior_record.get('namespace_epoch')
-    return prior_epoch is not None and prior_epoch == snapshot.namespace_epoch
+    return (
+        bool(prior_record)
+        and str(prior_record.get('activity_state') or '').strip().lower() in _BUSY_STATES
+        and snapshot.activity_state in _COMPLETED_STATES
+        and prior_record.get('namespace_epoch') is not None
+        and prior_record.get('namespace_epoch') == snapshot.namespace_epoch
+    )
 
 
 def _snapshot_key(snapshot: MobileNotificationSnapshot) -> str:
@@ -336,160 +331,94 @@ def _snapshot_key_for_invalidation(snapshot: MobileInvalidationSnapshot) -> str:
 
 
 def _snapshot_state(snapshot: MobileNotificationSnapshot, *, completion_sequence: int) -> dict[str, object]:
-    return {
-        'project_id': snapshot.project_id,
-        'namespace_epoch': snapshot.namespace_epoch,
-        'agent': snapshot.agent,
-        'activity_state': snapshot.activity_state,
-        'observed_at': snapshot.observed_at,
-        'completion_sequence': int(completion_sequence),
-    }
+    return {'project_id': snapshot.project_id, 'namespace_epoch': snapshot.namespace_epoch, 'agent': snapshot.agent, 'activity_state': snapshot.activity_state, 'observed_at': snapshot.observed_at, 'completion_sequence': int(completion_sequence)}
 
 
 def _dedupe_key(snapshot: MobileNotificationSnapshot, *, completion_sequence: int) -> str:
-    return ':'.join(
-        (
-            snapshot.project_id,
-            str(snapshot.namespace_epoch),
-            snapshot.agent,
-            str(int(completion_sequence)),
-        )
-    )
+    return ':'.join((snapshot.project_id, str(snapshot.namespace_epoch), snapshot.agent, str(int(completion_sequence))))
 
 
 def _state_agents(state: dict[str, object]) -> dict[str, dict[str, object]]:
-    agents = state.get('agents')
-    if not isinstance(agents, dict):
-        return {}
-    return {
-        str(key): dict(value)
-        for key, value in agents.items()
-        if isinstance(value, dict)
-    }
+    return {str(k): dict(v) for k, v in _map(state.get('agents')).items() if isinstance(v, dict)}
 
 
 def _state_invalidation_agents(state: dict[str, object]) -> dict[str, dict[str, object]]:
-    records = state.get('invalidations')
-    if not isinstance(records, dict):
-        return {}
-    return {
-        str(key): dict(value)
-        for key, value in records.items()
-        if isinstance(value, dict)
-    }
+    return {str(k): dict(v) for k, v in _map(state.get('invalidations')).items() if isinstance(v, dict)}
 
 
 def _invalidation_snapshot_state(snapshot: MobileInvalidationSnapshot) -> dict[str, object]:
-    return {
-        'project_id': snapshot.project_id,
-        'namespace_epoch': snapshot.namespace_epoch,
-        'agent': snapshot.agent,
-        'activity_state': snapshot.activity_state,
-        'conversation_fingerprint': snapshot.conversation_fingerprint,
-        'observed_at': snapshot.observed_at,
-    }
+    return {'project_id': snapshot.project_id, 'namespace_epoch': snapshot.namespace_epoch, 'agent': snapshot.agent, 'activity_state': snapshot.activity_state, 'conversation_fingerprint': snapshot.conversation_fingerprint, 'observed_at': snapshot.observed_at}
 
 
-def _invalidation_dedupe_key(
-    snapshot: MobileInvalidationSnapshot,
-    *,
-    kind: str,
-) -> str:
-    value = (
-        snapshot.activity_state
-        if kind == INVALIDATION_KIND_AGENT_ACTIVITY
-        else snapshot.conversation_fingerprint
-    )
-    # Keep the journal useful for de-duplication without turning a private
-    # change detector (notably the conversation fingerprint) into public SSE
-    # payload.  The REST snapshot remains the sole content authority.
-    digest = hashlib.sha256(value.encode('utf-8')).hexdigest()[:16]
-    return ':'.join(
-        ('invalidation', kind, snapshot.project_id, str(snapshot.namespace_epoch), snapshot.agent, digest)
-    )
-
-
-def _project_summary_dedupe_key(snapshot: MobileInvalidationSnapshot) -> str:
-    return ':'.join(
-        ('invalidation', INVALIDATION_KIND_PROJECT_SUMMARY, snapshot.project_id, str(snapshot.namespace_epoch), snapshot.activity_state)
-    )
+def _invalidation_record_key(event: MobileNotificationEvent) -> str:
+    if event.kind not in {INVALIDATION_KIND_PROJECT_SUMMARY, INVALIDATION_KIND_AGENT_ACTIVITY, INVALIDATION_KIND_CONVERSATION}:
+        return ''
+    return '\0'.join((event.project_id, event.agent, event.kind, str(event.namespace_epoch)))
 
 
 def _event_from_record(record: dict[str, object]) -> MobileNotificationEvent | None:
-    required = {
-        'id',
-        'kind',
-        'project_id',
-        'project_short_name',
-        'agent',
-        'completed_at',
-        'dedupe_key',
-    }
+    required = {'id', 'kind', 'project_id', 'project_short_name', 'agent', 'completed_at', 'dedupe_key'}
     if not required.issubset(record):
         return None
     return MobileNotificationEvent(
-        id=str(record.get('id') or ''),
-        kind=str(record.get('kind') or ''),
-        project_id=str(record.get('project_id') or ''),
-        project_short_name=str(record.get('project_short_name') or ''),
-        agent=str(record.get('agent') or ''),
-        completed_at=str(record.get('completed_at') or ''),
-        dedupe_key=str(record.get('dedupe_key') or ''),
-        namespace_epoch=_optional_int(record.get('namespace_epoch')),
+        id=str(record.get('id') or ''), kind=str(record.get('kind') or ''),
+        project_id=str(record.get('project_id') or ''), project_short_name=str(record.get('project_short_name') or ''),
+        agent=str(record.get('agent') or ''), completed_at=str(record.get('completed_at') or ''),
+        dedupe_key=str(record.get('dedupe_key') or ''), namespace_epoch=_optional_int(record.get('namespace_epoch')),
         scope=_optional_text(record.get('scope')),
     )
 
 
-def _next_sequence_after(records: list[dict[str, object]]) -> int:
-    max_sequence = 0
-    prefix = 'mnotif_'
-    for record in records:
-        event_id = str(record.get('id') or '')
-        if not event_id.startswith(prefix):
-            continue
-        try:
-            max_sequence = max(max_sequence, int(event_id[len(prefix):]))
-        except ValueError:
-            continue
-    return max_sequence + 1
+def _events_from_records(records: list[dict[str, object]]) -> list[MobileNotificationEvent]:
+    return [event for record in records if (event := _event_from_record(record)) is not None]
+
+
+def _next_event_id(state: dict[str, object]) -> str:
+    sequence = max(1, _int(state.get('next_event_sequence'), 1))
+    state['next_event_sequence'] = sequence + 1
+    return f'mnotif_{sequence:012d}'
+
+
+def _event_sequence(event: MobileNotificationEvent) -> int:
+    return _event_sequence_from_id(event.id)
+
+
+def _event_sequence_from_id(value: str) -> int:
+    text = str(value or '')
+    for prefix in ('mnotif_resync_', 'mnotif_'):
+        if text.startswith(prefix):
+            try:
+                return int(text[len(prefix):])
+            except ValueError:
+                return -1
+    return -1
+
+
+def _next_sequence_after(events: list[MobileNotificationEvent]) -> int:
+    return max([0, *(_event_sequence(event) for event in events)]) + 1
 
 
 def _read_jsonl(path: Path) -> list[dict[str, object]]:
-    records: list[dict[str, object]] = []
     try:
         lines = path.read_text(encoding='utf-8').splitlines()
     except OSError:
-        return records
+        return []
+    records: list[dict[str, object]] = []
     for line in lines:
-        text = line.strip()
-        if not text:
-            continue
         try:
-            payload = json.loads(text)
-        except json.JSONDecodeError:
+            payload = json.loads(line)
+        except (json.JSONDecodeError, TypeError):
             continue
         if isinstance(payload, dict):
             records.append(dict(payload))
     return records
 
 
-def _append_jsonl(path: Path, payload: dict[str, object]) -> None:
+def _write_jsonl(path: Path, events: list[MobileNotificationEvent]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open('a', encoding='utf-8') as handle:
-        handle.write(json.dumps(payload, ensure_ascii=False, sort_keys=True))
-        handle.write('\n')
-
-
-def _trim_jsonl(path: Path, *, limit: int) -> None:
-    records = _read_jsonl(path)
-    if len(records) <= limit:
-        return
-    retained = records[-max(1, limit):]
+    text = ''.join(json.dumps(event.to_payload(), ensure_ascii=False, sort_keys=True) + '\n' for event in events)
     temp = path.with_suffix(path.suffix + '.tmp')
-    with temp.open('w', encoding='utf-8') as handle:
-        for record in retained:
-            handle.write(json.dumps(record, ensure_ascii=False, sort_keys=True))
-            handle.write('\n')
+    temp.write_text(text, encoding='utf-8')
     temp.replace(path)
 
 
@@ -517,14 +446,9 @@ def _optional_text(value: object) -> str | None:
 
 
 __all__ = [
-    'MobileNotificationEvent',
-    'MobileInvalidationSnapshot',
-    'MobileNotificationSnapshot',
-    'MobileNotificationStore',
-    'NOTIFICATION_KIND_TASK_COMPLETED',
-    'INVALIDATION_KIND_AGENT_ACTIVITY',
-    'INVALIDATION_KIND_CONVERSATION',
-    'INVALIDATION_KIND_PROJECT_SUMMARY',
-    'SCHEMA_VERSION',
+    'MobileNotificationEvent', 'MobileInvalidationSnapshot', 'MobileNotificationSnapshot',
+    'MobileNotificationStore', 'NOTIFICATION_KIND_TASK_COMPLETED',
+    'INVALIDATION_KIND_AGENT_ACTIVITY', 'INVALIDATION_KIND_CONVERSATION',
+    'INVALIDATION_KIND_PROJECT_SUMMARY', 'INVALIDATION_KIND_RESYNC', 'SCHEMA_VERSION',
     'encode_sse_event',
 ]

@@ -27,7 +27,6 @@ class AgentMessageSubmitCoordinator {
     required AgentMessageSubmitTimelineNearEnd isTimelineNearEnd,
     required AgentMessageSubmitTimelineScrollToEnd scrollTimelineToEnd,
     required AgentMessageSubmitLoadConversation loadConversation,
-    void Function(String)? scheduleConversationRefresh,
     AgentPaneMessageSubmitter? paneSubmitter,
   }) : _chatController = chatController,
        _isMounted = isMounted,
