@@ -108,12 +108,18 @@ Date: 2026-06-24
   ensure/status/release` by profile and count.
 - Accepted the dynamic runtime layout direction: CCB should maintain logical
   tmux windows and panes for dynamic agents through a runtime layout manager.
-  V1 keeps four resident visible workflow panes:
-  `ccb_frontdesk + ccb_task_detailer` in `ccb-user` and
-  `ccb_planner + ccb_orchestrator` in `ccb-plan`. `ccb_round_reviewer` is
-  still placed in `ccb-plan` when round verification is requested. Active
+  V1 keeps only `ccb_frontdesk` in `ccb-user` and `ccb_planner` in `ccb-plan`
+  as resident workflow panes. `ccb_task_detailer`, `ccb_orchestrator`, and
+  `ccb_round_reviewer` are immaculate dynamic roles placed in those windows
+  only while their task/round stage is active. Active
   `coder + code_reviewer` work units pack into `ccb-exec` pages at six panes
   per window; diagnostics live in `runtime`.
+- Verified the current dynamic layout in an opened real-provider project with
+  three sequential direct-execution loops. Each round created fresh
+  orchestrator/round-reviewer/coder/code-reviewer panes, created and removed
+  `ccb-exec`, released `4/0`, and returned to the two resident panes. The run
+  also exposed and fixed Claude session rotation after `/clear`. See
+  [history/visible-three-round-dynamic-window-e2e-20260710.md](history/visible-three-round-dynamic-window-e2e-20260710.md).
 - Landed the first deterministic pane-growth slice in the current worktree:
   `ccb layout plan` reports 1->6 pane layouts and overflow windows, while
   `ccb layout smoke` creates placeholder panes in an isolated tmux session.

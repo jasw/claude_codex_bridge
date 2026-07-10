@@ -31,6 +31,23 @@ and frontdesk-started handoff through planner/orchestrator. Scripted B7 rows
 are required evidence, but they are not sufficient by themselves; if hidden
 script output contradicts visible project state or raw task/loop authority,
 the normalizer is the bug.
+
+## 2026-07-10 Visible Multi-Round Checkpoint
+
+`talk2` directly completed a three-task, three-loop real-provider run in the
+opened project
+`/home/bfly/yunwei/test_ccb2/workflow-window-e2e-talk2-20260710-093408`.
+All tasks reached `done/pass`; every execution loop released four dynamic
+roles with zero retained; `ccb-exec` was removed after each round; resident
+frontdesk and planner panes remained visible. The run exposed and fixed static
+route-target activation plus two Claude post-`/clear` session-selection bugs.
+Current workflow-branch commits are `c845c8f2`, `7a134400`, and `df164fb1`.
+Direct verification: provider/session suite `92 passed`, project suite
+`12 passed`, config valid, final loop topologies empty. Evidence:
+[history/visible-three-round-dynamic-window-e2e-20260710.md](history/visible-three-round-dynamic-window-e2e-20260710.md).
+The project remains mounted for inspection; no release was published and
+production/default enablement remains a separate decision.
+
 2026-07-08 talk2 checkpoint: the latest source tree is locally test-clean
 after the sequence29/frontdesk/detailer/B7 fixes and the phase2 provider
 blackbox environment-isolation regression. Verified:

@@ -33,6 +33,7 @@ scope after the 2026-07-05 `talk2` final aggregation review.
 | Module-level and Phase 6A claim-boundary audit | Accepted with residual risk for Phase 6A program-matrix scope | `/home/bfly/yunwei/ccb_source/.ccb/ccbd/artifacts/text/completion-reply/job_a34e79ecfc00-art_0a002853e7a4463b.txt` |
 | Dated Phase 1-6 acceptance report, Phase 6A gate | Historical report; Phase 6A accepted for program-matrix scope, Phase 6B was blocked at that time | [phase1-6-acceptance-report-20260704.md](phase1-6-acceptance-report-20260704.md) |
 | Dated Phase 1-6 acceptance report, final aggregation | Current report; Phase 6A accepted and Phase 6B accepted for initial real-provider single-round capability; production/default enablement remains out of scope | [phase1-6-acceptance-report-20260705.md](phase1-6-acceptance-report-20260705.md) |
+| Visible three-round dynamic-window E2E | Pass for current workflow branch; real provider defect recovered and fixed | [visible-three-round-dynamic-window-e2e-20260710.md](visible-three-round-dynamic-window-e2e-20260710.md); opened project `/home/bfly/yunwei/test_ccb2/workflow-window-e2e-talk2-20260710-093408`; three tasks `done/pass`; every execution loop released 4 dynamic agents with 0 retained; final frontdesk/planner panes remained visible. |
 
 ## Accepted Planning Inputs
 

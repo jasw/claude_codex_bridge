@@ -1227,6 +1227,24 @@ Current evidence:
   retained loop agents, and empty namespace/pane reflow errors;
 - live provider release remains gated on busy/idle checks.
 
+## 2026-07-10 Real Project Evidence
+
+The opened real-provider project recorded in
+[visible-three-round-dynamic-window-e2e-20260710.md](../history/visible-three-round-dynamic-window-e2e-20260710.md)
+validated the intended foreground layout across three sequential task loops.
+Idle state retained only frontdesk and planner. Each direct-execution round
+created `ccb-exec`, appended immaculate orchestration/round-review panes to
+`ccb-plan`, then released all four dynamic agents and removed the empty
+execution window. The final state returned to two windows and two resident
+agent panes with zero retained loop agents.
+
+The same run proved that provider context purity is a runtime requirement, not
+only a RolePack prompt convention: every activation performed provider-native
+clear, generated fresh pane/session evidence, and was unloaded after evidence
+import. Claude session selection now permits same-agent, same-project rotation
+after clear while preserving the initial exact binding and rejecting foreign
+project sessions.
+
 Deferred:
 
 - interactive drag/drop layout management;

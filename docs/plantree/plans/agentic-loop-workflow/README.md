@@ -46,6 +46,11 @@ recoverable workflow loops.
   P1 post-acceptance deployment-readiness evidence for real-project dynamic
   release, busy-retain, UI/sidebar visibility, and observer timeout behavior;
   not the final deployment-readiness report.
+- [history/visible-three-round-dynamic-window-e2e-20260710.md](history/visible-three-round-dynamic-window-e2e-20260710.md):
+  direct `talk2` evidence from an opened real-provider project covering three
+  sequential direct-execution loops, visible window creation/removal, two
+  resident roles, four dynamic roles per round, and repaired Claude session
+  rotation after `/clear`.
 - [history/phase1-6-deployment-readiness-p2-frontdesk-pressure-20260708.md](history/phase1-6-deployment-readiness-p2-frontdesk-pressure-20260708.md):
   P2 post-acceptance deployment-readiness evidence for real-project
   frontdesk macro-intake pressure across direct, detail, macro-adjustment, and
