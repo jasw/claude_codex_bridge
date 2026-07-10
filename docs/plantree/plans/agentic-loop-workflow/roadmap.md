@@ -94,6 +94,17 @@ Date: 2026-06-24
   `docs/plantree/plans/<plan-slug>/tasks/<task-id>/`, runtime loop lists live
   under `.ccb/runtime/loops/`, and scripts own all authoritative status,
   index, phase, owner, node, branch, ask, and round writes.
+- Accepted the post-V1 parallel roadmap direction: Plan Tree should represent
+  serial dependencies, parallel branches, scope conflicts, priorities, joins,
+  and integration gates in a script-validated Roadmap Graph. Workflow Lane is
+  the concurrent execution unit. One global planner remains the default graph
+  writer; multiple planners are deferred until measured planning throughput
+  requires disjoint plan-root or lane-scoped writers. Code changes use isolated
+  lane worktrees and join through combined verification, while Plan Tree stays
+  one durable control plane. See
+  [topics/parallel-roadmap-lanes-and-planner-authority.md](topics/parallel-roadmap-lanes-and-planner-authority.md)
+  and
+  [decisions/023-roadmap-graph-and-workflow-lanes.md](decisions/023-roadmap-graph-and-workflow-lanes.md).
 - Accepted the orchestrator boundary: it is an ask-activated immaculate
   semantic planner that keeps work slicing, dependencies, logical role
   assignment, complete task packets, review/integration intent, and bounded

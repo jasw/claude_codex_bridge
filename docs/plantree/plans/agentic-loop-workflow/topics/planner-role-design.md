@@ -97,6 +97,16 @@ deterministic `ccb plan` authority surface. It is not a separate required
 mainline Role. `task_detailer` is not a fixed downstream planning member; it is
 activated only when orchestrator triage needs task-local detail refinement.
 
+The accepted post-V1 parallel direction keeps one global planner by default
+and adds a Roadmap Graph plus Workflow Lanes. One planner may create several
+serial or parallel roadmap branches and remain idle while controller code
+advances the safe ready frontier. Multiple planner instances are only a later
+throughput optimization across disjoint plan roots or explicit lane scopes;
+the same plan scope never has multiple active planner writers. See
+[parallel-roadmap-lanes-and-planner-authority.md](parallel-roadmap-lanes-and-planner-authority.md)
+and
+[Decision 023](../decisions/023-roadmap-graph-and-workflow-lanes.md).
+
 Optional later roles:
 
 - `risk_reviewer`: only for destructive, release, migration, security,

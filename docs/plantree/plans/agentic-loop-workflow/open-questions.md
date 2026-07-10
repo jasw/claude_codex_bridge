@@ -108,6 +108,17 @@ Date: 2026-07-04
    [decisions/020-mount-topology-and-ask-first-orchestration.md](decisions/020-mount-topology-and-ask-first-orchestration.md).
 9. How long should legacy topology-dispatch tests and command paths remain
    available after the mount-topology split?
+10. What is the smallest Roadmap Graph schema that supports dependencies,
+    scope claims, joins, priority, pause/resume, and plan revision without
+    turning Plan Tree into a general workflow DSL?
+11. Should production concurrent mode keep the canonical Plan Tree in the main
+    checkout or one shared plan-control worktree while preserving one authority
+    copy and a clean user main checkout?
+12. Which semantic scope-claim vocabulary is required for the first two-lane
+    gate: files, modules, interfaces, schemas, commands, runtime resources, and
+    release surfaces?
+13. What measured planning-queue latency should permit multiple scoped planner
+    instances, and what default maximum should config validation enforce?
 
 ## Phase 6B Real-Provider Launch Questions
 

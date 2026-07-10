@@ -198,6 +198,10 @@ recoverable workflow loops.
 - [topics/planner-role-design.md](topics/planner-role-design.md): planner
   authority, readiness rules, clarification boundaries, script authority, and
   orchestrator triage handoff.
+- [topics/parallel-roadmap-lanes-and-planner-authority.md](topics/parallel-roadmap-lanes-and-planner-authority.md):
+  target Plan Tree Roadmap Graph, Workflow Lane, ready-frontier, planner
+  single-writer, code-worktree, conflict, and integration-gate design for
+  serial and parallel project work.
 - [topics/planner-plan-tree-brief-and-detail-boundary.md](topics/planner-plan-tree-brief-and-detail-boundary.md):
   planner-owned plan brief shape and boundary with task-detailer-owned detail
   docs and per-task execution refinement.
@@ -407,6 +411,10 @@ recoverable workflow loops.
   decision to keep slicing, dependency design, logical assignment, and task
   publication intent in one orchestrator bundle while scripts own concrete
   binding, exact-once ask submission, state import, and lifecycle side effects.
+- [decisions/023-roadmap-graph-and-workflow-lanes.md](decisions/023-roadmap-graph-and-workflow-lanes.md):
+  decision that Plan Tree models serial/parallel roadmap branches and joins,
+  Workflow Lane is the concurrent execution unit, one planner remains the
+  default global graph writer, and multiple planners require disjoint scopes.
 - [history/review-2026-06-26-loop-runner-readiness.md](history/review-2026-06-26-loop-runner-readiness.md):
   reviewer/coworker readiness review that narrowed the next implementation
   slice to task-loop binding, round-result import, `run-once --task-id`, and
@@ -511,7 +519,7 @@ Out of scope:
 | Role | Authority | Non-Authority |
 | :--- | :--- | :--- |
 | `frontdesk` group | User conversation, scope confirmation, final summary, escalation handling | Direct business implementation or internal loop micromanagement |
-| planner | Macro planning artifacts, plan brief, high-level acceptance, readiness recommendation, macro adjustment review | Detail design body maintenance, detailed implementation packet maintenance, runtime worker lifecycle, direct detailer/worker dispatch, or final authority over code correctness |
+| planner | Macro planning artifacts, global Roadmap Graph, plan brief, serial/parallel branches, priorities, cross-lane dependencies, high-level acceptance, readiness recommendation, macro adjustment and integration review | Detail design body maintenance, detailed implementation packet maintenance, runtime worker lifecycle, direct detailer/worker dispatch, concurrent writing of another planner scope, or final authority over code correctness |
 | `task_detailer` | Task-local refinement, task-scoped detail docs, source evidence, detail packet, stable summary backfill, task-local clarification | Roadmap/status authority, runtime dispatch, worker/reviewer control, or long-term user conversation |
 | clarification broker | Candidate-question filtering, user-question artifact, answer normalization | Direct user conversation or execution-loop activation |
 | planner stewardship mode / `ccb plan` scripts | Plan-tree consistency, short-term progress state, evidence linking, authoritative task/index/status writes through scripts | Business implementation, provider repair, daemon supervision, or bypassing script validation |
@@ -536,6 +544,7 @@ then [topics/orchestrator-rolepack-blueprint.md](topics/orchestrator-rolepack-bl
 then [topics/role-profiles-and-capacity-skill.md](topics/role-profiles-and-capacity-skill.md),
 then [goals/orchestrator-dynamic-capacity-goal.md](goals/orchestrator-dynamic-capacity-goal.md),
 then [topics/planner-role-design.md](topics/planner-role-design.md), then
+[topics/parallel-roadmap-lanes-and-planner-authority.md](topics/parallel-roadmap-lanes-and-planner-authority.md), then
 [topics/planner-plan-tree-brief-and-detail-boundary.md](topics/planner-plan-tree-brief-and-detail-boundary.md), then
 [topics/task-detailer-role-design.md](topics/task-detailer-role-design.md), then
 [topics/plan-update-script-landing.md](topics/plan-update-script-landing.md),
