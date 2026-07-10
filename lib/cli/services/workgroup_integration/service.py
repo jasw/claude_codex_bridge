@@ -11,12 +11,24 @@ from project.ids import compute_project_id
 from project.resolver import ProjectContext
 from storage.atomic import atomic_write_json
 from storage.locks import file_lock
-from workspace.git_worktree import branch_exists, list_registered_worktrees
+from workspace.git_worktree import (
+    branch_exists,
+    delete_owned_branch,
+    is_registered_worktree,
+    list_registered_worktrees,
+    remove_clean_registered_worktree,
+)
 from workspace.materializer import WorkspaceMaterializer
 from workspace.planner import WorkspacePlanner
 
 from cli.services.loop_execution_scope import path_allowed_by_scope, scopes_overlap
 
+from .authority_intents import (
+    create_merge_intent,
+    create_node_commit_intent,
+    merge_intent_matches,
+    node_commit_intent_matches,
+)
 from .git_ops import GitOperations
 from .models import (
     GitIntegrationError,
@@ -26,6 +38,7 @@ from .models import (
     WORKGROUP_GIT_TRANSACTION_VERSION,
     WorkgroupNodeSpec,
 )
+from .verification_quarantine import preserve_verification_delta, remove_captured_untracked
 
 
 class WorkgroupGitIntegration:
@@ -43,6 +56,7 @@ class WorkgroupGitIntegration:
         root_verification: Iterable[VerificationCommand] = (),
         verify_each_layer: bool = False,
         workspace_root: Path | None = None,
+        quarantine_root: Path | None = None,
     ) -> None:
         self.project_root = Path(project_root).expanduser().resolve()
         self.state_path = Path(state_path).expanduser().resolve()
@@ -91,6 +105,19 @@ class WorkgroupGitIntegration:
             project_id=compute_project_id(self.project_root),
             source='workgroup-integration',
         )
+        self.quarantine_root = (
+            Path(quarantine_root).expanduser().resolve()
+            if quarantine_root is not None
+            else self.project_root.parent
+            / '.ccb-workgroup-quarantine'
+            / self.project_context.project_id
+        )
+        try:
+            self.quarantine_root.relative_to(self.project_root)
+        except ValueError:
+            pass
+        else:
+            raise ValueError('quarantine_root must be outside project_root')
         self.planner = WorkspacePlanner()
         self.materializer = WorkspaceMaterializer()
         self._checkpoint_hook: Callable[[str, dict[str, object]], None] | None = None
@@ -108,6 +135,7 @@ class WorkgroupGitIntegration:
         root_verification: Iterable[VerificationCommand] = (),
         verify_each_layer: bool = False,
         workspace_root: Path | None = None,
+        quarantine_root: Path | None = None,
     ) -> WorkgroupGitIntegration:
         raw_nodes = bundle.get('nodes')
         if not isinstance(raw_nodes, list):
@@ -124,6 +152,7 @@ class WorkgroupGitIntegration:
             root_verification=root_verification,
             verify_each_layer=verify_each_layer,
             workspace_root=workspace_root,
+            quarantine_root=quarantine_root,
         )
 
     def preflight(self) -> dict[str, object]:
@@ -166,6 +195,7 @@ class WorkgroupGitIntegration:
                     'root': str(self.project_root),
                     'project_id': self.project_context.project_id,
                     'repository_identity': git.repository_identity(),
+                    'quarantine_root': str(self.quarantine_root),
                 },
                 'task': {
                     'task_id': self.task_id,
@@ -183,6 +213,8 @@ class WorkgroupGitIntegration:
                     'tree_digest': base_tree,
                     'merge_order': [],
                     'merges': [],
+                    'merge_intent': None,
+                    'merge_intents': [],
                     'checks': [],
                 },
                 'root': {
@@ -195,6 +227,7 @@ class WorkgroupGitIntegration:
                     'promotion': None,
                     'checks': [],
                     'rollback': None,
+                    'verification': None,
                 },
                 'verification_policy': {
                     'verify_each_layer': self.verify_each_layer,
@@ -400,7 +433,7 @@ class WorkgroupGitIntegration:
             if node.get('reviewed_commit'):
                 self._validate_reviewed_commit(state, node)
                 return deepcopy(node)
-            if node['status'] != 'review_passed':
+            if node['status'] not in {'review_passed', 'commit_pending'}:
                 raise self._state_error(
                     state,
                     'missing_reviewer_pass',
@@ -426,9 +459,29 @@ class WorkgroupGitIntegration:
                         'node tree changed after reviewer pass',
                         details={'expected': reviewed_tree, 'observed': inspection['tree_digest']},
                     )
-                commit = git.commit_all(workspace, self._node_commit_message(state, node))
+                intent_value = node.get('commit_intent')
+                if intent_value is None:
+                    intent = self._create_node_commit_intent(state, node)
+                    node['commit_intent'] = intent
+                    node['status'] = 'commit_pending'
+                    self._save_state(state)
+                    self._checkpoint('after_node_commit_intent', state)
+                else:
+                    intent = _mapping(intent_value)
+                    self._validate_node_intent_record(state, node, intent)
+                commit = git.commit_all(workspace, str(intent['message']))
                 self._checkpoint('after_node_commit', state)
             else:
+                intent_value = node.get('commit_intent')
+                if not isinstance(intent_value, dict):
+                    raise self._state_error(
+                        state,
+                        'node_commit_authority_drift',
+                        f'nodes.{node_id}.finalize',
+                        'node HEAD changed without a durable controller commit intent',
+                        details={'base_commit': base_commit, 'observed': head},
+                    )
+                intent = intent_value
                 commit = head
                 self._validate_recoverable_node_commit(state, node, commit)
             commit_tree = git.commit_tree_digest(workspace, commit)
@@ -461,6 +514,9 @@ class WorkgroupGitIntegration:
                 'review_input_digest': review['input_digest'],
                 'created_by': 'ccb-controller',
             }
+            intent['status'] = 'completed'
+            intent['commit'] = commit
+            intent['completed_at'] = _now()
             self._save_state(state)
             self._checkpoint('after_node_state_write', state)
             return deepcopy(node)
@@ -608,6 +664,30 @@ class WorkgroupGitIntegration:
                     'root.verification',
                     'promotion must be applied before project-root verification',
                 )
+            verification_value = root.get('verification')
+            if (
+                isinstance(verification_value, dict)
+                and verification_value.get('status') == 'running'
+            ):
+                self._capture_interrupted_root_verification(state, verification_value)
+                check = self._complete_failed_root_verification(state, verification_value)
+                raise self._error(
+                    'root_verification_failed',
+                    'root.verification',
+                    'project-root verification was interrupted and promotion was rolled back',
+                    details={'check': check},
+                )
+            if isinstance(verification_value, dict) and verification_value.get('status') in {
+                'captured',
+                'quarantined',
+            }:
+                check = self._complete_failed_root_verification(state, verification_value)
+                raise self._error(
+                    'root_verification_failed',
+                    'root.verification',
+                    'project-root verification failed and promotion was rolled back',
+                    details={'check': check},
+                )
             existing = _check_record(root.get('checks'), key='final')
             if existing is not None:
                 if existing.get('status') != 'pass':
@@ -619,19 +699,31 @@ class WorkgroupGitIntegration:
                     )
                 return deepcopy(state)
             git = self._git()
-            before_untracked = set(git.untracked_paths(self.project_root))
+            self._validate_promoted_root(state)
+            verification = {
+                'schema': 'ccb.loop.root_verification_intent.v1',
+                'status': 'running',
+                'prepared_state_revision': int(state['state_revision']) + 1,
+                'commands_digest': _sha256_record(
+                    [command.to_record() for command in self.root_verification]
+                ),
+                'before': self._root_signature(git),
+                'prepared_at': _now(),
+                'quarantine': None,
+            }
+            root['verification'] = verification
+            self._save_state(state)
+            self._checkpoint('after_root_verification_intent', state)
             results = [
                 git.run_verification(self.project_root, command)
                 for command in self.root_verification
             ]
-            status = git.status_lines(self.project_root, ignore_controller_state=True)
-            after_untracked = set(git.untracked_paths(self.project_root))
+            signature = self._root_signature(git)
+            status = tuple(str(item) for item in signature['status'])
             generated_untracked = tuple(
-                sorted(
-                    path
-                    for path in after_untracked - before_untracked
-                    if not path.startswith('.ccb/')
-                )
+                path
+                for path in git.untracked_paths(self.project_root)
+                if not path.startswith('.ccb/')
             )
             passed = all(result['result'] == 'pass' for result in results) and not status
             check = {
@@ -648,21 +740,223 @@ class WorkgroupGitIntegration:
                 'recorded_at': _now(),
             }
             _list(root, 'checks').append(check)
-            self._save_state(state)
             if not passed:
-                self._rollback_locked(
-                    state,
-                    reason='root_verification_failed',
+                integrated_head = str(promotion['integrated_head'])
+                changed_paths = tuple(
+                    path
+                    for path in git.changed_paths(self.project_root, integrated_head)
+                    if not path.startswith('.ccb/')
                 )
+                deleted_paths = tuple(
+                    path
+                    for path in git.deleted_paths(self.project_root, integrated_head)
+                    if not path.startswith('.ccb/')
+                )
+                verification.update(
+                    {
+                        'status': 'captured',
+                        'post': signature,
+                        'changed_paths': list(changed_paths),
+                        'deleted_paths': list(deleted_paths),
+                        'untracked_paths': list(generated_untracked),
+                        'check': deepcopy(check),
+                        'captured_at': _now(),
+                    }
+                )
+                state['status'] = 'root_verification_failed_pending_rollback'
+                self._save_state(state)
+                check = self._complete_failed_root_verification(state, verification)
                 raise self._error(
                     'root_verification_failed',
                     'root.verification',
                     'project-root verification failed and promotion was rolled back',
                     details={'check': check},
                 )
+            verification['status'] = 'passed'
+            verification['post'] = signature
+            verification['check'] = deepcopy(check)
+            verification['completed_at'] = _now()
             state['status'] = 'root_verified'
             self._save_state(state)
             return deepcopy(state)
+
+    def _capture_interrupted_root_verification(
+        self,
+        state: dict[str, object],
+        verification: dict[str, object],
+    ) -> None:
+        root = _mapping(state['root'])
+        promotion = _mapping(root['promotion'])
+        git = self._git()
+        signature = self._root_signature(git)
+        integrated_head = str(promotion['integrated_head'])
+        changed_paths = tuple(
+            path
+            for path in git.changed_paths(self.project_root, integrated_head)
+            if not path.startswith('.ccb/')
+        )
+        deleted_paths = tuple(
+            path
+            for path in git.deleted_paths(self.project_root, integrated_head)
+            if not path.startswith('.ccb/')
+        )
+        untracked_paths = tuple(
+            path
+            for path in git.untracked_paths(self.project_root)
+            if not path.startswith('.ccb/')
+        )
+        check = {
+            'key': 'final',
+            'head': signature['head'],
+            'tree_digest': signature['tree_digest'],
+            'results': [
+                {
+                    'label': 'controller-interrupted-root-verification',
+                    'argv': [],
+                    'timeout_seconds': None,
+                    'exit_code': None,
+                    'stdout': '',
+                    'stderr': 'verification process ended before durable result capture',
+                    'stdout_truncated': False,
+                    'stderr_truncated': False,
+                    'timed_out': False,
+                    'interrupted': True,
+                    'result': 'failed',
+                }
+            ],
+            'status': 'failed',
+            'post_status': list(signature['status']),
+            'generated_untracked': list(untracked_paths),
+            'recorded_at': _now(),
+        }
+        _list(root, 'checks').append(check)
+        verification.update(
+            {
+                'status': 'captured',
+                'post': signature,
+                'changed_paths': list(changed_paths),
+                'deleted_paths': list(deleted_paths),
+                'untracked_paths': list(untracked_paths),
+                'check': deepcopy(check),
+                'interrupted': True,
+                'captured_at': _now(),
+            }
+        )
+        state['status'] = 'root_verification_failed_pending_rollback'
+        self._save_state(state)
+
+    def _complete_failed_root_verification(
+        self,
+        state: dict[str, object],
+        verification: dict[str, object],
+    ) -> dict[str, object]:
+        if verification.get('status') == 'captured':
+            quarantine = preserve_verification_delta(
+                project_root=self.project_root,
+                quarantine_root=self.quarantine_root,
+                transaction_key=self.transaction_key,
+                signature=_mapping(verification['post']),
+                changed_paths=tuple(str(item) for item in verification['changed_paths']),
+                deleted_paths=tuple(str(item) for item in verification['deleted_paths']),
+                untracked_paths=tuple(str(item) for item in verification['untracked_paths']),
+            )
+            verification['quarantine'] = quarantine
+            verification['status'] = 'quarantined'
+            verification['quarantined_at'] = _now()
+            self._save_state(state)
+            self._checkpoint('after_root_verification_quarantine', state)
+        self._rollback_verification_failure(state, verification)
+        return deepcopy(_mapping(verification['check']))
+
+    def _root_signature(self, git: GitOperations) -> dict[str, object]:
+        return {
+            'branch': git.branch(self.project_root),
+            'head': git.head(self.project_root),
+            'tree_digest': git.current_tree_digest(
+                self.project_root,
+                ignore_controller_state=True,
+            ),
+            'status': list(
+                git.status_lines(self.project_root, ignore_controller_state=True)
+            ),
+        }
+
+    def _rollback_verification_failure(
+        self,
+        state: dict[str, object],
+        verification: dict[str, object],
+    ) -> None:
+        root = _mapping(state['root'])
+        promotion = _mapping(root['promotion'])
+        git = self._git()
+        base_commit = str(promotion['before_head'])
+        expected_branch = str(promotion['branch'])
+        current = self._root_signature(git)
+        base_clean = (
+            current['branch'] == expected_branch
+            and current['head'] == base_commit
+            and not current['status']
+            and current['tree_digest'] == promotion['before_tree_digest']
+        )
+        if base_clean:
+            recovered = True
+        else:
+            recovered = False
+            captured = _mapping(verification['post'])
+            before = _mapping(verification['before'])
+            if (
+                captured.get('branch') != before.get('branch')
+                or captured.get('head') != before.get('head')
+            ):
+                raise self._state_error(
+                    state,
+                    'rollback_root_drift',
+                    'root.rollback',
+                    'verification changed Git branch or HEAD authority; automatic rollback refused',
+                    details={'before': before, 'captured': captured},
+                )
+            if current != verification.get('post'):
+                raise self._state_error(
+                    state,
+                    'rollback_root_drift',
+                    'root.rollback',
+                    'project root changed after verification evidence capture; rollback refused',
+                    details={'captured': verification.get('post'), 'observed': current},
+                )
+            git.reset_hard(self.project_root, base_commit)
+            remove_captured_untracked(
+                self.project_root,
+                tuple(str(item) for item in verification['untracked_paths']),
+            )
+            self._checkpoint('after_root_rollback', state)
+        final = self._root_signature(git)
+        if not (
+            final['branch'] == expected_branch
+            and final['head'] == base_commit
+            and final['tree_digest'] == promotion['before_tree_digest']
+            and not final['status']
+        ):
+            raise self._state_error(
+                state,
+                'rollback_verification_failed',
+                'root.rollback',
+                'project root was not restored to exact pre-promotion authority',
+                details={'expected_head': base_commit, 'observed': final},
+            )
+        root['rollback'] = {
+            'status': 'restored',
+            'reason': 'root_verification_failed',
+            'head': final['head'],
+            'tree_digest': final['tree_digest'],
+            'recovered': recovered,
+            'recorded_at': _now(),
+        }
+        promotion['status'] = 'rolled_back'
+        verification['status'] = 'rolled_back'
+        verification['completed_at'] = _now()
+        state['status'] = 'rolled_back'
+        self._save_state(state)
+        self._checkpoint('after_rollback_state_write', state)
 
     def accept(self) -> dict[str, object]:
         with file_lock(self.lock_path):
@@ -696,6 +990,18 @@ class WorkgroupGitIntegration:
     ) -> dict[str, object]:
         with file_lock(self.lock_path):
             state = self._load_state()
+            existing_cleanup = _mapping(state['cleanup'])
+            if existing_cleanup.get('status') == 'complete':
+                return deepcopy(existing_cleanup)
+            if (
+                existing_cleanup.get('schema') == 'ccb.loop.workgroup_cleanup_intent.v1'
+                and existing_cleanup.get('status') in {'executing', 'blocked'}
+            ):
+                raise self._error(
+                    'cleanup_in_progress',
+                    'cleanup',
+                    'cleanup execution has a durable intent and must be resumed with cleanup()',
+                )
             active = {str(Path(path).expanduser().resolve()) for path in active_workspaces}
             records = [
                 _mapping(state['integration']),
@@ -738,6 +1044,7 @@ class WorkgroupGitIntegration:
             else:
                 reason = 'eligible'
             state['cleanup'] = {
+                'status': 'ready' if eligible else 'blocked',
                 'evidence_captured': bool(evidence_captured),
                 'active_workspaces': active_owned,
                 'dirty_workspaces': dirty,
@@ -749,6 +1056,309 @@ class WorkgroupGitIntegration:
             }
             self._save_state(state)
             return deepcopy(state['cleanup'])
+
+    def cleanup(self, *, active_workspaces: Iterable[Path]) -> dict[str, object]:
+        with file_lock(self.lock_path):
+            state = self._load_state()
+            cleanup = _mapping(state['cleanup'])
+            if cleanup.get('status') == 'complete':
+                return deepcopy(cleanup)
+            active = {str(Path(path).expanduser().resolve()) for path in active_workspaces}
+            records = [
+                _mapping(state['integration']),
+                *[_mapping(value) for value in _mapping(state['nodes']).values()],
+            ]
+            owned_paths = {
+                str(Path(str(record['worktree_path'])).resolve()) for record in records
+            }
+            active_owned = sorted(active & owned_paths)
+            if active_owned:
+                raise self._cleanup_error(
+                    state,
+                    cleanup,
+                    'owned_worktree_active',
+                    ', '.join(active_owned),
+                    details={'active_workspaces': active_owned},
+                )
+            if cleanup.get('status') == 'ready':
+                self._prepare_cleanup_intent(state, cleanup)
+            elif (
+                cleanup.get('schema') == 'ccb.loop.workgroup_cleanup_intent.v1'
+                and cleanup.get('status') == 'blocked'
+            ):
+                cleanup['status'] = 'executing'
+                cleanup['resumed_at'] = _now()
+                self._save_state(state)
+            elif cleanup.get('status') != 'executing':
+                reason = str(cleanup.get('reason') or 'cleanup_not_ready')
+                raise self._cleanup_error(
+                    state,
+                    cleanup,
+                    reason if reason != 'eligible' else 'cleanup_not_ready',
+                    reason,
+                )
+            self._execute_cleanup_intent(state, cleanup)
+            return deepcopy(cleanup)
+
+    def _prepare_cleanup_intent(
+        self,
+        state: dict[str, object],
+        cleanup: dict[str, object],
+    ) -> None:
+        if not cleanup.get('evidence_captured'):
+            raise self._cleanup_error(
+                state,
+                cleanup,
+                'terminal_evidence_not_captured',
+                'terminal evidence is not durable',
+            )
+        if str(state.get('status')) not in {
+            'accepted',
+            'rolled_back',
+            'integration_failed',
+            'replan_required',
+        }:
+            raise self._cleanup_error(
+                state,
+                cleanup,
+                'transaction_not_terminal',
+                str(state.get('status')),
+            )
+        if cleanup.get('active_workspaces'):
+            raise self._cleanup_error(
+                state,
+                cleanup,
+                'owned_worktree_active',
+                ', '.join(str(item) for item in cleanup['active_workspaces']),
+            )
+        records = [
+            ('integration', _mapping(state['integration'])),
+            *[
+                (str(spec.node_id), self._state_node(state, spec.node_id))
+                for spec in self.ordered_nodes
+            ],
+        ]
+        owned_worktrees: list[dict[str, object]] = []
+        owned_branches: list[dict[str, object]] = []
+        git = self._git()
+        for owner, record in records:
+            path = Path(str(record['worktree_path'])).resolve()
+            branch = str(record['branch'])
+            expected_head = (
+                str(record['head'])
+                if owner == 'integration'
+                else str(record.get('reviewed_commit') or record.get('head') or '')
+            )
+            if not path.is_dir() or not is_registered_worktree(self.project_root, path):
+                raise self._cleanup_error(
+                    state,
+                    cleanup,
+                    'owned_worktree_missing',
+                    str(path),
+                )
+            status = git.status_lines(path)
+            if status:
+                raise self._cleanup_error(
+                    state,
+                    cleanup,
+                    'owned_worktree_dirty',
+                    str(path),
+                    details={'status': list(status)},
+                )
+            if not branch_exists(self.project_root, branch):
+                raise self._cleanup_error(
+                    state,
+                    cleanup,
+                    'owned_branch_missing',
+                    branch,
+                )
+            observed_head = git.resolve_commit(self.project_root, branch)
+            if observed_head != expected_head:
+                raise self._cleanup_error(
+                    state,
+                    cleanup,
+                    'owned_branch_authority_drift',
+                    branch,
+                    details={'expected': expected_head, 'observed': observed_head},
+                )
+            owned_worktrees.append(
+                {'owner': owner, 'path': str(path), 'status': 'pending'}
+            )
+            owned_branches.append(
+                {
+                    'owner': owner,
+                    'branch': branch,
+                    'expected_head': expected_head,
+                    'status': 'pending',
+                }
+            )
+        cleanup.update(
+            {
+                'schema': 'ccb.loop.workgroup_cleanup_intent.v1',
+                'status': 'executing',
+                'prepared_state_revision': int(state['state_revision']) + 1,
+                'worktrees': owned_worktrees,
+                'branches': owned_branches,
+                'prepared_at': _now(),
+            }
+        )
+        self._save_state(state)
+
+    def _execute_cleanup_intent(
+        self,
+        state: dict[str, object],
+        cleanup: dict[str, object],
+    ) -> None:
+        for item_value in _list(cleanup, 'worktrees'):
+            item = _mapping(item_value)
+            path = Path(str(item['path'])).resolve()
+            status = str(item['status'])
+            registered = is_registered_worktree(self.project_root, path)
+            exists = path.exists()
+            if status == 'removed':
+                if registered or exists:
+                    raise self._cleanup_error(
+                        state,
+                        cleanup,
+                        'cleanup_replay_authority_drift',
+                        str(path),
+                    )
+                continue
+            if status == 'pending' and (not registered or not exists):
+                raise self._cleanup_error(
+                    state,
+                    cleanup,
+                    'owned_worktree_missing',
+                    str(path),
+                )
+            if status == 'removing' and not registered and not exists:
+                item['status'] = 'removed'
+                item['recovered'] = True
+                item['removed_at'] = _now()
+                self._save_state(state)
+                continue
+            if not registered or not exists:
+                raise self._cleanup_error(
+                    state,
+                    cleanup,
+                    'cleanup_replay_authority_drift',
+                    str(path),
+                )
+            dirty = self._git().status_lines(path)
+            if dirty:
+                raise self._cleanup_error(
+                    state,
+                    cleanup,
+                    'owned_worktree_dirty',
+                    str(path),
+                    details={'status': list(dirty)},
+                )
+            if status == 'pending':
+                item['status'] = 'removing'
+                self._save_state(state)
+            try:
+                remove_clean_registered_worktree(self.project_root, path)
+            except RuntimeError as exc:
+                raise self._cleanup_error(
+                    state,
+                    cleanup,
+                    'owned_worktree_remove_failed',
+                    str(path),
+                    details={'error': str(exc)},
+                ) from exc
+            self._checkpoint('after_cleanup_worktree_removed', state)
+            item['status'] = 'removed'
+            item['recovered'] = False
+            item['removed_at'] = _now()
+            self._save_state(state)
+
+        for item_value in _list(cleanup, 'branches'):
+            item = _mapping(item_value)
+            branch = str(item['branch'])
+            expected_head = str(item['expected_head'])
+            status = str(item['status'])
+            exists = branch_exists(self.project_root, branch)
+            if status == 'removed':
+                if exists:
+                    raise self._cleanup_error(
+                        state,
+                        cleanup,
+                        'cleanup_replay_authority_drift',
+                        branch,
+                    )
+                continue
+            if status == 'pending' and not exists:
+                raise self._cleanup_error(
+                    state,
+                    cleanup,
+                    'owned_branch_missing',
+                    branch,
+                )
+            if status == 'removing' and not exists:
+                item['status'] = 'removed'
+                item['recovered'] = True
+                item['removed_at'] = _now()
+                self._save_state(state)
+                continue
+            try:
+                if status == 'pending':
+                    observed = self._git().resolve_commit(self.project_root, branch)
+                    if observed != expected_head:
+                        raise RuntimeError(
+                            f'expected {expected_head}, observed {observed}'
+                        )
+                    item['status'] = 'removing'
+                    self._save_state(state)
+                delete_owned_branch(
+                    self.project_root,
+                    branch,
+                    expected_commit=expected_head,
+                )
+            except RuntimeError as exc:
+                raise self._cleanup_error(
+                    state,
+                    cleanup,
+                    'owned_branch_remove_failed',
+                    branch,
+                    details={'error': str(exc)},
+                ) from exc
+            self._checkpoint('after_cleanup_branch_removed', state)
+            item['status'] = 'removed'
+            item['recovered'] = False
+            item['removed_at'] = _now()
+            self._save_state(state)
+
+        cleanup['status'] = 'complete'
+        cleanup['eligible'] = False
+        cleanup['reason'] = 'complete'
+        cleanup['worktrees_preserved'] = False
+        cleanup['completed_at'] = _now()
+        self._save_state(state)
+
+    def _cleanup_error(
+        self,
+        state: dict[str, object],
+        cleanup: dict[str, object],
+        code: str,
+        subject: str,
+        *,
+        details: dict[str, object] | None = None,
+    ) -> GitIntegrationError:
+        cleanup['status'] = 'blocked'
+        cleanup['reason'] = code
+        cleanup['blocker'] = {
+            'code': code,
+            'subject': subject,
+            'details': dict(details or {}),
+            'recorded_at': _now(),
+        }
+        return self._state_error(
+            state,
+            code,
+            'cleanup',
+            f'controller-owned cleanup blocked: {subject}',
+            details=details,
+        )
 
     def _git(self) -> GitOperations:
         try:
@@ -788,6 +1398,7 @@ class WorkgroupGitIntegration:
                 'reviewed_commit': None,
                 'reviewed_tree_digest': None,
                 'commit': None,
+                'commit_intent': None,
                 'status': 'planned',
             }
         return {'integration': integration, 'nodes': nodes}
@@ -899,7 +1510,7 @@ class WorkgroupGitIntegration:
                 )
             return
         base_commit = str(node.get('base_commit') or '')
-        if node['status'] == 'review_passed' and head != base_commit:
+        if node['status'] in {'review_passed', 'commit_pending'} and head != base_commit:
             self._validate_recoverable_node_commit(state, node, head)
             return
         if head != base_commit:
@@ -1024,35 +1635,90 @@ class WorkgroupGitIntegration:
             )
         )
 
+    def _create_node_commit_intent(
+        self,
+        state: dict[str, object],
+        node: dict[str, object],
+    ) -> dict[str, object]:
+        review = _mapping(node['review'])
+        return create_node_commit_intent(
+            node_id=str(node['node_id']),
+            base_commit=str(node['base_commit']),
+            reviewed_tree_digest=str(review['tree_digest']),
+            review_input_digest=str(review['input_digest']),
+            reviewer_job_id=str(review['reviewer_job_id']),
+            actor=self._git().controller_identity(),
+            prepared_state_revision=int(state['state_revision']) + 1,
+            message_prefix=self._node_commit_message(state, node),
+            prepared_at=_now(),
+        )
+
+    def _validate_node_intent_record(
+        self,
+        state: dict[str, object],
+        node: dict[str, object],
+        intent: dict[str, object],
+    ) -> None:
+        review = _mapping(node['review'])
+        if not node_commit_intent_matches(
+            intent,
+            node_id=str(node['node_id']),
+            base_commit=str(node['base_commit']),
+            reviewed_tree_digest=str(review['tree_digest']),
+            review_input_digest=str(review['input_digest']),
+            reviewer_job_id=str(review['reviewer_job_id']),
+            actor=self._git().controller_identity(),
+            message_prefix=self._node_commit_message(state, node),
+        ):
+            raise self._state_error(
+                state,
+                'node_commit_authority_drift',
+                f'nodes.{node["node_id"]}.finalize',
+                'durable node commit intent no longer matches review authority',
+            )
+
     def _validate_recoverable_node_commit(
         self,
         state: dict[str, object],
         node: dict[str, object],
         commit: str,
     ) -> None:
+        intent_value = node.get('commit_intent')
+        if not isinstance(intent_value, dict):
+            raise self._state_error(
+                state,
+                'node_commit_authority_drift',
+                f'nodes.{node["node_id"]}.finalize',
+                'node commit recovery requires a durable controller intent',
+                details={'commit': commit},
+            )
+        intent = intent_value
+        self._validate_node_intent_record(state, node, intent)
         git = self._git()
         workspace = Path(str(node['worktree_path']))
         parents = git.commit_parents(workspace, commit)
-        if parents != (str(node['base_commit']),):
-            raise self._state_error(
-                state,
-                'node_commit_recovery_mismatch',
-                f'nodes.{node["node_id"]}.finalize',
-                'unrecorded node commit does not have the recorded base as its sole parent',
-                details={'commit': commit, 'parents': list(parents)},
-            )
         message = git.commit_message(workspace, commit)
-        required = (
-            f'CCB-Node: {node["node_id"]}',
-            f'CCB-Reviewed-Tree: {_mapping(node["review"])["tree_digest"]}',
-        )
-        if any(marker not in message for marker in required):
+        tree = git.commit_tree_digest(workspace, commit)
+        identity = git.commit_identity(workspace, commit)
+        expected_identity = git.controller_identity()
+        if (
+            parents != (str(intent['base_commit']),)
+            or tree != str(intent['reviewed_tree_digest'])
+            or message != str(intent['message'])
+            or identity != expected_identity
+        ):
             raise self._state_error(
                 state,
-                'node_commit_recovery_mismatch',
+                'node_commit_authority_drift',
                 f'nodes.{node["node_id"]}.finalize',
-                'unrecorded commit lacks controller review trailers',
-                details={'commit': commit},
+                'Git commit does not exactly match durable controller intent',
+                details={
+                    'commit': commit,
+                    'parents': list(parents),
+                    'tree_digest': tree,
+                    'message_digest': _sha256_record(message),
+                    'identity': identity,
+                },
             )
 
     def _validate_reviewed_commit(self, state: dict[str, object], node: dict[str, object]) -> None:
@@ -1066,6 +1732,44 @@ class WorkgroupGitIntegration:
                 'reviewed commit tree no longer matches durable state',
             )
 
+    def _create_merge_intent(
+        self,
+        state: dict[str, object],
+        node: dict[str, object],
+        *,
+        before: str,
+    ) -> dict[str, object]:
+        return create_merge_intent(
+            node_id=str(node['node_id']),
+            head_before=before,
+            reviewed_commit=str(node['reviewed_commit']),
+            reviewed_tree_digest=str(node['reviewed_tree_digest']),
+            actor=self._git().controller_identity(),
+            prepared_state_revision=int(state['state_revision']) + 1,
+            prepared_at=_now(),
+        )
+
+    def _validate_merge_intent_record(
+        self,
+        state: dict[str, object],
+        node: dict[str, object],
+        intent: dict[str, object],
+    ) -> None:
+        if not merge_intent_matches(
+            intent,
+            node_id=str(node['node_id']),
+            head_before=str(_mapping(state['integration'])['head']),
+            reviewed_commit=str(node['reviewed_commit']),
+            reviewed_tree_digest=str(node['reviewed_tree_digest']),
+            actor=self._git().controller_identity(),
+        ):
+            raise self._state_error(
+                state,
+                'integration_merge_authority_drift',
+                f'integration.merge.{node["node_id"]}',
+                'durable merge intent no longer matches deterministic integration authority',
+            )
+
     def _recover_unrecorded_merge(self, state: dict[str, object]) -> None:
         integration = _mapping(state['integration'])
         workspace = Path(str(integration['worktree_path']))
@@ -1074,6 +1778,16 @@ class WorkgroupGitIntegration:
         recorded = str(integration['head'])
         if actual == recorded:
             return
+        intent_value = integration.get('merge_intent')
+        if not isinstance(intent_value, dict) or intent_value.get('status') != 'prepared':
+            raise self._state_error(
+                state,
+                'integration_merge_authority_drift',
+                'integration.recovery',
+                'integration HEAD changed without a durable controller merge intent',
+                details={'recorded': recorded, 'observed': actual},
+            )
+        intent = intent_value
         next_spec = self._next_unintegrated_node(state)
         if next_spec is None:
             raise self._state_error(
@@ -1085,18 +1799,28 @@ class WorkgroupGitIntegration:
             )
         node = self._state_node(state, next_spec.node_id)
         reviewed_commit = str(node.get('reviewed_commit') or '')
+        self._validate_merge_intent_record(state, node, intent)
         parents = git.commit_parents(workspace, actual)
-        if node['status'] != 'integration_ready' or parents != (recorded, reviewed_commit):
+        message = git.commit_message(workspace, actual)
+        identity = git.commit_identity(workspace, actual)
+        if (
+            node['status'] != 'integration_ready'
+            or parents != (recorded, reviewed_commit)
+            or message != str(intent['message'])
+            or identity != git.controller_identity()
+        ):
             raise self._state_error(
                 state,
-                'integration_head_drift',
+                'integration_merge_authority_drift',
                 'integration.recovery',
-                'unrecorded integration HEAD is not the next deterministic controller merge',
+                'unrecorded integration commit does not exactly match durable merge intent',
                 details={
                     'recorded': recorded,
                     'observed': actual,
                     'expected_node': next_spec.node_id,
                     'parents': list(parents),
+                    'message_digest': _sha256_record(message),
+                    'identity': identity,
                 },
             )
         if git.status_lines(workspace):
@@ -1128,16 +1852,30 @@ class WorkgroupGitIntegration:
                 details={'expected_head': before, 'observed_head': actual},
             )
         reviewed_commit = str(node['reviewed_commit'])
+        intent_value = integration.get('merge_intent')
+        if not isinstance(intent_value, dict) or intent_value.get('status') == 'completed':
+            intent = self._create_merge_intent(state, node, before=before)
+            integration['merge_intent'] = intent
+            self._save_state(state)
+            self._checkpoint('after_integration_merge_intent', state)
+        else:
+            intent = intent_value
+            self._validate_merge_intent_record(state, node, intent)
         result = git.merge_no_ff(
             workspace,
             reviewed_commit,
-            f'CCB integrate {node["node_id"]}',
+            str(intent['message']),
         )
         if result.returncode != 0:
             conflicts = git.conflict_paths(workspace)
             git.merge_abort(workspace)
             code = 'integration_merge_conflict' if conflicts else 'integration_merge_failed'
             integration['status'] = 'merge_conflict'
+            intent['status'] = 'failed'
+            intent['failure'] = {
+                'exit_code': result.returncode,
+                'conflict_paths': list(conflicts),
+            }
             state['status'] = 'replan_required'
             raise self._state_error(
                 state,
@@ -1156,13 +1894,24 @@ class WorkgroupGitIntegration:
         after = git.head(workspace)
         self._checkpoint('after_integration_merge', state)
         parents = git.commit_parents(workspace, after)
-        if parents != (before, reviewed_commit):
+        message = git.commit_message(workspace, after)
+        identity = git.commit_identity(workspace, after)
+        if (
+            parents != (before, reviewed_commit)
+            or message != str(intent['message'])
+            or identity != git.controller_identity()
+        ):
             raise self._state_error(
                 state,
-                'integration_merge_parent_mismatch',
+                'integration_merge_authority_drift',
                 f'integration.merge.{node["node_id"]}',
-                'integration merge parents do not match deterministic authority',
-                details={'expected': [before, reviewed_commit], 'observed': list(parents)},
+                'integration merge does not exactly match durable controller intent',
+                details={
+                    'expected_parents': [before, reviewed_commit],
+                    'observed_parents': list(parents),
+                    'message_digest': _sha256_record(message),
+                    'identity': identity,
+                },
             )
         post_merge_status = git.status_lines(workspace)
         if post_merge_status:
@@ -1205,6 +1954,12 @@ class WorkgroupGitIntegration:
         integration['head'] = after
         integration['tree_digest'] = tree
         integration['status'] = 'merging'
+        intent = _mapping(integration['merge_intent'])
+        intent['status'] = 'completed'
+        intent['head_after'] = after
+        intent['tree_digest'] = tree
+        intent['completed_at'] = _now()
+        _list(integration, 'merge_intents').append(deepcopy(intent))
         node['status'] = 'integrated'
         node['integration'] = {
             'status': 'integrated',
@@ -1501,6 +2256,12 @@ class WorkgroupGitIntegration:
                 'integration_state_identity_mismatch',
                 'state.project.root',
                 'durable state project root does not match this controller',
+            )
+        if project.get('quarantine_root') != str(self.quarantine_root):
+            raise self._error(
+                'integration_state_identity_mismatch',
+                'state.project.quarantine_root',
+                'durable verification quarantine authority changed after preflight',
             )
         git = self._git()
         if project.get('repository_identity') != git.repository_identity():

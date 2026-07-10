@@ -9,11 +9,13 @@ import tempfile
 from .models import VerificationCommand
 
 
+CONTROLLER_NAME = 'CCB Controller'
+CONTROLLER_EMAIL = 'ccb-controller@localhost'
 _CONTROLLER_ENV = {
-    'GIT_AUTHOR_NAME': 'CCB Controller',
-    'GIT_AUTHOR_EMAIL': 'ccb-controller@localhost',
-    'GIT_COMMITTER_NAME': 'CCB Controller',
-    'GIT_COMMITTER_EMAIL': 'ccb-controller@localhost',
+    'GIT_AUTHOR_NAME': CONTROLLER_NAME,
+    'GIT_AUTHOR_EMAIL': CONTROLLER_EMAIL,
+    'GIT_COMMITTER_NAME': CONTROLLER_NAME,
+    'GIT_COMMITTER_EMAIL': CONTROLLER_EMAIL,
 }
 _MAX_VERIFICATION_OUTPUT_BYTES = 65_536
 
@@ -132,7 +134,35 @@ class GitOperations:
         return tuple(parts[1:])
 
     def commit_message(self, cwd: Path, commit: str) -> str:
-        return self.output(cwd, ['show', '-s', '--format=%B', commit])
+        raw = self.run(cwd, ['cat-file', '-p', commit]).stdout
+        separator = raw.find('\n\n')
+        if separator < 0:
+            raise RuntimeError(f'cannot parse Git commit message for {commit}')
+        message = raw[separator + 2 :]
+        return message[:-1] if message.endswith('\n') else message
+
+    def commit_identity(self, cwd: Path, commit: str) -> dict[str, str]:
+        raw = self.run(
+            cwd,
+            ['show', '-s', '--format=%an%x00%ae%x00%cn%x00%ce', commit],
+        ).stdout.rstrip('\n')
+        parts = raw.split('\0')
+        if len(parts) != 4:
+            raise RuntimeError(f'cannot parse Git identity for commit {commit}')
+        return {
+            'author_name': parts[0],
+            'author_email': parts[1],
+            'committer_name': parts[2],
+            'committer_email': parts[3],
+        }
+
+    def controller_identity(self) -> dict[str, str]:
+        return {
+            'author_name': CONTROLLER_NAME,
+            'author_email': CONTROLLER_EMAIL,
+            'committer_name': CONTROLLER_NAME,
+            'committer_email': CONTROLLER_EMAIL,
+        }
 
     def commit_all(self, cwd: Path, message: str) -> str:
         self.run(cwd, ['add', '-A', '--', '.'])
@@ -301,4 +331,9 @@ def _bounded_output(value: str) -> tuple[str, bool]:
     return encoded[:_MAX_VERIFICATION_OUTPUT_BYTES].decode('utf-8', errors='replace'), True
 
 
-__all__ = ['GitCommandResult', 'GitOperations']
+__all__ = [
+    'CONTROLLER_EMAIL',
+    'CONTROLLER_NAME',
+    'GitCommandResult',
+    'GitOperations',
+]

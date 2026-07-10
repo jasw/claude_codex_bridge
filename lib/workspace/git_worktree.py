@@ -119,6 +119,43 @@ def remove_registered_worktree(repo_root: Path, workspace_path: Path) -> bool:
     return False
 
 
+def remove_clean_registered_worktree(repo_root: Path, workspace_path: Path) -> bool:
+    target = _normalize_path(workspace_path)
+    if not is_registered_worktree(repo_root, target):
+        return False
+    if not target.exists():
+        raise RuntimeError(f'registered worktree is missing: {target}')
+    dirty = workspace_is_dirty(target)
+    if dirty is not False:
+        raise RuntimeError(f'refusing to remove dirty or unreadable worktree: {target}')
+    _run_git(
+        repo_root,
+        ['worktree', 'remove', str(target)],
+        error=f'failed to remove clean git worktree {target}',
+    )
+    return True
+
+
+def delete_owned_branch(repo_root: Path, branch_name: str, *, expected_commit: str) -> bool:
+    if not branch_exists(repo_root, branch_name):
+        return False
+    observed = _git(repo_root, ['rev-parse', '--verify', f'{branch_name}^{{commit}}'])
+    if observed.returncode != 0:
+        raise RuntimeError(_detail(observed) or f'failed to resolve branch {branch_name}')
+    observed_commit = (observed.stdout or '').strip()
+    if observed_commit != expected_commit:
+        raise RuntimeError(
+            f'owned branch authority drift for {branch_name}: '
+            f'expected {expected_commit}, observed {observed_commit}'
+        )
+    _run_git(
+        repo_root,
+        ['branch', '-D', branch_name],
+        error=f'failed to delete owned branch {branch_name}',
+    )
+    return True
+
+
 def _path_within(path: Path, parent: Path) -> bool:
     normalized_path = _normalize_path(path)
     normalized_parent = _normalize_path(parent)
@@ -158,12 +195,14 @@ __all__ = [
     'branch_is_merged_into_head',
     'can_use_git_worktree',
     'delete_branch',
+    'delete_owned_branch',
     'has_missing_registered_worktree',
     'is_git_workspace_root',
     'is_registered_worktree',
     'list_registered_worktrees',
     'prune_missing_worktrees_under',
     'remove_registered_worktree',
+    'remove_clean_registered_worktree',
     'unregister_worktrees_under',
     'workspace_is_dirty',
 ]

@@ -572,6 +572,181 @@ def test_root_verification_failure_restores_exact_pre_promotion_root(tmp_path: P
     assert not (root / spec.allowed_paths[0]).exists()
 
 
+@pytest.mark.parametrize(
+    ('script', 'changed_path', 'quarantined_text'),
+    (
+        (
+            'from pathlib import Path; Path("verification.out").write_text("generated\\n"); '
+            'raise SystemExit(9)',
+            'verification.out',
+            'generated\n',
+        ),
+        (
+            'from pathlib import Path; Path("README.md").write_text("verification changed\\n"); '
+            'raise SystemExit(9)',
+            'README.md',
+            'verification changed\n',
+        ),
+    ),
+)
+def test_root_verification_mutation_is_quarantined_then_exactly_rolled_back(
+    tmp_path: Path,
+    script: str,
+    changed_path: str,
+    quarantined_text: str,
+) -> None:
+    root = _init_repo(tmp_path)
+    spec = _node(1)
+    failing = VerificationCommand(
+        'mutate-and-fail-root',
+        (sys.executable, '-c', script),
+        timeout_seconds=10,
+    )
+    kernel = _kernel(root, (spec,), root_verification=(failing,))
+    kernel.preflight()
+    kernel.prepare_integration()
+    _prepare_changed_node(kernel, spec)
+    kernel.integrate_ready()
+    kernel.promote()
+    base = kernel.state()['task']['base_commit']
+
+    with pytest.raises(GitIntegrationError) as exc_info:
+        kernel.verify_root()
+
+    state = kernel.state()
+    quarantine = state['root']['verification']['quarantine']
+    preserved = Path(str(quarantine['path'])) / 'files' / changed_path
+    assert exc_info.value.code == 'root_verification_failed'
+    assert state['status'] == 'rolled_back'
+    assert quarantine['status'] == 'preserved'
+    assert root not in preserved.parents
+    assert preserved.read_text(encoding='utf-8') == quarantined_text
+    assert _git(root, 'rev-parse', 'HEAD') == base
+    assert _git(root, 'status', '--porcelain') == ''
+    assert (root / 'README.md').read_text(encoding='utf-8') == 'base\n'
+    assert not (root / 'verification.out').exists()
+
+
+def test_root_verification_quarantine_crash_replays_rollback_without_rerun(tmp_path: Path) -> None:
+    root = _init_repo(tmp_path)
+    spec = _node(1)
+    marker = tmp_path / 'verification-runs.txt'
+    failing = VerificationCommand(
+        'mutate-and-fail-root',
+        (
+            sys.executable,
+            '-c',
+            'from pathlib import Path; '
+            f'p=Path({str(marker)!r}); p.write_text(p.read_text() + "run\\n" if p.exists() else "run\\n"); '
+            'Path("verification.out").write_text("generated\\n"); raise SystemExit(9)',
+        ),
+        timeout_seconds=10,
+    )
+    kernel = _kernel(root, (spec,), root_verification=(failing,))
+    kernel.preflight()
+    kernel.prepare_integration()
+    _prepare_changed_node(kernel, spec)
+    kernel.integrate_ready()
+    kernel.promote()
+    fired = False
+
+    def crash(name: str, _state: dict[str, object]) -> None:
+        nonlocal fired
+        if name == 'after_root_verification_quarantine' and not fired:
+            fired = True
+            raise RuntimeError('crash:verification-quarantine')
+
+    kernel._checkpoint_hook = crash
+    with pytest.raises(RuntimeError, match='crash:verification-quarantine'):
+        kernel.verify_root()
+
+    replay = _kernel(root, (spec,), root_verification=(failing,))
+    with pytest.raises(GitIntegrationError) as exc_info:
+        replay.verify_root()
+
+    assert exc_info.value.code == 'root_verification_failed'
+    assert marker.read_text(encoding='utf-8') == 'run\n'
+    assert replay.state()['status'] == 'rolled_back'
+    assert _git(root, 'status', '--porcelain') == ''
+
+
+def test_root_verification_intent_crash_does_not_resubmit_command(tmp_path: Path) -> None:
+    root = _init_repo(tmp_path)
+    spec = _node(1)
+    marker = tmp_path / 'verification-command-ran.txt'
+    command = VerificationCommand(
+        'must-not-rerun',
+        (
+            sys.executable,
+            '-c',
+            f'from pathlib import Path; Path({str(marker)!r}).write_text("ran\\n")',
+        ),
+        timeout_seconds=10,
+    )
+    kernel = _kernel(root, (spec,), root_verification=(command,))
+    kernel.preflight()
+    kernel.prepare_integration()
+    _prepare_changed_node(kernel, spec)
+    kernel.integrate_ready()
+    kernel.promote()
+    fired = False
+
+    def crash(name: str, _state: dict[str, object]) -> None:
+        nonlocal fired
+        if name == 'after_root_verification_intent' and not fired:
+            fired = True
+            raise RuntimeError('crash:verification-intent')
+
+    kernel._checkpoint_hook = crash
+    with pytest.raises(RuntimeError, match='crash:verification-intent'):
+        kernel.verify_root()
+
+    replay = _kernel(root, (spec,), root_verification=(command,))
+    with pytest.raises(GitIntegrationError) as exc_info:
+        replay.verify_root()
+
+    state = replay.state()
+    assert exc_info.value.code == 'root_verification_failed'
+    assert state['root']['verification']['interrupted'] is True
+    assert state['status'] == 'rolled_back'
+    assert not marker.exists()
+
+
+def test_concurrent_drift_after_verification_quarantine_blocks_rollback(tmp_path: Path) -> None:
+    root = _init_repo(tmp_path)
+    spec = _node(1)
+    failing = VerificationCommand(
+        'mutate-and-fail-root',
+        (
+            sys.executable,
+            '-c',
+            'from pathlib import Path; Path("verification.out").write_text("generated\\n"); '
+            'raise SystemExit(9)',
+        ),
+        timeout_seconds=10,
+    )
+    kernel = _kernel(root, (spec,), root_verification=(failing,))
+    kernel.preflight()
+    kernel.prepare_integration()
+    _prepare_changed_node(kernel, spec)
+    kernel.integrate_ready()
+    kernel.promote()
+    integrated_head = kernel.state()['integration']['head']
+
+    def concurrent_write(name: str, _state: dict[str, object]) -> None:
+        if name == 'after_root_verification_quarantine':
+            (root / 'user-concurrent.txt').write_text('preserve me\n', encoding='utf-8')
+
+    kernel._checkpoint_hook = concurrent_write
+    with pytest.raises(GitIntegrationError) as exc_info:
+        kernel.verify_root()
+
+    assert exc_info.value.code == 'rollback_root_drift'
+    assert _git(root, 'rev-parse', 'HEAD') == integrated_head
+    assert (root / 'verification.out').read_text(encoding='utf-8') == 'generated\n'
+    assert (root / 'user-concurrent.txt').read_text(encoding='utf-8') == 'preserve me\n'
+
+
 def test_explicit_nonpass_rollback_after_root_verification(tmp_path: Path) -> None:
     root = _init_repo(tmp_path)
     spec = _node(1)
@@ -597,7 +772,10 @@ def test_explicit_nonpass_rollback_after_root_verification(tmp_path: Path) -> No
     assert not (root / spec.allowed_paths[0]).exists()
 
 
-@pytest.mark.parametrize('checkpoint', ('after_node_commit', 'after_node_state_write'))
+@pytest.mark.parametrize(
+    'checkpoint',
+    ('after_node_commit_intent', 'after_node_commit', 'after_node_state_write'),
+)
 def test_node_finalize_replay_never_duplicates_controller_commit(
     tmp_path: Path,
     checkpoint: str,
@@ -639,7 +817,71 @@ def test_node_finalize_replay_never_duplicates_controller_commit(
     assert _git(worktree, 'rev-list', '--count', f'{base}..HEAD') == '1'
 
 
-def test_integration_merge_replay_records_existing_merge_without_duplication(tmp_path: Path) -> None:
+@pytest.mark.parametrize('tamper', ('actor', 'message'))
+def test_provider_lookalike_node_commit_is_not_controller_recovery_authority(
+    tmp_path: Path,
+    tamper: str,
+) -> None:
+    root = _init_repo(tmp_path)
+    spec = _node(1)
+    kernel = _kernel(root, (spec,))
+    kernel.preflight()
+    kernel.prepare_integration()
+    kernel.prepare_node(spec.node_id)
+    _write_node_file(kernel, spec.node_id, spec.allowed_paths[0], 'provider commit\n')
+    review = kernel.capture_review_input(spec.node_id, worker_job_id='worker-1')
+    kernel.record_review(
+        spec.node_id,
+        reviewer_job_id='reviewer-1',
+        result='pass',
+        input_digest=str(review['input_digest']),
+        tree_digest=str(review['tree_digest']),
+    )
+    fired = False
+
+    def crash(name: str, _state: dict[str, object]) -> None:
+        nonlocal fired
+        if name == 'after_node_commit_intent' and not fired:
+            fired = True
+            raise RuntimeError('crash:node-intent')
+
+    kernel._checkpoint_hook = crash
+    with pytest.raises(RuntimeError, match='crash:node-intent'):
+        kernel.finalize_node(spec.node_id)
+
+    record = _node_record(kernel, spec.node_id)
+    worktree = Path(str(record['worktree_path']))
+    _git(worktree, 'add', '-A')
+    _git(
+        worktree,
+        '-c',
+        f'user.name={"Provider Actor" if tamper == "actor" else "CCB Controller"}',
+        '-c',
+        f'user.email={"provider@example.com" if tamper == "actor" else "ccb-controller@localhost"}',
+        'commit',
+        '-m',
+        str(record['commit_intent']['message']) + ('\nlookalike' if tamper == 'message' else ''),
+    )
+
+    with pytest.raises(GitIntegrationError) as exc_info:
+        kernel.finalize_node(spec.node_id)
+
+    assert exc_info.value.code == 'node_commit_authority_drift'
+    assert _node_record(kernel, spec.node_id)['reviewed_commit'] is None
+
+
+@pytest.mark.parametrize(
+    ('checkpoint', 'expected_recovered'),
+    (
+        ('after_integration_merge_intent', False),
+        ('after_integration_merge', True),
+    ),
+)
+def test_integration_merge_replay_records_existing_merge_without_duplication(
+    tmp_path: Path,
+    checkpoint: str,
+    expected_recovered: bool,
+) -> None:
     root = _init_repo(tmp_path)
     spec = _node(1)
     kernel = _kernel(root, (spec,))
@@ -650,7 +892,7 @@ def test_integration_merge_replay_records_existing_merge_without_duplication(tmp
 
     def crash(name: str, _state: dict[str, object]) -> None:
         nonlocal fired
-        if name == 'after_integration_merge' and not fired:
+        if name == checkpoint and not fired:
             fired = True
             raise RuntimeError('crash:merge')
 
@@ -666,8 +908,228 @@ def test_integration_merge_replay_records_existing_merge_without_duplication(tmp
     base = state['task']['base_commit']
 
     assert integration['merge_order'] == ['node-001']
-    assert integration['merges'][0]['recovered'] is True
+    assert integration['merges'][0]['recovered'] is expected_recovered
     assert _git(worktree, 'rev-list', '--first-parent', '--count', f'{base}..HEAD') == '1'
+
+
+@pytest.mark.parametrize('tamper', ('actor', 'message'))
+def test_provider_lookalike_merge_is_not_controller_recovery_authority(
+    tmp_path: Path,
+    tamper: str,
+) -> None:
+    root = _init_repo(tmp_path)
+    spec = _node(1)
+    kernel = _kernel(root, (spec,))
+    kernel.preflight()
+    kernel.prepare_integration()
+    finalized = _prepare_changed_node(kernel, spec)
+    fired = False
+
+    def crash(name: str, _state: dict[str, object]) -> None:
+        nonlocal fired
+        if name == 'after_integration_merge_intent' and not fired:
+            fired = True
+            raise RuntimeError('crash:merge-intent')
+
+    kernel._checkpoint_hook = crash
+    with pytest.raises(RuntimeError, match='crash:merge-intent'):
+        kernel.integrate_ready()
+
+    state = kernel.state()
+    integration_path = Path(str(state['integration']['worktree_path']))
+    _git(
+        integration_path,
+        '-c',
+        f'user.name={"Provider Actor" if tamper == "actor" else "CCB Controller"}',
+        '-c',
+        f'user.email={"provider@example.com" if tamper == "actor" else "ccb-controller@localhost"}',
+        'merge',
+        '--no-ff',
+        '-m',
+        str(state['integration']['merge_intent']['message'])
+        + ('\nlookalike' if tamper == 'message' else ''),
+        str(finalized['reviewed_commit']),
+    )
+
+    with pytest.raises(GitIntegrationError) as exc_info:
+        kernel.integrate_ready()
+
+    assert exc_info.value.code == 'integration_merge_authority_drift'
+    assert kernel.state()['integration']['merge_order'] == []
+
+
+def test_cleanup_removes_only_owned_worktrees_and_branches_and_is_idempotent(tmp_path: Path) -> None:
+    root = _init_repo(tmp_path)
+    spec = _node(1)
+    kernel = _kernel(root, (spec,))
+    kernel.preflight()
+    kernel.prepare_integration()
+    _prepare_changed_node(kernel, spec)
+    kernel.integrate_ready()
+    kernel.promote()
+    kernel.verify_root()
+    accepted = kernel.accept()
+    unrelated_branch = 'user/unrelated'
+    unrelated_path = tmp_path / 'unrelated-worktree'
+    _git(root, 'branch', unrelated_branch)
+    _git(root, 'worktree', 'add', str(unrelated_path), unrelated_branch)
+    owned_paths = [
+        Path(str(accepted['integration']['worktree_path'])),
+        Path(str(accepted['nodes'][spec.node_id]['worktree_path'])),
+    ]
+    owned_branches = [
+        str(accepted['integration']['branch']),
+        str(accepted['nodes'][spec.node_id]['branch']),
+    ]
+    assert kernel.cleanup_readiness(evidence_captured=True)['eligible'] is True
+
+    cleaned = kernel.cleanup(active_workspaces=())
+    replayed = kernel.cleanup(active_workspaces=())
+
+    assert cleaned['status'] == 'complete'
+    assert replayed == cleaned
+    assert cleaned['worktrees_preserved'] is False
+    assert all(not path.exists() for path in owned_paths)
+    for branch in owned_branches:
+        result = subprocess.run(
+            ['git', '-C', str(root), 'show-ref', '--verify', '--quiet', f'refs/heads/{branch}'],
+            check=False,
+        )
+        assert result.returncode == 1
+    assert unrelated_path.is_dir()
+    assert _git(root, 'show-ref', '--verify', f'refs/heads/{unrelated_branch}')
+
+
+def test_cleanup_crash_after_owned_worktree_removal_replays_without_unrelated_removal(
+    tmp_path: Path,
+) -> None:
+    root = _init_repo(tmp_path)
+    spec = _node(1)
+    kernel = _kernel(root, (spec,))
+    kernel.preflight()
+    kernel.prepare_integration()
+    _prepare_changed_node(kernel, spec)
+    kernel.integrate_ready()
+    kernel.promote()
+    kernel.verify_root()
+    kernel.accept()
+    kernel.cleanup_readiness(evidence_captured=True)
+    unrelated_branch = 'user/unrelated'
+    _git(root, 'branch', unrelated_branch)
+    fired = False
+
+    def crash(name: str, _state: dict[str, object]) -> None:
+        nonlocal fired
+        if name == 'after_cleanup_worktree_removed' and not fired:
+            fired = True
+            raise RuntimeError('crash:cleanup-worktree')
+
+    kernel._checkpoint_hook = crash
+    with pytest.raises(RuntimeError, match='crash:cleanup-worktree'):
+        kernel.cleanup(active_workspaces=())
+
+    replay = _kernel(root, (spec,))
+    cleaned = replay.cleanup(active_workspaces=())
+
+    assert cleaned['status'] == 'complete'
+    assert _git(root, 'show-ref', '--verify', f'refs/heads/{unrelated_branch}')
+
+
+def test_cleanup_crash_after_owned_branch_removal_replays(tmp_path: Path) -> None:
+    root = _init_repo(tmp_path)
+    spec = _node(1)
+    kernel = _kernel(root, (spec,))
+    kernel.preflight()
+    kernel.prepare_integration()
+    _prepare_changed_node(kernel, spec)
+    kernel.integrate_ready()
+    kernel.promote()
+    kernel.verify_root()
+    kernel.accept()
+    kernel.cleanup_readiness(evidence_captured=True)
+    fired = False
+
+    def crash(name: str, _state: dict[str, object]) -> None:
+        nonlocal fired
+        if name == 'after_cleanup_branch_removed' and not fired:
+            fired = True
+            raise RuntimeError('crash:cleanup-branch')
+
+    kernel._checkpoint_hook = crash
+    with pytest.raises(RuntimeError, match='crash:cleanup-branch'):
+        kernel.cleanup(active_workspaces=())
+
+    cleaned = _kernel(root, (spec,)).cleanup(active_workspaces=())
+
+    assert cleaned['status'] == 'complete'
+    assert all(item['status'] == 'removed' for item in cleaned['branches'])
+
+
+@pytest.mark.parametrize(
+    ('mutation', 'expected_reason'),
+    (('dirty', 'owned_worktree_dirty'), ('missing', 'owned_worktree_missing')),
+)
+def test_cleanup_preserves_dirty_and_missing_owned_workspace_blockers(
+    tmp_path: Path,
+    mutation: str,
+    expected_reason: str,
+) -> None:
+    root = _init_repo(tmp_path)
+    spec = _node(1)
+    kernel = _kernel(root, (spec,))
+    kernel.preflight()
+    kernel.prepare_integration()
+    _prepare_changed_node(kernel, spec)
+    kernel.integrate_ready()
+    kernel.promote()
+    kernel.verify_root()
+    kernel.accept()
+    path = Path(str(kernel.state()['nodes'][spec.node_id]['worktree_path']))
+    if mutation == 'dirty':
+        (path / spec.allowed_paths[0]).write_text('dirty after terminal\n', encoding='utf-8')
+    else:
+        subprocess.run(
+            ['git', '-C', str(root), 'worktree', 'remove', '--force', str(path)],
+            check=True,
+        )
+
+    readiness = kernel.cleanup_readiness(evidence_captured=True)
+    with pytest.raises(GitIntegrationError) as exc_info:
+        kernel.cleanup(active_workspaces=())
+
+    assert readiness['reason'] == expected_reason
+    assert exc_info.value.code == expected_reason
+    assert kernel.state()['cleanup']['blocker']['code'] == expected_reason
+    if mutation == 'dirty':
+        assert (path / spec.allowed_paths[0]).read_text(encoding='utf-8') == (
+            'dirty after terminal\n'
+        )
+    else:
+        assert not path.exists()
+
+
+def test_cleanup_rechecks_active_owned_workspace_at_execution_time(tmp_path: Path) -> None:
+    root = _init_repo(tmp_path)
+    spec = _node(1)
+    kernel = _kernel(root, (spec,))
+    kernel.preflight()
+    kernel.prepare_integration()
+    _prepare_changed_node(kernel, spec)
+    kernel.integrate_ready()
+    kernel.promote()
+    kernel.verify_root()
+    kernel.accept()
+    kernel.cleanup_readiness(evidence_captured=True)
+    active = Path(str(kernel.state()['nodes'][spec.node_id]['worktree_path']))
+
+    with pytest.raises(GitIntegrationError) as exc_info:
+        kernel.cleanup(active_workspaces=(active,))
+
+    assert exc_info.value.code == 'owned_worktree_active'
+    assert active.is_dir()
+    assert kernel.state()['cleanup']['blocker']['details']['active_workspaces'] == [
+        str(active)
+    ]
 
 
 def test_promotion_replay_recovers_applied_delta_without_second_promotion(tmp_path: Path) -> None:
