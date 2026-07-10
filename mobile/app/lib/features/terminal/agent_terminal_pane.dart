@@ -2,7 +2,6 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:xterm/xterm.dart';
 
 import '../../models/ccb_project_view.dart';
@@ -372,42 +371,6 @@ class _LiveTerminalPaneState extends State<_LiveTerminalPane>
     }
   }
 
-  Future<void> _pasteClipboard() async {
-    final data = await Clipboard.getData(Clipboard.kTextPlain);
-    final text = data?.text ?? '';
-    if (text.isEmpty) {
-      _setControlStatus('Clipboard empty');
-      return;
-    }
-    final session = _session;
-    if (session == null) {
-      _setControlStatus('Connecting');
-      return;
-    }
-    try {
-      await session.paste(text);
-      _setControlStatus('Pasted');
-    } catch (error) {
-      _setControlStatus('Paste failed');
-      _terminal.write('\r\n\x1b[31m$error\x1b[0m\r\n');
-    }
-  }
-
-  Future<void> _syncSize() async {
-    final session = _session;
-    if (session == null) {
-      _setControlStatus('Connecting');
-      return;
-    }
-    try {
-      await session.resize(_lastGeometry);
-      _setControlStatus('Size synced');
-    } catch (error) {
-      _setControlStatus('Resize failed');
-      _terminal.write('\r\n\x1b[31m$error\x1b[0m\r\n');
-    }
-  }
-
   Future<void> _reconnect() async {
     _cancelAutoReconnectTimer();
     final session = _session;
@@ -568,6 +531,7 @@ class _LiveTerminalPaneState extends State<_LiveTerminalPane>
                 title: widget.model.title,
                 subtitle: widget.model.attachCommand,
                 trailing: status,
+                onReconnect: disconnected && canReconnect ? _reconnect : null,
               ),
             Expanded(
               child: LayoutBuilder(
@@ -589,22 +553,12 @@ class _LiveTerminalPaneState extends State<_LiveTerminalPane>
                           ),
                           child: TerminalControlToolbar(
                             enabled: connected,
-                            reconnectEnabled: canReconnect,
                             onEscape: () => _sendKey(const [27], 'Esc'),
                             onTab: () => _sendKey(const [9], 'Tab'),
                             onCtrlC: () => _sendKey(const [3], 'Ctrl-C'),
-                            onCtrlD: () => _sendKey(const [4], 'Ctrl-D'),
-                            onCtrlU: () => _sendKey(const [21], 'Ctrl-U'),
                             onArrowUp: () => _sendKey(const [27, 91, 65], 'Up'),
                             onArrowDown:
                                 () => _sendKey(const [27, 91, 66], 'Down'),
-                            onArrowRight:
-                                () => _sendKey(const [27, 91, 67], 'Right'),
-                            onArrowLeft:
-                                () => _sendKey(const [27, 91, 68], 'Left'),
-                            onPaste: _pasteClipboard,
-                            onResize: _syncSize,
-                            onReconnect: _reconnect,
                           ),
                         ),
                       ),
@@ -625,12 +579,14 @@ class AgentTerminalHeader extends StatelessWidget {
     required this.title,
     required this.subtitle,
     required this.trailing,
+    this.onReconnect,
     super.key,
   });
 
   final String title;
   final String subtitle;
   final String trailing;
+  final VoidCallback? onReconnect;
 
   @override
   Widget build(BuildContext context) {
@@ -642,12 +598,19 @@ class AgentTerminalHeader extends StatelessWidget {
         leading: const Icon(Icons.terminal),
         title: Text(title, maxLines: 1, overflow: TextOverflow.ellipsis),
         subtitle: Text(subtitle, maxLines: 1, overflow: TextOverflow.ellipsis),
-        trailing: Text(
-          trailing,
-          key: const ValueKey('terminal-connection-status'),
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-        ),
+        trailing:
+            onReconnect == null
+                ? Text(
+                  trailing,
+                  key: const ValueKey('terminal-connection-status'),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                )
+                : TextButton(
+                  key: const ValueKey('terminal-header-reconnect'),
+                  onPressed: onReconnect,
+                  child: Text(trailing),
+                ),
       ),
     );
   }
@@ -656,36 +619,20 @@ class AgentTerminalHeader extends StatelessWidget {
 class TerminalControlToolbar extends StatefulWidget {
   const TerminalControlToolbar({
     required this.enabled,
-    bool? reconnectEnabled,
     required this.onEscape,
     required this.onTab,
     required this.onCtrlC,
-    required this.onCtrlD,
-    required this.onCtrlU,
     required this.onArrowUp,
     required this.onArrowDown,
-    required this.onArrowRight,
-    required this.onArrowLeft,
-    required this.onPaste,
-    required this.onResize,
-    required this.onReconnect,
     super.key,
-  }) : reconnectEnabled = reconnectEnabled ?? enabled;
+  });
 
   final bool enabled;
-  final bool reconnectEnabled;
   final VoidCallback onEscape;
   final VoidCallback onTab;
   final VoidCallback onCtrlC;
-  final VoidCallback onCtrlD;
-  final VoidCallback onCtrlU;
   final VoidCallback onArrowUp;
   final VoidCallback onArrowDown;
-  final VoidCallback onArrowRight;
-  final VoidCallback onArrowLeft;
-  final VoidCallback onPaste;
-  final VoidCallback onResize;
-  final VoidCallback onReconnect;
 
   @override
   State<TerminalControlToolbar> createState() => _TerminalControlToolbarState();
@@ -768,33 +715,6 @@ class _TerminalControlToolbarState extends State<TerminalControlToolbar> {
                           enabled: widget.enabled,
                           onPressed: widget.onCtrlC,
                         ),
-                        PopupMenuButton<VoidCallback>(
-                          key: const ValueKey('terminal-ctrl-menu'),
-                          tooltip: 'More terminal keys',
-                          enabled: widget.enabled,
-                          icon: const Icon(Icons.keyboard_command_key),
-                          onSelected: (callback) => callback(),
-                          itemBuilder:
-                              (context) => [
-                                PopupMenuItem<VoidCallback>(
-                                  key: const ValueKey('terminal-key-ctrl-d'),
-                                  value: widget.onCtrlD,
-                                  child: const Text('Ctrl-D'),
-                                ),
-                                PopupMenuItem<VoidCallback>(
-                                  key: const ValueKey('terminal-key-ctrl-u'),
-                                  value: widget.onCtrlU,
-                                  child: const Text('Ctrl-U'),
-                                ),
-                              ],
-                        ),
-                        _TerminalShortcutIconButton(
-                          key: const ValueKey('terminal-key-arrow-left'),
-                          tooltip: 'Left',
-                          enabled: widget.enabled,
-                          onPressed: widget.onArrowLeft,
-                          icon: Icons.keyboard_arrow_left,
-                        ),
                         _TerminalShortcutIconButton(
                           key: const ValueKey('terminal-key-arrow-up'),
                           tooltip: 'Up',
@@ -808,34 +728,6 @@ class _TerminalControlToolbarState extends State<TerminalControlToolbar> {
                           enabled: widget.enabled,
                           onPressed: widget.onArrowDown,
                           icon: Icons.keyboard_arrow_down,
-                        ),
-                        _TerminalShortcutIconButton(
-                          key: const ValueKey('terminal-key-arrow-right'),
-                          tooltip: 'Right',
-                          enabled: widget.enabled,
-                          onPressed: widget.onArrowRight,
-                          icon: Icons.keyboard_arrow_right,
-                        ),
-                        _TerminalShortcutIconButton(
-                          key: const ValueKey('terminal-paste-button'),
-                          tooltip: 'Paste clipboard',
-                          enabled: widget.enabled,
-                          onPressed: widget.onPaste,
-                          icon: Icons.content_paste_go,
-                        ),
-                        _TerminalShortcutIconButton(
-                          key: const ValueKey('terminal-resize-button'),
-                          tooltip: 'Sync terminal size',
-                          enabled: widget.enabled,
-                          onPressed: widget.onResize,
-                          icon: Icons.fit_screen,
-                        ),
-                        _TerminalShortcutIconButton(
-                          key: const ValueKey('terminal-reconnect-button'),
-                          tooltip: 'Reconnect terminal',
-                          enabled: widget.reconnectEnabled,
-                          onPressed: widget.onReconnect,
-                          icon: Icons.refresh,
                         ),
                       ],
                     ],

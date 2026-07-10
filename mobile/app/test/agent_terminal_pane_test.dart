@@ -25,15 +25,8 @@ void main() {
               onEscape: () => calls.add('esc'),
               onTab: () => calls.add('tab'),
               onCtrlC: () => calls.add('ctrl-c'),
-              onCtrlD: () => calls.add('ctrl-d'),
-              onCtrlU: () => calls.add('ctrl-u'),
               onArrowUp: () => calls.add('up'),
               onArrowDown: () => calls.add('down'),
-              onArrowRight: () => calls.add('right'),
-              onArrowLeft: () => calls.add('left'),
-              onPaste: () => calls.add('paste'),
-              onResize: () => calls.add('resize'),
-              onReconnect: () => calls.add('reconnect'),
             ),
           ),
         ),
@@ -49,23 +42,23 @@ void main() {
     expect(find.byKey(const ValueKey('terminal-key-escape')), findsOneWidget);
     expect(find.byKey(const ValueKey('terminal-key-tab')), findsOneWidget);
     expect(find.byKey(const ValueKey('terminal-key-ctrl-c')), findsOneWidget);
+    expect(find.byKey(const ValueKey('terminal-key-arrow-up')), findsOneWidget);
     expect(
-      find.byKey(const ValueKey('terminal-key-arrow-left')),
+      find.byKey(const ValueKey('terminal-key-arrow-down')),
       findsOneWidget,
     );
+    expect(find.byKey(const ValueKey('terminal-key-arrow-left')), findsNothing);
     expect(
       find.byKey(const ValueKey('terminal-key-arrow-right')),
-      findsOneWidget,
+      findsNothing,
     );
-    expect(find.byKey(const ValueKey('terminal-paste-button')), findsOneWidget);
-    expect(
-      find.byKey(const ValueKey('terminal-resize-button')),
-      findsOneWidget,
-    );
+    expect(find.byKey(const ValueKey('terminal-paste-button')), findsNothing);
+    expect(find.byKey(const ValueKey('terminal-resize-button')), findsNothing);
     expect(
       find.byKey(const ValueKey('terminal-reconnect-button')),
-      findsOneWidget,
+      findsNothing,
     );
+    expect(find.byKey(const ValueKey('terminal-ctrl-menu')), findsNothing);
 
     await tester.tap(find.byKey(const ValueKey('terminal-key-escape')));
     await tester.tap(find.byKey(const ValueKey('terminal-key-tab')));
@@ -92,15 +85,8 @@ void main() {
             onEscape: () => called = true,
             onTab: () => called = true,
             onCtrlC: () => called = true,
-            onCtrlD: () => called = true,
-            onCtrlU: () => called = true,
             onArrowUp: () => called = true,
             onArrowDown: () => called = true,
-            onArrowRight: () => called = true,
-            onArrowLeft: () => called = true,
-            onPaste: () => called = true,
-            onResize: () => called = true,
-            onReconnect: () => called = true,
           ),
         ),
       ),
@@ -113,15 +99,15 @@ void main() {
         matching: find.byType(TextButton),
       ),
     );
-    final paste = tester.widget<IconButton>(
+    final up = tester.widget<IconButton>(
       find.descendant(
-        of: find.byKey(const ValueKey('terminal-paste-button')),
+        of: find.byKey(const ValueKey('terminal-key-arrow-up')),
         matching: find.byType(IconButton),
       ),
     );
 
     expect(escape.onPressed, isNull);
-    expect(paste.onPressed, isNull);
+    expect(up.onPressed, isNull);
     expect(called, isFalse);
   });
 
@@ -312,11 +298,8 @@ void main() {
         matching: find.byType(TextButton),
       ),
     );
-    final reconnect = tester.widget<IconButton>(
-      find.descendant(
-        of: find.byKey(const ValueKey('terminal-reconnect-button')),
-        matching: find.byType(IconButton),
-      ),
+    final reconnect = tester.widget<TextButton>(
+      find.byKey(const ValueKey('terminal-header-reconnect')),
     );
     expect(ctrlC.onPressed, isNull);
     expect(reconnect.onPressed, isNotNull);
@@ -410,8 +393,9 @@ void main() {
       const TerminalTransportException('terminal stream disconnected'),
     );
     await tester.pump();
+    await tester.pump();
 
-    await tester.tap(find.byKey(const ValueKey('terminal-reconnect-button')));
+    await tester.tap(find.byKey(const ValueKey('terminal-header-reconnect')));
     await tester.pump();
 
     expect(session.reconnectCount, 1);
@@ -452,11 +436,8 @@ void main() {
         matching: find.byType(TextButton),
       ),
     );
-    final reconnect = tester.widget<IconButton>(
-      find.descendant(
-        of: find.byKey(const ValueKey('terminal-reconnect-button')),
-        matching: find.byType(IconButton),
-      ),
+    final reconnect = tester.widget<TextButton>(
+      find.byKey(const ValueKey('terminal-header-reconnect')),
     );
     expect(ctrlC.onPressed, isNull);
     expect(reconnect.onPressed, isNotNull);
@@ -506,14 +487,11 @@ void main() {
         matching: find.byType(TextButton),
       ),
     );
-    final reconnect = tester.widget<IconButton>(
-      find.descendant(
-        of: find.byKey(const ValueKey('terminal-reconnect-button')),
-        matching: find.byType(IconButton),
-      ),
-    );
     expect(ctrlC.onPressed, isNull);
-    expect(reconnect.onPressed, isNull);
+    expect(
+      find.byKey(const ValueKey('terminal-header-reconnect')),
+      findsNothing,
+    );
 
     await tester.pump(const Duration(seconds: 9));
     expect(session.reconnectCount, 0);
