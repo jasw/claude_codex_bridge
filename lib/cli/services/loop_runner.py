@@ -9,6 +9,7 @@ import time
 from types import SimpleNamespace
 from uuid import uuid4
 
+from agents.config_loader import load_project_config
 from cli.models import ParsedAskCommand, ParsedClearCommand
 from cli.models_mailbox import ParsedTraceCommand
 from storage.atomic import atomic_write_json, atomic_write_text
@@ -18,6 +19,7 @@ from .ask import submit_ask
 from .clear import clear_agent_context
 from .loop_ask_first import release_ask_first_execution_round, run_ask_first_execution_round
 from .loop_run_once import loop_run_once
+from .loop_topology import loop_topology
 from .plan_tasks import find_first_actionable_task, plan_task
 from .questions import question_refs
 from .role_output_import import consume_activation_role_output, consume_explicit_role_output
@@ -96,11 +98,13 @@ def loop_runner_once(context, command, services=None) -> dict[str, object]:
     deps = _deps(services)
     requested_task_id = str(getattr(command, 'task_id', None) or '').strip() or None
     if bool(getattr(command, 'consume_role_output', False)):
-        return deps.consume_explicit_role_output(context, command, deps.services)
+        payload = deps.consume_explicit_role_output(context, command, deps.services)
+        return _release_consumed_activation_topology(context, deps, payload)
     pending_role_output = None
     if requested_task_id is None:
         role_output = deps.consume_activation_role_output(context, command, deps.services)
         if role_output is not None:
+            role_output = _release_consumed_activation_topology(context, deps, role_output)
             if role_output.get('loop_runner_status') != 'pending':
                 return role_output
             pending_role_output = role_output
@@ -503,12 +507,17 @@ def _orchestrator_route_for_record(record: dict[str, object]) -> str:
 def _activate_orchestrator(context, command, deps, task: dict[str, object]) -> dict[str, object]:
     record = dict(task['record'])
     task_id = str(record.get('task_id') or '')
+    target, target_is_configured = _activation_target_for_role(
+        context,
+        role_id='agentroles.ccb_orchestrator',
+        fallback='orchestrator',
+    )
     existing = _consume_existing_activation_for_task(
         context,
         command,
         deps,
         task_id=task_id,
-        target='orchestrator',
+        target=target,
         record=record,
     )
     if existing is not None:
@@ -521,12 +530,23 @@ def _activate_orchestrator(context, command, deps, task: dict[str, object]) -> d
         reason=str(task.get('runner_reason') or 'ready_for_orchestration'),
     )
     activation_path = _activation_path(context, activation_id)
+    activation['topology'] = _mount_activation_topology(
+        context,
+        deps,
+        activation_id=activation_id,
+        target=target,
+        profile='ccb_orchestrator',
+        window_name='ccb-plan',
+        configured=target_is_configured,
+    )
     atomic_write_json(activation_path, activation)
+    if _activation_topology_not_ready(activation['topology']):
+        return _activation_topology_failure(context, activation, activation_path=activation_path)
     freshness = _prepare_immaculate_activation(
         context,
         deps,
         activation_id=activation_id,
-        target='orchestrator',
+        target=target,
         role='ccb_orchestrator',
         reason='fresh_before_orchestrator_ask',
     )
@@ -536,7 +556,7 @@ def _activate_orchestrator(context, command, deps, task: dict[str, object]) -> d
         context,
         ParsedAskCommand(
             project=None,
-            target='orchestrator',
+            target=target,
             sender='system',
             message=_orchestrator_message(activation),
             task_id=activation_id,
@@ -544,9 +564,9 @@ def _activate_orchestrator(context, command, deps, task: dict[str, object]) -> d
             inline_request=True,
         ),
     )
-    job = _single_job(summary.jobs, target='orchestrator')
+    job = _single_job(summary.jobs, target=target)
     activation['ask'] = {
-        'target': 'orchestrator',
+        'target': target,
         'job_id': str(job['job_id']),
         'status': job.get('status'),
     }
@@ -564,6 +584,7 @@ def _activate_orchestrator(context, command, deps, task: dict[str, object]) -> d
         'next_owner': 'orchestrator',
         'activation_id': activation_id,
         'activation_path': str(activation_path),
+        'topology': activation['topology'],
         'freshness': freshness,
         'ask': activation['ask'],
         'next_activation': 'stop_after_one_activation',
@@ -683,12 +704,17 @@ def _activate_task_detailer(context, command, deps, task: dict[str, object]) -> 
     record = dict(task['record'])
     task_id = str(record.get('task_id') or '')
     next_owner = str(task.get('next_owner') or record.get('next_owner') or 'planner')
+    target, target_is_configured = _activation_target_for_role(
+        context,
+        role_id='agentroles.ccb_task_detailer',
+        fallback='task_detailer',
+    )
     existing = _consume_existing_activation_for_task(
         context,
         command,
         deps,
         task_id=task_id,
-        target='task_detailer',
+        target=target,
         record=record,
     )
     if existing is not None:
@@ -701,12 +727,23 @@ def _activate_task_detailer(context, command, deps, task: dict[str, object]) -> 
         reason=str(task.get('runner_reason') or 'detail_required'),
     )
     activation_path = _activation_path(context, activation_id)
+    activation['topology'] = _mount_activation_topology(
+        context,
+        deps,
+        activation_id=activation_id,
+        target=target,
+        profile='ccb_task_detailer',
+        window_name='ccb-user',
+        configured=target_is_configured,
+    )
     atomic_write_json(activation_path, activation)
+    if _activation_topology_not_ready(activation['topology']):
+        return _activation_topology_failure(context, activation, activation_path=activation_path)
     freshness = _prepare_immaculate_activation(
         context,
         deps,
         activation_id=activation_id,
-        target='task_detailer',
+        target=target,
         role='ccb_task_detailer',
         reason='fresh_before_task_detailer_ask',
     )
@@ -716,7 +753,7 @@ def _activate_task_detailer(context, command, deps, task: dict[str, object]) -> 
         context,
         ParsedAskCommand(
             project=None,
-            target='task_detailer',
+            target=target,
             sender='system',
             message=_task_detailer_message(activation),
             task_id=activation_id,
@@ -724,9 +761,9 @@ def _activate_task_detailer(context, command, deps, task: dict[str, object]) -> 
             inline_request=True,
         ),
     )
-    job = _single_job(summary.jobs, target='task_detailer')
+    job = _single_job(summary.jobs, target=target)
     activation['ask'] = {
-        'target': 'task_detailer',
+        'target': target,
         'job_id': str(job['job_id']),
         'status': job.get('status'),
     }
@@ -744,6 +781,7 @@ def _activate_task_detailer(context, command, deps, task: dict[str, object]) -> 
         'next_owner': next_owner,
         'activation_id': activation_id,
         'activation_path': str(activation_path),
+        'topology': activation['topology'],
         'freshness': freshness,
         'ask': activation['ask'],
         'next_activation': 'stop_after_one_activation',
@@ -811,11 +849,198 @@ def _deps(services):
             consume_explicit_role_output,
         ),
         clear_agent_context=getattr(services, 'clear_agent_context', clear_agent_context),
+        loop_topology=getattr(services, 'loop_topology', loop_topology),
         submit_ask=getattr(services, 'submit_ask', submit_ask),
         trace_target=getattr(services, 'trace_target', trace_target),
         sleep=getattr(services, 'sleep', time.sleep),
         services=services,
     )
+
+
+def _activation_target_for_role(context, *, role_id: str, fallback: str) -> tuple[str, bool]:
+    try:
+        config = load_project_config(
+            Path(context.project.project_root),
+            include_loop_overlays=False,
+        ).config
+    except Exception:
+        return fallback, False
+    agents = getattr(config, 'agents', None)
+    if not isinstance(agents, dict):
+        return fallback, False
+    if fallback in agents:
+        return fallback, True
+    for agent_name, spec in agents.items():
+        if str(getattr(spec, 'role', '') or '').strip() == role_id:
+            return str(agent_name), True
+    return fallback, False
+
+
+def _mount_activation_topology(
+    context,
+    deps,
+    *,
+    activation_id: str,
+    target: str,
+    profile: str,
+    window_name: str,
+    configured: bool,
+) -> dict[str, object]:
+    if configured:
+        return {
+            'mode': 'configured',
+            'target': target,
+            'profile': profile,
+            'window_name': window_name,
+            'loop_topology_status': 'configured',
+        }
+    proposal_path = _activation_path(context, activation_id).with_suffix('.topology.proposal.json')
+    proposal = {
+        'schema': 'ccb.loop.agent_mount_topology.v1',
+        'release_policy': {'policy': 'auto', 'idle_only': True},
+        'windows': [
+            {
+                'name': window_name,
+                'class': 'user' if window_name == 'ccb-user' else 'planning',
+                'max_panes': 6,
+                'layout_policy': 'append-or-create-window',
+            }
+        ],
+        'agents': [
+            {
+                'id': target,
+                'profile': profile,
+                'desired_state': 'present',
+                'window_name': window_name,
+                'pane_order': 0,
+                'lifecycle': 'ephemeral',
+                'release_policy': 'auto',
+            }
+        ],
+    }
+    atomic_write_json(proposal_path, proposal)
+    try:
+        proposed = deps.loop_topology(
+            context,
+            SimpleNamespace(
+                action='propose',
+                loop_id=activation_id,
+                from_path=str(proposal_path),
+                proposal_id='role-activation',
+                json_output=True,
+            ),
+        )
+        committed = deps.loop_topology(
+            context,
+            SimpleNamespace(
+                action='commit',
+                loop_id=activation_id,
+                proposal_id='role-activation',
+                apply=True,
+                json_output=True,
+            ),
+        )
+        status = deps.loop_topology(
+            context,
+            SimpleNamespace(action='status', loop_id=activation_id, json_output=True),
+        )
+    except Exception as exc:
+        return {
+            'mode': 'dynamic',
+            'target': target,
+            'profile': profile,
+            'window_name': window_name,
+            'loop_id': activation_id,
+            'proposal_source_path': str(proposal_path),
+            'loop_topology_status': 'failed',
+            'error': str(exc),
+        }
+    return {
+        'mode': 'dynamic',
+        'target': target,
+        'profile': profile,
+        'window_name': window_name,
+        'loop_id': activation_id,
+        'proposal_source_path': str(proposal_path),
+        'propose': proposed,
+        'commit': committed,
+        'status': status,
+        'loop_topology_status': status.get('loop_topology_status'),
+    }
+
+
+def _activation_topology_not_ready(topology: object) -> bool:
+    if not isinstance(topology, dict):
+        return True
+    return str(topology.get('loop_topology_status') or '') not in {'configured', 'ready'}
+
+
+def _activation_topology_failure(context, activation: dict[str, object], *, activation_path: Path) -> dict[str, object]:
+    topology = activation.get('topology') if isinstance(activation.get('topology'), dict) else {}
+    return {
+        'schema_version': 1,
+        'record_type': 'ccb_loop_runner_once',
+        'loop_runner_status': 'blocked',
+        'project_id': context.project.project_id,
+        'project_root': str(context.project.project_root),
+        'action': 'activation_topology_not_ready',
+        'reason': topology.get('error') or topology.get('loop_topology_status') or 'topology_not_ready',
+        'task_id': activation.get('task_id'),
+        'task_status': activation.get('task_status'),
+        'activation_id': activation.get('activation_id'),
+        'activation_path': str(activation_path),
+        'topology': topology,
+        'next_activation': 'repair_activation_topology',
+    }
+
+
+def _release_consumed_activation_topology(context, deps, payload: dict[str, object]) -> dict[str, object]:
+    if not isinstance(payload, dict) or str(payload.get('loop_runner_status') or '') == 'pending':
+        return payload
+    job_id = str(payload.get('job_id') or '').strip()
+    if not job_id:
+        return payload
+    for activation_path, activation in _iter_activation_records(context):
+        ask = activation.get('ask') if isinstance(activation.get('ask'), dict) else {}
+        if str(ask.get('job_id') or '').strip() != job_id:
+            continue
+        topology = activation.get('topology') if isinstance(activation.get('topology'), dict) else {}
+        if str(topology.get('mode') or '') != 'dynamic':
+            return payload
+        previous_release = (
+            activation.get('topology_release')
+            if isinstance(activation.get('topology_release'), dict)
+            else None
+        )
+        if previous_release is not None and str(previous_release.get('loop_topology_status') or '') == 'released':
+            result = dict(payload)
+            result['activation_topology_release'] = previous_release
+            return result
+        loop_id = str(topology.get('loop_id') or activation.get('activation_id') or '').strip()
+        if not loop_id:
+            return payload
+        release = deps.loop_topology(
+            context,
+            SimpleNamespace(
+                action='release',
+                loop_id=loop_id,
+                policy='auto',
+                idle_only=True,
+                json_output=True,
+            ),
+        )
+        activation['topology_release'] = release
+        activation['topology_released_at'] = _utc_now()
+        atomic_write_json(activation_path, activation)
+        result = dict(payload)
+        result['activation_topology_release'] = release
+        if str(release.get('loop_topology_status') or '') != 'released':
+            result['role_output_action'] = result.get('action')
+            result['loop_runner_status'] = 'blocked'
+            result['action'] = 'activation_topology_release_incomplete'
+            result['next_activation'] = 'repair_activation_topology_release'
+        return result
+    return payload
 
 
 def _wait_for_job_terminal(context, job_id: str, deps, command) -> None:
@@ -1385,6 +1610,7 @@ def _consume_existing_activation_for_task(
             continue
         consume_command = replace(command, role_job_id=job_id, task_id=task_id, consume_role_output=True)
         payload = deps.consume_explicit_role_output(context, consume_command, deps.services)
+        payload = _release_consumed_activation_topology(context, deps, payload)
         if isinstance(payload, dict):
             payload.setdefault('activation_id', activation.get('activation_id'))
             payload.setdefault('activation_path', str(activation_path))

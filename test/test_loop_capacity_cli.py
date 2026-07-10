@@ -276,7 +276,7 @@ def _project_with_loop_capacity(tmp_path: Path, monkeypatch: pytest.MonkeyPatch)
     monkeypatch.setenv('AGENT_ROLES_STORE', str(role_store))
     _write(
         project_root / '.ccb' / 'ccb.config',
-        """cmd; orchestrator:codex
+        """cmd; orchestrator:codex; task_detailer:codex
 
 [loop.capacity]
 enabled = true
@@ -1427,6 +1427,181 @@ def test_loop_runner_once_ready_for_orchestration_activates_orchestrator_only(
     assert set(shown['task']['artifacts']) == {'task_packet', 'execution_contract'}
 
 
+def test_loop_runner_dynamic_orchestrator_mounts_imports_and_unloads(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = _project_with_workflow_topology(tmp_path, monkeypatch)
+    _add_ready_plan_task(project_root, task_id='task-dynamic-orchestrator')
+    command = ParsedLoopRunnerCommand(project=None, once=True, timeout_s=11.0, json_output=True)
+    context = CliContextBuilder().build(command, cwd=project_root, bootstrap_if_missing=False)
+    submitted: list[object] = []
+
+    def fake_clear_agent_context(_context, clear_command):
+        return {
+            'status': 'ok',
+            'results': [
+                {
+                    'agent': clear_command.agent_names[0],
+                    'status': 'cleared',
+                    'pane_id': '%7',
+                    'command': '/clear',
+                }
+            ],
+        }
+
+    def fake_submit_ask(_context, ask_command):
+        submitted.append(ask_command)
+        return AskSummary(
+            project_id=context.project.project_id,
+            submission_id=None,
+            jobs=({'job_id': 'job_dynamic_orchestrator', 'agent_name': ask_command.target, 'status': 'accepted'},),
+        )
+
+    activated = loop_runner_once(
+        context,
+        command,
+        services=SimpleNamespace(
+            clear_agent_context=fake_clear_agent_context,
+            submit_ask=fake_submit_ask,
+            plan_task=plan_task,
+        ),
+    )
+
+    assert activated['action'] == 'activated_orchestrator'
+    assert activated['ask']['target'] == 'orchestrator'
+    assert activated['topology']['mode'] == 'dynamic'
+    assert activated['topology']['loop_topology_status'] == 'ready'
+    proposal = json.loads(Path(str(activated['topology']['propose']['proposal_path'])).read_text(encoding='utf-8'))
+    assert len(proposal['agents']) == 1
+    assert proposal['agents'][0] == {
+        'desired_state': 'present',
+        'id': 'orchestrator',
+        'lifecycle': 'ephemeral',
+        'pane_order': 0,
+        'profile': 'ccb_orchestrator',
+        'release_policy': 'auto',
+        'window_name': 'ccb-plan',
+    }
+    lifecycle_path = project_root / '.ccb' / 'runtime' / 'agents' / 'orchestrator' / 'lifecycle.json'
+    lifecycle = json.loads(lifecycle_path.read_text(encoding='utf-8'))
+    assert lifecycle['lifecycle_state'] == 'visible'
+    assert lifecycle['role_class'] == 'short_lived_execution'
+
+    _write_completion_snapshot(
+        project_root,
+        job_id='job_dynamic_orchestrator',
+        agent_name='orchestrator',
+        reply='route: direct_execution\norchestration_notes: Ready for bounded execution.\n',
+    )
+    imported = loop_runner_once(
+        context,
+        command,
+        services=SimpleNamespace(
+            submit_ask=lambda *_args, **_kwargs: (_ for _ in ()).throw(
+                AssertionError('completed orchestrator activation must not be resubmitted')
+            ),
+            plan_task=plan_task,
+        ),
+    )
+
+    assert imported['action'] == 'imported_orchestration_notes'
+    assert imported['route'] == 'direct_execution'
+    assert imported['activation_topology_release']['loop_topology_status'] == 'released'
+    assert imported['activation_topology_release']['released_agents'] == ['orchestrator']
+    lifecycle = json.loads(lifecycle_path.read_text(encoding='utf-8'))
+    assert lifecycle['lifecycle_state'] == 'unloaded'
+
+
+def test_loop_runner_dynamic_task_detailer_mounts_imports_and_unloads(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = _project_with_workflow_topology(tmp_path, monkeypatch)
+    _add_ready_plan_task(project_root, task_id='task-dynamic-detailer')
+    command = ParsedLoopRunnerCommand(project=None, once=True, timeout_s=11.0, json_output=True)
+    context = CliContextBuilder().build(command, cwd=project_root, bootstrap_if_missing=False)
+    _import_orchestration_notes(context, project_root, task_id='task-dynamic-detailer', route='needs_detail')
+
+    def fake_clear_agent_context(_context, clear_command):
+        return {
+            'status': 'ok',
+            'results': [
+                {
+                    'agent': clear_command.agent_names[0],
+                    'status': 'cleared',
+                    'pane_id': '%8',
+                    'command': '/clear',
+                }
+            ],
+        }
+
+    def fake_submit_ask(_context, ask_command):
+        return AskSummary(
+            project_id=context.project.project_id,
+            submission_id=None,
+            jobs=({'job_id': 'job_dynamic_detailer', 'agent_name': ask_command.target, 'status': 'accepted'},),
+        )
+
+    activated = loop_runner_once(
+        context,
+        command,
+        services=SimpleNamespace(
+            clear_agent_context=fake_clear_agent_context,
+            submit_ask=fake_submit_ask,
+            plan_task=plan_task,
+        ),
+    )
+
+    assert activated['action'] == 'activated_task_detailer'
+    assert activated['ask']['target'] == 'task_detailer'
+    assert activated['topology']['mode'] == 'dynamic'
+    assert activated['topology']['window_name'] == 'ccb-user'
+    assert activated['topology']['loop_topology_status'] == 'ready'
+    lifecycle_path = project_root / '.ccb' / 'runtime' / 'agents' / 'task_detailer' / 'lifecycle.json'
+    lifecycle = json.loads(lifecycle_path.read_text(encoding='utf-8'))
+    assert lifecycle['lifecycle_state'] == 'visible'
+    assert lifecycle['role_class'] == 'short_lived_execution'
+
+    _write_completion_snapshot(
+        project_root,
+        job_id='job_dynamic_detailer',
+        agent_name='task_detailer',
+        reply="""**task-detail-design.md**
+
+Design:
+- Keep the implementation bounded to the declared task paths.
+
+**brief-update-summary.md**
+
+The missing task detail is now resolved.
+
+**detail-packet.md**
+
+Readiness recommendation: `detail_ready`
+
+Recommended route: `direct_execution`
+""",
+    )
+    imported = loop_runner_once(
+        context,
+        command,
+        services=SimpleNamespace(
+            submit_ask=lambda *_args, **_kwargs: (_ for _ in ()).throw(
+                AssertionError('completed detailer activation must not be resubmitted')
+            ),
+            plan_task=plan_task,
+        ),
+    )
+
+    assert imported['action'] == 'imported_task_detailer_detail_authority'
+    assert imported['task_status'] == 'detail_ready'
+    assert imported['activation_topology_release']['loop_topology_status'] == 'released'
+    assert imported['activation_topology_release']['released_agents'] == ['task_detailer']
+    lifecycle = json.loads(lifecycle_path.read_text(encoding='utf-8'))
+    assert lifecycle['lifecycle_state'] == 'unloaded'
+
+
 def test_loop_runner_once_waits_for_existing_same_task_orchestrator_activation(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -2185,10 +2360,11 @@ def test_loop_runner_once_selects_ready_task_despite_committed_legacy_topology(
         ),
     )
 
-    assert payload['loop_runner_status'] == 'ok'
-    assert payload['action'] == 'activated_orchestrator'
+    assert payload['loop_runner_status'] == 'blocked'
+    assert payload['action'] == 'activation_topology_not_ready'
     assert payload['task_id'] == 'task-runner'
-    assert seen == {'target': 'orchestrator'}
+    assert 'agent profile ccb_orchestrator exceeds max_instances=1' in payload['reason']
+    assert seen == {}
     dispatch_path = project_root / '.ccb' / 'runtime' / 'loops' / 'wf1' / 'topology_dispatch.json'
     assert not dispatch_path.exists()
 
