@@ -53,6 +53,7 @@ class ConfigUiHandle:
     _idle_timeout_s: float
 
     def serve_forever(self) -> None:
+        self._last_activity[0] = time.monotonic()
         self._server.timeout = min(1.0, max(0.05, self._idle_timeout_s))
         while time.monotonic() - self._last_activity[0] < self._idle_timeout_s:
             self._server.handle_request()

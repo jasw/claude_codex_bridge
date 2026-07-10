@@ -4,6 +4,7 @@ import base64
 import json
 import re
 import threading
+import time
 from pathlib import Path
 from types import SimpleNamespace
 from urllib.error import HTTPError
@@ -64,6 +65,7 @@ def test_config_ui_serves_token_guarded_page_and_project_session(tmp_path: Path)
         token='test-token',
         idle_timeout_s=0.3,
     )
+    time.sleep(0.35)
     thread = threading.Thread(target=handle.serve_forever)
     thread.start()
 

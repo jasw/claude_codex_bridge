@@ -35,6 +35,7 @@ def test_build_config_declares_orchestrator_and_loop_profiles() -> None:
     assert 'provider = "codex"' in text
     assert 'model = "gpt-test"' in text
     assert 'max_nodes = 2' in text
+    assert 'thinking =' not in text
 
 
 def test_prepare_project_writes_config_and_role_store(tmp_path: Path) -> None:

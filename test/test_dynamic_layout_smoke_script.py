@@ -131,6 +131,7 @@ def test_build_resolve_preflight_config_declares_full_class_and_loop_profiles() 
     assert 'name_template = "loop-{loop_id}-{profile}-{index}"' in text
     assert '[loop.role_profiles.worker]' in text
     assert '[loop.role_profiles.code_reviewer]' in text
+    assert 'thinking =' not in text
 
 
 def test_prepare_projects_write_configs_and_roles(tmp_path: Path) -> None:
