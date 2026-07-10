@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import hashlib
 from pathlib import Path
+import shlex
 from types import SimpleNamespace
 
 try:  # pragma: no cover - version shim
@@ -39,9 +40,10 @@ def _write_project_memory(project_root: Path, text: str) -> None:
 
 
 def test_build_hook_command_includes_completion_dir_and_workspace(tmp_path: Path) -> None:
+    script_path = tmp_path / 'bin' / 'ccb-provider-finish-hook'
     command = build_hook_command(
         provider='claude',
-        script_path=tmp_path / 'bin' / 'ccb-provider-finish-hook',
+        script_path=script_path,
         python_executable='/usr/bin/python3',
         completion_dir=tmp_path / 'completion',
         agent_name='agent1',
@@ -52,6 +54,22 @@ def test_build_hook_command_includes_completion_dir_and_workspace(tmp_path: Path
     assert '--agent-name agent1' in command
     assert '--completion-dir' in command
     assert '--workspace' in command
+    assert shlex.split(command)[0] == str(script_path)
+    assert '/usr/bin/python3' not in shlex.split(command)
+
+
+def test_build_hook_command_uses_python_for_python_script(tmp_path: Path) -> None:
+    script_path = tmp_path / 'bin' / 'ccb-provider-finish-hook.py'
+    command = build_hook_command(
+        provider='claude',
+        script_path=script_path,
+        python_executable='/usr/bin/python3',
+        completion_dir=tmp_path / 'completion',
+        agent_name='agent1',
+        workspace_path=tmp_path / 'workspace',
+    )
+
+    assert shlex.split(command)[:2] == ['/usr/bin/python3', str(script_path)]
 
 
 def test_install_claude_hooks_writes_managed_home_settings_only(tmp_path: Path) -> None:
@@ -111,7 +129,7 @@ def test_install_claude_hooks_prunes_stale_ccb_finish_hooks(tmp_path: Path) -> N
     home_root = tmp_path / 'claude-home'
     settings_path = home_root / '.claude' / 'settings.json'
     settings_path.parent.mkdir(parents=True, exist_ok=True)
-    command = '/usr/bin/python3 /current/bin/ccb-provider-finish-hook --provider claude'
+    command = '/current/bin/ccb-provider-finish-hook --provider claude'
     stale_command = '/usr/bin/python3 /old/bin/ccb-provider-finish-hook --provider claude'
     settings_path.write_text(
         json.dumps(
@@ -308,7 +326,9 @@ def test_prepare_provider_workspace_inherits_claude_hooks_from_source_home(
         if isinstance(hook, dict)
     ]
     assert 'echo source-stop-hook' in stop_commands
-    assert any('ccb-provider-finish-hook' in command for command in stop_commands)
+    finish_command = next(command for command in stop_commands if 'ccb-provider-finish-hook' in command)
+    assert shlex.split(finish_command)[0].endswith('/bin/ccb-provider-finish-hook')
+    assert not shlex.split(finish_command)[0].endswith('.py')
     assert any('ccb-provider-activity-hook' in command for command in stop_commands)
     assert 'echo source-prompt-hook' in prompt_commands
     assert any('ccb-provider-activity-hook' in command for command in prompt_commands)
@@ -355,6 +375,8 @@ def test_prepare_provider_workspace_materializes_claude_activity_hooks(tmp_path:
         ]
         activity_commands = [command for command in commands if 'ccb-provider-activity-hook' in command]
         assert len(activity_commands) == 1
+        assert shlex.split(activity_commands[0])[0].endswith('/bin/ccb-provider-activity-hook')
+        assert not shlex.split(activity_commands[0])[0].endswith('.py')
         assert '--provider claude' in activity_commands[0]
         assert '--agent-name agent1' in activity_commands[0]
         assert f'--runtime-dir {runtime_dir}' in activity_commands[0]
@@ -1463,6 +1485,9 @@ def test_prepare_provider_workspace_materializes_gemini_memory_bundle_before_hoo
     assert 'project gemini memory' in text
     assert 'agent private memory' in text
     assert settings['contextFileName'] == 'GEMINI.md'
+    finish_command = settings['hooks']['AfterAgent'][0]['hooks'][0]['command']
+    assert shlex.split(finish_command)[0].endswith('/bin/ccb-provider-finish-hook')
+    assert not shlex.split(finish_command)[0].endswith('.py')
 
 
 def test_prepare_provider_workspace_records_gemini_memory_projection_event_once(

@@ -6,6 +6,54 @@ import sys
 from pathlib import Path
 
 
+def test_provider_finish_hook_launcher_executes_via_shebang(tmp_path: Path) -> None:
+    project_root = Path(__file__).resolve().parents[1]
+    completion_dir = tmp_path / "completion"
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    transcript = tmp_path / "transcript.jsonl"
+    req_id = "job_launcher249"
+    transcript.write_text(
+        json.dumps(
+            {
+                "type": "user",
+                "message": {"content": f"CCB_REQ_ID: {req_id}"},
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    payload = {
+        "hook_event_name": "Stop",
+        "transcript_path": str(transcript),
+        "last_assistant_message": "launcher ok",
+        "session_id": "claude-session-launcher",
+    }
+
+    proc = subprocess.run(
+        [
+            str(project_root / "bin" / "ccb-provider-finish-hook"),
+            "--provider",
+            "claude",
+            "--completion-dir",
+            str(completion_dir),
+            "--agent-name",
+            "agent-launcher",
+            "--workspace",
+            str(workspace),
+        ],
+        input=json.dumps(payload, ensure_ascii=False),
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert proc.returncode == 0, proc.stderr
+    event = json.loads((completion_dir / "events" / f"{req_id}.json").read_text(encoding="utf-8"))
+    assert event["reply"] == "launcher ok"
+    assert event["status"] == "completed"
+
+
 def test_provider_finish_hook_writes_claude_completion_event(tmp_path: Path) -> None:
     project_root = Path(__file__).resolve().parents[1]
     completion_dir = tmp_path / "completion"

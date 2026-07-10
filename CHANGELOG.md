@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Provider Hook Launchers
+
+- **Claude And Gemini Hook Interpreter Fixed**: managed completion and
+  activity hooks now execute the CCB bash launchers directly, allowing their
+  shebang and `_ccb-python` resolver to select a compatible Python runtime.
+  Extensionless launchers are no longer incorrectly prefixed with `python3`,
+  preventing the bash syntax error reported in GitHub issue #249.
+
 ## v8.0.19 (2026-07-07)
 
 ### Mobile Host Startup
