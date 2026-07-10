@@ -2,8 +2,11 @@ import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:ccb_mobile/ccb_mobile.dart';
+import 'package:ccb_mobile/features/project_home/project_home_profile_bootstrapper.dart';
 import 'package:ccb_mobile/features/project_home/project_home_runtime_activation.dart';
 import 'package:test/test.dart';
+
+import 'support/project_home_test_fakes.dart';
 
 void main() {
   test('paired runtime selection returns no-profile snack', () {
@@ -41,6 +44,38 @@ void main() {
 
     expect(selection.activation?.profile, same(first));
   });
+
+  test(
+    'runtime activation follows restored selection for a newer route',
+    () async {
+      final store = GatewayHostProfileStore(secureStore: MemorySecureStore());
+      final oldRoute = _pairedHost(
+        hostId: 'host-id',
+        deviceId: 'old-device',
+        gatewayUrl: Uri.parse('http://127.0.0.1:18899'),
+      );
+      final newRoute = _pairedHost(
+        hostId: 'host-id',
+        deviceId: 'new-device',
+        gatewayUrl: Uri.parse('http://127.0.0.1:8787'),
+      );
+      await store.save(oldRoute);
+      await store.save(newRoute);
+      await store.markSuccessful(newRoute);
+
+      final restored = await ProjectHomeProfileBootstrapper(
+        store: store,
+      ).load(selectedProfile: null);
+      final selection = selectProjectHomePairedRuntimeProfile(
+        profiles: restored.profiles,
+        selectedProfile: restored.selectedProfile,
+      );
+
+      expect(selection.kind, ProjectHomePairedRuntimeSelectionKind.activate);
+      expect(selection.activation?.profile.profile.deviceId, 'new-device');
+      expect(selection.activation?.gatewayUrlText, 'http://127.0.0.1:8787');
+    },
+  );
 
   test('activation data uses project id when present', () {
     final profile = _pairedHost(

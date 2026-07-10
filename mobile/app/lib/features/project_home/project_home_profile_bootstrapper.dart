@@ -43,7 +43,7 @@ class ProjectHomeProfileBootstrapper {
     return ProjectHomeProfileBootstrapResult(
       profiles: profiles,
       selectedProfile:
-          selectedProfile ?? (profiles.isEmpty ? null : profiles.first),
+          selectedProfile ?? await _store.resolvePreferred(profiles),
     );
   }
 

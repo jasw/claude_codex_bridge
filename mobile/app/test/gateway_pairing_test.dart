@@ -67,6 +67,10 @@ void main() {
     expect(paired.deviceToken, 'device-secret');
     expect(loaded?.deviceToken, 'device-secret');
     expect(
+      (await store.resolvePreferred(await store.list()))?.profile.deviceId,
+      'dev_demo',
+    );
+    expect(
       loaded?.profile.toJson().toString(),
       isNot(contains('device-secret')),
     );
@@ -102,6 +106,33 @@ void main() {
       transport.close(force: true);
     }
   });
+
+  test(
+    'claim may reuse a device id without sending the stored device token',
+    () async {
+      final pairing = GatewayPairingPayload.fromJson({
+        'pairing_code': 'one-time-code',
+        'claim_endpoint': '$baseUrl/v1/pairing/claim',
+        'route_provider': 'lan',
+        'gateway_url': baseUrl.toString(),
+        'project_id': 'proj-demo',
+        'scopes': ['view'],
+      });
+
+      await client.claim(
+        pairing: pairing,
+        deviceName: 'Pixel Fold',
+        deviceId: 'dev_previous',
+      );
+
+      expect(jsonDecode(requests.single['body'] as String), {
+        'pairing_code': 'one-time-code',
+        'device_name': 'Pixel Fold',
+        'device_id': 'dev_previous',
+      });
+      expect(requests.single['body'], isNot(contains('device-secret')));
+    },
+  );
 
   test('rejects claim responses that omit the device token', () async {
     final pairing = GatewayPairingPayload.fromJson({

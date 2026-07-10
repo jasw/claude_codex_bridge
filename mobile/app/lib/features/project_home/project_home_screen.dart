@@ -23,6 +23,7 @@ import '../../transport/terminal_transport.dart';
 import '../agent_chat/agent_execution_status.dart';
 import 'project_home_connection_details_panel_host.dart';
 import 'project_home_focus_coordinator.dart';
+import 'project_home_gateway_profiles.dart';
 import 'project_home_lifecycle_coordinator.dart';
 import 'project_home_notification_target.dart';
 import 'project_home_onboarding.dart';
@@ -940,6 +941,7 @@ class _ProjectHomeViewState extends State<_ProjectHomeView>
   }
 
   void _activateGatewayProfile(GatewayPairedHost profile) {
+    unawaited(widget.profileStore.markSelected(profile));
     _activateGateway(activateProjectHomeGatewayProfile(profile));
   }
 
@@ -959,6 +961,20 @@ class _ProjectHomeViewState extends State<_ProjectHomeView>
       session.projectsFuture.catchError((Object _) => const <CcbProject>[]),
     );
     final profile = session.activation.profile;
+    unawaited(
+      session.projectsFuture
+          .then<void>((_) async {
+            if (!mounted ||
+                _mode != AppRuntimeMode.pairedGateway ||
+                _selectedProfile == null ||
+                projectHomeGatewayProfileKey(_selectedProfile!) !=
+                    projectHomeGatewayProfileKey(profile)) {
+              return;
+            }
+            await widget.profileStore.markSuccessful(profile);
+          })
+          .catchError((Object _) {}),
+    );
     _stopActiveProjectStatusRefresh();
     setState(() {
       _mode = AppRuntimeMode.pairedGateway;

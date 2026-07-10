@@ -54,10 +54,12 @@ class ProjectHomePairingClaimCoordinator {
     required ProjectHomePairingProfileMerger mergeProfiles,
   }) async {
     try {
+      final deviceId = await store.reusableDeviceIdFor(request.pairing);
       final paired = await claimAndStore(
         pairing: request.pairing,
         deviceName: request.deviceName,
         store: store,
+        deviceId: deviceId,
       );
       final profiles = await mergeProfiles(paired);
       return ProjectHomePairingClaimOutcome.success(

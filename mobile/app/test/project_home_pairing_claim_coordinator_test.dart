@@ -55,6 +55,36 @@ void main() {
       },
     );
 
+    test(
+      'reuses a same-host same-route device id for the new QR claim',
+      () async {
+        final store = GatewayHostProfileStore(secureStore: MemorySecureStore());
+        await store.save(
+          _pairedHost(hostId: 'proj-demo', deviceId: 'phone-old'),
+        );
+        String? seenDeviceId;
+
+        final outcome = await const ProjectHomePairingClaimCoordinator()
+            .complete(
+              request: _request(projectId: 'proj-demo'),
+              claimAndStore: ({
+                required pairing,
+                required deviceName,
+                required store,
+                deviceId,
+              }) async {
+                seenDeviceId = deviceId;
+                return _pairedHost(hostId: 'proj-demo', deviceId: 'phone-old');
+              },
+              store: store,
+              mergeProfiles: (paired) async => [paired],
+            );
+
+        expect(outcome.kind, ProjectHomePairingClaimOutcomeKind.success);
+        expect(seenDeviceId, 'phone-old');
+      },
+    );
+
     test('claim failure returns failure snack and does not merge', () async {
       final store = GatewayHostProfileStore(secureStore: MemorySecureStore());
       var mergeCalls = 0;
@@ -115,13 +145,14 @@ void main() {
   });
 }
 
-ProjectHomePairingRequest _request() {
+ProjectHomePairingRequest _request({String? projectId}) {
   return ProjectHomePairingRequest(
     pairing: GatewayPairingPayload(
       pairingCode: 'pair-code',
       claimEndpoint: Uri.parse('http://127.0.0.1:8787/v1/pairing/claim'),
       routeProvider: RouteProviderKind.lan,
       gatewayUrl: Uri.parse('http://127.0.0.1:8787'),
+      projectId: projectId,
       scopes: const {'view', 'content', 'focus', 'terminal_input', 'lifecycle'},
     ),
     deviceName: 'Pixel Fold',

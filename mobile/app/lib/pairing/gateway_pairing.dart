@@ -84,12 +84,24 @@ class GatewayPairedHost {
     required this.deviceToken,
     this.projectId,
     this.createdAt,
+    this.savedAt,
   });
 
   final GatewayHostProfile profile;
   final String deviceToken;
   final String? projectId;
   final DateTime? createdAt;
+  final DateTime? savedAt;
+
+  GatewayPairedHost copyWith({DateTime? savedAt}) {
+    return GatewayPairedHost(
+      profile: profile,
+      deviceToken: deviceToken,
+      projectId: projectId,
+      createdAt: createdAt,
+      savedAt: savedAt ?? this.savedAt,
+    );
+  }
 
   factory GatewayPairedHost.fromClaimJson(
     Map<String, Object?> json, {
@@ -157,16 +169,18 @@ class GatewayPairedHost {
       deviceToken: _requiredText(json['device_token'], 'device_token'),
       projectId: _optionalText(json['project_id']),
       createdAt: _optionalDateTime(json['created_at']),
+      savedAt: _optionalDateTime(json['saved_at']),
     );
   }
 
   Map<String, Object?> toSecureJson() {
     return {
-      'schema_version': 1,
+      'schema_version': 2,
       'profile': profile.toJson(),
       'device_token': deviceToken,
       if (_hasText(projectId)) 'project_id': projectId,
       if (createdAt != null) 'created_at': createdAt!.toUtc().toIso8601String(),
+      if (savedAt != null) 'saved_at': savedAt!.toUtc().toIso8601String(),
     };
   }
 }
@@ -206,6 +220,7 @@ class GatewayPairingClient {
       deviceId: deviceId,
     );
     await store.save(paired);
+    await store.markSuccessful(paired);
     return paired;
   }
 
@@ -269,22 +284,46 @@ class FlutterGatewaySecureStore implements GatewaySecureStore {
 }
 
 class GatewayHostProfileStore {
-  GatewayHostProfileStore({GatewaySecureStore? secureStore})
-    : _secureStore = secureStore ?? FlutterGatewaySecureStore();
+  GatewayHostProfileStore({
+    GatewaySecureStore? secureStore,
+    DateTime Function()? now,
+  }) : _secureStore = secureStore ?? FlutterGatewaySecureStore(),
+       _now = now ?? DateTime.now;
 
   static const _indexKey = 'ccb_mobile.gateway_profiles.index';
   static const _profilePrefix = 'ccb_mobile.gateway_profiles.profile.';
+  static const _lastSelectedKey = 'ccb_mobile.gateway_profiles.last_selected';
+  static const _lastSuccessfulKey =
+      'ccb_mobile.gateway_profiles.last_successful';
 
   final GatewaySecureStore _secureStore;
+  final DateTime Function() _now;
 
   Future<void> save(GatewayPairedHost host) async {
-    final key = _profileKey(host.profile.hostId, host.profile.deviceId);
-    await _secureStore.write(key: key, value: jsonEncode(host.toSecureJson()));
+    final stored = host.copyWith(savedAt: _now().toUtc());
+    final key = profileKey(stored);
+    await _secureStore.write(
+      key: key,
+      value: jsonEncode(stored.toSecureJson()),
+    );
     final keys = await _readIndex();
-    if (!keys.contains(key)) {
-      keys.add(key);
-      await _writeIndex(keys);
+    final supersededKeys = <String>[];
+    for (final existingKey in keys) {
+      if (existingKey == key) {
+        continue;
+      }
+      final existing = await _readProfile(existingKey);
+      if (existing != null && _sameHostRoute(existing, stored)) {
+        supersededKeys.add(existingKey);
+      }
     }
+    for (final supersededKey in supersededKeys) {
+      await _secureStore.delete(key: supersededKey);
+      await _clearPreferenceFor(supersededKey);
+    }
+    keys.removeWhere(supersededKeys.contains);
+    keys.add(key);
+    await _writeIndex(keys);
   }
 
   Future<GatewayPairedHost?> read({
@@ -305,12 +344,73 @@ class GatewayHostProfileStore {
     return result;
   }
 
+  /// Returns the persisted selection, falling back to a deterministic legacy
+  /// migration. The migration chooses the most recently stored profile, then
+  /// server creation time, then a stable profile key; it never relies on map
+  /// iteration or encrypted-index ordering.
+  Future<GatewayPairedHost?> resolvePreferred(
+    Iterable<GatewayPairedHost> profiles,
+  ) async {
+    final candidates = profiles.toList(growable: false);
+    if (candidates.isEmpty) {
+      return null;
+    }
+    for (final preferenceKey in [_lastSelectedKey, _lastSuccessfulKey]) {
+      final profile = await _readPreferredFrom(
+        preferenceKey: preferenceKey,
+        profiles: candidates,
+      );
+      if (profile != null) {
+        return profile;
+      }
+    }
+    final migrated = _mostRecentProfile(candidates);
+    await markSelected(migrated);
+    return migrated;
+  }
+
+  /// Returns a device ID that may be included in a fresh one-time pairing
+  /// claim. It never returns a device token and requires the same host/project
+  /// evidence plus the exact route before reuse.
+  Future<String?> reusableDeviceIdFor(GatewayPairingPayload pairing) async {
+    if (!_hasText(pairing.projectId)) {
+      return null;
+    }
+    final matches = (await list())
+        .where((profile) => _matchesPairingRoute(profile, pairing))
+        .toList(growable: false);
+    if (matches.isEmpty) {
+      return null;
+    }
+    for (final preferenceKey in [_lastSelectedKey, _lastSuccessfulKey]) {
+      final profile = await _readPreferredFrom(
+        preferenceKey: preferenceKey,
+        profiles: matches,
+      );
+      if (profile != null) {
+        return profile.profile.deviceId;
+      }
+    }
+    return _mostRecentProfile(matches).profile.deviceId;
+  }
+
+  Future<void> markSelected(GatewayPairedHost host) {
+    return _secureStore.write(key: _lastSelectedKey, value: profileKey(host));
+  }
+
+  Future<void> markSuccessful(GatewayPairedHost host) async {
+    final key = profileKey(host);
+    await _secureStore.write(key: _lastSelectedKey, value: key);
+    await _secureStore.write(key: _lastSuccessfulKey, value: key);
+  }
+
   Future<void> delete({
     required String hostId,
     required String deviceId,
   }) async {
     final key = _profileKey(hostId, deviceId);
     await _secureStore.delete(key: key);
+    await _clearPreferenceFor(key);
     final keys = await _readIndex();
     keys.remove(key);
     await _writeIndex(keys);
@@ -345,6 +445,85 @@ class GatewayHostProfileStore {
   Future<void> _writeIndex(List<String> keys) {
     final unique = keys.toSet().toList()..sort();
     return _secureStore.write(key: _indexKey, value: jsonEncode(unique));
+  }
+
+  Future<GatewayPairedHost?> _readPreferredFrom({
+    required String preferenceKey,
+    required Iterable<GatewayPairedHost> profiles,
+  }) async {
+    final selectedKey = await _secureStore.read(key: preferenceKey);
+    if (!_hasText(selectedKey)) {
+      return null;
+    }
+    for (final profile in profiles) {
+      if (profileKey(profile) == selectedKey) {
+        return profile;
+      }
+    }
+    await _secureStore.delete(key: preferenceKey);
+    return null;
+  }
+
+  Future<void> _clearPreferenceFor(String profileKey) async {
+    for (final preferenceKey in [_lastSelectedKey, _lastSuccessfulKey]) {
+      if (await _secureStore.read(key: preferenceKey) == profileKey) {
+        await _secureStore.delete(key: preferenceKey);
+      }
+    }
+  }
+
+  static GatewayPairedHost _mostRecentProfile(
+    Iterable<GatewayPairedHost> profiles,
+  ) {
+    return profiles.reduce((best, candidate) {
+      final bestTime = best.savedAt ?? best.createdAt;
+      final candidateTime = candidate.savedAt ?? candidate.createdAt;
+      final timeComparison = _compareNullableDateTimes(candidateTime, bestTime);
+      if (timeComparison != 0) {
+        return timeComparison > 0 ? candidate : best;
+      }
+      return profileKey(candidate).compareTo(profileKey(best)) > 0
+          ? candidate
+          : best;
+    });
+  }
+
+  static bool _matchesPairingRoute(
+    GatewayPairedHost profile,
+    GatewayPairingPayload pairing,
+  ) {
+    final pairingProjectId = pairing.projectId;
+    return pairingProjectId != null &&
+        (profile.profile.hostId == pairingProjectId ||
+            profile.projectId == pairingProjectId) &&
+        profile.profile.routeProvider.kind == pairing.routeProvider &&
+        _canonicalGatewayUrl(profile.profile.routeProvider.gatewayUrl) ==
+            _canonicalGatewayUrl(pairing.gatewayUrl);
+  }
+
+  static bool _sameHostRoute(GatewayPairedHost a, GatewayPairedHost b) {
+    return a.profile.hostId == b.profile.hostId &&
+        a.profile.routeProvider.kind == b.profile.routeProvider.kind &&
+        _canonicalGatewayUrl(a.profile.routeProvider.gatewayUrl) ==
+            _canonicalGatewayUrl(b.profile.routeProvider.gatewayUrl);
+  }
+
+  static String _canonicalGatewayUrl(Uri uri) {
+    return uri.replace(path: '', query: null, fragment: null).toString();
+  }
+
+  static int _compareNullableDateTimes(DateTime? a, DateTime? b) {
+    if (a == null) {
+      return b == null ? 0 : -1;
+    }
+    if (b == null) {
+      return 1;
+    }
+    return a.compareTo(b);
+  }
+
+  static String profileKey(GatewayPairedHost host) {
+    return _profileKey(host.profile.hostId, host.profile.deviceId);
   }
 
   static String _profileKey(String hostId, String deviceId) {

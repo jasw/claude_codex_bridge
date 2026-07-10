@@ -191,6 +191,7 @@ void main() {
       routeKind: RouteProviderKind.relay,
     );
     final profileStore = await _profileStoreWith([first, second]);
+    await profileStore.markSelected(first);
     final seenRepositoryProfiles = <GatewayPairedHost>[];
 
     await tester.pumpWidget(
@@ -225,6 +226,12 @@ void main() {
     expect(loadedSecond.profile.deviceId, second.profile.deviceId);
     expect(seenRepositoryProfiles.first, same(loadedFirst));
     expect(seenRepositoryProfiles.last, same(loadedSecond));
+    expect(
+      (await profileStore.resolvePreferred(
+        await profileStore.list(),
+      ))?.profile.deviceId,
+      'tablet',
+    );
     expect(find.text('Pair a gateway profile first'), findsNothing);
     expect(find.text('proj-demo / tablet / relay'), findsWidgets);
   });

@@ -96,6 +96,107 @@ void main() {
   );
 
   test(
+    'restart restores last successful new route instead of sorted old route',
+    () async {
+      final secureStore = MemorySecureStore();
+      var now = DateTime.utc(2026, 7, 10, 9);
+      final store = GatewayHostProfileStore(
+        secureStore: secureStore,
+        now: () => now,
+      );
+      final oldRoute = _pairedHost(
+        hostId: 'host-demo',
+        deviceId: 'old-phone',
+        gatewayUrl: Uri.parse('http://127.0.0.1:18899'),
+      );
+      await store.save(oldRoute);
+      now = now.add(const Duration(minutes: 1));
+      final newRoute = _pairedHost(
+        hostId: 'host-demo',
+        deviceId: 'new-phone',
+        gatewayUrl: Uri.parse('http://127.0.0.1:8787'),
+      );
+      await store.save(newRoute);
+      await store.markSuccessful(newRoute);
+
+      final restarted = ProjectHomeProfileBootstrapper(store: store);
+      final result = await restarted.load(selectedProfile: null);
+
+      expect(result.profiles, hasLength(2));
+      expect(result.selectedProfile?.profile.deviceId, 'new-phone');
+      expect(
+        result.selectedProfile?.profile.routeProvider.gatewayUrl,
+        Uri.parse('http://127.0.0.1:8787'),
+      );
+    },
+  );
+
+  test(
+    'legacy profiles migrate to their most recently saved route deterministically',
+    () async {
+      final secureStore = MemorySecureStore();
+      var now = DateTime.utc(2026, 7, 10, 9);
+      final store = GatewayHostProfileStore(
+        secureStore: secureStore,
+        now: () => now,
+      );
+      final older = _pairedHost(
+        hostId: 'host-demo',
+        deviceId: 'old-phone',
+        gatewayUrl: Uri.parse('http://127.0.0.1:18899'),
+      );
+      await store.save(older);
+      now = now.add(const Duration(minutes: 1));
+      final newer = _pairedHost(
+        hostId: 'host-demo',
+        deviceId: 'new-phone',
+        gatewayUrl: Uri.parse('http://127.0.0.1:8787'),
+      );
+      await store.save(newer);
+
+      final firstBoot = await ProjectHomeProfileBootstrapper(
+        store: store,
+      ).load(selectedProfile: null);
+      final secondBoot = await ProjectHomeProfileBootstrapper(
+        store: store,
+      ).load(selectedProfile: null);
+
+      expect(firstBoot.selectedProfile?.profile.deviceId, 'new-phone');
+      expect(secondBoot.selectedProfile?.profile.deviceId, 'new-phone');
+    },
+  );
+
+  test(
+    'same host and route supersedes obsolete local device profile',
+    () async {
+      final store = GatewayHostProfileStore(secureStore: MemorySecureStore());
+      final obsolete = _pairedHost(
+        hostId: 'host-demo',
+        deviceId: 'old-phone',
+        gatewayUrl: Uri.parse('http://127.0.0.1:8787'),
+      );
+      final replacement = _pairedHost(
+        hostId: 'host-demo',
+        deviceId: 'new-phone',
+        gatewayUrl: Uri.parse('http://127.0.0.1:8787'),
+      );
+
+      await store.save(obsolete);
+      await store.markSuccessful(obsolete);
+      await store.save(replacement);
+
+      final profiles = await store.list();
+      expect(profiles.map((profile) => profile.profile.deviceId), [
+        'new-phone',
+      ]);
+      expect(
+        (await store.resolvePreferred(profiles))?.profile.deviceId,
+        'new-phone',
+      );
+    },
+  );
+
+  test(
     'debug profile is saved, selected, and marked for auto activation',
     () async {
       final store = GatewayHostProfileStore(secureStore: MemorySecureStore());
@@ -137,6 +238,7 @@ GatewayPairedHost _pairedHost({
   required String deviceId,
   String? token,
   RouteProviderKind routeKind = RouteProviderKind.lan,
+  Uri? gatewayUrl,
 }) {
   return GatewayPairedHost(
     profile: GatewayHostProfile(
@@ -144,7 +246,7 @@ GatewayPairedHost _pairedHost({
       deviceId: deviceId,
       routeProvider: RouteProvider(
         kind: routeKind,
-        gatewayUrl: Uri.parse('http://$hostId.example.test'),
+        gatewayUrl: gatewayUrl ?? Uri.parse('http://$hostId.example.test'),
       ),
       scopes: const {'view'},
     ),
