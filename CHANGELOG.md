@@ -1,5 +1,38 @@
 # Changelog
 
+## v8.1.1 (2026-07-10)
+
+### Mobile Realtime Recovery
+
+- **Invalidations Replace Active Polling**: the server-wide gateway now
+  publishes a bounded SSE invalidation journal for project, activity, and
+  conversation changes. CCB Mobile refreshes authoritative REST state from
+  those signals without send-follow polling or active-project polling.
+- **Snapshots Survive Reconnects**: bounded read-only snapshots preserve the
+  selected host, project, agent, and recent conversation state through gateway
+  interruptions. The app exposes reconnect status, recovers automatically,
+  keeps completion notifications working, and does not replay stale sends.
+- **Legacy Gateway Processes Are Adopted**: Mobile host startup recognizes and
+  safely takes over the previous foreground gateway process when its script,
+  command, and listener match, avoiding duplicate listeners during upgrades.
+
+### macOS Installer Reliability
+
+- **Managed Python Environments Are Reused**: release updates preserve and
+  validate the existing managed `.venv`, so a working `watchdog` installation
+  is no longer deleted and downloaded again on every update.
+- **pip Has A Guarded Mirror Fallback**: install-time pip commands respect
+  `CCB_PIP_INDEX_URL` and, on macOS TLS or network failures, retry through the
+  configurable TUNA PyPI fallback. The fallback can be disabled with
+  `CCB_PIP_FALLBACK_INDEX_URL=0`; no global pip configuration or TLS bypass is
+  written.
+
+### Release Surface
+
+- **Release Metadata Synchronized**: VERSION, source CLI metadata,
+  `package.json`, Mobile app metadata and download links, workflow dispatch
+  defaults, README variants, and release notes are aligned for 8.1.1.
+
 ## v8.1.0 (2026-07-10)
 
 ### Configuration Control And Lighter Defaults

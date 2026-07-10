@@ -6,7 +6,7 @@
 **Coordinate Codex, Claude, Gemini, and other CLI agents in visible, controllable workflows you can take over**
 
 <p>
-  <img src="https://img.shields.io/badge/version-8.1.0-orange.svg" alt="version">
+  <img src="https://img.shields.io/badge/version-8.1.1-orange.svg" alt="version">
   <img src="https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20WSL-lightgrey.svg" alt="platform">
   <img src="https://img.shields.io/badge/providers-17%20CLI%20families-0B7285.svg" alt="providers">
 </p>
@@ -180,9 +180,9 @@ This command guides installation and configuration.
 <details>
 <summary><b>Mobile App details, safety boundary, and source</b></summary>
 
-CCB 8.1.0 includes the Flutter CCB Mobile source in [`mobile/`](mobile/) and publishes the Android APK through GitHub Releases:
+CCB 8.1.1 includes the Flutter CCB Mobile source in [`mobile/`](mobile/) and publishes the Android APK through GitHub Releases:
 
-- [Download CCB Mobile v8.1.0 APK](https://github.com/SeemSeam/claude_codex_bridge/releases/download/v8.1.0/ccb-mobile-v8.1.0.apk)
+- [Download CCB Mobile v8.1.1 APK](https://github.com/SeemSeam/claude_codex_bridge/releases/download/v8.1.1/ccb-mobile-v8.1.1.apk)
 - App source: [`mobile/app`](mobile/app)
 - Server gateway source: [`lib/mobile_gateway`](lib/mobile_gateway)
 
@@ -266,6 +266,16 @@ Thanks to [tmux-agent-sidebar](https://github.com/hiroppy/tmux-agent-sidebar) fo
 ## Release Notes
 
 <details open>
+<summary><b>v8.1.1</b> - Mobile realtime recovery and macOS installer resilience</summary>
+
+- Added a bounded Mobile gateway SSE invalidation stream so project, activity, and conversation changes refresh authoritative state without active-view polling.
+- Added bounded read-only Mobile snapshots, reconnect status and automatic recovery while retaining the selected host, project, agent, recent conversation state, and completion notifications.
+- Mobile host startup now recognizes and safely adopts matching legacy gateway processes, avoiding duplicate listeners during upgrades.
+- macOS release updates preserve healthy managed Python environments and retry `watchdog` installation through a configurable mirror after TLS or network failures.
+
+</details>
+
+<details>
 <summary><b>v8.1.0</b> - Config control plane and lighter defaults</summary>
 
 - Added a visual project configuration control panel, opened from the sidebar's top-left **⚙ Settings** action or with `ccb config ui`, with validation, diff review, save, reload dry-run, and guarded hot reload.
