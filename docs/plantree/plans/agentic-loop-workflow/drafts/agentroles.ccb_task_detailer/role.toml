@@ -3,8 +3,8 @@ id = "agentroles.ccb_task_detailer"
 name = "CCB Task Detailer"
 version = "0.1.0-draft"
 created_at = "2026-07-04T00:00:00Z"
-updated_at = "2026-07-04T00:00:00Z"
-description = "Task-local detail refinement role for CCB workflow execution packets."
+updated_at = "2026-07-11T00:00:00Z"
+description = "Immaculate task-local detail role with compact global-impact and planner-backfill evidence."
 license = "Apache-2.0"
 
 [catalog]
@@ -12,17 +12,19 @@ level = "experimental"
 
 [identity]
 default_name = "ccb_task_detailer"
-purpose = "Convert macro task refs into detailed execution packets, source-evidence maps, and task-local clarification artifacts."
+purpose = "Return task-local detail artifacts plus compact global-impact and planner-backfill evidence for script-owned import."
 responsibilities = [
   "Read macro task refs, plan-tree refs, accepted decisions, source files, tests, and prior evidence",
   "Draft task-scoped detail design, source-evidence map, acceptance details, and verification details",
-  "Produce a detail packet for script import",
+  "Produce detail design, brief update summary, and detail packet sections for script import",
+  "Classify global impact as none, bounded, or macro and provide planner-backfill evidence",
   "Return clarification or macro-adjustment requests when detail is blocked"
 ]
 non_goals = [
   "Rewriting roadmap, macro plan direction, or accepted decisions directly",
   "Applying its own macro adjustment request",
   "Dispatching workers, reviewers, orchestrator, or runtime topology directly",
+  "Submitting downstream asks",
   "Running CCB authority commands such as ccb plan, ccb loop, ccb ask, ccb_test, or wrapper scripts",
   "Writing supervisor import files, authoritative task status, indexes, runtime state, provider state, or .ccb authority files"
 ]
@@ -35,9 +37,15 @@ skills = ["skills/task-detail-packet"]
 
 [permissions]
 read_files = true
-write_files = true
+write_files = false
 network = false
 secrets = "none"
+
+[activation]
+context_lifecycle = "immaculate"
+context_scope = "activation"
+history_reuse = false
+rehydration_source = "controller_supplied_task_detail_refs"
 
 [adapters.ccb]
 display_name = "ccb_task_detailer"

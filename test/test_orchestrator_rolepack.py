@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import re
 import shutil
 
 from provider_profiles.codex_home_config import materialize_codex_home_config
@@ -50,8 +51,9 @@ ROLE_EXPECTATIONS = {
     },
     'agentroles.ccb_orchestrator': {
         'default': 'orchestrator',
-        'skills': (),
+        'skill': 'skills/orchestration-bundle-candidate',
         'templates': (
+            'templates/orchestration-bundle-candidate.md',
             'templates/capacity-request.json',
             'templates/worker-ask.md',
             'templates/checker-ask.md',
@@ -107,8 +109,8 @@ def test_orchestrator_rolepack_translates_ccb_skills() -> None:
     assert manifest.default_agent_name == 'orchestrator'
     assert {'codex', 'claude', 'qwen', 'zai'} <= set(manifest.providers)
     assert manifest.manifest['memory']['files'] == ['memory.md', 'adapters/ccb/memory.md']
-    assert manifest.manifest['skills']['codex'] == []
-    assert manifest.manifest['skills']['qwen'] == []
+    assert manifest.manifest['skills']['codex'] == ['skills/orchestration-bundle-candidate']
+    assert manifest.manifest['skills']['qwen'] == ['skills/orchestration-bundle-candidate']
 
 
 def test_orchestrator_rolepack_is_reply_only_for_capacity_and_lifecycle() -> None:
@@ -409,6 +411,186 @@ def test_coder_rolepack_is_workspace_only_and_reply_only_for_workflow_authority(
         assert forbidden not in combined
 
 
+def _combined_role_contract(role_id: str) -> str:
+    root = role_root(role_id)
+    paths = [root / 'memory.md', root / 'adapters' / 'ccb' / 'memory.md']
+    manifest = load_role_manifest(root)
+    for skill in manifest.manifest['skills']['codex']:
+        paths.append(root / skill / 'SKILL.md')
+    return '\n'.join(path.read_text(encoding='utf-8') for path in paths)
+
+
+def test_p1_orchestrator_rolepack_declares_adaptive_bundle_contract() -> None:
+    manifest = load_role_manifest(ORCHESTRATOR_ROLE)
+    activation = manifest.table('activation')
+    combined = _combined_role_contract('agentroles.ccb_orchestrator')
+    template = (
+        ORCHESTRATOR_ROLE / 'templates' / 'orchestration-bundle-candidate.md'
+    ).read_text(encoding='utf-8')
+    fenced = re.search(r'```json\s*\n(.*?)\n```', template, flags=re.DOTALL)
+
+    assert activation == {
+        'context_lifecycle': 'immaculate',
+        'context_scope': 'activation',
+        'history_reuse': False,
+        'rehydration_source': 'controller_supplied_artifact_refs',
+        'recommended_workspace_mode': 'inplace',
+    }
+    assert manifest.manifest['permissions']['write_files'] is False
+    assert fenced is not None
+    candidate = json.loads(fenced.group(1))
+    assert set(candidate) == {
+        'schema',
+        'task_id',
+        'bundle_revision',
+        'selection',
+        'nodes',
+        'integration',
+        'policy',
+    }
+    assert candidate['schema'] == 'ccb.loop.orchestration_bundle_candidate.v1'
+    assert set(candidate['selection']) == {
+        'workgroup_count',
+        'complexity',
+        'cutability',
+        'execution_shape',
+        'rationale',
+    }
+    assert set(candidate['nodes'][0]) == {
+        'node_id',
+        'workgroup_id',
+        'worker_profile',
+        'reviewer_profile',
+        'depends_on',
+        'parallel_group',
+        'work_packet',
+        'allowed_paths',
+        'acceptance_refs',
+        'verification_refs',
+        'integration_order',
+    }
+    assert candidate['nodes'][0]['worker_profile'] == 'coder'
+    assert candidate['nodes'][0]['reviewer_profile'] == 'code_reviewer'
+    assert 'exactly one route decision' in combined
+    assert 'Config V3' in combined
+    assert 'direct_execution' in combined
+    assert 'partial_completion' in combined
+    assert 'smallest justified workgroup count from 1 to 4' in combined
+    assert 'capacity is a ceiling, not a target' in ' '.join(combined.split()).lower()
+    assert 'Structural ambiguity requires `replan_required`' in combined
+    assert 'silent serialization' in combined
+    assert 'parallel_group is evidence only' in combined
+    assert 'do not submit downstream asks' in combined.lower()
+    assert 'normal post-worker orchestrator activation' in combined
+    assert '"workgroup_count": 1' not in template
+    assert 'fill capacity' not in template.lower()
+
+
+def test_p1_node_rolepacks_bind_canonical_packet_and_exact_review_tree() -> None:
+    coder = load_role_manifest(role_root('agentroles.coder'))
+    reviewer = load_role_manifest(role_root('agentroles.code_reviewer'))
+    coder_contract = _combined_role_contract('agentroles.coder')
+    reviewer_contract = _combined_role_contract('agentroles.code_reviewer')
+    coder_template = (
+        role_root('agentroles.coder') / 'templates' / 'node-work-result.md'
+    ).read_text(encoding='utf-8')
+    reviewer_template = (
+        role_root('agentroles.code_reviewer') / 'templates' / 'node-check-result.md'
+    ).read_text(encoding='utf-8')
+
+    for manifest in (coder, reviewer):
+        assert manifest.table('activation')['context_lifecycle'] == 'immaculate'
+        assert manifest.table('activation')['history_reuse'] is False
+    assert coder.manifest['permissions']['write_files'] is True
+    assert reviewer.manifest['permissions']['write_files'] is False
+    for required in (
+        'canonical node work packet',
+        'declared refs',
+        'allowed paths',
+        'changed paths',
+        'verification evidence',
+        'blockers',
+        'Do not expand scope',
+        'fallback',
+    ):
+        assert required in coder_contract + coder_template
+    for required in (
+        'exact node workspace',
+        'base commit',
+        'head commit',
+        'tree digest',
+        'read-only',
+        'scope violations',
+        'acceptance refs',
+        'verification refs',
+        'cannot mark the task or round done',
+    ):
+        assert required in reviewer_contract + reviewer_template
+
+
+def test_p1_round_reviewer_is_immaculate_and_rejects_unproven_integration() -> None:
+    root = role_root('agentroles.ccb_round_reviewer')
+    manifest = load_role_manifest(root)
+    combined = _combined_role_contract('agentroles.ccb_round_reviewer')
+    template = (root / 'templates' / 'round-result.md').read_text(encoding='utf-8')
+
+    assert manifest.table('activation')['context_lifecycle'] == 'immaculate'
+    assert manifest.table('activation')['context_scope'] == 'activation'
+    assert manifest.manifest['permissions']['write_files'] is False
+    assert template.startswith('round result: pass|partial|replan_required|blocked')
+    normalized_contract = ' '.join((combined + template).split()).lower()
+    for required in (
+        'compact node-review evidence',
+        'integration evidence',
+        'project-root verification evidence',
+        'missing node review',
+        'integration drift',
+        'scope violation',
+        'hidden fallback',
+        'partial promoted delta',
+        'unproven cleanup',
+        'cannot mark the task or round done',
+    ):
+        assert required in normalized_contract
+
+
+def test_p1_task_detailer_returns_global_impact_and_planner_backfill_evidence() -> None:
+    root = role_root('agentroles.ccb_task_detailer')
+    manifest = load_role_manifest(root)
+    combined = _combined_role_contract('agentroles.ccb_task_detailer')
+    template = (root / 'templates' / 'detail-packet.md').read_text(encoding='utf-8')
+
+    assert manifest.table('activation')['context_lifecycle'] == 'immaculate'
+    assert manifest.manifest['permissions']['write_files'] is False
+    assert 'global impact: none|bounded|macro' in combined + template
+    assert 'planner backfill' in (combined + template).lower()
+    assert 'never dispatch workers' in (combined + template).lower()
+    for heading in (
+        '## task-detail-design.md',
+        '## brief-update-summary.md',
+        '## detail-packet.md',
+    ):
+        assert heading in template
+
+
+def test_p1_rolepacks_are_provider_neutral_and_keep_project_config_authority() -> None:
+    role_ids = (
+        'agentroles.ccb_orchestrator',
+        'agentroles.coder',
+        'agentroles.code_reviewer',
+        'agentroles.ccb_round_reviewer',
+        'agentroles.ccb_task_detailer',
+    )
+    for role_id in role_ids:
+        manifest = load_role_manifest(role_root(role_id))
+        combined = _combined_role_contract(role_id)
+        assert {'codex', 'claude', 'gemini', 'opencode', 'kimi', 'mimo', 'qwen', 'zai', 'droid'} <= set(
+            manifest.providers
+        )
+        assert 'Provider and model selection remain project configuration concerns' in combined
+        assert 'Codex-only' not in combined
+
+
 def test_round_reviewer_and_orchestrator_templates_share_result_contract() -> None:
     accepted_round_template = (
         WORKFLOW_DRAFTS
@@ -506,6 +688,9 @@ def test_orchestrator_rolepack_does_not_project_command_skills_to_codex_home(
 
     assert not (target_home / 'skills' / 'orchestrator-capacity').exists()
     assert not (target_home / 'skills' / 'dynamic-agent-lifecycle').exists()
+    projected = target_home / 'skills' / 'orchestration-bundle-candidate' / 'SKILL.md'
+    assert projected.is_file()
+    assert 'ccb.loop.orchestration_bundle_candidate.v1' in projected.read_text(encoding='utf-8')
 
 
 def test_planner_rolepack_projects_planner_skill_to_codex_home(tmp_path: Path, monkeypatch) -> None:

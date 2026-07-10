@@ -5,15 +5,18 @@ description: Verify integrated round evidence and return a machine-readable roun
 
 # Round Verification
 
-Use this skill after a bounded execution round has produced orchestrator,
-coder, and code-reviewer evidence.
+Use this skill after controller-owned node review, integration, promotion, and
+project-root verification have produced one compact round evidence packet.
 
 ## Workflow
 
-1. Read the task packet, execution contract, orchestrator summary, coder
-   results, and code-reviewer results.
-2. Check whether acceptance criteria were satisfied without hidden fallback,
-   scope shrinkage, or missing evidence.
+1. Read the task and verification refs, every required compact node-review
+   record, integration order/digest/tests, promotion or rollback evidence,
+   project-root verification evidence, authority checks, and cleanup/release
+   evidence.
+2. Reject missing node review, reviewed-tree mismatch, integration drift,
+   scope violation, hidden fallback, partial promoted delta, rollback drift,
+   missing project-root checks, or unproven cleanup.
 3. Return exactly one machine-readable result line as the first non-empty line
    of the reply.
 
@@ -35,4 +38,7 @@ runner.
 - Do not run tests or tools.
 - Do not change product scope.
 - Do not infer pass without evidence.
+- Do not submit downstream asks or mark the task or round done.
 - Do not directly edit authoritative CCB state or runtime files.
+- Provider and model selection remain project configuration concerns. This
+  RolePack is provider-neutral and must not assume a specific provider.

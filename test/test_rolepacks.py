@@ -1409,6 +1409,28 @@ def test_source_test_roles_install_uses_source_checkout_draft_rolepacks(
         'agentroles.coder',
         'agentroles.code_reviewer',
     )
+    installed_contract_markers = {
+        'agentroles.ccb_orchestrator': (
+            'skills/orchestration-bundle-candidate/SKILL.md',
+            'ccb.loop.orchestration_bundle_candidate.v1',
+        ),
+        'agentroles.ccb_task_detailer': (
+            'templates/detail-packet.md',
+            'global impact: none|bounded|macro',
+        ),
+        'agentroles.ccb_round_reviewer': (
+            'templates/round-result.md',
+            'project-root verification evidence',
+        ),
+        'agentroles.coder': (
+            'templates/node-work-result.md',
+            'canonical node work packet',
+        ),
+        'agentroles.code_reviewer': (
+            'templates/node-check-result.md',
+            'exact node workspace',
+        ),
+    }
 
     for role_id in required_roles:
         payload = install_role(role_id, with_tools=False)
@@ -1427,7 +1449,14 @@ def test_source_test_roles_install_uses_source_checkout_draft_rolepacks(
         assert metadata['source_path'].endswith(
             f'docs/plantree/plans/agentic-loop-workflow/drafts/{role_id}'
         )
+        assert metadata['version'] == role.version
+        assert metadata['digest'] == f'sha256:{tree_digest(role.root)}'
         assert str(tmp_path / '.roles' / 'installed') in payload['path']
+        if role_id in installed_contract_markers:
+            relative_path, marker = installed_contract_markers[role_id]
+            installed_contract = role.root / relative_path
+            assert installed_contract.is_file()
+            assert marker.lower() in installed_contract.read_text(encoding='utf-8').lower()
 
 
 def test_frontdesk_rolepack_forbids_direct_project_artifact_implementation() -> None:

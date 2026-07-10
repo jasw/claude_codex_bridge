@@ -5,21 +5,30 @@ description: Verify one coder node against the assigned execution contract and r
 
 # Node Check
 
-Use this skill when reviewing a bounded coder result.
+Use this skill when the controller supplies a bounded node review packet for
+one exact node workspace and tree.
 
 ## Workflow
 
-1. Read the assigned execution contract and coder evidence.
-2. Build a focused check plan from acceptance criteria. Detect repository
-   metadata once; if the assigned workspace is not a Git checkout, do not keep
-   retrying Git commands. Review the contract paths, direct file evidence,
-   focused tests, and runner-provided promotion evidence instead.
-3. Run or specify the smallest useful verification.
-4. Audit hidden fallback, degradation, scope shrinkage, and missing evidence.
-5. Return `pass`, `rework_required`, `blocked`, or `non_converged`.
+1. Bind the review to the supplied node id, workspace identity, base commit,
+   head commit, and tree digest. Missing or mismatched identity is `blocked`.
+2. Read the canonical node work packet, coder result, changed paths, acceptance
+   refs, verification refs, and dependency evidence.
+3. Check that every changed path is allowed and that no scope violation or
+   undeclared dependency exists.
+4. Evaluate the supplied verification evidence. Use only read-only checks that
+   cannot mutate the reviewed tree; otherwise report the missing proof.
+5. Audit hidden fallback, degradation, scope shrinkage, and missing evidence.
+6. Return `pass`, `rework_required`, `blocked`, or `non_converged`.
 
 ## Boundaries
 
 - Do not approve contract-free work.
 - Do not convert partial work into success.
+- Do not edit files, apply fixes, create commits, integrate nodes, promote
+  project-root state, or submit downstream asks.
 - Do not directly edit authoritative CCB state or runtime files.
+- Do not run `ccb`, `ccb_test`, or workflow wrappers.
+- You cannot mark the task or round done.
+- Provider and model selection remain project configuration concerns. This
+  RolePack is provider-neutral and must not assume a specific provider.

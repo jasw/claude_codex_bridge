@@ -13,13 +13,30 @@ use `round result: blocked` as the first line.
 ## Evidence Reviewed
 
 - planner verification contract: <ref>
-- orchestrator summary: <ref>
-- node reports: <refs>
+- orchestration bundle: <ref and digest>
+- compact node-review evidence: <one ref/result/tree digest per required node>
+- integration evidence: <merge order, commit/digest, checks>
+- project-root verification evidence: <promotion digest and checks>
+- authority checks: <no provider authority mutation; no topology dispatch DSL>
+- cleanup/release evidence: <released, retained, residue>
 
 ## Integrated Verification
 
 - <check and result>
 
+## Rejection Audit
+
+- missing node review: <none or evidence>
+- integration drift: <none or evidence>
+- scope violation: <none or evidence>
+- hidden fallback or degradation: <none or evidence>
+- partial promoted delta: <none or evidence>
+- rollback drift: <none or evidence>
+- unproven cleanup or dynamic residue: <none or evidence>
+
 ## Next Recommendation
 
 - <done, rework node, replan, escalate, or pause>
+
+This reply is evidence only. The round reviewer cannot mark the task or round
+done, import artifacts, release agents, or submit downstream asks.

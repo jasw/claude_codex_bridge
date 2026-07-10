@@ -1,14 +1,10 @@
 {
-  "loop_id": "",
-  "profiles": {
-    "worker": 1,
-    "code_reviewer": 1
-  },
-  "max_nodes": 4,
-  "lifetime": "current_round",
+  "status": "historical_reference_only",
+  "effective_capacity_source": "controller_supplied_snapshot",
+  "selection_rule": "smallest_semantically_justified_workgroup_count",
+  "capacity_rule": "ceiling_not_target",
   "placement_policy": "ccb_runtime_layout_manager",
   "forbidden_placement_overrides": ["window_name", "window_class", "pane_id"],
-  "reason": "",
-  "task_packet_ref": "",
-  "verification_ref": ""
+  "provider_authority": false,
+  "runtime_authority": false
 }

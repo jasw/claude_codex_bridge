@@ -1,6 +1,8 @@
 # agentroles.coder
 
-Draft accepted RolePack for a bounded implementation or investigation worker.
+Draft accepted RolePack for one immaculate, bounded workgroup coder.
 
-The coder handles one scoped work item and returns evidence. It does not decide
-whole-round success, mutate workflow authority, or change task scope.
+The coder consumes one canonical node work packet in its controller-assigned
+workspace and returns changed-path, verification, and blocker evidence. It does
+not decide whole-round success, mutate workflow authority, expand scope,
+integrate work, or submit downstream asks.

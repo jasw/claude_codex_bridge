@@ -1,5 +1,9 @@
 # Round Aggregation
 
+Historical filename retained for compatibility. This template is not used on
+the normal post-worker path: controller-owned integration and
+`ccb_round_reviewer` evidence replace orchestrator aggregation.
+
 task id: <task-id>
 loop id: <loop-id>
 orchestrator: <agent-name>
@@ -28,3 +32,6 @@ aggregation result: complete|partial|blocked|replan_required
 - task packet ref: <ref>
 - verification ref: <ref>
 - worker/checker refs: <refs>
+
+Only a structural `replan_required` starts another immaculate orchestrator
+activation. The orchestrator does not import this report or mutate authority.
