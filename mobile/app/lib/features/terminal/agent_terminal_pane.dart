@@ -354,12 +354,8 @@ class _LiveTerminalPaneState extends State<_LiveTerminalPane>
   static final _secondaryDeviceAttributesPattern = RegExp(
     r'^\x1B\[>\d+;\d+;\d+c$',
   );
-  static final _cursorPositionReportPattern = RegExp(
-    r'^\x1B\[\d+;\d+R$',
-  );
-  static final _windowSizeReportPattern = RegExp(
-    r'^\x1B\[8;\d+;\d+t$',
-  );
+  static final _cursorPositionReportPattern = RegExp(r'^\x1B\[\d+;\d+R$');
+  static final _windowSizeReportPattern = RegExp(r'^\x1B\[8;\d+;\d+t$');
 
   Future<void> _sendKey(List<int> bytes, String status) async {
     final session = _session;
@@ -573,28 +569,48 @@ class _LiveTerminalPaneState extends State<_LiveTerminalPane>
                 subtitle: widget.model.attachCommand,
                 trailing: status,
               ),
-            TerminalControlToolbar(
-              enabled: connected,
-              reconnectEnabled: canReconnect,
-              status: status,
-              onEscape: () => _sendKey(const [27], 'Esc'),
-              onTab: () => _sendKey(const [9], 'Tab'),
-              onCtrlC: () => _sendKey(const [3], 'Ctrl-C'),
-              onCtrlD: () => _sendKey(const [4], 'Ctrl-D'),
-              onCtrlU: () => _sendKey(const [21], 'Ctrl-U'),
-              onArrowUp: () => _sendKey(const [27, 91, 65], 'Up'),
-              onArrowDown: () => _sendKey(const [27, 91, 66], 'Down'),
-              onArrowRight: () => _sendKey(const [27, 91, 67], 'Right'),
-              onArrowLeft: () => _sendKey(const [27, 91, 68], 'Left'),
-              onPaste: _pasteClipboard,
-              onResize: _syncSize,
-              onReconnect: _reconnect,
-            ),
             Expanded(
-              child: TerminalView(
-                _terminal,
-                key: const ValueKey('ccb-live-terminal-view'),
-                autofocus: true,
+              child: LayoutBuilder(
+                builder: (context, constraints) {
+                  return Stack(
+                    fit: StackFit.expand,
+                    children: [
+                      TerminalView(
+                        _terminal,
+                        key: const ValueKey('ccb-live-terminal-view'),
+                        autofocus: true,
+                      ),
+                      Positioned(
+                        left: 12,
+                        bottom: 12,
+                        child: ConstrainedBox(
+                          constraints: BoxConstraints(
+                            maxWidth: constraints.maxWidth - 24,
+                          ),
+                          child: TerminalControlToolbar(
+                            enabled: connected,
+                            reconnectEnabled: canReconnect,
+                            onEscape: () => _sendKey(const [27], 'Esc'),
+                            onTab: () => _sendKey(const [9], 'Tab'),
+                            onCtrlC: () => _sendKey(const [3], 'Ctrl-C'),
+                            onCtrlD: () => _sendKey(const [4], 'Ctrl-D'),
+                            onCtrlU: () => _sendKey(const [21], 'Ctrl-U'),
+                            onArrowUp: () => _sendKey(const [27, 91, 65], 'Up'),
+                            onArrowDown:
+                                () => _sendKey(const [27, 91, 66], 'Down'),
+                            onArrowRight:
+                                () => _sendKey(const [27, 91, 67], 'Right'),
+                            onArrowLeft:
+                                () => _sendKey(const [27, 91, 68], 'Left'),
+                            onPaste: _pasteClipboard,
+                            onResize: _syncSize,
+                            onReconnect: _reconnect,
+                          ),
+                        ),
+                      ),
+                    ],
+                  );
+                },
               ),
             ),
           ],
@@ -637,11 +653,10 @@ class AgentTerminalHeader extends StatelessWidget {
   }
 }
 
-class TerminalControlToolbar extends StatelessWidget {
+class TerminalControlToolbar extends StatefulWidget {
   const TerminalControlToolbar({
     required this.enabled,
     bool? reconnectEnabled,
-    required this.status,
     required this.onEscape,
     required this.onTab,
     required this.onCtrlC,
@@ -659,7 +674,6 @@ class TerminalControlToolbar extends StatelessWidget {
 
   final bool enabled;
   final bool reconnectEnabled;
-  final String status;
   final VoidCallback onEscape;
   final VoidCallback onTab;
   final VoidCallback onCtrlC;
@@ -674,130 +688,190 @@ class TerminalControlToolbar extends StatelessWidget {
   final VoidCallback onReconnect;
 
   @override
+  State<TerminalControlToolbar> createState() => _TerminalControlToolbarState();
+}
+
+class _TerminalControlToolbarState extends State<TerminalControlToolbar> {
+  bool _expanded = false;
+
+  @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
-    return Material(
-      color: colorScheme.surface,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    status,
-                    key: const ValueKey('terminal-control-status'),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                      color: colorScheme.onSurfaceVariant,
-                    ),
-                  ),
-                ),
-                _ToolbarTextButton(
-                  key: const ValueKey('terminal-key-escape'),
-                  label: 'Esc',
-                  enabled: enabled,
-                  onPressed: onEscape,
-                ),
-                _ToolbarTextButton(
-                  key: const ValueKey('terminal-key-tab'),
-                  label: 'Tab',
-                  enabled: enabled,
-                  onPressed: onTab,
-                ),
-                _ToolbarTextButton(
-                  key: const ValueKey('terminal-key-ctrl-c'),
-                  label: 'C-c',
-                  enabled: enabled,
-                  onPressed: onCtrlC,
-                ),
-                PopupMenuButton<VoidCallback>(
-                  key: const ValueKey('terminal-ctrl-menu'),
-                  tooltip: 'More terminal keys',
-                  enabled: enabled,
-                  icon: const Icon(Icons.keyboard_command_key),
-                  onSelected: (callback) => callback(),
-                  itemBuilder:
-                      (context) => [
-                        PopupMenuItem<VoidCallback>(
-                          key: const ValueKey('terminal-key-ctrl-d'),
-                          value: onCtrlD,
-                          child: const Text('Ctrl-D'),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final width =
+            _expanded && constraints.hasBoundedWidth
+                ? constraints.maxWidth
+                : 48.0;
+        return AnimatedSize(
+          duration: const Duration(milliseconds: 180),
+          curve: Curves.easeOutCubic,
+          alignment: Alignment.bottomLeft,
+          child: SizedBox(
+            width: width,
+            child: Material(
+              key: const ValueKey('terminal-shortcut-surface'),
+              color:
+                  _expanded
+                      ? colorScheme.surface.withValues(alpha: 0.92)
+                      : Colors.transparent,
+              elevation: _expanded ? 4 : 0,
+              borderRadius: BorderRadius.circular(24),
+              clipBehavior: Clip.antiAlias,
+              child: SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: Padding(
+                  padding:
+                      _expanded
+                          ? const EdgeInsets.symmetric(
+                            horizontal: 4,
+                            vertical: 3,
+                          )
+                          : EdgeInsets.zero,
+                  child: Row(
+                    key:
+                        _expanded
+                            ? const ValueKey('terminal-shortcuts-panel')
+                            : null,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Opacity(
+                        opacity: _expanded ? 0.9 : 0.62,
+                        child: IconButton.filledTonal(
+                          key: const ValueKey('terminal-shortcuts-toggle'),
+                          tooltip:
+                              _expanded
+                                  ? 'Hide terminal shortcuts'
+                                  : 'Show terminal shortcuts',
+                          onPressed:
+                              () => setState(() => _expanded = !_expanded),
+                          icon: Icon(_expanded ? Icons.close : Icons.add),
                         ),
-                        PopupMenuItem<VoidCallback>(
-                          key: const ValueKey('terminal-key-ctrl-u'),
-                          value: onCtrlU,
-                          child: const Text('Ctrl-U'),
+                      ),
+                      if (_expanded) ...[
+                        const SizedBox(width: 2),
+                        _ToolbarTextButton(
+                          key: const ValueKey('terminal-key-escape'),
+                          label: 'Esc',
+                          enabled: widget.enabled,
+                          onPressed: widget.onEscape,
+                        ),
+                        _ToolbarTextButton(
+                          key: const ValueKey('terminal-key-tab'),
+                          label: 'Tab',
+                          enabled: widget.enabled,
+                          onPressed: widget.onTab,
+                        ),
+                        _ToolbarTextButton(
+                          key: const ValueKey('terminal-key-ctrl-c'),
+                          label: 'C-c',
+                          enabled: widget.enabled,
+                          onPressed: widget.onCtrlC,
+                        ),
+                        PopupMenuButton<VoidCallback>(
+                          key: const ValueKey('terminal-ctrl-menu'),
+                          tooltip: 'More terminal keys',
+                          enabled: widget.enabled,
+                          icon: const Icon(Icons.keyboard_command_key),
+                          onSelected: (callback) => callback(),
+                          itemBuilder:
+                              (context) => [
+                                PopupMenuItem<VoidCallback>(
+                                  key: const ValueKey('terminal-key-ctrl-d'),
+                                  value: widget.onCtrlD,
+                                  child: const Text('Ctrl-D'),
+                                ),
+                                PopupMenuItem<VoidCallback>(
+                                  key: const ValueKey('terminal-key-ctrl-u'),
+                                  value: widget.onCtrlU,
+                                  child: const Text('Ctrl-U'),
+                                ),
+                              ],
+                        ),
+                        _TerminalShortcutIconButton(
+                          key: const ValueKey('terminal-key-arrow-left'),
+                          tooltip: 'Left',
+                          enabled: widget.enabled,
+                          onPressed: widget.onArrowLeft,
+                          icon: Icons.keyboard_arrow_left,
+                        ),
+                        _TerminalShortcutIconButton(
+                          key: const ValueKey('terminal-key-arrow-up'),
+                          tooltip: 'Up',
+                          enabled: widget.enabled,
+                          onPressed: widget.onArrowUp,
+                          icon: Icons.keyboard_arrow_up,
+                        ),
+                        _TerminalShortcutIconButton(
+                          key: const ValueKey('terminal-key-arrow-down'),
+                          tooltip: 'Down',
+                          enabled: widget.enabled,
+                          onPressed: widget.onArrowDown,
+                          icon: Icons.keyboard_arrow_down,
+                        ),
+                        _TerminalShortcutIconButton(
+                          key: const ValueKey('terminal-key-arrow-right'),
+                          tooltip: 'Right',
+                          enabled: widget.enabled,
+                          onPressed: widget.onArrowRight,
+                          icon: Icons.keyboard_arrow_right,
+                        ),
+                        _TerminalShortcutIconButton(
+                          key: const ValueKey('terminal-paste-button'),
+                          tooltip: 'Paste clipboard',
+                          enabled: widget.enabled,
+                          onPressed: widget.onPaste,
+                          icon: Icons.content_paste_go,
+                        ),
+                        _TerminalShortcutIconButton(
+                          key: const ValueKey('terminal-resize-button'),
+                          tooltip: 'Sync terminal size',
+                          enabled: widget.enabled,
+                          onPressed: widget.onResize,
+                          icon: Icons.fit_screen,
+                        ),
+                        _TerminalShortcutIconButton(
+                          key: const ValueKey('terminal-reconnect-button'),
+                          tooltip: 'Reconnect terminal',
+                          enabled: widget.reconnectEnabled,
+                          onPressed: widget.onReconnect,
+                          icon: Icons.refresh,
                         ),
                       ],
+                    ],
+                  ),
                 ),
-              ],
+              ),
             ),
-            Row(
-              children: [
-                IconButton(
-                  key: const ValueKey('terminal-key-arrow-left'),
-                  tooltip: 'Left',
-                  visualDensity: VisualDensity.compact,
-                  onPressed: enabled ? onArrowLeft : null,
-                  icon: const Icon(Icons.keyboard_arrow_left),
-                ),
-                Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    IconButton(
-                      key: const ValueKey('terminal-key-arrow-up'),
-                      tooltip: 'Up',
-                      visualDensity: VisualDensity.compact,
-                      onPressed: enabled ? onArrowUp : null,
-                      icon: const Icon(Icons.keyboard_arrow_up),
-                    ),
-                    IconButton(
-                      key: const ValueKey('terminal-key-arrow-down'),
-                      tooltip: 'Down',
-                      visualDensity: VisualDensity.compact,
-                      onPressed: enabled ? onArrowDown : null,
-                      icon: const Icon(Icons.keyboard_arrow_down),
-                    ),
-                  ],
-                ),
-                IconButton(
-                  key: const ValueKey('terminal-key-arrow-right'),
-                  tooltip: 'Right',
-                  visualDensity: VisualDensity.compact,
-                  onPressed: enabled ? onArrowRight : null,
-                  icon: const Icon(Icons.keyboard_arrow_right),
-                ),
-                const Spacer(),
-                IconButton(
-                  key: const ValueKey('terminal-paste-button'),
-                  tooltip: 'Paste clipboard',
-                  visualDensity: VisualDensity.compact,
-                  onPressed: enabled ? onPaste : null,
-                  icon: const Icon(Icons.content_paste_go),
-                ),
-                IconButton(
-                  key: const ValueKey('terminal-resize-button'),
-                  tooltip: 'Sync terminal size',
-                  visualDensity: VisualDensity.compact,
-                  onPressed: enabled ? onResize : null,
-                  icon: const Icon(Icons.fit_screen),
-                ),
-                IconButton(
-                  key: const ValueKey('terminal-reconnect-button'),
-                  tooltip: 'Reconnect terminal',
-                  visualDensity: VisualDensity.compact,
-                  onPressed: reconnectEnabled ? onReconnect : null,
-                  icon: const Icon(Icons.refresh),
-                ),
-              ],
-            ),
-          ],
-        ),
-      ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _TerminalShortcutIconButton extends StatelessWidget {
+  const _TerminalShortcutIconButton({
+    required this.tooltip,
+    required this.enabled,
+    required this.onPressed,
+    required this.icon,
+    super.key,
+  });
+
+  final String tooltip;
+  final bool enabled;
+  final VoidCallback onPressed;
+  final IconData icon;
+
+  @override
+  Widget build(BuildContext context) {
+    return IconButton(
+      tooltip: tooltip,
+      visualDensity: VisualDensity.compact,
+      constraints: const BoxConstraints.tightFor(width: 40, height: 40),
+      onPressed: enabled ? onPressed : null,
+      icon: Icon(icon),
     );
   }
 }

@@ -10,7 +10,7 @@ import 'support/project_home_test_fakes.dart';
 void main() {
   final binding = TestWidgetsFlutterBinding.ensureInitialized();
 
-  testWidgets('terminal toolbar exposes direct pane controls on phone width', (
+  testWidgets('terminal shortcuts stay collapsed under a floating plus', (
     tester,
   ) async {
     final calls = <String>[];
@@ -22,7 +22,6 @@ void main() {
             width: 390,
             child: TerminalControlToolbar(
               enabled: true,
-              status: 'Connected',
               onEscape: () => calls.add('esc'),
               onTab: () => calls.add('tab'),
               onCtrlC: () => calls.add('ctrl-c'),
@@ -41,38 +40,43 @@ void main() {
       ),
     );
 
-    expect(
-      find.byKey(const ValueKey('terminal-control-status')),
-      findsOneWidget,
-    );
+    expect(find.byKey(const ValueKey('terminal-shortcut-surface')), findsOne);
+    expect(find.byIcon(Icons.add), findsOneWidget);
+    expect(find.byKey(const ValueKey('terminal-key-escape')), findsNothing);
+
+    await _expandTerminalShortcuts(tester);
+
     expect(find.byKey(const ValueKey('terminal-key-escape')), findsOneWidget);
     expect(find.byKey(const ValueKey('terminal-key-tab')), findsOneWidget);
     expect(find.byKey(const ValueKey('terminal-key-ctrl-c')), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('terminal-key-arrow-left')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('terminal-key-arrow-right')),
+      findsOneWidget,
+    );
+    expect(find.byKey(const ValueKey('terminal-paste-button')), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('terminal-resize-button')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('terminal-reconnect-button')),
+      findsOneWidget,
+    );
 
     await tester.tap(find.byKey(const ValueKey('terminal-key-escape')));
     await tester.tap(find.byKey(const ValueKey('terminal-key-tab')));
     await tester.tap(find.byKey(const ValueKey('terminal-key-ctrl-c')));
-    await tester.tap(find.byKey(const ValueKey('terminal-key-arrow-up')));
-    await tester.tap(find.byKey(const ValueKey('terminal-key-arrow-down')));
-    await tester.tap(find.byKey(const ValueKey('terminal-key-arrow-left')));
-    await tester.tap(find.byKey(const ValueKey('terminal-key-arrow-right')));
-    await tester.tap(find.byKey(const ValueKey('terminal-paste-button')));
-    await tester.tap(find.byKey(const ValueKey('terminal-resize-button')));
-    await tester.tap(find.byKey(const ValueKey('terminal-reconnect-button')));
     await tester.pump();
 
-    expect(calls, [
-      'esc',
-      'tab',
-      'ctrl-c',
-      'up',
-      'down',
-      'left',
-      'right',
-      'paste',
-      'resize',
-      'reconnect',
-    ]);
+    expect(calls, ['esc', 'tab', 'ctrl-c']);
+
+    await tester.tap(find.byKey(const ValueKey('terminal-shortcuts-toggle')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('terminal-key-escape')), findsNothing);
   });
 
   testWidgets('terminal toolbar disables controls while disconnected', (
@@ -85,7 +89,6 @@ void main() {
         home: Scaffold(
           body: TerminalControlToolbar(
             enabled: false,
-            status: 'Connecting',
             onEscape: () => called = true,
             onTab: () => called = true,
             onCtrlC: () => called = true,
@@ -102,6 +105,7 @@ void main() {
         ),
       ),
     );
+    await _expandTerminalShortcuts(tester);
 
     final escape = tester.widget<TextButton>(
       find.descendant(
@@ -110,7 +114,10 @@ void main() {
       ),
     );
     final paste = tester.widget<IconButton>(
-      find.byKey(const ValueKey('terminal-paste-button')),
+      find.descendant(
+        of: find.byKey(const ValueKey('terminal-paste-button')),
+        matching: find.byType(IconButton),
+      ),
     );
 
     expect(escape.onPressed, isNull);
@@ -169,6 +176,7 @@ void main() {
     await tester.pumpAndSettle();
 
     final session = transport.sessions.single;
+    await _expandTerminalShortcuts(tester);
     await tester.tap(find.byKey(const ValueKey('terminal-key-tab')));
     await tester.tap(find.byKey(const ValueKey('terminal-key-escape')));
     await tester.pump();
@@ -179,7 +187,7 @@ void main() {
     ]);
   });
 
-  testWidgets('live terminal pane still sends typed terminal text', (
+  testWidgets('live terminal pane sends alphabetic and Chinese text', (
     tester,
   ) async {
     final transport = RecordingTerminalTransport();
@@ -202,10 +210,10 @@ void main() {
     final session = transport.sessions.single;
     await tester.tap(find.byKey(const ValueKey('ccb-live-terminal-view')));
     await tester.pump(const Duration(seconds: 1));
-    binding.testTextInput.enterText('plain input');
+    binding.testTextInput.enterText('Alpha中文123');
     await binding.idle();
 
-    expect(session.written.map(utf8.decode), contains('plain input'));
+    expect(session.written.map(utf8.decode), contains('Alpha中文123'));
   });
 
   testWidgets('live terminal pane reopens when target epoch changes', (
@@ -284,6 +292,7 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
+    await _expandTerminalShortcuts(tester);
 
     final session = transport.sessions.single;
     session.addOutput('before');
@@ -304,7 +313,10 @@ void main() {
       ),
     );
     final reconnect = tester.widget<IconButton>(
-      find.byKey(const ValueKey('terminal-reconnect-button')),
+      find.descendant(
+        of: find.byKey(const ValueKey('terminal-reconnect-button')),
+        matching: find.byType(IconButton),
+      ),
     );
     expect(ctrlC.onPressed, isNull);
     expect(reconnect.onPressed, isNotNull);
@@ -391,6 +403,7 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
+    await _expandTerminalShortcuts(tester);
 
     final session = transport.sessions.single;
     session.addOutputError(
@@ -427,6 +440,7 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
+    await _expandTerminalShortcuts(tester);
 
     await transport.sessions.single.endOutput();
     await tester.pump();
@@ -439,7 +453,10 @@ void main() {
       ),
     );
     final reconnect = tester.widget<IconButton>(
-      find.byKey(const ValueKey('terminal-reconnect-button')),
+      find.descendant(
+        of: find.byKey(const ValueKey('terminal-reconnect-button')),
+        matching: find.byType(IconButton),
+      ),
     );
     expect(ctrlC.onPressed, isNull);
     expect(reconnect.onPressed, isNotNull);
@@ -473,6 +490,7 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
+    await _expandTerminalShortcuts(tester);
 
     final session = transport.sessions.single;
     session.addOutputError(
@@ -489,7 +507,10 @@ void main() {
       ),
     );
     final reconnect = tester.widget<IconButton>(
-      find.byKey(const ValueKey('terminal-reconnect-button')),
+      find.descendant(
+        of: find.byKey(const ValueKey('terminal-reconnect-button')),
+        matching: find.byType(IconButton),
+      ),
     );
     expect(ctrlC.onPressed, isNull);
     expect(reconnect.onPressed, isNull);
@@ -498,6 +519,18 @@ void main() {
     expect(session.reconnectCount, 0);
     expect(transport.sessions, hasLength(1));
   });
+}
+
+Future<void> _expandTerminalShortcuts(WidgetTester tester) async {
+  if (find
+      .byKey(const ValueKey('terminal-shortcuts-panel'))
+      .evaluate()
+      .isNotEmpty) {
+    return;
+  }
+  await tester.tap(find.byKey(const ValueKey('terminal-shortcuts-toggle')));
+  await tester.pump();
+  await tester.pump(const Duration(milliseconds: 220));
 }
 
 CcbProjectView _view({required int namespaceEpoch}) {
