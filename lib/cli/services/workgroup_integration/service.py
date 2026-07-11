@@ -425,6 +425,143 @@ class WorkgroupGitIntegration:
             self._save_state(state)
             return deepcopy(review)
 
+    def record_node_failure(
+        self,
+        node_id: str,
+        *,
+        authority_id: str,
+        source: str,
+        job_id: str | None = None,
+    ) -> dict[str, object]:
+        node_id = _segment(node_id, field_name='node_id')
+        failure_authority_id = _required_text(authority_id, field_name='authority_id')
+        terminal_job_id = str(job_id or '').strip() or None
+        failure_source = _required_text(source, field_name='source')
+        with file_lock(self.lock_path):
+            state = self._load_state()
+            node = self._state_node(state, node_id)
+            expected = {
+                'schema': 'ccb.loop.workgroup_node_failure.v1',
+                'authority_id': failure_authority_id,
+                'job_id': terminal_job_id,
+                'source': failure_source,
+            }
+            existing = node.get('terminal_failure')
+            if isinstance(existing, dict):
+                if {key: existing.get(key) for key in expected} != expected:
+                    raise self._error(
+                        'node_failure_authority_drift',
+                        f'nodes.{node_id}.failure',
+                        'replayed terminal failure does not match durable authority',
+                    )
+                failure = existing
+            elif node['status'] not in {'prepared', 'review_pending', 'review_rejected'}:
+                raise self._error(
+                    'node_failure_not_recordable',
+                    f'nodes.{node_id}.failure',
+                    f'node status {node["status"]} cannot be excluded from integration',
+                )
+            else:
+                workspace = Path(str(node['worktree_path']))
+                git = self._git()
+                head = git.head(workspace)
+                base_commit = str(node['base_commit'])
+                if head != base_commit:
+                    raise self._state_error(
+                        state,
+                        'provider_created_authority_commit',
+                        f'nodes.{node_id}.failure',
+                        'failed node HEAD changed before controller exclusion',
+                        details={'expected': base_commit, 'observed': head},
+                    )
+                changed_paths = git.changed_paths(workspace, base_commit)
+                deleted_paths = git.deleted_paths(workspace, base_commit)
+                self._validate_changed_paths(node, changed_paths)
+                self._validate_changed_paths(node, deleted_paths)
+                untracked_paths = git.untracked_paths(workspace)
+                failure = {
+                    **expected,
+                    'status': 'captured',
+                    'head': head,
+                    'tree_digest': git.current_tree_digest(workspace),
+                    'worktree_status': list(git.status_lines(workspace)),
+                    'changed_paths': list(changed_paths),
+                    'deleted_paths': list(deleted_paths),
+                    'untracked_paths': list(untracked_paths),
+                    'quarantine': None,
+                    'recorded_at': _now(),
+                }
+                node['terminal_failure'] = failure
+                self._save_state(state)
+            workspace = Path(str(node['worktree_path']))
+            git = self._git()
+            if failure.get('status') == 'captured' and failure.get('worktree_status'):
+                failure['quarantine'] = preserve_verification_delta(
+                    project_root=workspace,
+                    quarantine_root=self.quarantine_root,
+                    transaction_key=f'{self.transaction_key}-{node_id}',
+                    signature={
+                        'head': failure['head'],
+                        'tree_digest': failure['tree_digest'],
+                        'status': failure['worktree_status'],
+                    },
+                    changed_paths=tuple(str(item) for item in failure['changed_paths']),
+                    deleted_paths=tuple(str(item) for item in failure['deleted_paths']),
+                    untracked_paths=tuple(str(item) for item in failure['untracked_paths']),
+                    evidence_kind='node-failure',
+                )
+                failure['status'] = 'quarantined'
+                self._save_state(state)
+            if failure.get('status') in {'captured', 'quarantined'}:
+                failure['status'] = 'restoring'
+                self._save_state(state)
+                self._checkpoint('after_node_failure_restore_intent', state)
+            if failure.get('status') == 'restoring':
+                current = {
+                    'head': git.head(workspace),
+                    'tree_digest': git.current_tree_digest(workspace),
+                    'status': list(git.status_lines(workspace)),
+                }
+                expected_current = {
+                    'head': failure['head'],
+                    'tree_digest': failure['tree_digest'],
+                    'status': failure['worktree_status'],
+                }
+                restored = {
+                    'head': str(node['base_commit']),
+                    'tree_digest': git.commit_tree_digest(workspace, str(node['base_commit'])),
+                    'status': [],
+                }
+                if current == expected_current:
+                    git.reset_hard(workspace, str(node['base_commit']))
+                    remove_captured_untracked(
+                        workspace,
+                        tuple(str(item) for item in failure['untracked_paths']),
+                    )
+                    self._checkpoint('after_node_failure_worktree_restore', state)
+                    current = {
+                        'head': git.head(workspace),
+                        'tree_digest': git.current_tree_digest(workspace),
+                        'status': list(git.status_lines(workspace)),
+                    }
+                if current != restored:
+                    raise self._state_error(
+                        state,
+                        'node_failure_workspace_drift',
+                        f'nodes.{node_id}.failure',
+                        'failed node worktree changed after evidence capture',
+                        details={
+                            'expected_captured': expected_current,
+                            'expected_restored': restored,
+                            'observed': current,
+                        },
+                    )
+                failure['status'] = 'restored'
+                failure['restored_at'] = _now()
+            node['status'] = 'excluded'
+            self._save_state(state)
+            return deepcopy(node)
+
     def finalize_node(self, node_id: str) -> dict[str, object]:
         node_id = _segment(node_id, field_name='node_id')
         with file_lock(self.lock_path):
@@ -2184,13 +2321,13 @@ class WorkgroupGitIntegration:
 
     def _next_unintegrated_node(self, state: dict[str, object]) -> WorkgroupNodeSpec | None:
         for spec in self.ordered_nodes:
-            if self._state_node(state, spec.node_id)['status'] != 'integrated':
+            if self._state_node(state, spec.node_id)['status'] not in {'integrated', 'excluded'}:
                 return spec
         return None
 
     def _layer_complete(self, state: dict[str, object], layer: int) -> bool:
         return all(
-            self._state_node(state, spec.node_id)['status'] == 'integrated'
+            self._state_node(state, spec.node_id)['status'] in {'integrated', 'excluded'}
             for spec in self.ordered_nodes
             if self.layers[spec.node_id] == layer
         )

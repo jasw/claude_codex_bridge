@@ -871,6 +871,23 @@ def test_markdown_report_uses_pass_wording_for_observed_matrix() -> None:
     assert "Missing or not implemented cases remain" not in history
 
 
+def test_busy_only_selected_matrix_does_not_require_unselected_rows() -> None:
+    module = _load_module()
+    evidence = _all_case_evidence()[module.BUSY_RELEASE_CASE_ID]
+
+    report = module.build_matrix_report(
+        case_evidence={module.BUSY_RELEASE_CASE_ID: evidence},
+        selected_case_ids=[module.BUSY_RELEASE_CASE_ID],
+    )
+
+    assert report['phase6_fake_matrix_status'] == 'pass'
+    assert report['summary']['required_case_count'] == 1
+    assert report['summary']['observed_case_count'] == 1
+    assert report['summary']['missing_case_ids'] == []
+    assert [row['case_id'] for row in report['rows']] == [module.BUSY_RELEASE_CASE_ID]
+    assert [row['case_id'] for row in report['manifest']] == [module.BUSY_RELEASE_CASE_ID]
+
+
 def _case_payload(
     tmp_path: Path,
     desired_path: Path,

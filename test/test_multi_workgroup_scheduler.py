@@ -73,6 +73,16 @@ class FakeIntegration:
         )
         return kwargs
 
+    def record_node_failure(self, node_id: str, *, authority_id: str, job_id: str | None, source: str):
+        self.calls.append(('record_node_failure', node_id, authority_id, job_id, source))
+        self.payload['nodes'][node_id]['status'] = 'excluded'
+        self.payload['nodes'][node_id]['terminal_failure'] = {
+            'job_id': job_id,
+            'authority_id': authority_id,
+            'source': source,
+        }
+        return self.payload['nodes'][node_id]
+
     def finalize_node(self, node_id: str):
         self.calls.append(('finalize_node', node_id))
         commit = f'commit-{node_id}'
@@ -97,7 +107,10 @@ class FakeIntegration:
                 record['status'] = 'integrated'
                 self.payload['integration']['merge_order'].append(node['node_id'])
                 changed = True
-        if all(record['status'] == 'integrated' for record in self.payload['nodes'].values()):
+        if all(
+            record['status'] in {'integrated', 'excluded'}
+            for record in self.payload['nodes'].values()
+        ):
             self.payload['integration']['status'] = 'verified'
         return self.payload
 

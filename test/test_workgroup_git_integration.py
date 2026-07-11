@@ -217,6 +217,103 @@ def test_mixed_dependency_graph_uses_current_integrated_head_and_stable_order(tm
     assert (integration_root / node_3.allowed_paths[0]).read_text(encoding='utf-8') == 'dependent\n'
 
 
+def test_terminal_failed_node_is_durably_excluded_while_reviewed_sibling_integrates(
+    tmp_path: Path,
+) -> None:
+    root = _init_repo(tmp_path)
+    node_1 = _node(1)
+    node_2 = _node(2)
+    kernel = _kernel(root, (node_1, node_2))
+    kernel.preflight()
+    kernel.prepare_integration()
+    kernel.prepare_node(node_1.node_id)
+    _prepare_changed_node(kernel, node_2)
+
+    excluded = kernel.record_node_failure(
+        node_1.node_id,
+        authority_id='job:job-worker-failed',
+        job_id='job-worker-failed',
+        source='provider_job_failed',
+    )
+    replayed = kernel.record_node_failure(
+        node_1.node_id,
+        authority_id='job:job-worker-failed',
+        job_id='job-worker-failed',
+        source='provider_job_failed',
+    )
+    integrated = kernel.integrate_ready()
+
+    assert excluded['status'] == 'excluded'
+    assert replayed['terminal_failure'] == excluded['terminal_failure']
+    assert integrated['nodes'][node_1.node_id]['status'] == 'excluded'
+    assert integrated['nodes'][node_2.node_id]['status'] == 'integrated'
+    assert integrated['integration']['merge_order'] == [node_2.node_id]
+    assert integrated['integration']['status'] == 'verified'
+    assert integrated['root']['promotion'] is None
+
+    with pytest.raises(GitIntegrationError) as exc_info:
+        kernel.record_node_failure(
+            node_1.node_id,
+            authority_id='job:job-lookalike',
+            job_id='job-lookalike',
+            source='provider_job_failed',
+        )
+    assert exc_info.value.code == 'node_failure_authority_drift'
+
+
+def test_reviewer_failure_quarantines_exact_unreviewed_delta_before_cleanup(tmp_path: Path) -> None:
+    root = _init_repo(tmp_path)
+    node = _node(1)
+    kernel = _kernel(root, (node,))
+    kernel.preflight()
+    kernel.prepare_integration()
+    kernel.prepare_node(node.node_id)
+    _write_node_file(kernel, node.node_id, node.allowed_paths[0], 'unreviewed\n')
+    kernel.capture_review_input(node.node_id, worker_job_id='job-worker')
+
+    fired = False
+
+    def crash_after_restore(name: str, _state: dict[str, object]) -> None:
+        nonlocal fired
+        if name == 'after_node_failure_worktree_restore' and not fired:
+            fired = True
+            raise RuntimeError('crash:after-node-failure-worktree-restore')
+
+    kernel._checkpoint_hook = crash_after_restore
+    with pytest.raises(RuntimeError, match='crash:after-node-failure-worktree-restore'):
+        kernel.record_node_failure(
+            node.node_id,
+            authority_id='job:job-reviewer-failed',
+            job_id='job-reviewer-failed',
+            source='provider_job_failed',
+        )
+    assert kernel.state()['nodes'][node.node_id]['terminal_failure']['status'] == 'restoring'
+    kernel._checkpoint_hook = None
+    excluded = kernel.record_node_failure(
+        node.node_id,
+        authority_id='job:job-reviewer-failed',
+        job_id='job-reviewer-failed',
+        source='provider_job_failed',
+    )
+    worktree = Path(str(excluded['worktree_path']))
+    failure = excluded['terminal_failure']
+
+    assert excluded['status'] == 'excluded'
+    assert failure['status'] == 'restored'
+    quarantine_manifest = Path(str(failure['quarantine']['manifest_path']))
+    assert quarantine_manifest.is_file()
+    assert json.loads(quarantine_manifest.read_text(encoding='utf-8'))['schema'] == (
+        'ccb.loop.node_failure_quarantine.v1'
+    )
+    assert _git(worktree, 'status', '--porcelain') == ''
+    assert not (worktree / node.allowed_paths[0]).exists()
+
+    kernel.close_without_promotion(result='partial', reason='required_node_failure')
+    assert kernel.cleanup_readiness(evidence_captured=True)['eligible'] is True
+    assert kernel.cleanup(active_workspaces=())['status'] == 'complete'
+    assert not worktree.exists()
+
+
 def test_rejected_dirty_preflight_does_not_create_branches_or_worktrees(tmp_path: Path) -> None:
     root = _init_repo(tmp_path)
     (root / 'user-change.txt').write_text('keep me\n', encoding='utf-8')

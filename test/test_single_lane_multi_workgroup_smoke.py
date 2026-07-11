@@ -20,6 +20,23 @@ from provider_execution.fake import FakeProviderAdapter
 SCRIPT = Path(__file__).resolve().parents[1] / 'scripts' / 'single_lane_multi_workgroup_smoke.py'
 
 
+def _scenario_contract(
+    *,
+    count: int,
+    shape: str,
+    scenario: str = 'pass',
+) -> dict[str, object]:
+    return {
+        'schema': 'ccb.g5.source_fake_runtime_scenario.v1',
+        'task_id': 'g5-multi-workgroup-task',
+        'scenario': scenario,
+        'count': count,
+        'shape': shape,
+        'selected_node': 'node-001',
+        'restart_latency_ms': 3000 if scenario == 'restart_replay_pass' else 0,
+    }
+
+
 def _load_script():
     spec = importlib.util.spec_from_file_location('single_lane_multi_workgroup_smoke', SCRIPT)
     assert spec is not None
@@ -56,9 +73,8 @@ def _job(*, agent_name: str, body: str, workspace: Path | None = None) -> JobRec
 
 
 def _orchestrator_body(*, count: int, shape: str, task_root: str) -> str:
-    paths = [f'g5_outputs/node-{index:03d}.txt' for index in range(1, count + 1)]
     marker = 'g5_multi_workgroup_smoke: ' + json.dumps(
-        {'count': count, 'shape': shape, 'allowed_paths': paths},
+        _scenario_contract(count=count, shape=shape),
         sort_keys=True,
     )
     refs = {
@@ -78,7 +94,7 @@ def _orchestrator_body(*, count: int, shape: str, task_root: str) -> str:
 def _record(project_root: Path, *, count: int, shape: str) -> dict[str, object]:
     task_root = project_root / 'docs/plantree/plans/g5/tasks/g5-multi-workgroup-task'
     paths = [f'g5_outputs/node-{index:03d}.txt' for index in range(1, count + 1)]
-    marker = json.dumps({'count': count, 'shape': shape, 'allowed_paths': paths}, sort_keys=True)
+    marker = json.dumps(_scenario_contract(count=count, shape=shape), sort_keys=True)
     artifacts = {}
     for kind, text in (
         ('task_packet', f'g5_multi_workgroup_smoke: {marker}\n'),
@@ -204,8 +220,8 @@ def test_fake_scheduler_worker_writes_only_node_bound_allowed_path(tmp_path: Pat
         f'Worktree: {workspace}\n'
         'Allowed paths: ["g5_outputs/node-002.txt"]\n\n'
         'g5_multi_workgroup_smoke: '
-        '{"count": 2, "shape": "parallel", "allowed_paths": '
-        '["g5_outputs/node-001.txt", "g5_outputs/node-002.txt"]}\n'
+        + json.dumps(_scenario_contract(count=2, shape='parallel'), sort_keys=True)
+        + '\n'
         'allowed_change_paths:\n- g5_outputs/node-001.txt\n- g5_outputs/node-002.txt\n'
     )
 
@@ -239,6 +255,56 @@ def test_fake_orchestrator_requires_valid_explicit_smoke_contract(body: str) -> 
     )
 
     assert 'ccb.loop.orchestration_bundle_candidate.v1' not in submission.reply
+
+
+def test_fake_scenario_contract_requires_exact_versioned_shape() -> None:
+    valid = 'g5_multi_workgroup_smoke: ' + json.dumps(
+        _scenario_contract(count=2, shape='parallel'), sort_keys=True
+    )
+    extra = json.loads(valid.split(': ', 1)[1])
+    extra['unexpected'] = True
+
+    assert FakeProviderAdapter(latency_seconds=0).start(
+        _job(agent_name='orchestrator', body=_orchestrator_body(count=2, shape='parallel', task_root='task')),
+        context=None,
+        now='2026-07-11T00:00:00Z',
+    ).reply.startswith('route: direct_execution')
+    invalid = FakeProviderAdapter(latency_seconds=0).start(
+        _job(agent_name='orchestrator', body='Role: ccb_orchestrator\n' + 'g5_multi_workgroup_smoke: ' + json.dumps(extra)),
+        context=None,
+        now='2026-07-11T00:00:00Z',
+    )
+    assert 'ccb.loop.orchestration_bundle_candidate.v1' not in invalid.reply
+
+
+def test_g5_rework_and_provider_failure_are_strictly_scenario_gated(tmp_path: Path) -> None:
+    reviewer_body = (
+        'Task: g5-multi-workgroup-task\nNode: node-001\nPurpose: reviewer\n'
+        'Role: code_reviewer\n'
+        'g5_multi_workgroup_smoke: '
+        + json.dumps(_scenario_contract(count=1, shape='parallel', scenario='reviewer_rework_pass'), sort_keys=True)
+    )
+    rework = FakeProviderAdapter(latency_seconds=0).start(
+        _job(agent_name='loop-lp-node-001-code_reviewer', body=reviewer_body),
+        context=None,
+        now='2026-07-11T00:00:00Z',
+    )
+    assert rework.reply.startswith('status: rework_required')
+
+    workspace = tmp_path / 'worker'
+    failure_body = (
+        'Task: g5-multi-workgroup-task\nNode: node-001\nPurpose: worker\n'
+        f'Worktree: {workspace}\nAllowed paths: ["g5_outputs/node-001.txt"]\n'
+        'g5_multi_workgroup_smoke: '
+        + json.dumps(_scenario_contract(count=2, shape='parallel', scenario='worker_failure_partial'), sort_keys=True)
+    )
+    failed = FakeProviderAdapter(latency_seconds=0).start(
+        _job(agent_name='loop-lp-node-001-coder', body=failure_body, workspace=workspace),
+        context=None,
+        now='2026-07-11T00:00:00Z',
+    )
+    assert failed.status.value == 'failed'
+    assert not (workspace / 'g5_outputs/node-001.txt').exists()
 
 
 def test_fake_multi_workgroup_round_reviewer_uses_scheduler_contract() -> None:
@@ -301,6 +367,29 @@ def test_report_merge_order_uses_dependency_layer_then_integration_order() -> No
         'node-004',
         'node-003',
     ]
+
+
+@pytest.mark.parametrize(
+    ('task_status', 'round_result', 'classification'),
+    (
+        ('done', 'pass', 'pass'),
+        ('partial', 'partial', 'valid_non_success'),
+        ('blocked', 'blocked', 'valid_non_success'),
+        ('replan_required', 'replan_required', 'valid_non_success'),
+        ('done', 'blocked', 'system_failure'),
+    ),
+)
+def test_observed_classification_is_derived_from_task_and_round_authority(
+    task_status: str,
+    round_result: str,
+    classification: str,
+) -> None:
+    module = _load_script()
+
+    assert module._observed_classification(
+        task_status=task_status,
+        round_result=round_result,
+    ) == classification
 
 
 def test_v3_role_activation_mount_has_loop_owner_and_capacity_digest(tmp_path: Path) -> None:
@@ -408,3 +497,50 @@ def test_real_cli_fake_multi_workgroup_full_flow(
     assert report['release']['live_agents'] == []
     assert report['release']['dynamic_residue'] == []
     assert Path(report['paths']['report']).is_file()
+
+
+@pytest.mark.ccb_lifecycle_smoke
+@pytest.mark.parametrize(
+    ('scenario', 'count', 'expected_classification'),
+    (
+        ('reviewer_rework_pass', 1, 'pass'),
+        ('worker_failure_partial', 2, 'valid_non_success'),
+        ('all_workers_failed_blocked', 1, 'valid_non_success'),
+        ('reviewer_provider_failure', 2, 'valid_non_success'),
+        ('round_reviewer_blocked', 1, 'valid_non_success'),
+        ('integration_verification_failure', 1, 'valid_non_success'),
+        ('root_verification_failure', 1, 'valid_non_success'),
+        ('restart_replay_pass', 1, 'pass'),
+    ),
+)
+def test_real_cli_fake_runtime_scenarios(
+    tmp_path: Path,
+    scenario: str,
+    count: int,
+    expected_classification: str,
+) -> None:
+    module = _load_script()
+    project_root = tmp_path / f'g5-real-cli-{scenario}'
+
+    report = module.run_smoke(
+        project_root=project_root,
+        count=count,
+        shape='parallel',
+        scenario=scenario,
+        ccb_test=Path(__file__).resolve().parents[1] / 'ccb_test',
+        command_timeout_s=240,
+    )
+
+    assert report['status'] == 'pass'
+    assert report['execution_mode'] == 'source_fake_runtime'
+    assert report['provider'] == 'fake'
+    assert report['observed']['classification'] == expected_classification
+    assert report['observed']['task_status'] == report['expected']['task_status']
+    assert report['observed']['round_result'] == report['expected']['round_result']
+    assert report['observed']['round_source'] == report['expected']['round_source']
+    assert all(report['checks'].values())
+    assert report['post_cleanup'] == {
+        'owned_processes': [],
+        'connectable_sockets': [],
+        'child_worktrees': [],
+    }

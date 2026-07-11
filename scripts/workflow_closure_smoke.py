@@ -1553,6 +1553,8 @@ def _smoke_env(*, test_root: Path, project_root: Path, role_store: Path) -> dict
     source_home = test_root.expanduser().resolve(strict=False) / "source_home"
     env["HOME"] = str(source_home)
     env["CCB_SOURCE_HOME"] = str(source_home)
+    env["CCB_TEST_ROOTS"] = str(test_root.expanduser().resolve(strict=False))
+    env["CCB_SOURCE_ALLOWED_ROOTS"] = str(test_root.expanduser().resolve(strict=False))
     env["AGENT_ROLES_STORE"] = str(role_store)
     env["CCB_NO_ATTACH"] = "1"
     env["CCB_REPLY_LANG"] = "en"

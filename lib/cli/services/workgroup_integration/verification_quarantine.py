@@ -17,6 +17,7 @@ def preserve_verification_delta(
     changed_paths: Iterable[str],
     deleted_paths: Iterable[str],
     untracked_paths: Iterable[str],
+    evidence_kind: str = 'root-verification',
 ) -> dict[str, object]:
     project_root = Path(project_root).resolve()
     quarantine_root = Path(quarantine_root).resolve()
@@ -26,9 +27,15 @@ def preserve_verification_delta(
         pass
     else:
         raise ValueError('verification quarantine must be outside the project root')
-    destination = quarantine_root / transaction_key / 'root-verification'
+    if evidence_kind == 'root-verification':
+        schema = 'ccb.loop.root_verification_quarantine.v1'
+    elif evidence_kind == 'node-failure':
+        schema = 'ccb.loop.node_failure_quarantine.v1'
+    else:
+        raise ValueError(f'unsupported verification quarantine evidence kind: {evidence_kind}')
+    destination = quarantine_root / transaction_key / evidence_kind
     manifest = {
-        'schema': 'ccb.loop.root_verification_quarantine.v1',
+        'schema': schema,
         'transaction_key': transaction_key,
         'project_root': str(project_root),
         'signature': signature,
@@ -36,6 +43,8 @@ def preserve_verification_delta(
         'deleted_paths': sorted(set(deleted_paths)),
         'untracked_paths': sorted(set(untracked_paths)),
     }
+    if evidence_kind != 'root-verification':
+        manifest['evidence_kind'] = evidence_kind
     manifest['digest'] = _digest(manifest)
     manifest_path = destination / 'manifest.json'
     if manifest_path.is_file():

@@ -165,6 +165,7 @@ def build_matrix_report(
     direct_smoke_payload: dict[str, Any] | None = None,
     route_smoke_payloads: dict[str, dict[str, Any]] | None = None,
     case_evidence: dict[str, dict[str, Any]] | None = None,
+    selected_case_ids: list[str] | None = None,
 ) -> dict[str, Any]:
     if direct_evidence is not None and direct_smoke_payload is not None:
         raise ValueError("provide either direct_evidence or direct_smoke_payload, not both")
@@ -184,8 +185,14 @@ def build_matrix_report(
     elif direct_evidence is not None:
         observed_rows[DIRECT_CASE_ID] = _direct_row_from_evidence(direct_evidence)
 
-    rows = [observed_rows.get(case["case_id"]) or _not_observed_row(case) for case in REQUIRED_CASES]
-    return _matrix_report(rows)
+    selected = set(selected_case_ids or ())
+    unknown = selected - {str(case["case_id"]) for case in REQUIRED_CASES}
+    if unknown:
+        raise ValueError(f"unknown selected case ids: {', '.join(sorted(unknown))}")
+    cases = [case for case in REQUIRED_CASES if not selected or case["case_id"] in selected]
+    rows = [observed_rows.get(case["case_id"]) or _not_observed_row(case) for case in cases]
+    manifest = [item for item in case_manifest() if not selected or item["case_id"] in selected]
+    return _matrix_report(rows, manifest=manifest)
 
 
 def run_direct_execution_smoke(
@@ -721,6 +728,25 @@ def main(argv: list[str] | None = None) -> int:
         direct_smoke_payload=direct_payload,
         route_smoke_payloads=route_payloads or None,
         case_evidence=case_evidence or None,
+        selected_case_ids=(
+            [BUSY_RELEASE_CASE_ID]
+            if args.run_busy_release
+            and not args.run
+            and not args.run_direct_execution
+            and not args.run_route_tranche
+            and not args.run_execution_tranche
+            and not any(
+                (
+                    args.run_needs_detail,
+                    args.run_macro_adjustment,
+                    args.run_blocked,
+                    args.run_partial_completion,
+                    args.run_reviewer_reject_rework,
+                    args.run_reviewer_cannot_accept,
+                )
+            )
+            else None
+        ),
     )
     history_report_path = (
         Path(args.history_report_path)
@@ -780,7 +806,11 @@ def _case_project_name(base: str, case_id: str) -> str:
     return f"{base}-{case_id}"
 
 
-def _matrix_report(rows: list[dict[str, Any]]) -> dict[str, Any]:
+def _matrix_report(
+    rows: list[dict[str, Any]],
+    *,
+    manifest: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     missing_case_ids = [row["case_id"] for row in rows if row["case_status"] != "observed"]
     not_implemented_case_ids = [row["case_id"] for row in rows if not row["implemented"]]
     classification_counts = {name: 0 for name in sorted(CLASSIFICATIONS)}
@@ -795,7 +825,7 @@ def _matrix_report(rows: list[dict[str, Any]]) -> dict[str, Any]:
     return {
         "phase6_fake_matrix_status": status,
         "phase6a_pass": status == "pass",
-        "manifest": case_manifest(),
+        "manifest": manifest if manifest is not None else case_manifest(),
         "rows": rows,
         "summary": {
             "required_case_count": len(rows),

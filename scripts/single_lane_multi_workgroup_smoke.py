@@ -2,11 +2,15 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 from pathlib import Path
+import signal
+import socket
 import subprocess
 import sys
+import time
 from typing import Any
 
 
@@ -23,6 +27,65 @@ ROLE_IDS = (
 PLAN_SLUG = 'g5-fake-fullflow'
 TASK_ID = 'g5-multi-workgroup-task'
 TERMINAL_JOB_STATUSES = {'completed', 'failed', 'cancelled', 'timed_out'}
+TERMINAL_TASK_STATUSES = {'done', 'partial', 'blocked', 'replan_required'}
+SCENARIO_SCHEMA = 'ccb.g5.source_fake_runtime_scenario.v1'
+REPORT_SCHEMA = 'ccb.g5.source_fake_runtime_report.v1'
+SCENARIO_EXPECTATIONS = {
+    'pass': {
+        'classification': 'pass',
+        'task_status': 'done',
+        'round_result': 'pass',
+        'round_source': 'round_reviewer_reply',
+    },
+    'reviewer_rework_pass': {
+        'classification': 'pass',
+        'task_status': 'done',
+        'round_result': 'pass',
+        'round_source': 'round_reviewer_reply',
+    },
+    'worker_failure_partial': {
+        'classification': 'valid_non_success',
+        'task_status': 'partial',
+        'round_result': 'partial',
+        'round_source': 'required_node_failure',
+    },
+    'all_workers_failed_blocked': {
+        'classification': 'valid_non_success',
+        'task_status': 'blocked',
+        'round_result': 'blocked',
+        'round_source': 'required_node_failure',
+    },
+    'reviewer_provider_failure': {
+        'classification': 'valid_non_success',
+        'task_status': 'partial',
+        'round_result': 'partial',
+        'round_source': 'required_node_failure',
+    },
+    'round_reviewer_blocked': {
+        'classification': 'valid_non_success',
+        'task_status': 'blocked',
+        'round_result': 'blocked',
+        'round_source': 'round_reviewer_reply',
+    },
+    'integration_verification_failure': {
+        'classification': 'valid_non_success',
+        'task_status': 'replan_required',
+        'round_result': 'replan_required',
+        'round_source': 'integration_verification_failed',
+    },
+    'root_verification_failure': {
+        'classification': 'valid_non_success',
+        'task_status': 'replan_required',
+        'round_result': 'replan_required',
+        'round_source': 'root_verification_failed',
+    },
+    'restart_replay_pass': {
+        'classification': 'pass',
+        'task_status': 'done',
+        'round_result': 'pass',
+        'round_source': 'round_reviewer_reply',
+    },
+}
 
 
 class SmokeFailure(RuntimeError):
@@ -100,13 +163,14 @@ def run_smoke(
     count: int,
     shape: str,
     ccb_test: Path,
+    scenario: str = 'pass',
     keep_running: bool = False,
     command_timeout_s: int = 240,
 ) -> dict[str, Any]:
     project_root = project_root.expanduser().resolve(strict=False)
     test_root = project_root.parent
     ccb_test = ccb_test.expanduser().resolve(strict=True)
-    _validate_matrix(count=count, shape=shape)
+    _validate_matrix(count=count, shape=shape, scenario=scenario)
     if project_root.exists():
         raise SmokeFailure(f'fresh project root already exists: {project_root}')
     project_root.mkdir(parents=True)
@@ -168,7 +232,12 @@ def run_smoke(
             logs_dir=logs_dir,
             timeout_s=command_timeout_s,
         )
-        artifacts = _write_task_inputs(project_root, count=count, shape=shape)
+        artifacts = _write_task_inputs(
+            project_root,
+            count=count,
+            shape=shape,
+            scenario=scenario,
+        )
         artifact_results = {}
         for kind in ('task_packet', 'execution_contract'):
             artifact_results[kind] = _run_logged(
@@ -184,6 +253,7 @@ def run_smoke(
                 timeout_s=command_timeout_s,
             )
         _git_commit_authority(project_root)
+        root_preflight = _root_authority(project_root)
         ready = _run_logged(
             command_log,
             'ready_for_orchestration',
@@ -197,23 +267,8 @@ def run_smoke(
             logs_dir=logs_dir,
             timeout_s=command_timeout_s,
         )
-        runner_results = []
-        for attempt in range(1, 4):
-            runner = _run_logged(
-                command_log,
-                f'loop_runner_auto_{attempt}',
-                [
-                    str(ccb_test), '--project', str(project_root), 'loop', 'runner', '--auto',
-                    '--max-steps', '64', '--poll-interval', '0.05', '--json',
-                ],
-                cwd=test_root,
-                env=env,
-                logs_dir=logs_dir,
-                timeout_s=command_timeout_s,
-            )
-            runner_payload = _json_object(runner['stdout'])
-            runner_results.append(runner_payload)
-            shown = _task_show(
+        if scenario == 'restart_replay_pass':
+            runner_results, restart_evidence = _run_restart_replay(
                 command_log,
                 ccb_test=ccb_test,
                 project_root=project_root,
@@ -221,10 +276,18 @@ def run_smoke(
                 env=env,
                 logs_dir=logs_dir,
                 timeout_s=command_timeout_s,
-                label=f'task_show_after_runner_{attempt}',
             )
-            if _task_record(shown).get('status') == 'done':
-                break
+        else:
+            runner_results = _run_until_terminal(
+                command_log,
+                ccb_test=ccb_test,
+                project_root=project_root,
+                test_root=test_root,
+                env=env,
+                logs_dir=logs_dir,
+                timeout_s=command_timeout_s,
+            )
+            restart_evidence = None
         task_show = _task_show(
             command_log,
             ccb_test=ccb_test,
@@ -249,6 +312,9 @@ def run_smoke(
             role_store=role_store,
             count=count,
             shape=shape,
+            scenario=scenario,
+            root_preflight=root_preflight,
+            restart_evidence=restart_evidence,
             config_validate=_json_object(config_validate['stdout']),
             start_stdout=start['stdout'],
             task_create=_json_object(task_create['stdout']),
@@ -259,8 +325,6 @@ def run_smoke(
             ps_text=ps_result['stdout'],
             command_log=command_log,
         )
-        _require_report_pass(report)
-        _write_json(report_path, report)
         if not keep_running:
             cleanup_result = _run_logged(
                 command_log,
@@ -273,20 +337,33 @@ def run_smoke(
                 allow_failure=True,
             )
             report['external_cleanup'] = _compact_command(cleanup_result)
+            report['post_cleanup'] = _post_cleanup_evidence(project_root)
+            report['checks']['external_cleanup_succeeded'] = cleanup_result['returncode'] == 0
+            report['checks']['process_residue_absent'] = not report['post_cleanup']['owned_processes']
+            report['checks']['socket_residue_absent'] = not report['post_cleanup']['connectable_sockets']
+            report['checks']['child_worktree_residue_absent'] = not report['post_cleanup']['child_worktrees']
             report['command_log'] = [_compact_command(item) for item in command_log]
-            _write_json(report_path, report)
+        else:
+            report['external_cleanup'] = None
+            report['post_cleanup'] = None
+        report['status'] = 'pass' if all(report['checks'].values()) else 'failed'
+        _write_json(report_path, report)
+        _require_report_pass(report)
         return report
     except Exception as exc:
         failure = {
-            'schema': 'ccb.g5.fake_multi_workgroup_smoke.v1',
+            'schema': REPORT_SCHEMA,
             'status': 'failed',
             'project_root': str(project_root),
             'count': count,
             'shape': shape,
+            'scenario': scenario,
             'error': str(exc),
             'command_log': [_compact_command(item) for item in command_log],
         }
-        _write_json(report_path, failure)
+        preserved = _read_json(report_path)
+        if preserved.get('schema') != REPORT_SCHEMA or 'checks' not in preserved:
+            _write_json(report_path, failure)
         if not keep_running and cleanup_result is None:
             try:
                 _run_logged(
@@ -310,6 +387,9 @@ def _build_report(
     role_store: Path,
     count: int,
     shape: str,
+    scenario: str,
+    root_preflight: dict[str, Any],
+    restart_evidence: dict[str, Any] | None,
     config_validate: dict[str, Any],
     start_stdout: str,
     task_create: dict[str, Any],
@@ -320,6 +400,7 @@ def _build_report(
     ps_text: str,
     command_log: list[dict[str, Any]],
 ) -> dict[str, Any]:
+    expectation = SCENARIO_EXPECTATIONS[scenario]
     task = _task_record(task_show)
     bundle_artifact = _mapping(_mapping(task.get('artifacts')).get('orchestration_bundle'))
     bundle_path = project_root / str(bundle_artifact.get('path') or '')
@@ -339,8 +420,10 @@ def _build_report(
     for node_id in sorted(_mapping(scheduler.get('nodes'))):
         node = _mapping(_mapping(scheduler['nodes']).get(node_id))
         integration_node = _mapping(_mapping(integration.get('nodes')).get(node_id))
-        worker = _mapping(node.get('worker_rework') or node.get('worker'))
-        reviewer = _mapping(node.get('reviewer_recheck') or node.get('reviewer'))
+        worker = _mapping(node.get('worker'))
+        worker_rework = _mapping(node.get('worker_rework'))
+        reviewer = _mapping(node.get('reviewer'))
+        reviewer_recheck = _mapping(node.get('reviewer_recheck'))
         node_records.append(
             {
                 'node_id': node_id,
@@ -350,8 +433,17 @@ def _build_report(
                 'reviewer_agent': node.get('reviewer_agent'),
                 'worker_job_id': worker.get('job_id'),
                 'worker_job_status': worker.get('status'),
+                'worker_rework_job_id': worker_rework.get('job_id'),
+                'worker_rework_job_status': worker_rework.get('status'),
                 'reviewer_job_id': reviewer.get('job_id'),
                 'reviewer_job_status': reviewer.get('status'),
+                'reviewer_recheck_job_id': reviewer_recheck.get('job_id'),
+                'reviewer_recheck_job_status': reviewer_recheck.get('status'),
+                'rework_count': node.get('rework_count'),
+                'rework_history': node.get('rework_history'),
+                'review_history': integration_node.get('reviews'),
+                'terminal_failure': integration_node.get('terminal_failure'),
+                'failure': node.get('failure'),
                 'worktree_path': integration_node.get('worktree_path'),
                 'worktree_exists_after_cleanup': Path(str(integration_node.get('worktree_path') or '')).exists(),
                 'branch': integration_node.get('branch'),
@@ -373,6 +465,18 @@ def _build_report(
     expected_merge_order = _expected_merge_order(integration)
     expected_paths = [f'g5_outputs/node-{index:03d}.txt' for index in range(1, count + 1)]
     actual_paths = [path for path in expected_paths if (project_root / path).is_file()]
+    selected_path = expected_paths[0]
+    if scenario in {
+        'worker_failure_partial',
+        'reviewer_provider_failure',
+        'all_workers_failed_blocked',
+        'round_reviewer_blocked',
+        'integration_verification_failure',
+        'root_verification_failure',
+    }:
+        expected_root_paths = []
+    else:
+        expected_root_paths = expected_paths
     dynamic_lines = [
         line for line in ps_text.splitlines()
         if 'source=loop' in line or 'loop-' + loop_id in line
@@ -381,12 +485,43 @@ def _build_report(
         item for item in jobs.values()
         if item.get('agent_name') and 'orchestrator' in str(item.get('agent_name'))
     ]
+    referenced_job_ids = [
+        str(value)
+        for item in node_records
+        for field in (
+            'worker_job_id',
+            'worker_rework_job_id',
+            'reviewer_job_id',
+            'reviewer_recheck_job_id',
+        )
+        for value in (item.get(field),)
+        if value
+    ]
+    if round_reviewer.get('job_id'):
+        referenced_job_ids.append(str(round_reviewer['job_id']))
+    referenced_job_evidence = {
+        job_id: jobs.get(job_id, {}) for job_id in referenced_job_ids
+    }
+    workflow_task_ids = [
+        str(_mapping(item.get('request')).get('task_id') or '')
+        for item in jobs.values()
+        if str(_mapping(item.get('request')).get('task_id') or '').startswith(loop_id)
+    ]
+    workflow_task_id_counts = {
+        task_id: workflow_task_ids.count(task_id)
+        for task_id in sorted(set(workflow_task_ids))
+    }
     runner_steps = [
         step
         for result in runner_results
         for step in result.get('steps') or ()
         if isinstance(step, dict)
     ]
+    runner_steps.extend(
+        result
+        for result in runner_results
+        if isinstance(result, dict) and result.get('scheduler_action')
+    )
     initial_frontier = next(
         (
             step for step in runner_steps
@@ -395,6 +530,26 @@ def _build_report(
         {},
     )
     expected_initial_frontier_size = count if shape == 'parallel' else count - 1
+    rollback_scenario = scenario in {
+        'round_reviewer_blocked',
+        'integration_verification_failure',
+        'root_verification_failure',
+    }
+    root_after = _root_authority(project_root)
+    observed_classification = _observed_classification(
+        task_status=str(task.get('status') or ''),
+        round_result=str(round_record.get('round_result') or ''),
+    )
+    rework_node = next((item for item in node_records if item['node_id'] == 'node-001'), {})
+    all_referenced_jobs_terminal = all(
+        str(record.get('status') or '') in TERMINAL_JOB_STATUSES
+        for record in referenced_job_evidence.values()
+    ) and len(referenced_job_evidence) == len(referenced_job_ids)
+    expected_node_failures = scenario in {
+        'worker_failure_partial',
+        'all_workers_failed_blocked',
+        'reviewer_provider_failure',
+    }
     checks = {
         'config_v3_valid': (
             config_validate.get('config_version') == 3
@@ -407,24 +562,68 @@ def _build_report(
         'bundle_schema': bundle.get('schema') == 'ccb.loop.orchestration_bundle.v1',
         'bundle_node_count': len(bundle.get('nodes') or ()) == count,
         'bundle_capacity_digest': bool(bundle.get('capacity_digest')),
-        'scheduler_terminal': scheduler.get('status') == 'pass',
-        'all_nodes_integrated': all(item['status'] == 'integrated' for item in node_records),
-        'all_jobs_completed': all(
-            item.get(field) == 'completed'
+        'scheduler_terminal': scheduler.get('status') not in {
+            None, 'created', 'executing', 'topology_pending', 'round_review_pending'
+        },
+        'task_status_matches': task.get('status') == expectation['task_status'],
+        'round_result_matches': round_record.get('round_result') == expectation['round_result'],
+        'round_source_matches': round_record.get('round_result_source') == expectation['round_source'],
+        'classification_matches': observed_classification == expectation['classification'],
+        'referenced_jobs_unique': len(referenced_job_ids) == len(set(referenced_job_ids)),
+        'scheduler_job_intents_unique': all(
+            count_value == 1 for count_value in workflow_task_id_counts.values()
+        ),
+        'referenced_jobs_terminal': all_referenced_jobs_terminal,
+        'root_paths_match_scenario': actual_paths == expected_root_paths,
+        'failed_scope_absent': selected_path not in actual_paths if expected_node_failures else True,
+        'root_authority_restored': root_after == root_preflight if rollback_scenario else True,
+        'merge_order_deterministic': (
+            list(integration_section.get('merge_order') or ())
+            == [
+                node_id for node_id in expected_merge_order
+                if node_id in set(integration_section.get('merge_order') or ())
+            ]
+        ),
+        'reviewed_commits_present_for_integrated_nodes': all(
+            bool(item['reviewed_commit'])
             for item in node_records
-            for field in ('worker_job_status', 'reviewer_job_status')
-        ) and round_reviewer.get('status') == 'completed',
-        'all_nodes_reviewed_commits': all(bool(item['reviewed_commit']) for item in node_records),
-        'root_files_promoted': actual_paths == expected_paths,
-        'merge_order_complete': integration_section.get('merge_order') == expected_merge_order,
-        'root_verification_passed': _mapping(root_section.get('verification')).get('status') == 'passed',
-        'task_done': task.get('status') == 'done',
-        'round_pass': round_record.get('round_result') == 'pass',
-        'round_source_script_owned': round_record.get('round_result_source') == 'round_reviewer_reply',
+            if item['status'] == 'integrated'
+        ),
+        'rework_exactly_once': (
+            int(rework_node.get('rework_count') or 0) == 1
+            and bool(rework_node.get('worker_rework_job_id'))
+            and bool(rework_node.get('reviewer_recheck_job_id'))
+            and [
+                _mapping(item).get('result')
+                for item in rework_node.get('review_history') or ()
+            ] == ['rework', 'pass']
+            and {
+                _mapping(item).get('kind')
+                for item in rework_node.get('rework_history') or ()
+            } == {
+                'rework_requested',
+                'worker_submission',
+                'worker_terminal',
+                'reviewer_submission',
+                'reviewer_terminal',
+            }
+        ) if scenario == 'reviewer_rework_pass' else all(
+            int(item.get('rework_count') or 0) == 0 for item in node_records
+        ),
         'release_clean': release.get('loop_topology_status') == 'released'
         and int(release.get('retained_count') or 0) == 0
         and int(release.get('release_incomplete_count') or 0) == 0,
         'raw_observed_exists': observed_path.is_file(),
+        'raw_authority_files_present': all(
+            path.is_file()
+            for path in (
+                bundle_path,
+                scheduler_state_path,
+                round_path,
+                integration_path,
+                observed_path,
+            )
+        ),
         'raw_observed_no_live_agents': not _live_observed_agents(raw_observed),
         'dynamic_residue_absent': not dynamic_lines,
         'orchestrator_job_completed': any(item.get('status') == 'completed' for item in orchestrator_jobs),
@@ -432,14 +631,34 @@ def _build_report(
             len(initial_frontier.get('pending_job_ids') or ()) == expected_initial_frontier_size
         ),
         'git_root_not_drifted': not _git_status(project_root),
+        'restart_replay_identity_preserved': (
+            _restart_evidence_valid(restart_evidence, referenced_job_ids)
+            if scenario == 'restart_replay_pass'
+            else restart_evidence is None
+        ),
     }
     return {
-        'schema': 'ccb.g5.fake_multi_workgroup_smoke.v1',
+        'schema': REPORT_SCHEMA,
         'status': 'pass' if all(checks.values()) else 'failed',
+        'execution_mode': 'source_fake_runtime',
+        'coverage': {
+            'provider': 'fake',
+            'real_provider': False,
+            'live_provider': False,
+            'disclaimer': 'Source/fake runtime evidence only; this report does not cover live or real providers.',
+        },
         'project_root': str(project_root),
         'project_id': task_show.get('project_id'),
         'role_store': str(role_store),
         'provider': 'fake',
+        'scenario': scenario,
+        'expected': expectation,
+        'observed': {
+            'classification': observed_classification,
+            'task_status': task.get('status'),
+            'round_result': round_record.get('round_result'),
+            'round_source': round_record.get('round_result_source'),
+        },
         'config_version': 3,
         'matrix': {'requested_count': count, 'requested_shape': shape},
         'task_id': TASK_ID,
@@ -461,6 +680,8 @@ def _build_report(
             'orchestrator': orchestrator_jobs,
             'nodes': node_records,
             'round_reviewer': round_reviewer,
+            'referenced': referenced_job_evidence,
+            'scheduler_task_id_counts': workflow_task_id_counts,
         },
         'integration': {
             'state_path': str(integration_path),
@@ -494,19 +715,30 @@ def _build_report(
             'expected_paths': expected_paths,
             'actual_paths': actual_paths,
             'git_status': _git_status(project_root),
+            'preflight_authority': root_preflight,
+            'final_authority': root_after,
         },
         'runner_results': runner_results,
         'execution': {
             'initial_frontier_job_ids': list(initial_frontier.get('pending_job_ids') or ()),
             'expected_initial_frontier_size': expected_initial_frontier_size,
+            'restart': restart_evidence,
         },
         'checks': checks,
         'paths': {
             'report': str(project_root / '.ccb' / 'evidence' / 'g5-fake-fullflow' / 'report.json'),
+            'bundle': str(bundle_path),
             'scheduler_state': str(scheduler_state_path),
             'round': str(round_path),
             'integration_state': str(integration_path),
             'raw_observed': str(observed_path),
+        },
+        'raw_evidence_sha256': {
+            'bundle': _sha256_file(bundle_path),
+            'scheduler_state': _sha256_file(scheduler_state_path),
+            'round': _sha256_file(round_path),
+            'integration_state': _sha256_file(integration_path),
+            'raw_observed': _sha256_file(observed_path),
         },
         'command_log': [_compact_command(item) for item in command_log],
     }
@@ -534,15 +766,45 @@ def _write_config_and_plan(project_root: Path) -> None:
     _git(project_root, 'commit', '-m', 'G5 smoke base')
 
 
-def _write_task_inputs(project_root: Path, *, count: int, shape: str) -> dict[str, Path]:
+def _write_task_inputs(
+    project_root: Path,
+    *,
+    count: int,
+    shape: str,
+    scenario: str,
+) -> dict[str, Path]:
     inputs = project_root / '.ccb' / 'evidence' / 'g5-fake-fullflow' / 'inputs'
     inputs.mkdir(parents=True, exist_ok=True)
     paths = [f'g5_outputs/node-{index:03d}.txt' for index in range(1, count + 1)]
-    contract = json.dumps({'count': count, 'shape': shape, 'allowed_paths': paths}, sort_keys=True)
+    contract = json.dumps(
+        {
+            'schema': SCENARIO_SCHEMA,
+            'task_id': TASK_ID,
+            'scenario': scenario,
+            'count': count,
+            'shape': shape,
+            'selected_node': 'node-001',
+            'restart_latency_ms': 3000 if scenario == 'restart_replay_pass' else 0,
+        },
+        separators=(',', ':'),
+    )
     allowed_lines = '\n'.join(f'- {path}' for path in paths)
-    verification_lines = '\n'.join(
+    accepted_paths = paths[1:] if scenario in {
+        'worker_failure_partial', 'reviewer_provider_failure'
+    } else paths
+    normal_verification = '\n'.join(
         '- python -c "from pathlib import Path; assert Path(\'' + path + '\').is_file()"'
-        for path in paths
+        for path in accepted_paths
+    )
+    integration_verification = (
+        '- python -c "raise SystemExit(19)"'
+        if scenario == 'integration_verification_failure'
+        else normal_verification
+    )
+    root_verification = (
+        '- python -c "raise SystemExit(23)"'
+        if scenario == 'root_verification_failure'
+        else normal_verification
     )
     task_packet = inputs / 'task_packet.md'
     execution_contract = inputs / 'execution_contract.md'
@@ -551,7 +813,9 @@ def _write_task_inputs(project_root: Path, *, count: int, shape: str) -> dict[st
         f'g5_multi_workgroup_smoke: {contract}\n\n'
         'Goal: exercise the real G3 scheduler, R2 integration, and T1 topology with fake provider jobs.\n\n'
         'Allowed Change Paths:\n'
-        f'{allowed_lines}\n',
+        f'{allowed_lines}\n\n'
+        '## Verification Commands\n'
+        f'{integration_verification}\n',
         encoding='utf-8',
     )
     execution_contract.write_text(
@@ -560,7 +824,7 @@ def _write_task_inputs(project_root: Path, *, count: int, shape: str) -> dict[st
         'allowed_change_paths:\n'
         f'{allowed_lines}\n\n'
         '## Verification Commands\n'
-        f'{verification_lines}\n',
+        f'{root_verification}\n',
         encoding='utf-8',
     )
     return {'task_packet': task_packet, 'execution_contract': execution_contract}
@@ -593,6 +857,175 @@ def _task_show(
         timeout_s=timeout_s,
     )
     return _json_object(result['stdout'])
+
+
+def _run_until_terminal(
+    command_log: list[dict[str, Any]],
+    *,
+    ccb_test: Path,
+    project_root: Path,
+    test_root: Path,
+    env: dict[str, str],
+    logs_dir: Path,
+    timeout_s: int,
+    label_prefix: str = 'loop_runner_auto',
+) -> list[dict[str, Any]]:
+    results = []
+    for attempt in range(1, 5):
+        runner = _run_logged(
+            command_log,
+            f'{label_prefix}_{attempt}',
+            [
+                str(ccb_test), '--project', str(project_root), 'loop', 'runner', '--auto',
+                '--max-steps', '64', '--poll-interval', '0.05', '--json',
+            ],
+            cwd=test_root,
+            env=env,
+            logs_dir=logs_dir,
+            timeout_s=timeout_s,
+            allow_failure=True,
+        )
+        results.append(_json_object(runner['stdout']))
+        shown = _task_show(
+            command_log,
+            ccb_test=ccb_test,
+            project_root=project_root,
+            test_root=test_root,
+            env=env,
+            logs_dir=logs_dir,
+            timeout_s=timeout_s,
+            label=f'{label_prefix}_task_show_{attempt}',
+        )
+        if _task_record(shown).get('status') in TERMINAL_TASK_STATUSES:
+            return results
+    raise SmokeFailure('loop runner did not reach terminal task authority in four auto activations')
+
+
+def _run_restart_replay(
+    command_log: list[dict[str, Any]],
+    *,
+    ccb_test: Path,
+    project_root: Path,
+    test_root: Path,
+    env: dict[str, str],
+    logs_dir: Path,
+    timeout_s: int,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    results: list[dict[str, Any]] = []
+    pending_job: dict[str, Any] | None = None
+    loop_id = ''
+    for attempt in range(1, 9):
+        runner = _run_logged(
+            command_log,
+            f'restart_prepare_once_{attempt}',
+            [
+                str(ccb_test), '--project', str(project_root), 'loop', 'runner', '--once', '--json',
+            ],
+            cwd=test_root,
+            env=env,
+            logs_dir=logs_dir,
+            timeout_s=timeout_s,
+            allow_failure=True,
+        )
+        results.append(_json_object(runner['stdout']))
+        loop_id = _find_loop_id(project_root, TASK_ID)
+        if loop_id:
+            state = _read_json(
+                project_root / '.ccb' / 'runtime' / 'loops' / loop_id / 'workgroup_scheduler_state.json'
+            )
+            node = _mapping(_mapping(state.get('nodes')).get('node-001'))
+            reviewer = _mapping(node.get('reviewer'))
+            if reviewer.get('job_id') and not bool(reviewer.get('terminal')):
+                pending_job = reviewer
+                break
+        time.sleep(0.25)
+    if pending_job is None:
+        raise SmokeFailure('restart replay did not establish a durable pending reviewer job')
+
+    lease_path = project_root / '.ccb' / 'ccbd' / 'lease.json'
+    lease_before = _read_json(lease_path)
+    daemon_pid = int(lease_before.get('ccbd_pid') or lease_before.get('pid') or 0)
+    if daemon_pid <= 1:
+        raise SmokeFailure(f'restart replay missing daemon pid in {lease_path}')
+    os.kill(daemon_pid, signal.SIGKILL)
+    _record_script_action(
+        command_log,
+        logs_dir=logs_dir,
+        label='restart_daemon_sigkill',
+        payload={'pid': daemon_pid, 'pending_job_id': pending_job.get('job_id'), 'loop_id': loop_id},
+    )
+    if not _wait_pid_exit(daemon_pid, timeout_s=10.0):
+        raise SmokeFailure(f'restart replay daemon did not exit after SIGKILL: {daemon_pid}')
+    restarted = _run_logged(
+        command_log,
+        'restart_project',
+        [str(ccb_test), '--project', str(project_root)],
+        cwd=test_root,
+        env=env,
+        logs_dir=logs_dir,
+        timeout_s=timeout_s,
+    )
+    lease_after = _read_json(lease_path)
+    daemon_after = int(lease_after.get('ccbd_pid') or lease_after.get('pid') or 0)
+    results.extend(
+        _run_until_terminal(
+            command_log,
+            ccb_test=ccb_test,
+            project_root=project_root,
+            test_root=test_root,
+            env=env,
+            logs_dir=logs_dir,
+            timeout_s=timeout_s,
+            label_prefix='restart_resume_auto',
+        )
+    )
+    return results, {
+        'loop_id': loop_id,
+        'pending_job_id': pending_job.get('job_id'),
+        'pending_submission_identity': pending_job.get('submission_identity'),
+        'pending_status_before_restart': pending_job.get('status'),
+        'daemon_pid_before': daemon_pid,
+        'daemon_pid_after': daemon_after,
+        'restart_returncode': restarted['returncode'],
+    }
+
+
+def _record_script_action(
+    command_log: list[dict[str, Any]],
+    *,
+    logs_dir: Path,
+    label: str,
+    payload: dict[str, Any],
+) -> None:
+    if any(item.get('label') == label for item in command_log):
+        raise SmokeFailure(f'duplicate command label: {label}')
+    stdout_path = logs_dir / f'{label}.stdout'
+    stderr_path = logs_dir / f'{label}.stderr'
+    stdout_path.write_text(json.dumps(payload, sort_keys=True) + '\n', encoding='utf-8')
+    stderr_path.write_text('', encoding='utf-8')
+    command_log.append(
+        {
+            'label': label,
+            'argv': ['script-owned-sigkill', str(payload.get('pid') or '')],
+            'cwd': str(logs_dir),
+            'returncode': 0,
+            'stdout': stdout_path.read_text(encoding='utf-8'),
+            'stderr': '',
+            'stdout_path': str(stdout_path),
+            'stderr_path': str(stderr_path),
+        }
+    )
+
+
+def _wait_pid_exit(pid: int, *, timeout_s: float) -> bool:
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return True
+        time.sleep(0.05)
+    return False
 
 
 def _run_logged(
@@ -645,6 +1078,7 @@ def _smoke_env(*, test_root: Path, project_root: Path, role_store: Path, source_
             'HOME': str(source_home),
             'CCB_SOURCE_HOME': str(source_home),
             'CCB_TEST_ROOTS': str(test_root),
+            'CCB_SOURCE_ALLOWED_ROOTS': str(test_root),
             'AGENT_ROLES_STORE': str(role_store),
             'CCB_NO_ATTACH': '1',
             'CCB_REPLY_LANG': 'en',
@@ -671,6 +1105,19 @@ def _collect_jobs(project_root: Path) -> dict[str, dict[str, Any]]:
             job_id = str(payload.get('job_id') or '')
             if job_id:
                 latest[job_id] = payload
+    for path in project_root.glob('.ccb/**/snapshots/job_*.json'):
+        payload = _read_json(path)
+        job_id = str(payload.get('job_id') or '')
+        decision = _mapping(payload.get('latest_decision'))
+        if job_id and job_id not in latest and decision.get('terminal'):
+            latest[job_id] = {
+                'job_id': job_id,
+                'agent_name': payload.get('agent_name'),
+                'status': decision.get('status'),
+                'reason': decision.get('reason'),
+                'evidence_source': 'completion_snapshot',
+                'snapshot_path': str(path),
+            }
     return latest
 
 
@@ -700,6 +1147,119 @@ def _live_observed_agents(observed: dict[str, Any]) -> list[dict[str, Any]]:
         item for item in observed.get('agents') or ()
         if isinstance(item, dict) and str(item.get('observed_state') or '') not in terminal
     ]
+
+
+def _root_authority(project_root: Path) -> dict[str, Any]:
+    return {
+        'head': _git(project_root, 'rev-parse', 'HEAD'),
+        'tree': _git(project_root, 'rev-parse', 'HEAD^{tree}'),
+        'status': _git_status(project_root),
+    }
+
+
+def _observed_classification(*, task_status: str, round_result: str) -> str:
+    if task_status == 'done' and round_result == 'pass':
+        return 'pass'
+    if task_status in {'partial', 'blocked', 'replan_required'} and round_result in {
+        'partial', 'blocked', 'replan_required'
+    }:
+        return 'valid_non_success'
+    return 'system_failure'
+
+
+def _sha256_file(path: Path) -> str:
+    if not path.is_file():
+        return ''
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _restart_evidence_valid(
+    evidence: dict[str, Any] | None,
+    referenced_job_ids: list[str],
+) -> bool:
+    if not evidence:
+        return False
+    pending_job_id = str(evidence.get('pending_job_id') or '')
+    return (
+        bool(pending_job_id)
+        and referenced_job_ids.count(pending_job_id) == 1
+        and bool(evidence.get('pending_submission_identity'))
+        and int(evidence.get('daemon_pid_before') or 0) > 1
+        and int(evidence.get('daemon_pid_after') or 0) > 1
+        and evidence.get('daemon_pid_before') != evidence.get('daemon_pid_after')
+        and evidence.get('restart_returncode') == 0
+    )
+
+
+def _post_cleanup_evidence(project_root: Path) -> dict[str, Any]:
+    owned_processes = []
+    excluded_pids = _current_process_lineage()
+    proc_root = Path('/proc')
+    if proc_root.is_dir():
+        for proc in proc_root.iterdir():
+            if not proc.name.isdigit():
+                continue
+            if int(proc.name) in excluded_pids:
+                continue
+            try:
+                cmdline = (proc / 'cmdline').read_bytes().replace(b'\0', b' ').decode(
+                    'utf-8', errors='replace'
+                ).strip()
+                cwd = (proc / 'cwd').resolve(strict=True)
+            except (FileNotFoundError, OSError, PermissionError):
+                continue
+            command_owned = str(project_root) in cmdline
+            cwd_owned = cwd == project_root or project_root in cwd.parents
+            if command_owned or cwd_owned:
+                owned_processes.append(
+                    {'pid': int(proc.name), 'cmdline': cmdline, 'cwd': str(cwd)}
+                )
+
+    connectable_sockets = []
+    for path in project_root.glob('.ccb/**/*.sock'):
+        client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        client.settimeout(0.1)
+        try:
+            client.connect(str(path))
+        except OSError:
+            pass
+        else:
+            connectable_sockets.append(str(path))
+        finally:
+            client.close()
+
+    child_worktrees = []
+    completed = subprocess.run(
+        ['git', 'worktree', 'list', '--porcelain'],
+        cwd=str(project_root),
+        text=True,
+        capture_output=True,
+    )
+    if completed.returncode == 0:
+        for line in completed.stdout.splitlines():
+            if not line.startswith('worktree '):
+                continue
+            path = Path(line.split(' ', 1)[1]).resolve(strict=False)
+            if path != project_root:
+                child_worktrees.append(str(path))
+    return {
+        'owned_processes': owned_processes,
+        'connectable_sockets': connectable_sockets,
+        'child_worktrees': child_worktrees,
+    }
+
+
+def _current_process_lineage() -> set[int]:
+    lineage = {os.getpid()}
+    pid = os.getppid()
+    while pid > 1 and pid not in lineage:
+        lineage.add(pid)
+        try:
+            stat = (Path('/proc') / str(pid) / 'stat').read_text(encoding='utf-8')
+            pid = int(stat.rsplit(')', 1)[1].split()[1])
+        except (OSError, ValueError, IndexError):
+            break
+    return lineage
 
 
 def _require_report_pass(report: dict[str, Any]) -> None:
@@ -762,13 +1322,17 @@ def _git_status(project_root: Path) -> list[str]:
     return output.splitlines() if output else []
 
 
-def _validate_matrix(*, count: int, shape: str) -> None:
+def _validate_matrix(*, count: int, shape: str, scenario: str = 'pass') -> None:
     if count not in {1, 2, 3, 4}:
         raise SmokeFailure('count must be 1, 2, 3, or 4')
     if shape not in {'parallel', 'mixed_dag'}:
         raise SmokeFailure('shape must be parallel or mixed_dag')
     if shape == 'mixed_dag' and count < 3:
         raise SmokeFailure('mixed_dag requires count >= 3')
+    if scenario not in SCENARIO_EXPECTATIONS:
+        raise SmokeFailure(f'unsupported scenario: {scenario}')
+    if scenario in {'worker_failure_partial', 'reviewer_provider_failure'} and count < 2:
+        raise SmokeFailure(f'{scenario} requires count >= 2')
 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
@@ -776,6 +1340,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument('--root', required=True)
     parser.add_argument('--count', type=int, required=True)
     parser.add_argument('--shape', choices=('parallel', 'mixed_dag'), default='parallel')
+    parser.add_argument('--scenario', choices=tuple(SCENARIO_EXPECTATIONS), default='pass')
     parser.add_argument('--ccb-test', default=str(REPO_ROOT / 'ccb_test'))
     parser.add_argument('--keep-running', action='store_true')
     parser.add_argument('--command-timeout', type=int, default=240)
@@ -790,6 +1355,7 @@ def main(argv: list[str] | None = None) -> int:
             project_root=Path(args.root),
             count=int(args.count),
             shape=str(args.shape),
+            scenario=str(args.scenario),
             ccb_test=Path(args.ccb_test),
             keep_running=bool(args.keep_running),
             command_timeout_s=int(args.command_timeout),

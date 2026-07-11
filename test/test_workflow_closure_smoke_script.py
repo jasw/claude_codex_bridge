@@ -392,3 +392,17 @@ def test_tests_workflow_runs_workflow_closure_layout_cleanup_smoke() -> None:
 
 def _json(payload: dict[str, object]) -> str:
     return json.dumps(payload, ensure_ascii=False) + "\n"
+def test_smoke_env_propagates_explicit_source_wrapper_allowed_root(tmp_path: Path) -> None:
+    module = _load_module()
+    test_root = tmp_path / 'external-test-root'
+    project_root = test_root / 'project'
+    role_store = project_root / 'roles'
+
+    env = module._smoke_env(
+        test_root=test_root,
+        project_root=project_root,
+        role_store=role_store,
+    )
+
+    assert env['CCB_TEST_ROOTS'] == str(test_root.resolve())
+    assert env['CCB_SOURCE_ALLOWED_ROOTS'] == str(test_root.resolve())

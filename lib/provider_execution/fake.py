@@ -9,11 +9,13 @@ from pathlib import Path
 from ccbd.api_models import JobRecord
 from ccbd.system import parse_utc_timestamp
 from completion.models import (
+    CompletionConfidence,
     CompletionDecision,
     CompletionCursor,
     CompletionItem,
     CompletionItemKind,
     CompletionSourceKind,
+    CompletionStatus,
 )
 
 from .base import ProviderPollResult, ProviderSubmission
@@ -47,10 +49,17 @@ class FakeProviderAdapter:
 
     def start(self, job: JobRecord, *, context, now: str) -> ProviderSubmission:
         directive = parse_directive(job.request.task_id, default_latency_seconds=self._latency_seconds)
+        effective_body = _effective_request_body(job)
+        g5_contract = _g5_contract_for_job(job, context=context, body=effective_body)
+        directive = _g5_scenario_directive(
+            directive,
+            contract=g5_contract,
+            body=effective_body,
+        )
         events = tuple(normalize_script_event(raw) for raw in (directive.script or default_script(directive, mode=self._script_mode)))
         max_delay_ms = max((event.at_ms for event in events), default=0)
         ready_at = parse_utc_timestamp(now) + timedelta(milliseconds=max_delay_ms)
-        reply, attachments = _reply_for_body(job, context=context)
+        reply, attachments = _reply_for_body(job, context=context, g5_contract=g5_contract)
         return ProviderSubmission(
             job_id=job.job_id,
             agent_name=job.agent_name,
@@ -175,7 +184,12 @@ _normalize_script_event = normalize_script_event
 _parse_directive = parse_directive
 
 
-def _reply_for_body(job: JobRecord, *, context=None) -> tuple[str, list[dict[str, object]]]:
+def _reply_for_body(
+    job: JobRecord,
+    *,
+    context=None,
+    g5_contract: dict[str, object] | None = None,
+) -> tuple[str, list[dict[str, object]]]:
     agent_name = job.agent_name
     body = job.request.body
     marker = body.strip()
@@ -187,9 +201,19 @@ def _reply_for_body(job: JobRecord, *, context=None) -> tuple[str, list[dict[str
             body=effective_body,
         )
     if workflow_reply is None:
-        workflow_reply = _workflow_execution_reply(job=job, context=context, agent_name=agent_name, body=effective_body)
+        workflow_reply = _workflow_execution_reply(
+            job=job,
+            context=context,
+            agent_name=agent_name,
+            body=effective_body,
+            g5_contract=g5_contract,
+        )
     if workflow_reply is None:
-        workflow_reply = _workflow_round_checker_reply(agent_name=agent_name, body=effective_body)
+        workflow_reply = _workflow_round_checker_reply(
+            agent_name=agent_name,
+            body=effective_body,
+            g5_contract=g5_contract,
+        )
     if workflow_reply is not None:
         return (workflow_reply, [])
 
@@ -375,12 +399,23 @@ def _workflow_role_bundle_reply(*, agent_name: str, body: str) -> str | None:
     return None
 
 
-def _workflow_execution_reply(*, job: JobRecord, context, agent_name: str, body: str) -> str | None:
-    g5_smoke = _g5_smoke_contract(body)
+def _workflow_execution_reply(
+    *,
+    job: JobRecord,
+    context,
+    agent_name: str,
+    body: str,
+    g5_contract: dict[str, object] | None = None,
+) -> str | None:
+    g5_smoke = g5_contract or _g5_smoke_contract(body)
     scheduler_purpose = _scheduler_purpose(body) if g5_smoke is not None else ''
     if 'Role: worker' in body or scheduler_purpose in {'worker', 'worker_rework'}:
         status = 'done'
-        changed_files = _materialize_fake_worker_changes(job, context, body)
+        changed_files = (
+            []
+            if _g5_terminal_provider_failure(g5_smoke, body=body)
+            else _materialize_fake_worker_changes(job, context, body)
+        )
         changed_files_text = ', '.join(changed_files) if changed_files else 'none'
         if 'Purpose: bounded_rework' in body:
             return (
@@ -401,7 +436,22 @@ def _workflow_execution_reply(*, job: JobRecord, context, agent_name: str, body:
         )
     if 'Role: code_reviewer' not in body and scheduler_purpose not in {'reviewer', 'reviewer_recheck'}:
         return None
-    recheck = 'Purpose: bounded_rework_recheck' in body
+    recheck = (
+        scheduler_purpose == 'reviewer_recheck'
+        or 'Purpose: bounded_rework_recheck' in body
+    )
+    if (
+        g5_smoke is not None
+        and str(g5_smoke.get('scenario')) == 'reviewer_rework_pass'
+        and _scheduler_node_id(body) == str(g5_smoke.get('selected_node'))
+        and not recheck
+    ):
+        return (
+            'status: rework_required\n'
+            'execution_contract audit: exact selected-node rework request\n'
+            'verification checks performed: deterministic G5 initial reviewer rejection\n'
+            'risk notes: one bounded rework required\n'
+        )
     scenario = _phase6_scenario(body)
     if scenario == 'reviewer_reject_rework' and not recheck:
         return (
@@ -425,7 +475,12 @@ def _workflow_execution_reply(*, job: JobRecord, context, agent_name: str, body:
     )
 
 
-def _workflow_round_checker_reply(*, agent_name: str, body: str) -> str | None:
+def _workflow_round_checker_reply(
+    *,
+    agent_name: str,
+    body: str,
+    g5_contract: dict[str, object] | None = None,
+) -> str | None:
     normalized_agent = agent_name.replace('-', '_')
     multi_workgroup_review = (
         'Role: ccb_round_reviewer' in body
@@ -440,8 +495,14 @@ def _workflow_round_checker_reply(*, agent_name: str, body: str) -> str | None:
     if not is_round_reviewer or not has_round_role:
         return None
     if multi_workgroup_review:
+        result = (
+            'blocked'
+            if g5_contract is not None
+            and str(g5_contract.get('scenario')) == 'round_reviewer_blocked'
+            else 'pass'
+        )
         return (
-            'round_result: pass\n'
+            f'round_result: {result}\n'
             'verification performed: fake provider deterministic multi-workgroup smoke\n'
             'hidden degradation audit: no degradation requested\n'
             'evidence refs: scheduler state, reviewed commits, integration state, release evidence\n'
@@ -604,7 +665,7 @@ def _g5_orchestration_candidate(body: str, *, contract: dict[str, object]) -> di
         },
         'nodes': nodes,
         'integration': {
-            'verification_refs': [execution_contract_ref],
+            'verification_refs': [task_packet_ref],
             'project_root_verification_refs': [execution_contract_ref],
         },
         'policy': {
@@ -633,26 +694,178 @@ def _g5_smoke_contract(body: str) -> dict[str, object] | None:
                 return None
             if not isinstance(payload, dict):
                 return None
+            required_keys = {
+                'schema',
+                'task_id',
+                'scenario',
+                'count',
+                'shape',
+                'selected_node',
+                'restart_latency_ms',
+            }
+            if set(payload) != required_keys:
+                return None
+            if payload.get('schema') != 'ccb.g5.source_fake_runtime_scenario.v1':
+                return None
+            if payload.get('task_id') != 'g5-multi-workgroup-task':
+                return None
+            scenario = str(payload.get('scenario') or '')
+            if scenario not in {
+                'pass',
+                'reviewer_rework_pass',
+                'worker_failure_partial',
+                'all_workers_failed_blocked',
+                'reviewer_provider_failure',
+                'round_reviewer_blocked',
+                'integration_verification_failure',
+                'root_verification_failure',
+                'restart_replay_pass',
+            }:
+                return None
             count = payload.get('count')
             shape = str(payload.get('shape') or '')
-            allowed_paths = payload.get('allowed_paths')
+            selected_node = str(payload.get('selected_node') or '')
+            restart_latency_ms = payload.get('restart_latency_ms')
             if isinstance(count, bool) or not isinstance(count, int) or count not in {1, 2, 3, 4}:
                 return None
             if shape not in {'parallel', 'mixed_dag'}:
                 return None
             if shape == 'mixed_dag' and count < 3:
                 return None
-            if not isinstance(allowed_paths, list) or len(allowed_paths) != count:
+            if selected_node not in {f'node-{index:03d}' for index in range(1, count + 1)}:
                 return None
-            normalized = [_safe_fake_relative_path(str(path or '')) for path in allowed_paths]
-            if any(path is None for path in normalized):
+            if (
+                isinstance(restart_latency_ms, bool)
+                or not isinstance(restart_latency_ms, int)
+                or restart_latency_ms < 0
+                or (scenario == 'restart_replay_pass' and restart_latency_ms == 0)
+            ):
                 return None
             return {
                 'count': count,
                 'shape': shape,
-                'allowed_paths': [path.as_posix() for path in normalized if path is not None],
+                'schema': payload['schema'],
+                'task_id': payload['task_id'],
+                'scenario': scenario,
+                'selected_node': selected_node,
+                'allowed_paths': [
+                    f'g5_outputs/node-{index:03d}.txt'
+                    for index in range(1, count + 1)
+                ],
+                'restart_latency_ms': restart_latency_ms,
             }
     return None
+
+
+def _g5_contract_for_job(
+    job: JobRecord,
+    *,
+    context,
+    body: str,
+) -> dict[str, object] | None:
+    contract = _g5_smoke_contract(body)
+    if contract is not None:
+        return contract
+    if (
+        job.request.task_id != 'g5-multi-workgroup-task'
+        and _loop_activation_task_id(body) != 'g5-multi-workgroup-task'
+    ):
+        return None
+    candidates: list[Path] = []
+    roots = [
+        str(getattr(context, 'workspace_path', '') or ''),
+        str(job.workspace_path or ''),
+    ]
+    artifact = job.request.body_artifact if isinstance(job.request.body_artifact, dict) else {}
+    artifact_path = Path(str(artifact.get('path') or ''))
+    if artifact_path.is_absolute():
+        for parent in artifact_path.parents:
+            if parent.name == '.ccb':
+                roots.append(str(parent.parent))
+                break
+    for raw_root in roots:
+        if not raw_root:
+            continue
+        root = Path(raw_root)
+        candidates.extend(
+            root.glob(
+                'docs/plantree/plans/*/tasks/g5-multi-workgroup-task/task_packet.md'
+            )
+        )
+    for path in candidates:
+        try:
+            contract = _g5_smoke_contract(path.read_text(encoding='utf-8'))
+        except OSError:
+            continue
+        if contract is not None:
+            return contract
+    return None
+
+
+def _g5_scenario_directive(
+    directive: FakeDirective,
+    *,
+    contract: dict[str, object] | None,
+    body: str,
+) -> FakeDirective:
+    if contract is None:
+        return directive
+    scenario = str(contract['scenario'])
+    purpose = _scheduler_purpose(body)
+    node_id = _scheduler_node_id(body)
+    selected = str(contract['selected_node'])
+    provider_failure = _g5_terminal_provider_failure(contract, body=body)
+    if provider_failure:
+        return replace(
+            directive,
+            status=CompletionStatus.FAILED,
+            reason='g5_scenario_terminal_provider_failure',
+            confidence=CompletionConfidence.EXACT,
+            script=(),
+        )
+    if (
+        scenario == 'restart_replay_pass'
+        and purpose == 'reviewer'
+        and node_id == selected
+    ):
+        return replace(
+            directive,
+            latency_seconds=int(contract['restart_latency_ms']) / 1000.0,
+            script=(),
+        )
+    return directive
+
+
+def _g5_terminal_provider_failure(
+    contract: dict[str, object] | None,
+    *,
+    body: str,
+) -> bool:
+    if contract is None:
+        return False
+    scenario = str(contract['scenario'])
+    purpose = _scheduler_purpose(body)
+    node_id = _scheduler_node_id(body)
+    selected = str(contract['selected_node'])
+    return (
+        scenario == 'all_workers_failed_blocked' and purpose == 'worker'
+    ) or (
+        scenario == 'worker_failure_partial'
+        and purpose == 'worker'
+        and node_id == selected
+    ) or (
+        scenario == 'reviewer_provider_failure'
+        and purpose == 'reviewer'
+        and node_id == selected
+    )
+
+
+def _scheduler_node_id(body: str) -> str:
+    for raw_line in str(body or '').splitlines():
+        line = raw_line.strip()
+        if line.startswith('Node:'):
+            return line.split(':', 1)[1].strip()
+    return ''
 
 
 def _literal_mapping_line(body: str, label: str) -> dict[str, object]:
