@@ -3332,7 +3332,7 @@ def _codex_native_conversation_latest_page(
     limit: int,
 ) -> _ConversationItemsResult:
     items: list[dict[str, object]] = []
-    parsed_thread_count = 0
+    total_chunk_count = 0
     has_older = False
     indexed_rows = list(enumerate(rows))
     latest_rows = sorted(
@@ -3344,17 +3344,17 @@ def _codex_native_conversation_latest_page(
         reverse=True,
     )
     for row_index, row in latest_rows:
-        if parsed_thread_count >= _CODEX_NATIVE_TAIL_THREAD_LIMIT:
+        if total_chunk_count >= _CODEX_NATIVE_TAIL_CHUNK_LIMIT:
             has_older = True
             break
         rollout_path = _codex_rollout_path(row, home=home)
         if rollout_path is None:
             continue
         before_offset: int | None = None
-        parsed_thread_count += 1
         chunk_count = 0
         while True:
             chunk_count += 1
+            total_chunk_count += 1
             tail_lines, complete = _codex_rollout_tail_lines(
                 rollout_path,
                 line_limit=_CODEX_NATIVE_TAIL_LINE_LIMIT,
@@ -3392,7 +3392,10 @@ def _codex_native_conversation_latest_page(
             if complete:
                 break
             has_older = True
-            if chunk_count >= _CODEX_NATIVE_TAIL_CHUNK_LIMIT:
+            if (
+                chunk_count >= _CODEX_NATIVE_TAIL_CHUNK_LIMIT
+                or total_chunk_count >= _CODEX_NATIVE_TAIL_CHUNK_LIMIT
+            ):
                 break
             before_offset = tail_lines[0][0]
         if len(_coalesce_codex_native_agent_replies(_codex_sort_native_items(items))) >= limit * 3:
@@ -3733,7 +3736,7 @@ def _codex_rollout_conversation_items(
             agent=agent,
             mobile_files_dir=mobile_files_dir,
         )
-        body = _clean_native_message_text(body)
+        body = _clean_codex_native_message_text(body)
         if not body:
             continue
         item_id = f'codex-{thread_id}-{line_number}-{role}'
@@ -4126,7 +4129,7 @@ def _codex_event_message_conversation_item(
         agent=agent,
         mobile_files_dir=mobile_files_dir,
     )
-    body = _clean_native_message_text(body)
+    body = _clean_codex_native_message_text(body)
     if not body:
         return None
     if payload_type == 'user_message':
@@ -4286,6 +4289,32 @@ def _clean_native_message_text(text: str) -> str:
             skipping_reply_guidance = False
         lines.append(line)
     return '\n'.join(lines).strip()
+
+
+_CODEX_LOCAL_COMMAND_CAVEAT_RE = re.compile(
+    r'^\s*<local-command-caveat>.*?</local-command-caveat>\s*$',
+    re.IGNORECASE | re.DOTALL,
+)
+_CODEX_LOCAL_COMMAND_RE = re.compile(
+    r'^\s*<command-name>(?P<name>.*?)</command-name>\s*'
+    r'<command-message>.*?</command-message>\s*'
+    r'<command-args>(?P<args>.*?)</command-args>\s*$',
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+def _clean_codex_native_message_text(text: str) -> str:
+    cleaned = _clean_native_message_text(text)
+    if not cleaned or _CODEX_LOCAL_COMMAND_CAVEAT_RE.fullmatch(cleaned):
+        return ''
+    command = _CODEX_LOCAL_COMMAND_RE.fullmatch(cleaned)
+    if command is None:
+        return cleaned
+    name = command.group('name').strip()
+    if name.casefold() == '/clear':
+        return ''
+    args = command.group('args').strip()
+    return f'{name} {args}'.strip()
 
 
 def _agent_history_conversation_items(

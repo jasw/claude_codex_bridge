@@ -1503,6 +1503,106 @@ def test_agent_conversation_prefers_codex_native_transcript(tmp_path: Path) -> N
     assert 'stale pane answer' not in public_json
 
 
+def test_agent_conversation_skips_codex_local_controls_and_backfills_real_thread(
+    tmp_path: Path,
+) -> None:
+    project_root = tmp_path / 'repo'
+    _write_codex_rollout(
+        project_root,
+        agent='mobile',
+        thread_id='real-thread',
+        created_at=1782350000,
+        updated_at=1782350001,
+        records=[
+            {
+                'timestamp': '2026-06-25T12:00:00.000Z',
+                'type': 'event_msg',
+                'payload': {
+                    'type': 'user_message',
+                    'message': 'real question before local controls',
+                },
+            },
+            {
+                'timestamp': '2026-06-25T12:00:01.000Z',
+                'type': 'event_msg',
+                'payload': {
+                    'type': 'agent_message',
+                    'message': 'real answer before local controls',
+                },
+            },
+        ],
+    )
+    _write_codex_rollout(
+        project_root,
+        agent='mobile',
+        thread_id='clear-thread',
+        created_at=1782350010,
+        updated_at=1782350011,
+        records=[
+            {
+                'timestamp': '2026-06-25T12:01:00.000Z',
+                'type': 'event_msg',
+                'payload': {
+                    'type': 'user_message',
+                    'message': (
+                        '<command-name>/clear</command-name>\n'
+                        '<command-message>clear</command-message> '
+                        '<command-args></command-args>'
+                    ),
+                },
+            },
+        ],
+    )
+    _write_codex_rollout(
+        project_root,
+        agent='mobile',
+        thread_id='caveat-thread',
+        created_at=1782350020,
+        updated_at=1782350021,
+        records=[
+            {
+                'timestamp': '2026-06-25T12:02:00.000Z',
+                'type': 'event_msg',
+                'payload': {
+                    'type': 'user_message',
+                    'message': (
+                        '<local-command-caveat>Caveat: local command metadata. '
+                        'Do not respond.</local-command-caveat>'
+                    ),
+                },
+            },
+        ],
+    )
+
+    service = _service(
+        _FakeCcbdClient(),
+        project_root=project_root,
+        mobile_dir=tmp_path / 'mobile',
+    )
+    pairing = service.create_pairing_payload(
+        gateway_url='http://127.0.0.1:8787',
+        scopes=('view',),
+    )
+    _, claim = service.dispatch_post(
+        '/v1/pairing/claim',
+        {'pairing_code': str(pairing['pairing_code'])},
+    )
+
+    status, payload = service.dispatch_get(
+        '/v1/projects/proj-demo/agents/mobile/conversation?namespace_epoch=4&limit=20',
+        {'Authorization': f'Bearer {claim["device_token"]}'},
+    )
+
+    assert status == 200
+    items = payload['conversation']['items']
+    assert [(item['kind'], item['body']) for item in items] == [
+        ('user_message', 'real question before local controls'),
+        ('agent_reply', 'real answer before local controls'),
+    ]
+    assert '<command-name>' not in json.dumps(payload)
+    assert '<local-command-caveat>' not in json.dumps(payload)
+
+
 def test_agent_conversation_keeps_codex_response_assistant_with_event_user(
     tmp_path: Path,
 ) -> None:
