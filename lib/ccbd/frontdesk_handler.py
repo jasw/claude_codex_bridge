@@ -10,6 +10,7 @@ from cli.services.ask_runtime.submission import (
     message_with_reply_guidance,
 )
 from cli.services.frontdesk_intake import frontdesk_intake
+from cli.services.frontdesk_source_request import resolve_frontdesk_source_request
 
 
 def build_frontdesk_forward_planner_handler(dispatcher, *, start_auto_runner=None):
@@ -19,13 +20,17 @@ def build_frontdesk_forward_planner_handler(dispatcher, *, start_auto_runner=Non
             action='forward-planner',
             plan_slug=_optional_text(payload.get('plan_slug')),
             request_id=_optional_text(payload.get('request_id')),
+            source_job_id=_optional_text(payload.get('source_job_id')),
             file_path=_optional_text(payload.get('file_path')),
             intake_base64=_optional_text(payload.get('intake_base64')),
             intake_text=str(payload.get('intake_text') or ''),
             json_output=bool(payload.get('json_output', False)),
         )
         context = _frontdesk_context(dispatcher, command)
-        services = SimpleNamespace(submit_ask=_submit_ask_via_dispatcher(dispatcher))
+        services = SimpleNamespace(
+            submit_ask=_submit_ask_via_dispatcher(dispatcher),
+            resolve_source_request=_resolve_source_request_via_dispatcher(dispatcher),
+        )
         if start_auto_runner is not None:
             services.start_auto_runner = start_auto_runner
         return frontdesk_intake(context, command, services=services)
@@ -86,6 +91,27 @@ def _submit_ask_via_dispatcher(dispatcher):
         )
 
     return submit_ask
+
+
+def _resolve_source_request_via_dispatcher(dispatcher):
+    def resolve_source_request(context, source_job_id: str) -> dict[str, object]:
+        get_job = getattr(dispatcher, 'get', None)
+        if not callable(get_job):
+            return {
+                'status': 'blocked',
+                'reason': 'frontdesk_source_job_lookup_unavailable',
+                'source_job_id': source_job_id,
+            }
+        job = get_job(source_job_id)
+        if job is None:
+            return {
+                'status': 'blocked',
+                'reason': 'frontdesk_source_job_missing',
+                'source_job_id': source_job_id,
+            }
+        return resolve_frontdesk_source_request(context, source_job_id=source_job_id, job=job)
+
+    return resolve_source_request
 
 
 def _route_options(command) -> dict[str, object]:

@@ -87,6 +87,7 @@ def observe_frontdesk_session(app) -> dict[str, object] | None:
         {
             'intake_base64': base64.b64encode(reply.encode('utf-8')).decode('ascii'),
             'request_id': request_id,
+            'source_job_id': request.get('source_job_id'),
             'json_output': True,
         }
     )
@@ -103,6 +104,7 @@ def observe_frontdesk_session(app) -> dict[str, object] | None:
             'session_path': str(session_path),
             'request_id': request_id,
             'request_id_source': request['source'],
+            'source_job_id': request.get('source_job_id'),
             'user_message_sha256': request.get('user_message_sha256'),
             'frontdesk_intake': _compact_intake_payload(payload),
         },
@@ -211,6 +213,7 @@ def _request_context_for_turn(session_path: Path, turn_id: str) -> dict[str, obj
     return {
         'request_id': request_id,
         'source': source,
+        'source_job_id': request_id if source == 'current_user_turn' and request_id.startswith('job_') else None,
         'user_message_sha256': hashlib.sha256(user_message.encode('utf-8')).hexdigest() if user_message else None,
     }
 

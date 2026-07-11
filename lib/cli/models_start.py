@@ -182,6 +182,7 @@ class ParsedFrontdeskCommand:
     action: str
     plan_slug: str | None = None
     request_id: str | None = None
+    source_job_id: str | None = None
     file_path: str | None = None
     intake_base64: str | None = None
     intake_text: str = ''

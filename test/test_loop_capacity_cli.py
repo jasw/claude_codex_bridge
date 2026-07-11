@@ -51,6 +51,7 @@ from cli.services.frontdesk_intake_command import frontdesk_intake_command
 from cli.services.watch import WatchEventBatch
 import cli.services.loop_capacity as loop_capacity_module
 from storage.paths import PathLayout
+from storage.text_artifacts import write_text_artifact
 
 
 def _write(path: Path, text: str) -> None:
@@ -60,6 +61,34 @@ def _write(path: Path, text: str) -> None:
 
 def _write_json(path: Path, payload: dict[str, object]) -> None:
     _write(path, json.dumps(payload, ensure_ascii=False, indent=2) + '\n')
+
+
+def _write_source_ask_job(
+    project_root: Path,
+    *,
+    job_id: str,
+    body: str,
+    agent_name: str = 'frontdesk',
+) -> None:
+    _write(
+        project_root / '.ccb' / 'agents' / agent_name / 'jobs.jsonl',
+        json.dumps(
+            {
+                'job_id': job_id,
+                'agent_name': agent_name,
+                'request': {
+                    'project_id': PathLayout(project_root).project_id,
+                    'to_agent': agent_name,
+                    'from_actor': 'user',
+                    'message_type': 'ask',
+                    'body': body,
+                    'body_artifact': None,
+                    'task_id': None,
+                },
+            }
+        )
+        + '\n',
+    )
 
 
 def _seed_copy_workspace_binding(context, project_root: Path, target: str) -> Path:
@@ -8801,6 +8830,26 @@ Constraints:
 """
 
 
+def _exact_four_surface_user_request() -> str:
+    return """Extend the inventory project with four independent batch reporting surfaces.
+
+1. Add `inventory/batch_manifest.py`. Expose `build_batch_manifest(items)` returning a dictionary with exactly
+`record_count`, `total_quantity`, `categories`, and `records`. Normalize through
+`inventory.schema.normalize_item`; categories are sorted and records preserve input order.
+
+2. Add `inventory/jsonl_archive.py`. Expose `write_jsonl_archive(path, items)` returning
+`{"record_count": int, "path": str}` and `read_jsonl_archive(path)` returning normalized records in file order.
+
+3. Add `inventory/report_cli.py`. Expose `main(argv=None) -> int` for
+`python -m inventory.report_cli INPUT_JSON OUTPUT_JSON`; invalid input returns nonzero and writes English stderr.
+
+4. Add `docs/inventory-batch-reporting.md` and a focused documentation contract test.
+
+All four surfaces have disjoint allowed paths and may run independently from the same baseline. Preserve existing
+behavior, use the standard library, run focused tests and the full suite, and do not duplicate schema or summary logic.
+"""
+
+
 def _frontdesk_auto_runner_stub(calls: list[dict[str, str]]):
     def fake_start_auto_runner(_context, *, activation_id: str, wait_job_id: str):
         calls.append({'activation_id': activation_id, 'wait_job_id': wait_job_id})
@@ -8864,7 +8913,7 @@ def test_frontdesk_forward_planner_submits_silent_planner_activation(
     assert ask_command.silence is True
     assert ask_command.compact is True
     assert ask_command.artifact_request is False
-    assert ask_command.inline_request is True
+    assert ask_command.inline_request is False
     assert ask_command.task_id == 'act-frontdesk-req_frontdesk_direct'
     assert 'Frontdesk intake evidence:' in ask_command.message
     assert 'Planner contract: single_task' in ask_command.message
@@ -9577,6 +9626,211 @@ def test_frontdesk_forward_planner_daemon_handler_writes_activation_and_submits_
     assert activation['ask']['job_id'] == 'job_planner_daemon_handler'
 
 
+def test_frontdesk_daemon_handler_preserves_exact_source_job_request_for_planner(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = _project_with_loop_capacity(tmp_path, monkeypatch)
+    (project_root / 'docs' / 'plantree' / 'plans' / 'demo-plan').mkdir(parents=True)
+    source_job_id = 'job_frontdesk_exact_contracts'
+    source_body = _exact_four_surface_user_request()
+    submitted: list[object] = []
+    auto_runner_calls: list[dict[str, str]] = []
+
+    class FakeDispatcher:
+        _layout = PathLayout(project_root)
+
+        def get(self, job_id):
+            assert job_id == source_job_id
+            return SimpleNamespace(
+                agent_name='frontdesk',
+                request=SimpleNamespace(
+                    project_id=self._layout.project_id,
+                    to_agent='frontdesk',
+                    from_actor='user',
+                    message_type='ask',
+                    body=source_body + '\n\nCCB reply guidance:\n- Distill aggressively.',
+                    body_artifact=None,
+                ),
+            )
+
+        def submit(self, envelope):
+            submitted.append(envelope)
+            return SubmitReceipt(
+                accepted_at='2026-07-11T00:00:00Z',
+                jobs=(
+                    AcceptedJobReceipt(
+                        job_id='job_planner_exact_contracts',
+                        agent_name='planner',
+                        status=JobStatus.QUEUED,
+                        accepted_at='2026-07-11T00:00:00Z',
+                    ),
+                ),
+            )
+
+    handler = build_frontdesk_forward_planner_handler(
+        FakeDispatcher(),
+        start_auto_runner=_frontdesk_auto_runner_stub(auto_runner_calls),
+    )
+    payload = handler(
+        {
+            'plan_slug': 'demo-plan',
+            'request_id': source_job_id,
+            'source_job_id': source_job_id,
+            'intake_base64': base64.b64encode(
+                _complex_financial_report_frontdesk_intake().encode('utf-8')
+            ).decode('ascii'),
+            'json_output': True,
+        }
+    )
+
+    assert payload['frontdesk_intake_status'] == 'ok'
+    assert len(submitted) == 1
+    envelope = submitted[0]
+    assert envelope.body_artifact is not None
+    planner_body = Path(str(envelope.body_artifact['path'])).read_text(encoding='utf-8')
+    assert 'Original user request (controller-loaded source-job evidence):' in planner_body
+    assert '<original-user-request>' in planner_body
+    assert 'build_batch_manifest(items)' in planner_body
+    assert '`record_count`, `total_quantity`, `categories`, and `records`' in planner_body
+    assert 'write_jsonl_archive(path, items)' in planner_body
+    assert 'main(argv=None) -> int' in planner_body
+    assert 'CCB reply guidance:' not in planner_body
+    assert 'Frontdesk intake evidence:' in planner_body
+    activation = json.loads(Path(str(payload['activation_path'])).read_text(encoding='utf-8'))
+    assert activation['source_job']['job_id'] == source_job_id
+    assert activation['source_request']['source_job_id'] == source_job_id
+    assert activation['source_request']['sha256'] == hashlib.sha256(source_body.encode('utf-8')).hexdigest()
+    assert activation['source_request']['bytes'] == len(source_body.encode('utf-8'))
+
+
+def test_frontdesk_daemon_handler_blocks_invalid_source_request_artifact_without_fallback(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = _project_with_loop_capacity(tmp_path, monkeypatch)
+    (project_root / 'docs' / 'plantree' / 'plans' / 'demo-plan').mkdir(parents=True)
+    source_job_id = 'job_frontdesk_missing_artifact'
+    submitted: list[object] = []
+
+    class FakeDispatcher:
+        _layout = PathLayout(project_root)
+
+        def get(self, job_id):
+            assert job_id == source_job_id
+            return SimpleNamespace(
+                agent_name='frontdesk',
+                request=SimpleNamespace(
+                    project_id=self._layout.project_id,
+                    to_agent='frontdesk',
+                    from_actor='user',
+                    message_type='ask',
+                    body='artifact stub',
+                    body_artifact={
+                        'path': str(project_root / '.ccb' / 'ccbd' / 'text-artifacts' / 'missing.txt'),
+                        'bytes': 100,
+                        'sha256': '0' * 64,
+                    },
+                ),
+            )
+
+        def submit(self, envelope):
+            submitted.append(envelope)
+            raise AssertionError('invalid source request must not submit planner ask')
+
+    handler = build_frontdesk_forward_planner_handler(FakeDispatcher())
+    payload = handler(
+        {
+            'plan_slug': 'demo-plan',
+            'request_id': source_job_id,
+            'source_job_id': source_job_id,
+            'intake_base64': base64.b64encode(_valid_frontdesk_intake().encode('utf-8')).decode('ascii'),
+            'json_output': True,
+        }
+    )
+
+    assert payload['frontdesk_intake_status'] == 'blocked'
+    assert payload['reason'] == 'frontdesk_source_request_artifact_invalid'
+    assert payload['evidence']['source_job_id'] == source_job_id
+    assert submitted == []
+    assert not (
+        project_root / '.ccb' / 'runtime' / 'loops' / 'activations' / f'act-frontdesk-{source_job_id}.json'
+    ).exists()
+
+
+def test_frontdesk_daemon_handler_reads_and_verifies_source_request_artifact(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = _project_with_loop_capacity(tmp_path, monkeypatch)
+    (project_root / 'docs' / 'plantree' / 'plans' / 'demo-plan').mkdir(parents=True)
+    source_job_id = 'job_frontdesk_artifact_request'
+    source_body = _exact_four_surface_user_request() + ('Exact retained constraint.\n' * 160)
+    layout = PathLayout(project_root)
+    source_artifact = write_text_artifact(
+        layout,
+        text=source_body,
+        kind='ask-request',
+        owner_id=source_job_id,
+    )
+    submitted: list[object] = []
+
+    class FakeDispatcher:
+        _layout = layout
+
+        def get(self, job_id):
+            assert job_id == source_job_id
+            return SimpleNamespace(
+                agent_name='frontdesk',
+                request=SimpleNamespace(
+                    project_id=self._layout.project_id,
+                    to_agent='frontdesk',
+                    from_actor='user',
+                    message_type='ask',
+                    body='CCB ask request was stored as an artifact.',
+                    body_artifact=source_artifact,
+                ),
+            )
+
+        def submit(self, envelope):
+            submitted.append(envelope)
+            return SubmitReceipt(
+                accepted_at='2026-07-11T00:00:00Z',
+                jobs=(
+                    AcceptedJobReceipt(
+                        job_id='job_planner_artifact_request',
+                        agent_name='planner',
+                        status=JobStatus.QUEUED,
+                        accepted_at='2026-07-11T00:00:00Z',
+                    ),
+                ),
+            )
+
+    handler = build_frontdesk_forward_planner_handler(
+        FakeDispatcher(),
+        start_auto_runner=_frontdesk_auto_runner_stub([]),
+    )
+    payload = handler(
+        {
+            'plan_slug': 'demo-plan',
+            'request_id': source_job_id,
+            'source_job_id': source_job_id,
+            'intake_base64': base64.b64encode(_valid_frontdesk_intake().encode('utf-8')).decode('ascii'),
+        }
+    )
+
+    assert payload['frontdesk_intake_status'] == 'ok'
+    assert len(submitted) == 1
+    planner_artifact = submitted[0].body_artifact
+    assert planner_artifact is not None
+    planner_body = Path(str(planner_artifact['path'])).read_text(encoding='utf-8')
+    assert source_body.strip() in planner_body
+    activation = json.loads(Path(str(payload['activation_path'])).read_text(encoding='utf-8'))
+    assert activation['source_request']['sha256'] == source_artifact['sha256']
+    assert activation['source_request']['bytes'] == source_artifact['bytes']
+    assert activation['source_request']['body_artifact']['path'] == source_artifact['path']
+
+
 def test_frontdesk_session_observer_handoffs_latest_codex_intake_once(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -9789,6 +10043,116 @@ def test_frontdesk_session_observer_handoffs_latest_codex_intake_once(
     }
 
 
+def test_frontdesk_session_observer_binds_original_job_request_to_planner_handoff(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = _project_with_loop_capacity(tmp_path, monkeypatch)
+    (project_root / 'docs' / 'plantree' / 'plans' / 'demo-plan').mkdir(parents=True)
+    source_job_id = 'job_frontdesk_observed_source'
+    source_body = _exact_four_surface_user_request()
+    session_jsonl = project_root / '.ccb' / 'agents' / 'frontdesk' / 'provider-state' / 'codex' / 'session.jsonl'
+    _write(
+        session_jsonl,
+        json.dumps(
+            {
+                'type': 'response_item',
+                'payload': {
+                    'type': 'message',
+                    'role': 'user',
+                    'content': [{'type': 'input_text', 'text': f'CCB_REQ_ID: {source_job_id}\n\n{source_body}'}],
+                    'internal_chat_message_metadata_passthrough': {'turn_id': 'turn_exact_source'},
+                },
+            }
+        )
+        + '\n'
+        + json.dumps(
+            {
+                'type': 'event_msg',
+                'payload': {
+                    'type': 'task_complete',
+                    'turn_id': 'turn_exact_source',
+                    'last_agent_message': _complex_financial_report_frontdesk_intake(),
+                },
+            }
+        )
+        + '\n',
+    )
+    session_info = project_root / '.ccb' / '.codex-frontdesk-session'
+    _write_json(session_info, {'codex_session_path': str(session_jsonl)})
+    submitted: list[object] = []
+
+    class FakeRegistry:
+        def get(self, agent_name):
+            assert agent_name == 'frontdesk'
+            return SimpleNamespace(provider='codex', session_file=str(session_info))
+
+    class FakeDispatcher:
+        _layout = PathLayout(project_root)
+
+        def get(self, job_id):
+            assert job_id == source_job_id
+            return SimpleNamespace(
+                agent_name='frontdesk',
+                request=SimpleNamespace(
+                    project_id=self._layout.project_id,
+                    to_agent='frontdesk',
+                    from_actor='user',
+                    message_type='ask',
+                    body=source_body,
+                    body_artifact=None,
+                ),
+            )
+
+        def submit(self, envelope):
+            submitted.append(envelope)
+            return SubmitReceipt(
+                accepted_at='2026-07-11T00:00:00Z',
+                jobs=(
+                    AcceptedJobReceipt(
+                        job_id='job_planner_observed_source',
+                        agent_name='planner',
+                        status=JobStatus.QUEUED,
+                        accepted_at='2026-07-11T00:00:00Z',
+                    ),
+                ),
+            )
+
+    app = SimpleNamespace(
+        paths=PathLayout(project_root),
+        registry=FakeRegistry(),
+        dispatcher=FakeDispatcher(),
+        clock=lambda: '2026-07-11T00:00:00Z',
+        frontdesk_observer_start_auto_runner=_frontdesk_auto_runner_stub([]),
+    )
+
+    observed = observe_frontdesk_session(app)
+
+    assert observed['status'] == 'ok'
+    assert observed['source_job_id'] == source_job_id
+    assert len(submitted) == 1
+    envelope = submitted[0]
+    planner_body = (
+        Path(str(envelope.body_artifact['path'])).read_text(encoding='utf-8')
+        if envelope.body_artifact
+        else envelope.body
+    )
+    assert 'build_batch_manifest(items)' in planner_body
+    assert 'write_jsonl_archive(path, items)' in planner_body
+    assert 'main(argv=None) -> int' in planner_body
+    activation = json.loads(
+        (
+            project_root
+            / '.ccb'
+            / 'runtime'
+            / 'loops'
+            / 'activations'
+            / f'act-frontdesk-{source_job_id}.json'
+        ).read_text(encoding='utf-8')
+    )
+    assert activation['source_request']['source_job_id'] == source_job_id
+
+
 def test_frontdesk_forward_planner_rejects_mixed_base64_and_stdin(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -9827,6 +10191,29 @@ Implement a compact task list feature.
 
 Build a Python module and pytest coverage.
 """
+    original_request = (
+        'Implement `add_task(title) -> int` and `complete_task(task_id) -> bool`; '
+        'reject blank titles with ValueError and preserve stable integer ids.\n'
+    )
+    _write(
+        project_root / '.ccb' / 'agents' / 'frontdesk' / 'jobs.jsonl',
+        json.dumps(
+            {
+                'job_id': 'job_frontdesk',
+                'agent_name': 'frontdesk',
+                'request': {
+                    'project_id': PathLayout(project_root).project_id,
+                    'to_agent': 'frontdesk',
+                    'from_actor': 'user',
+                    'message_type': 'ask',
+                    'body': original_request,
+                    'body_artifact': None,
+                    'task_id': None,
+                },
+            }
+        )
+        + '\n',
+    )
     _write_completion_snapshot(
         project_root,
         job_id='job_frontdesk',
@@ -9871,6 +10258,8 @@ Build a Python module and pytest coverage.
     assert payload['ask'] == {'target': 'planner', 'job_id': 'job_planner', 'status': 'submitted'}
     assert submitted[0][0] == 'planner'
     assert '**task-packet.md**' in submitted[0][1]
+    assert original_request.strip() in submitted[0][1]
+    assert 'Original user request (controller-loaded source-job evidence):' in submitted[0][1]
     assert 'Do not run ccb, ccb_test, ccb plan, ccb loop, ccb ask' in submitted[0][1]
     assert plan_root.is_dir()
     assert not (plan_root / 'tasks' / 'index.json').exists()
@@ -11574,11 +11963,16 @@ Required behavior:
 - Normalize tags to lowercase, stripped, unique strings
 - Focused pytest coverage for add/list/complete/filter/validation
 
-Constraints:
+    Constraints:
 - Keep implementation small and local
 - Downstream planner/orchestrator/runner should create task authority and route execution
 - Provider/frontdesk should not implement or mutate CCB authority state
 """
+    _write_source_ask_job(
+        project_root,
+        job_id='job_real_frontdesk',
+        body='Build a small local Python task-list feature with stable ids, normalized tags, validation, and tests.\n',
+    )
     _write_completion_snapshot(
         project_root,
         job_id='job_real_frontdesk',
@@ -11640,6 +12034,11 @@ Constraints:
 - Frontdesk must not create, edit, inspect, or verify the file.
 - Planner/orchestrator/worker flow owns task authority, implementation, and verification.
 """
+    _write_source_ask_job(
+        project_root,
+        job_id='job_runtime_retest_a',
+        body='Create `docs/runtime-retest-a.md` containing a concise runtime retest note.\n',
+    )
     _write_completion_snapshot(
         project_root,
         job_id='job_runtime_retest_a',
@@ -11704,6 +12103,11 @@ Constraints:
 - Downstream planner/orchestrator/runner should create task authority and route execution.
 - Provider must not run shell commands, mutate CCB authority, create/import/update plans or tasks, or run CCB/runtime/status/cleanup commands.
 """
+    _write_source_ask_job(
+        project_root,
+        job_id='job_labeled_frontdesk',
+        body='Build a small Python task-list module with add/list/complete/filter behavior and focused tests.\n',
+    )
     _write_completion_snapshot(
         project_root,
         job_id='job_labeled_frontdesk',
@@ -11753,6 +12157,11 @@ Routing recommendation: Route to blocked before implementation or worker executi
 
 Prohibited actions: Do not fake credentials, bypass the private endpoint, or implement simulated success.
 """
+    _write_source_ask_job(
+        project_root,
+        job_id='job_structured_blocked_frontdesk',
+        body='Validate the private production billing integration using `PRIVATE_BILLING_ROUTE_TOKEN`.\n',
+    )
     _write_completion_snapshot(
         project_root,
         job_id='job_structured_blocked_frontdesk',

@@ -56,6 +56,14 @@ def frontdesk_intake(context, command, services=None) -> dict[str, object]:
     if request_id_result.get('status') != 'ok':
         return _blocked_payload(context, reason=str(request_id_result.get('reason')), evidence=request_id_result)
     request_id = str(request_id_result['request_id'])
+    source_request_result = _resolve_source_request(context, command, deps)
+    if source_request_result.get('status') == 'blocked':
+        return _blocked_payload(
+            context,
+            reason=str(source_request_result.get('reason') or 'frontdesk_source_request_invalid'),
+            evidence=source_request_result,
+        )
+    source_request_text = str(source_request_result.get('text') or '')
     digest = hashlib.sha256(intake_text.encode('utf-8')).hexdigest()
     activation_id = f'act-frontdesk-{request_id}'
     activation_path = _activation_path(context, activation_id)
@@ -66,6 +74,7 @@ def frontdesk_intake(context, command, services=None) -> dict[str, object]:
         activation_path=activation_path,
         activation=existing,
         intake_sha256=digest,
+        source_request_sha256=_optional_digest(source_request_result.get('sha256')),
         plan_slug=plan_slug,
     )
     activation = _new_activation(
@@ -75,6 +84,7 @@ def frontdesk_intake(context, command, services=None) -> dict[str, object]:
         request_id=request_id,
         intake_text=intake_text,
         intake_sha256=digest,
+        source_request=source_request_result,
     )
     atomic_write_json(activation_path, activation)
     summary = deps.submit_ask(
@@ -83,11 +93,15 @@ def frontdesk_intake(context, command, services=None) -> dict[str, object]:
             project=None,
             target='planner',
             sender='frontdesk',
-            message=planner_from_frontdesk_intake_message(activation, intake_text),
+            message=planner_from_frontdesk_intake_message(
+                activation,
+                intake_text,
+                original_request=source_request_text,
+            ),
             task_id=activation_id,
             compact=True,
             silence=True,
-            inline_request=True,
+            inline_request=False,
         ),
     )
     job = _single_job(summary.jobs, target='planner')
@@ -232,6 +246,7 @@ def _handle_existing_activation(
     activation_path: Path,
     activation: dict[str, object],
     intake_sha256: str,
+    source_request_sha256: str | None,
     plan_slug: str,
 ) -> dict[str, object]:
     if str(activation.get('plan_slug') or '') != plan_slug:
@@ -252,6 +267,22 @@ def _handle_existing_activation(
                 'activation_path': str(activation_path),
                 'existing_intake_sha256': activation.get('intake_sha256'),
                 'incoming_intake_sha256': intake_sha256,
+            },
+        )
+    existing_source_request = activation.get('source_request')
+    existing_source_sha256 = (
+        str(existing_source_request.get('sha256') or '').strip()
+        if isinstance(existing_source_request, dict)
+        else ''
+    )
+    if source_request_sha256 and existing_source_sha256 != source_request_sha256:
+        return _blocked_payload(
+            context,
+            reason='frontdesk_activation_source_request_conflict',
+            evidence={
+                'activation_path': str(activation_path),
+                'existing_source_request_sha256': existing_source_sha256 or None,
+                'incoming_source_request_sha256': source_request_sha256,
             },
         )
     ask = activation.get('ask') if isinstance(activation.get('ask'), dict) else {}
@@ -278,9 +309,12 @@ def _new_activation(
     request_id: str,
     intake_text: str,
     intake_sha256: str,
+    source_request: dict[str, object],
 ) -> dict[str, object]:
-    planner_contract = planner_contract_for_frontdesk_text(intake_text)
-    expected_task_ids = planner_expected_task_ids_for_frontdesk_text(intake_text)
+    original_request = str(source_request.get('text') or '')
+    semantic_input = '\n\n'.join(part for part in (original_request, intake_text) if part)
+    planner_contract = planner_contract_for_frontdesk_text(semantic_input)
+    expected_task_ids = planner_expected_task_ids_for_frontdesk_text(semantic_input)
     script_write_rules = planner_script_write_rules_for_contract(
         planner_contract,
         expected_task_ids=expected_task_ids,
@@ -301,7 +335,7 @@ def _new_activation(
         'request_id': request_id,
         'intake_sha256': intake_sha256,
         'source_job': {
-            'job_id': request_id,
+            'job_id': str(source_request.get('source_job_id') or request_id),
             'agent_name': 'frontdesk',
             'terminal_status': 'forwarded',
             'finished_at': None,
@@ -312,6 +346,7 @@ def _new_activation(
             'bytes': len(intake_text.encode('utf-8')),
             'preview': intake_text.strip()[:400],
         },
+        'source_request': _source_request_evidence(source_request),
         'planner_contract': planner_contract,
         'required_next_output': required_next_output,
         'script_write_rules': script_write_rules,
@@ -397,12 +432,79 @@ def _utc_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace('+00:00', 'Z')
 
 
+def _resolve_source_request(context, command, deps) -> dict[str, object]:
+    source_job_id = str(getattr(command, 'source_job_id', None) or '').strip()
+    if not source_job_id:
+        return {'status': 'not_requested', 'text': ''}
+    result = deps.resolve_source_request(context, source_job_id)
+    if not isinstance(result, dict):
+        return {
+            'status': 'blocked',
+            'reason': 'frontdesk_source_request_resolver_invalid',
+            'source_job_id': source_job_id,
+        }
+    result = dict(result)
+    if str(result.get('status') or '') != 'ok':
+        result['status'] = 'blocked'
+        result.setdefault('reason', 'frontdesk_source_request_unavailable')
+        result.setdefault('source_job_id', source_job_id)
+        return result
+    text = str(result.get('text') or '')
+    if not text.strip():
+        return {
+            'status': 'blocked',
+            'reason': 'frontdesk_source_request_empty',
+            'source_job_id': source_job_id,
+        }
+    data = text.encode('utf-8')
+    result['source_job_id'] = source_job_id
+    result['text'] = text
+    result['bytes'] = len(data)
+    result['sha256'] = hashlib.sha256(data).hexdigest()
+    result['preview'] = text.strip()[:400]
+    return result
+
+
+def _source_request_evidence(source_request: dict[str, object]) -> dict[str, object] | None:
+    if str(source_request.get('status') or '') != 'ok':
+        return None
+    return {
+        key: source_request.get(key)
+        for key in (
+            'source_job_id',
+            'agent_name',
+            'project_id',
+            'to_agent',
+            'from_actor',
+            'message_type',
+            'bytes',
+            'sha256',
+            'preview',
+            'body_artifact',
+        )
+    }
+
+
+def _optional_digest(value) -> str | None:
+    text = str(value or '').strip()
+    return text or None
+
+
 def _deps(services):
     services = services or SimpleNamespace()
     return SimpleNamespace(
         submit_ask=getattr(services, 'submit_ask', submit_ask),
         start_auto_runner=getattr(services, 'start_auto_runner', _start_auto_runner),
+        resolve_source_request=getattr(services, 'resolve_source_request', _missing_source_request),
     )
+
+
+def _missing_source_request(_context, source_job_id: str) -> dict[str, object]:
+    return {
+        'status': 'blocked',
+        'reason': 'frontdesk_source_request_resolver_unavailable',
+        'source_job_id': source_job_id,
+    }
 
 
 def _start_auto_runner(context, *, activation_id: str, wait_job_id: str) -> dict[str, object]:

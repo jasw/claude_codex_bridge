@@ -13,6 +13,7 @@ from cli.models import ParsedAskCommand
 from storage.atomic import atomic_write_json, atomic_write_text
 
 from .ask import submit_ask
+from .frontdesk_source_request import resolve_frontdesk_source_request
 from .loop_orchestration_bundle import (
     ORCHESTRATION_BUNDLE_CANDIDATE_SCHEMA,
     build_single_node_candidate,
@@ -186,6 +187,7 @@ def _consume_job(context, command, deps, *, job_id: str, activation: dict[str, o
 
 def _consume_frontdesk(context, command, deps, *, snapshot: dict[str, object], reply: str) -> dict[str, object]:
     job_id = str(snapshot.get('job_id') or '')
+    agent_name = str(snapshot.get('agent_name') or 'frontdesk')
     existing_handoff = _frontdesk_handoff_marker(context, job_id)
     if existing_handoff is not None:
         return _consume_existing_frontdesk_handoff(context, snapshot=snapshot, reply=reply, handoff=existing_handoff)
@@ -198,12 +200,27 @@ def _consume_frontdesk(context, command, deps, *, snapshot: dict[str, object], r
             reason='frontdesk_reply_missing_required_anchors',
             evidence={'missing_fields': missing},
         )
+    source_request = _frontdesk_source_request_for_job(
+        context,
+        job_id=job_id,
+        agent_name=agent_name,
+    )
+    if source_request.get('status') != 'ok':
+        return _blocked_payload(
+            context,
+            job_id=job_id,
+            agent_name=agent_name,
+            reason=str(source_request.get('reason') or 'frontdesk_source_request_unavailable'),
+            evidence=source_request,
+        )
+    original_request = str(source_request.get('text') or '')
     plan_slug, plan_result = _resolve_or_bootstrap_plan(context, command)
     if plan_slug is None:
         return plan_result
     activation_id = f'act-{uuid4().hex[:12]}'
-    planner_contract = planner_contract_for_frontdesk_text(reply)
-    expected_task_ids = planner_expected_task_ids_for_frontdesk_text(reply)
+    semantic_input = '\n\n'.join(part for part in (original_request, reply) if part)
+    planner_contract = planner_contract_for_frontdesk_text(semantic_input)
+    expected_task_ids = planner_expected_task_ids_for_frontdesk_text(semantic_input)
     activation = {
         'schema_version': 1,
         'record_type': 'ccb_loop_frontdesk_planner_activation',
@@ -213,6 +230,7 @@ def _consume_frontdesk(context, command, deps, *, snapshot: dict[str, object], r
         'action': 'activate_planner_from_frontdesk',
         'plan_slug': plan_slug,
         'source_job': _job_trace(snapshot, reply),
+        'source_request': _frontdesk_source_request_evidence(source_request),
         'planner_contract': planner_contract,
         'required_next_output': planner_required_output_for_contract(
             planner_contract,
@@ -239,10 +257,14 @@ def _consume_frontdesk(context, command, deps, *, snapshot: dict[str, object], r
             project=None,
             target='planner',
             sender='system',
-            message=_planner_from_frontdesk_message(activation, reply),
+            message=_planner_from_frontdesk_message(
+                activation,
+                reply,
+                original_request=original_request,
+            ),
             task_id=activation_id,
             compact=True,
-            inline_request=True,
+            inline_request=False,
         ),
     )
     job = _single_job(summary.jobs, target='planner')
@@ -1105,6 +1127,60 @@ def _job_request_task_id(context, *, job_id: str, agent_name: str) -> str:
         task_id = str(request.get('task_id') or '').strip()
         return task_id if _SEGMENT_RE.fullmatch(task_id) else ''
     return ''
+
+
+def _frontdesk_source_request_for_job(context, *, job_id: str, agent_name: str) -> dict[str, object]:
+    job_id = str(job_id or '').strip()
+    agent_name = str(agent_name or '').strip()
+    if not job_id or agent_name != 'frontdesk':
+        return {
+            'status': 'blocked',
+            'reason': 'frontdesk_source_job_identity_mismatch',
+            'source_job_id': job_id,
+            'agent_name': agent_name,
+        }
+    path = Path(context.project.project_root) / '.ccb' / 'agents' / agent_name / 'jobs.jsonl'
+    try:
+        lines = path.read_text(encoding='utf-8').splitlines()
+    except FileNotFoundError:
+        return {
+            'status': 'blocked',
+            'reason': 'frontdesk_source_job_missing',
+            'source_job_id': job_id,
+        }
+    for line in reversed(lines):
+        if not line.strip():
+            continue
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(record, dict) or str(record.get('job_id') or '').strip() != job_id:
+            continue
+        return resolve_frontdesk_source_request(context, source_job_id=job_id, job=record)
+    return {
+        'status': 'blocked',
+        'reason': 'frontdesk_source_job_missing',
+        'source_job_id': job_id,
+    }
+
+
+def _frontdesk_source_request_evidence(source_request: dict[str, object]) -> dict[str, object]:
+    return {
+        key: source_request.get(key)
+        for key in (
+            'source_job_id',
+            'agent_name',
+            'project_id',
+            'to_agent',
+            'from_actor',
+            'message_type',
+            'bytes',
+            'sha256',
+            'preview',
+            'body_artifact',
+        )
+    }
 
 
 def _consume_task_detailer(
@@ -2662,20 +2738,39 @@ def _frontdesk_text_requests_phase6b_l1_l4_route_mix(text: str) -> bool:
     )
 
 
-def _planner_from_frontdesk_message(activation: dict[str, object], frontdesk_reply: str) -> str:
+def _planner_from_frontdesk_message(
+    activation: dict[str, object],
+    frontdesk_reply: str,
+    *,
+    original_request: str = '',
+) -> str:
     planner_contract = _planner_contract_from_activation(activation, reply=frontdesk_reply)
     if planner_contract == _PLANNER_CONTRACT_TASK_SET:
-        return _planner_task_set_from_frontdesk_message(activation, frontdesk_reply)
-    return _planner_single_task_from_frontdesk_message(activation, frontdesk_reply)
+        return _planner_task_set_from_frontdesk_message(
+            activation,
+            frontdesk_reply,
+            original_request=original_request,
+        )
+    return _planner_single_task_from_frontdesk_message(
+        activation,
+        frontdesk_reply,
+        original_request=original_request,
+    )
 
 
-def _planner_single_task_from_frontdesk_message(activation: dict[str, object], frontdesk_reply: str) -> str:
+def _planner_single_task_from_frontdesk_message(
+    activation: dict[str, object],
+    frontdesk_reply: str,
+    *,
+    original_request: str = '',
+) -> str:
     return (
         'Role: planner\n'
         f"Activation id: {activation.get('activation_id')}\n"
         f"Plan: {activation.get('plan_slug')}\n"
         f"Source frontdesk job: {(activation.get('source_job') or {}).get('job_id')}\n\n"
         f'Planner contract: {_PLANNER_CONTRACT_SINGLE_TASK}\n\n'
+        f'{_original_request_evidence(original_request)}'
         'Frontdesk intake evidence:\n'
         f'{frontdesk_reply.strip()}\n\n'
         'Required reply-only output. Use these exact labels and fenced blocks; do not use alternate headings, '
@@ -2720,7 +2815,12 @@ def _planner_single_task_from_frontdesk_message(activation: dict[str, object], f
     )
 
 
-def _planner_task_set_from_frontdesk_message(activation: dict[str, object], frontdesk_reply: str) -> str:
+def _planner_task_set_from_frontdesk_message(
+    activation: dict[str, object],
+    frontdesk_reply: str,
+    *,
+    original_request: str = '',
+) -> str:
     expected_task_ids = _expected_task_ids_from_activation(activation)
     exact_id_rules = ''
     if expected_task_ids:
@@ -2736,6 +2836,7 @@ def _planner_task_set_from_frontdesk_message(activation: dict[str, object], fron
         f"Plan: {activation.get('plan_slug')}\n"
         f"Source frontdesk job: {(activation.get('source_job') or {}).get('job_id')}\n\n"
         f'Planner contract: {_PLANNER_CONTRACT_TASK_SET}\n\n'
+        f'{_original_request_evidence(original_request)}'
         'Frontdesk intake evidence:\n'
         f'{frontdesk_reply.strip()}\n\n'
         'Required reply-only output for this multi-task/route-mix intake. Use exactly one fenced '
@@ -2783,8 +2884,31 @@ def frontdesk_intake_missing_fields(reply: str) -> list[str]:
     return _frontdesk_intake_missing_fields(reply)
 
 
-def planner_from_frontdesk_intake_message(activation: dict[str, object], frontdesk_reply: str) -> str:
-    return _planner_from_frontdesk_message(activation, frontdesk_reply)
+def planner_from_frontdesk_intake_message(
+    activation: dict[str, object],
+    frontdesk_reply: str,
+    *,
+    original_request: str = '',
+) -> str:
+    return _planner_from_frontdesk_message(
+        activation,
+        frontdesk_reply,
+        original_request=original_request,
+    )
+
+
+def _original_request_evidence(original_request: str) -> str:
+    text = str(original_request or '').strip()
+    if not text:
+        return ''
+    return (
+        'Original user request (controller-loaded source-job evidence):\n'
+        '<original-user-request>\n'
+        f'{text}\n'
+        '</original-user-request>\n'
+        'Preserve every concrete requirement, signature, field, path, CLI contract, error behavior, and constraint '
+        'from this source. Use frontdesk intake for macro routing context; never let its compression erase source details.\n\n'
+    )
 
 
 def _load_job_snapshot(context, job_id: str) -> dict[str, object] | None:
