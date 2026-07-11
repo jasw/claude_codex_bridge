@@ -2,18 +2,30 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 
 import 'package:ccb_mobile/ccb_mobile.dart';
 
 void main() {
-  test('scanner controller uses plugin auto start for camera lifecycle', () {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
+  late MobileScannerPlatform originalPlatform;
+
+  setUp(() {
+    originalPlatform = MobileScannerPlatform.instance;
+  });
+
+  tearDown(() {
+    MobileScannerPlatform.instance = originalPlatform;
+  });
+
+  test('scanner controller uses one managed QR-only camera lifecycle', () {
     final controller = gatewayPairingScannerController();
     addTearDown(controller.dispose);
 
-    expect(controller.autoStart, isTrue);
+    expect(controller.autoStart, isFalse);
+    expect(controller.detectionSpeed, DetectionSpeed.noDuplicates);
     expect(controller.formats, [BarcodeFormat.qrCode]);
   });
 
@@ -52,10 +64,23 @@ void main() {
     );
   });
 
-  testWidgets('native scanner result closes with pairing payload', (
+  test('capture extraction skips empty barcode values', () {
+    const capture = BarcodeCapture(
+      barcodes: [
+        Barcode(rawValue: '  '),
+        Barcode(rawValue: '  pairing payload  '),
+      ],
+    );
+
+    expect(gatewayPairingQrTextFromCapture(capture), 'pairing payload');
+    expect(gatewayPairingQrTextFromCapture(null), isNull);
+  });
+
+  testWidgets('embedded scanner returns a valid pairing payload', (
     tester,
   ) async {
-    final scanner = _FakeQrScanner(cameraResult: _validPairingQrText());
+    final platform = _FakeMobileScannerPlatform();
+    MobileScannerPlatform.instance = platform;
     GatewayPairingPayload? seenPairing;
 
     await tester.pumpWidget(
@@ -66,9 +91,7 @@ void main() {
               onPressed: () async {
                 seenPairing = await Navigator.of(context).push(
                   MaterialPageRoute<GatewayPairingPayload>(
-                    builder:
-                        (context) =>
-                            GatewayPairingScannerScreen(qrScanner: scanner),
+                    builder: (context) => const GatewayPairingScannerScreen(),
                   ),
                 );
               },
@@ -80,124 +103,9 @@ void main() {
     );
 
     await tester.tap(find.text('scan'));
-    await tester.pump();
     await tester.pumpAndSettle();
 
-    expect(scanner.cameraCalls, 1);
-    expect(scanner.cancelCalls, greaterThanOrEqualTo(1));
-    expect(seenPairing?.pairingCode, 'qr-code');
-    expect(seenPairing?.gatewayUrl.toString(), 'http://127.0.0.1:8787');
-  });
-
-  testWidgets('native scanner cancels stale native session before opening', (
-    tester,
-  ) async {
-    final scanner = _FakeQrScanner(cameraResult: _validPairingQrText());
-
-    await tester.pumpWidget(
-      MaterialApp(home: GatewayPairingScannerScreen(qrScanner: scanner)),
-    );
-    await tester.pump();
-    await tester.pumpAndSettle();
-
-    expect(scanner.cancelCalls, greaterThanOrEqualTo(1));
-    expect(scanner.cameraCalls, 1);
-  });
-
-  testWidgets('native scanner still opens when cancel bridge is missing', (
-    tester,
-  ) async {
-    final scanner = _FakeQrScanner(
-      cameraResult: _validPairingQrText(),
-      cancelError: MissingPluginException(),
-    );
-    GatewayPairingPayload? seenPairing;
-
-    await tester.pumpWidget(
-      MaterialApp(
-        home: Builder(
-          builder: (context) {
-            return ElevatedButton(
-              onPressed: () async {
-                seenPairing = await Navigator.of(context).push(
-                  MaterialPageRoute<GatewayPairingPayload>(
-                    builder:
-                        (context) =>
-                            GatewayPairingScannerScreen(qrScanner: scanner),
-                  ),
-                );
-              },
-              child: const Text('scan'),
-            );
-          },
-        ),
-      ),
-    );
-
-    await tester.tap(find.text('scan'));
-    await tester.pump();
-    await tester.pumpAndSettle();
-
-    expect(scanner.cancelCalls, greaterThanOrEqualTo(1));
-    expect(scanner.cameraCalls, 1);
-    expect(seenPairing?.pairingCode, 'qr-code');
-  });
-
-  testWidgets('image scan remains available when cancel bridge is missing', (
-    tester,
-  ) async {
-    final scanner = _FakeQrScanner(cancelError: MissingPluginException());
-
-    await tester.pumpWidget(
-      MaterialApp(home: GatewayPairingScannerScreen(qrScanner: scanner)),
-    );
-    await tester.pump();
-    await tester.pumpAndSettle();
-
-    expect(
-      find.byKey(const ValueKey('gateway-pairing-image-scan-button')),
-      findsOneWidget,
-    );
-    expect(tester.takeException(), isNull);
-  });
-
-  testWidgets('native scanner cancels pending native session on dispose', (
-    tester,
-  ) async {
-    final scanner = _FakeQrScanner(cameraCompleter: Completer<String?>());
-
-    await tester.pumpWidget(
-      MaterialApp(home: GatewayPairingScannerScreen(qrScanner: scanner)),
-    );
-    await tester.pump();
-
-    expect(scanner.cancelCalls, 1);
-    expect(scanner.cameraCalls, 1);
-
-    await tester.pumpWidget(const MaterialApp(home: SizedBox.shrink()));
-    await tester.pump();
-
-    expect(scanner.cancelCalls, 2);
-  });
-
-  testWidgets('native scanner cancel exposes image and manual paths', (
-    tester,
-  ) async {
-    final scanner = _FakeQrScanner();
-
-    await tester.pumpWidget(
-      MaterialApp(home: GatewayPairingScannerScreen(qrScanner: scanner)),
-    );
-    await tester.pump();
-    await tester.pumpAndSettle();
-
-    expect(scanner.cameraCalls, 1);
-    expect(
-      find.text(
-        'Scan canceled. Try camera, choose an image, or use manual setup.',
-      ),
-      findsOneWidget,
-    );
+    expect(find.byType(MobileScanner), findsOneWidget);
     expect(
       find.byKey(const ValueKey('gateway-pairing-image-scan-button')),
       findsOneWidget,
@@ -206,57 +114,39 @@ void main() {
       find.byKey(const ValueKey('gateway-pairing-scan-manual-button')),
       findsOneWidget,
     );
+    expect(
+      find.byKey(const ValueKey('gateway-pairing-native-scan-button')),
+      findsNothing,
+    );
+
+    platform.addBarcode(
+      BarcodeCapture(barcodes: [Barcode(rawValue: _validPairingQrText())]),
+    );
+    await tester.pumpAndSettle();
+
+    expect(platform.startCalls, 1);
+    expect(seenPairing?.pairingCode, 'qr-code');
+    expect(seenPairing?.gatewayUrl.toString(), 'http://127.0.0.1:8787');
   });
 
-  testWidgets('camera error panel offers manual setup fallback', (
+  testWidgets('camera error panel keeps image and manual paths available', (
     tester,
   ) async {
+    var retried = false;
+    var imageSelected = false;
     var manualSelected = false;
 
     await tester.pumpWidget(
       MaterialApp(
         home: GatewayPairingCameraErrorPanel(
           message:
-              'Camera permission denied. Enable camera access for CCB Mobile or use manual setup.',
-          onUseManualSetup: () {
-            manualSelected = true;
-          },
-        ),
-      ),
-    );
-
-    expect(
-      find.byKey(const ValueKey('gateway-pairing-scan-camera-error')),
-      findsOneWidget,
-    );
-    expect(find.text('Camera unavailable'), findsOneWidget);
-    expect(
-      find.text(
-        'Camera permission denied. Enable camera access for CCB Mobile or use manual setup.',
-      ),
-      findsOneWidget,
-    );
-
-    await tester.tap(
-      find.byKey(const ValueKey('gateway-pairing-scan-manual-button')),
-    );
-
-    expect(manualSelected, isTrue);
-  });
-
-  testWidgets('camera error panel can retry and constrains long details', (
-    tester,
-  ) async {
-    var retried = false;
-    var manualSelected = false;
-
-    await tester.pumpWidget(
-      MaterialApp(
-        home: GatewayPairingCameraErrorPanel(
-          message: 'Camera could not be opened. Try again or use manual setup.',
+              'Camera permission denied. Enable camera access for CCB Mobile or use image/manual setup.',
           onRetry: () {
             retried = true;
           },
+          onScanImage: () {
+            imageSelected = true;
+          },
           onUseManualSetup: () {
             manualSelected = true;
           },
@@ -264,39 +154,23 @@ void main() {
       ),
     );
 
-    expect(tester.takeException(), isNull);
-    expect(
-      find.byKey(const ValueKey('gateway-pairing-scan-retry-button')),
-      findsOneWidget,
-    );
-
+    expect(find.text('Camera unavailable'), findsOneWidget);
     await tester.tap(
       find.byKey(const ValueKey('gateway-pairing-scan-retry-button')),
     );
-    expect(retried, isTrue);
-
+    await tester.tap(
+      find.byKey(const ValueKey('gateway-pairing-image-scan-button')),
+    );
     await tester.tap(
       find.byKey(const ValueKey('gateway-pairing-scan-manual-button')),
     );
+
+    expect(retried, isTrue);
+    expect(imageSelected, isTrue);
     expect(manualSelected, isTrue);
   });
 
-  test('camera error message hides native implementation details', () {
-    final message = gatewayPairingCameraErrorMessage(
-      Exception(
-        "Attempt to invoke virtual method 'w4.c w4.b.a(s4.b)' on a null object reference",
-      ),
-    );
-
-    expect(
-      message,
-      'Camera could not be opened. Try again or use manual setup.',
-    );
-    expect(message, isNot(contains('null object reference')));
-    expect(message, isNot(contains('w4.')));
-  });
-
-  test('camera permission error has actionable message', () {
+  test('camera permission error has actionable image/manual alternatives', () {
     final message = gatewayPairingCameraErrorMessage(
       const MobileScannerException(
         errorCode: MobileScannerErrorCode.permissionDenied,
@@ -304,95 +178,64 @@ void main() {
     );
 
     expect(message, contains('Camera permission denied'));
-    expect(message, contains('manual setup'));
+    expect(message, contains('image/manual setup'));
   });
 
-  test('native scanner error message is actionable', () {
-    final message = gatewayPairingNativeScannerErrorMessage(
-      PlatformException(
-        code: 'scanner_unavailable',
-        message: 'w4 null object reference',
-      ),
+  test('image scanner errors do not expose implementation details', () {
+    final message = gatewayPairingImageScannerErrorMessage(
+      const MobileScannerBarcodeException('ML Kit internal failure'),
     );
 
-    expect(
-      message,
-      'Android scanner could not be opened. Try image scan or manual setup.',
-    );
-    expect(message, isNot(contains('w4')));
-  });
-
-  test('method channel scanner sends image bytes to native bridge', () async {
-    const channel = MethodChannel('test_pairing_scanner');
-    final calls = <MethodCall>[];
-    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
-        .setMockMethodCallHandler(channel, (call) async {
-          calls.add(call);
-          return 'qr';
-        });
-    addTearDown(() {
-      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
-          .setMockMethodCallHandler(channel, null);
-    });
-
-    final scanner = MethodChannelGatewayPairingQrScanner(channel: channel);
-
-    final result = await scanner.scanImageBytes(Uint8List.fromList([1, 2, 3]));
-
-    expect(result, 'qr');
-    expect(calls.single.method, 'scanPairingQrImageBytes');
-    expect(calls.single.arguments, {
-      'bytes': Uint8List.fromList([1, 2, 3]),
-    });
+    expect(message, 'That image could not be decoded as a QR code.');
+    expect(message, isNot(contains('ML Kit')));
   });
 }
 
-class _FakeQrScanner implements GatewayPairingQrScanner {
-  _FakeQrScanner({this.cameraResult, this.cameraCompleter, this.cancelError});
-
-  final String? cameraResult;
-  final Completer<String?>? cameraCompleter;
-  final Object? cancelError;
-  var cameraCalls = 0;
-  var imageCalls = 0;
-  var cancelCalls = 0;
+class _FakeMobileScannerPlatform extends MobileScannerPlatform {
+  final StreamController<BarcodeCapture> _barcodeController =
+      StreamController<BarcodeCapture>.broadcast();
+  var startCalls = 0;
 
   @override
-  bool get usesNativeCamera => true;
+  Stream<BarcodeCapture?> get barcodesStream => _barcodeController.stream;
 
   @override
-  Future<String?> scanCamera() async {
-    cameraCalls += 1;
-    if (cameraCompleter != null) {
-      return cameraCompleter!.future;
-    }
-    return cameraResult;
+  Stream<TorchState> get torchStateStream =>
+      Stream.value(TorchState.unavailable);
+
+  @override
+  Stream<double> get zoomScaleStateStream => Stream.value(1);
+
+  @override
+  Future<MobileScannerViewAttributes> start(StartOptions startOptions) async {
+    startCalls += 1;
+    expect(startOptions.formats, [BarcodeFormat.qrCode]);
+    return const MobileScannerViewAttributes(
+      cameraDirection: CameraFacing.back,
+      currentTorchMode: TorchState.unavailable,
+      size: Size(1080, 1920),
+      numberOfCameras: 1,
+    );
   }
 
   @override
-  Future<String?> scanImage(String path) async {
-    imageCalls += 1;
-    return null;
+  Future<void> stop() async {}
+
+  @override
+  Widget buildCameraView() {
+    return const ColoredBox(
+      key: ValueKey('fake-camera-preview'),
+      color: Colors.black,
+    );
+  }
+
+  void addBarcode(BarcodeCapture capture) {
+    _barcodeController.add(capture);
   }
 
   @override
-  Future<String?> scanImageBytes(Uint8List bytes) async {
-    imageCalls += 1;
-    return null;
-  }
-
-  @override
-  Future<void> cancelActiveScan() async {
-    cancelCalls += 1;
-    final error = cancelError;
-    if (error != null) {
-      throw error;
-    }
-    if (cameraCalls > 0 &&
-        cameraCompleter != null &&
-        !cameraCompleter!.isCompleted) {
-      cameraCompleter!.complete(null);
-    }
+  Future<void> dispose() async {
+    await _barcodeController.close();
   }
 }
 

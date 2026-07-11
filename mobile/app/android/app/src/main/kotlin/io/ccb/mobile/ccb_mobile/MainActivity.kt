@@ -9,18 +9,8 @@ import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.graphics.BitmapFactory
 import android.net.Uri
 import android.os.Build
-import com.google.zxing.BinaryBitmap
-import com.google.zxing.DecodeHintType
-import com.google.zxing.LuminanceSource
-import com.google.zxing.MultiFormatReader
-import com.google.zxing.RGBLuminanceSource
-import com.google.zxing.BarcodeFormat as ZxingBarcodeFormat
-import com.google.zxing.common.GlobalHistogramBinarizer
-import com.google.zxing.common.HybridBinarizer
-import com.google.zxing.integration.android.IntentIntegrator
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
@@ -30,47 +20,9 @@ class MainActivity : FlutterActivity() {
     private var pendingNotificationTapPayload: String? = null
     private var notificationTapHandlerReady = false
     private var pendingPermissionResult: MethodChannel.Result? = null
-    private var pendingPairingScanResult: MethodChannel.Result? = null
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
-        MethodChannel(
-            flutterEngine.dartExecutor.binaryMessenger,
-            "io.ccb.mobile/pairing_scanner"
-        ).setMethodCallHandler { call, result ->
-            when (call.method) {
-                "scanPairingQr" -> scanPairingQr(result)
-                "scanPairingQrImage" -> {
-                    val path = call.argument<String>("path")
-                    if (path.isNullOrBlank()) {
-                        result.error(
-                            "image_decode_failed",
-                            "Image path is required.",
-                            null
-                        )
-                        return@setMethodCallHandler
-                    }
-                    scanPairingQrImage(path, result)
-                }
-                "scanPairingQrImageBytes" -> {
-                    val bytes = call.argument<ByteArray>("bytes")
-                    if (bytes == null || bytes.isEmpty()) {
-                        result.error(
-                            "image_decode_failed",
-                            "Image bytes are required.",
-                            null
-                        )
-                        return@setMethodCallHandler
-                    }
-                    scanPairingQrImageBytes(bytes, result)
-                }
-                "cancelPairingQrScan" -> {
-                    cancelPairingQrScan()
-                    result.success(true)
-                }
-                else -> result.notImplemented()
-            }
-        }
         MethodChannel(
             flutterEngine.dartExecutor.binaryMessenger,
             "io.ccb.mobile/external_url"
@@ -158,171 +110,12 @@ class MainActivity : FlutterActivity() {
     ) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (requestCode != postNotificationsRequestCode) {
-            if (requestCode == pairingCameraRequestCode) {
-                val granted = grantResults.isNotEmpty() &&
-                    grantResults[0] == PackageManager.PERMISSION_GRANTED
-                if (granted) {
-                    startZxingPairingScan()
-                } else {
-                    completePairingScanError(
-                        "scanner_unavailable",
-                        "Camera permission denied."
-                    )
-                }
-            }
             return
         }
         val granted = grantResults.isNotEmpty() &&
             grantResults[0] == PackageManager.PERMISSION_GRANTED
         pendingPermissionResult?.success(granted)
         pendingPermissionResult = null
-    }
-
-    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
-        val scanResult = IntentIntegrator.parseActivityResult(requestCode, resultCode, data)
-        if (scanResult != null && pendingPairingScanResult != null) {
-            completePairingScan(scanResult.contents)
-            return
-        }
-        super.onActivityResult(requestCode, resultCode, data)
-    }
-
-    private fun scanPairingQr(result: MethodChannel.Result) {
-        if (pendingPairingScanResult != null) {
-            result.error("scanner_busy", "Scanner is already open.", null)
-            return
-        }
-        pendingPairingScanResult = result
-        startZxingPairingScan()
-    }
-
-    private fun startZxingPairingScan() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M &&
-            checkSelfPermission(Manifest.permission.CAMERA) !=
-            PackageManager.PERMISSION_GRANTED
-        ) {
-            requestPermissions(
-                arrayOf(Manifest.permission.CAMERA),
-                pairingCameraRequestCode
-            )
-            return
-        }
-        try {
-            IntentIntegrator(this).apply {
-                setCaptureActivity(CcbZxingCaptureActivity::class.java)
-                setDesiredBarcodeFormats(IntentIntegrator.QR_CODE)
-                setPrompt("Scan the CCB mobile pairing QR code")
-                setBeepEnabled(false)
-                setOrientationLocked(true)
-                setBarcodeImageEnabled(false)
-            }.initiateScan()
-        } catch (error: ActivityNotFoundException) {
-            completePairingScanError(
-                "scanner_unavailable",
-                error.message ?: "Embedded scanner could not be opened."
-            )
-        } catch (error: SecurityException) {
-            completePairingScanError(
-                "scanner_unavailable",
-                error.message ?: "Camera permission denied."
-            )
-        } catch (error: RuntimeException) {
-            completePairingScanError(
-                "scanner_unavailable",
-                error.message ?: "Embedded scanner could not be opened."
-            )
-        }
-    }
-
-    private fun scanPairingQrImage(path: String, result: MethodChannel.Result) {
-        try {
-            val bitmap = BitmapFactory.decodeFile(path)
-            if (bitmap == null) {
-                result.error("image_decode_failed", "Image could not be decoded.", null)
-                return
-            }
-            result.success(decodePairingQrBitmap(bitmap))
-        } catch (error: RuntimeException) {
-            result.error(
-                "image_decode_failed",
-                error.message ?: "Image could not be decoded.",
-                null
-            )
-        }
-    }
-
-    private fun scanPairingQrImageBytes(bytes: ByteArray, result: MethodChannel.Result) {
-        try {
-            val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
-            if (bitmap == null) {
-                result.error("image_decode_failed", "Image could not be decoded.", null)
-                return
-            }
-            result.success(decodePairingQrBitmap(bitmap))
-        } catch (error: RuntimeException) {
-            result.error(
-                "image_decode_failed",
-                error.message ?: "Image could not be decoded.",
-                null
-            )
-        }
-    }
-
-    private fun decodePairingQrBitmap(bitmap: android.graphics.Bitmap): String? {
-        val width = bitmap.width
-        val height = bitmap.height
-        val pixels = IntArray(width * height)
-        bitmap.getPixels(pixels, 0, width, 0, 0, width, height)
-        val source = RGBLuminanceSource(width, height, pixels)
-        return decodePairingQrSource(source)
-    }
-
-    private fun decodePairingQrSource(source: LuminanceSource): String? {
-        val sources = listOf(source, source.invert())
-        for (candidate in sources) {
-            decodePairingQrCandidate(candidate, useHybrid = true)?.let { return it }
-            decodePairingQrCandidate(candidate, useHybrid = false)?.let { return it }
-        }
-        return null
-    }
-
-    private fun decodePairingQrCandidate(
-        source: LuminanceSource,
-        useHybrid: Boolean
-    ): String? {
-        val hints = mapOf(
-            DecodeHintType.POSSIBLE_FORMATS to listOf(ZxingBarcodeFormat.QR_CODE),
-            DecodeHintType.TRY_HARDER to true,
-            DecodeHintType.CHARACTER_SET to "UTF-8"
-        )
-        val binaryBitmap = if (useHybrid) {
-            BinaryBitmap(HybridBinarizer(source))
-        } else {
-            BinaryBitmap(GlobalHistogramBinarizer(source))
-        }
-        return try {
-            MultiFormatReader().decode(binaryBitmap, hints).text
-        } catch (_: com.google.zxing.ReaderException) {
-            null
-        }
-    }
-
-    private fun completePairingScan(rawValue: String?) {
-        val result = pendingPairingScanResult ?: return
-        pendingPairingScanResult = null
-        result.success(rawValue)
-    }
-
-    private fun completePairingScanError(code: String, message: String) {
-        val result = pendingPairingScanResult ?: return
-        pendingPairingScanResult = null
-        result.error(code, message, null)
-    }
-
-    private fun cancelPairingQrScan() {
-        val result = pendingPairingScanResult ?: return
-        pendingPairingScanResult = null
-        result.success(null)
     }
 
     private fun requestPostNotificationsPermission(result: MethodChannel.Result) {
@@ -482,7 +275,6 @@ class MainActivity : FlutterActivity() {
     }
 
     companion object {
-        private const val pairingCameraRequestCode = 4206
         private const val postNotificationsRequestCode = 4207
         private const val taskCompletionSummaryNotificationId = 2147483646
         private const val taskCompletionSummaryNotificationTag =
