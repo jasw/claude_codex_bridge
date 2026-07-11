@@ -1266,7 +1266,7 @@ def test_auto_runner_advances_full_multi_workgroup_round_without_manual_once(
     )
 
     assert payload['final_action'] == 'none'
-    assert once_calls == 5
+    assert once_calls == 7
     assert harness.submissions[:2] == [('node-001', 'worker'), ('node-002', 'worker')]
     assert harness.submissions[2:4] == [('node-001', 'reviewer'), ('node-002', 'reviewer')]
     assert harness.submissions[4] == ('round', 'ccb_round_reviewer')
@@ -1274,6 +1274,83 @@ def test_auto_runner_advances_full_multi_workgroup_round_without_manual_once(
     assert integration.payload['integration']['merge_order'] == ['node-001', 'node-002']
     assert integration.calls.index('promote') < integration.calls.index('verify_root')
     assert ('cleanup', ()) in integration.calls
+
+
+def test_auto_runner_starts_node_reviewer_before_slower_sibling_worker_finishes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    scheduler, harness, _integration = _scheduler(tmp_path, 2)
+    terminal_returned = False
+    event_log: list[tuple[str, str, str]] = []
+    terminal_events: list[tuple[str, str]] = []
+
+    def fake_once(_context, _command, _services):
+        nonlocal terminal_returned
+        if terminal_returned:
+            return {'loop_runner_status': 'idle', 'action': 'none'}
+        submission_count = len(harness.submissions)
+        payload = scheduler.run_once()
+        for node_id, purpose in harness.submissions[submission_count:]:
+            event_log.append(('submitted', node_id, purpose))
+        if payload['controller_status'] == 'pass':
+            terminal_returned = True
+        return payload
+
+    def fake_trace(_context, trace_command):
+        job_id = trace_command.target
+        for result in harness.job_attempts.values():
+            if result['job_id'] != job_id:
+                continue
+            node_id = str(result['submission_identity']['node_id'])
+            purpose = str(result['purpose'])
+            if node_id == 'node-002' and purpose == 'worker':
+                reviewer_one_submitted = ('node-001', 'reviewer') in harness.submissions
+                if not reviewer_one_submitted:
+                    return {'job': {'job_id': job_id, 'status': 'running'}}
+            if not result['terminal']:
+                reply = (
+                    'round_result: pass'
+                    if purpose == 'ccb_round_reviewer'
+                    else ('status: pass' if purpose.startswith('reviewer') else 'done')
+                )
+                result.update(status='completed', terminal=True, reply=reply)
+                terminal_events.append((node_id, purpose))
+                event_log.append(('terminal', node_id, purpose))
+            return {'job': {'job_id': job_id, 'status': result['status']}}
+        raise AssertionError(f'unknown wait job: {job_id}')
+
+    monkeypatch.setattr(loop_runner_module, 'loop_runner_once', fake_once)
+    command = ParsedLoopRunnerCommand(
+        project=None,
+        auto=True,
+        once=False,
+        max_steps=12,
+        poll_interval_s=0.0,
+        json_output=True,
+    )
+    payload = loop_runner_auto(
+        scheduler.context,
+        command,
+        services=SimpleNamespace(trace_target=fake_trace, sleep=lambda _seconds: None),
+    )
+
+    assert payload['final_action'] == 'none'
+    assert harness.submissions[:3] == [
+        ('node-001', 'worker'),
+        ('node-002', 'worker'),
+        ('node-001', 'reviewer'),
+    ]
+    assert terminal_events.index(('node-001', 'worker')) < terminal_events.index(
+        ('node-002', 'worker')
+    )
+    assert event_log.index(('submitted', 'node-001', 'reviewer')) < event_log.index(
+        ('terminal', 'node-002', 'worker')
+    )
+    assert harness.submissions.index(('node-001', 'reviewer')) < harness.submissions.index(
+        ('node-002', 'reviewer')
+    )
+    assert scheduler.run_once()['controller_status'] == 'pass'
 
 
 def test_auto_runner_stops_without_spin_when_scheduler_has_no_waitable_job(

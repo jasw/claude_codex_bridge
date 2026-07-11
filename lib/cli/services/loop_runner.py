@@ -125,8 +125,7 @@ def loop_runner_auto(context, command, services=None) -> dict[str, object]:
                 if not wait_job_ids:
                     break
                 previous_scheduler_signature = signature
-                for job_id in wait_job_ids:
-                    _wait_for_job_terminal(context, job_id, deps, command)
+                _wait_for_any_job_terminal(context, wait_job_ids, deps, command)
                 continue
             if _auto_should_stop(payload):
                 break
@@ -1287,6 +1286,26 @@ def _wait_for_job_terminal(context, job_id: str, deps, command) -> dict[str, obj
         job = payload.get('job') if isinstance(payload, dict) else None
         status = str(job.get('status') or '').strip().lower() if isinstance(job, dict) else ''
         if status in {'completed', 'failed', 'cancelled', 'timed_out'}:
+            decision = job.get('terminal_decision') if isinstance(job, dict) else None
+            reason = str(decision.get('reason') or '') if isinstance(decision, dict) else ''
+            return {'job_id': job_id, 'status': status, 'reason': reason or None}
+        deps.sleep(poll_interval)
+
+
+def _wait_for_any_job_terminal(
+    context,
+    job_ids: list[str],
+    deps,
+    command,
+) -> dict[str, object]:
+    poll_interval = max(0.0, float(getattr(command, 'poll_interval_s', 2.0) or 0.0))
+    while True:
+        for job_id in job_ids:
+            payload = deps.trace_target(context, ParsedTraceCommand(project=None, target=job_id))
+            job = payload.get('job') if isinstance(payload, dict) else None
+            status = str(job.get('status') or '').strip().lower() if isinstance(job, dict) else ''
+            if status not in {'completed', 'failed', 'cancelled', 'timed_out'}:
+                continue
             decision = job.get('terminal_decision') if isinstance(job, dict) else None
             reason = str(decision.get('reason') or '') if isinstance(decision, dict) else ''
             return {'job_id': job_id, 'status': status, 'reason': reason or None}
