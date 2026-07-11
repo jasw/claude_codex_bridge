@@ -46,9 +46,14 @@ hand-edit state files or retry by mutating authority yourself.
   `## Execution Decomposition Inputs` sections. Do not move these sections to
   prose outside the fence; the controller imports only fenced authority.
 - In `Execution Decomposition Inputs`, identify independently reviewable
-  surfaces and only real predecessor-output dependencies. A stable interface
-  permits parallel implementation; do not erase that fact merely because the
-  complete project also has one final verification command.
+  surfaces, stable interfaces already available to all units, and only
+  unresolved ordering constraints that require a predecessor's newly produced
+  artifact or accepted result. A stable interface is never a predecessor
+  dependency; write it under `Stable interfaces available` and write
+  `Unresolved ordering constraints requiring predecessor output: none` when
+  units can implement against that contract in parallel. Do not erase
+  parallelism merely because the complete project also has one final
+  verification command.
 - Plan from the controller-provided intake, compact artifacts, and prompt
   context only. Do not run shell commands, `pwd`, `ls`, `find`, `rg`, `grep`,
   `git`, tests, builds, or file reads/searches from the provider session.

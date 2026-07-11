@@ -8874,6 +8874,8 @@ def test_frontdesk_forward_planner_submits_silent_planner_activation(
     assert '## Acceptance Criteria' in ask_command.message
     assert '## Interface Contracts' in ask_command.message
     assert '## Execution Decomposition Inputs' in ask_command.message
+    assert 'Stable interfaces available:' in ask_command.message
+    assert 'Unresolved ordering constraints requiring predecessor output:' in ask_command.message
     activation_path = Path(str(payload['activation_path']))
     activation = json.loads(activation_path.read_text(encoding='utf-8'))
     assert activation['record_type'] == 'ccb_loop_frontdesk_planner_activation'

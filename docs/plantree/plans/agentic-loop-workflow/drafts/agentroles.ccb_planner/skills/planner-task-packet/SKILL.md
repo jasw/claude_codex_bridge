@@ -47,7 +47,8 @@ Route: <direct_execution|needs_detail|macro_adjustment_request|blocked|partial_c
 - <constraint or explicit non-goal>
 ## Execution Decomposition Inputs
 - Independently reviewable surfaces: <surfaces or none>
-- Real predecessor dependencies: <dependencies or none>
+- Stable interfaces available: <interfaces or none>
+- Unresolved ordering constraints requiring predecessor output: <constraints or none>
 Allowed paths:
 - <relative path, or leave empty when route is needs_detail/blocked>
 Verification:
@@ -67,6 +68,11 @@ For frontdesk single-task work, all five semantic `##` sections shown above
 are mandatory and non-empty. Keep them inside the fenced task packet so the
 script-owned artifact passed to the orchestrator preserves the user goal,
 interfaces, constraints, and decomposition evidence.
+
+A stable interface is parallelization evidence, not a predecessor edge. Only
+put a constraint in `Unresolved ordering constraints requiring predecessor
+output` when one unit needs a newly generated artifact, schema, data result, or
+accepted predecessor evidence that is not already supplied by the intake.
 
 ````markdown
 **task-set.json**

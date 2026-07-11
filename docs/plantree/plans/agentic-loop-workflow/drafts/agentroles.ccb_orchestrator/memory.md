@@ -60,6 +60,12 @@ provider-neutral and must not assume a specific provider.
   dependency that makes separate review unsafe. General statements such as
   "the files are coupled" or "they share one API" are insufficient when the
   task supplies stable interfaces and independent test surfaces.
+- Emit `serial` or `mixed_dag` edges only when the task packet identifies an
+  unresolved ordering constraint requiring a predecessor's newly produced
+  artifact or accepted result. A module calling a supplied stable interface,
+  documentation describing a declared CLI contract, or final integration
+  tests are not predecessor dependencies and must not serialize otherwise
+  independent nodes.
 - Each node must contain a complete bounded work packet, `worker_profile:
   coder`, `reviewer_profile: code_reviewer`, dependencies, disjoint allowed
   paths for independent nodes, acceptance and verification refs, and
