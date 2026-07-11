@@ -61,6 +61,11 @@ recoverable workflow loops.
   direct source/runtime closure evidence for the one-to-four-workgroup
   ready-frontier scheduler, R2/T1 integration, crash recovery, strict release,
   and durable runtime accelerator ownership; no fake/live-provider claim.
+- [history/single-lane-g5-source-fake-acceptance-20260711.md](history/single-lane-g5-source-fake-acceptance-20260711.md):
+  direct `talk2` source/fake runtime acceptance evidence for one-to-four
+  workgroups, restart, rework, partial, blocked, integration/root verification
+  failure, round blocked, release, cleanup, and B7 campaign normalization; no
+  live-provider claim.
 - [history/phase1-6-deployment-readiness-p2-frontdesk-pressure-20260708.md](history/phase1-6-deployment-readiness-p2-frontdesk-pressure-20260708.md):
   P2 post-acceptance deployment-readiness evidence for real-project
   frontdesk macro-intake pressure across direct, detail, macro-adjustment, and

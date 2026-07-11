@@ -1,7 +1,7 @@
 # Single-Lane Multi-Workgroup Release Goal
 
 Date: 2026-07-11
-Status: In progress; Wave 3 G3 source closure landed, G5 acceptance active
+Status: In progress; G5 source/fake acceptance landed, G6 visible real-provider acceptance active
 
 ## Goal
 
@@ -65,15 +65,18 @@ Already available and preserved:
   accelerator ownership exposed by the direct full-suite gate. Evidence is
   recorded in
   [../history/single-lane-wave3-g3-scheduler-closure-20260711.md](../history/single-lane-wave3-g3-scheduler-closure-20260711.md).
+- commits `5163ad6f`, `9fceb5de`, and `b42ec3b2` close G5 source/fake
+  acceptance: ten scenario rows, one-to-four workgroup source-wrapper flows,
+  restart, rework, failure, integration/root verification failure, rollback,
+  release, cleanup, and B7 campaign normalization. Evidence is recorded in
+  [../history/single-lane-g5-source-fake-acceptance-20260711.md](../history/single-lane-g5-source-fake-acceptance-20260711.md).
 
 Remaining acceptance gaps:
 
-- G5 has not yet executed one task through one, two, three, and four reviewed
-  workgroups with the scheduler and strict E1 normalization;
-- restart, rework, partial, blocked, replan, integration-failure, rollback,
-  busy-retain, and release cases still need direct full-flow evidence;
 - Config V3 source validation is implemented, but opened-project enablement
-  remains gated until G5 and visible G6 acceptance complete;
+  remains gated until visible G6 acceptance completes;
+- visible Codex/Claude real-provider one-to-four-workgroup evidence is still
+  missing;
 - no packed-candidate install/update/rollback evidence exists for this branch.
 
 ## Scope
@@ -343,10 +346,10 @@ invalid V3 fails before provider or tmux startup.
 
 Source/config evidence: commits `6c2a15ad` and `fcf07b3a`; parser, effective
 config, diagnostics, migration preview, provider/model/RolePack/capacity, and
-V2 compatibility gates passed. Opened-project enablement remains gated by G5
-and G6 acceptance.
+V2 compatibility gates passed. Opened-project enablement remains gated by G6
+visible real-provider acceptance.
 
-### G5 Direct Source And Fake-Provider Acceptance - Active
+### G5 Direct Source And Fake-Provider Acceptance - Complete
 
 - Run focused unit/integration suites, full source suite, py_compile, static
   schema guards, source-wrapper smoke, and fake-provider matrix.
@@ -354,10 +357,13 @@ and G6 acceptance.
   rework, partial, blocked, replan, integration failure, restart recovery,
   busy retain, and release.
 
-Gate: no skipped required case, no normalized false pass, no unbounded residue,
-and no topology dispatch authority.
+Gate result: passed for source/fake scope. Direct evidence: commits
+`5163ad6f`, `9fceb5de`, and `b42ec3b2`; ten-scenario campaign row count `10`,
+`37` full-flow tests, `126` adjacent tests, changed-source `py_compile`,
+`pyflakes`, `git diff --check`, and narrow residue scans passed. See
+[../history/single-lane-g5-source-fake-acceptance-20260711.md](../history/single-lane-g5-source-fake-acceptance-20260711.md).
 
-### G6 Visible Real-Provider Acceptance - Pending
+### G6 Visible Real-Provider Acceptance - Active
 
 - From `/home/bfly/yunwei/test_ccb2`, use the current source `ccb_test`, inherit
   system provider environment, use a lab-local Role store, and open a visible
@@ -484,3 +490,9 @@ config digest, package hash, project root, and raw runtime paths.
 
 Wave 2 component evidence:
 [../history/single-lane-wave2-git-topology-evidence-closure-20260711.md](../history/single-lane-wave2-git-topology-evidence-closure-20260711.md).
+
+Wave 3 scheduler evidence:
+[../history/single-lane-wave3-g3-scheduler-closure-20260711.md](../history/single-lane-wave3-g3-scheduler-closure-20260711.md).
+
+G5 source/fake acceptance evidence:
+[../history/single-lane-g5-source-fake-acceptance-20260711.md](../history/single-lane-g5-source-fake-acceptance-20260711.md).

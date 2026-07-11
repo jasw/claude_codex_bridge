@@ -1,7 +1,7 @@
 # Single-Lane Multi-Workgroup Modification And Test Plan
 
 Date: 2026-07-11
-Status: Wave 3 G3 source closure complete; G5 direct acceptance active
+Status: G5 source/fake direct acceptance complete; G6 visible real-provider acceptance active
 
 F1 authority interfaces and adaptive group selection are frozen by
 [Decision 026](../decisions/026-authority-envelope-and-adaptive-workgroup-selection.md).
@@ -22,8 +22,10 @@ Wave 2 Git integration, topology/capacity, and evidence work landed through
 Wave 3 scheduler and runtime-ownership work landed through `94ea6d73`; direct
 evidence is recorded in
 [single-lane-wave3-g3-scheduler-closure-20260711.md](../history/single-lane-wave3-g3-scheduler-closure-20260711.md).
-The next gate is G5 scheduler-driven source/fake acceptance, not real-provider
-fanout yet.
+G5 source/fake direct acceptance landed through `b42ec3b2`; direct evidence is
+recorded in
+[single-lane-g5-source-fake-acceptance-20260711.md](../history/single-lane-g5-source-fake-acceptance-20260711.md).
+The next gate is G6 visible real-provider fanout from opened projects.
 
 ## Objective
 

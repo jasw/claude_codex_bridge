@@ -14,11 +14,12 @@ Date: 2026-06-24
   [history/single-lane-wave2-git-topology-evidence-closure-20260711.md](history/single-lane-wave2-git-topology-evidence-closure-20260711.md).
 - Wave 3 G3 is integrated through `94ea6d73`; direct evidence is in
   [history/single-lane-wave3-g3-scheduler-closure-20260711.md](history/single-lane-wave3-g3-scheduler-closure-20260711.md).
-- Current work is G5 direct source/fake acceptance across one to four
-  workgroups, restart/failure paths, integration, release, and E1 evidence.
-- Real one-to-four workgroup provider runs are intentionally unopened until
-  G5 directly proves the landed bind, integration, recovery, lifecycle, and
-  result paths through scheduler-driven source/fake flows.
+- G5 direct source/fake acceptance is integrated through `b42ec3b2`; direct
+  evidence is in
+  [history/single-lane-g5-source-fake-acceptance-20260711.md](history/single-lane-g5-source-fake-acceptance-20260711.md).
+- Current work is G6 visible real-provider acceptance from opened projects
+  under `/home/bfly/yunwei/test_ccb2`, using inherited provider environment
+  and project-local role authority.
 
 ## Done
 
@@ -1268,8 +1269,15 @@ execution remained gated on item 4/G3 and direct source/fake acceptance. See
 5 are landed through `bca51abd`; test-runtime and accelerator ownership are
 hardened through `94ea6d73`. The integrated non-provider-blackbox gate passed
 `4210` tests with zero current-run command-line or cwd-owned runtime residue.
-Item 7/G5 is now active. See
+Item 7/G5 was still active at this checkpoint. See
 [history/single-lane-wave3-g3-scheduler-closure-20260711.md](history/single-lane-wave3-g3-scheduler-closure-20260711.md).
+
+2026-07-11 G5 checkpoint: direct source/fake acceptance is landed through
+`b42ec3b2`. The ten-scenario campaign covers one-to-four workgroups, restart,
+rework, partial, blocked, integration/root verification failure, round blocked,
+release, cleanup, and B7 normalization. G6 visible real-provider acceptance is
+now active. See
+[history/single-lane-g5-source-fake-acceptance-20260711.md](history/single-lane-g5-source-fake-acceptance-20260711.md).
 
 1. Freeze the current one-workgroup and Config V2 source/test baselines and
    land the orchestration-bundle/node-state/evidence contracts from
