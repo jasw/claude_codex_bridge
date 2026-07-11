@@ -109,7 +109,7 @@ class _SelectedAgentWorkspaceState extends State<SelectedAgentWorkspace>
     mutateState: _mutateChatState,
     isTimelineNearEnd: _isTimelineNearEnd,
     scrollTimelineToEnd: _scrollTimelineToEnd,
-    onConversationLoaded: _persistConversationSnapshot,
+    onConversationLoaded: _handleConversationLoaded,
   );
   late final AgentPaneEventCoordinator _paneEventCoordinator =
       AgentPaneEventCoordinator(
@@ -344,6 +344,25 @@ class _SelectedAgentWorkspaceState extends State<SelectedAgentWorkspace>
         ),
         conversation.toJson(),
       ),
+    );
+  }
+
+  void _handleConversationLoaded(
+    CcbAgentConversation conversation,
+    CcbProjectView view,
+  ) {
+    _persistConversationSnapshot(conversation);
+    if (!mounted ||
+        widget.view.project.id != conversation.projectId ||
+        view.project.id != conversation.projectId ||
+        widget.agent?.name != conversation.agentName ||
+        widget.view.namespaceEpoch != conversation.namespaceEpoch ||
+        view.namespaceEpoch != conversation.namespaceEpoch) {
+      return;
+    }
+    _syncLocalExecutionStateFromView(
+      view: view,
+      agentName: conversation.agentName,
     );
   }
 

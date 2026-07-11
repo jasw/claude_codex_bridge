@@ -1906,6 +1906,81 @@ void main() {
   });
 
   testWidgets(
+    'single idle refresh settles awaiting after completed reply loads',
+    (tester) async {
+      final terminalTransport = RecordingTerminalTransport();
+      final repository = ControlledCompletedReplyConversationRepository();
+      final controller = SelectedAgentWorkspaceController();
+      var refreshCount = 0;
+      var view = _workspaceView(
+        _statusAgent(
+          activityState: 'idle',
+          activitySource: 'provider_pane',
+          activityReason: 'provider_prompt_idle',
+        ),
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: StatefulBuilder(
+              builder: (context, setState) {
+                final agent = view.agentByName('mobile')!;
+                return SelectedAgentWorkspace(
+                  repository: repository,
+                  terminalTransport: terminalTransport,
+                  usePaneInputForMessages: true,
+                  view: view,
+                  agent: agent,
+                  enableComposerCollapse: true,
+                  controller: controller,
+                  onRefreshView: () async {
+                    refreshCount += 1;
+                    final refreshed = _workspaceView(
+                      _statusAgent(
+                        activityState: 'idle',
+                        activitySource: 'provider_pane',
+                        activityReason: 'provider_prompt_idle',
+                      ),
+                    );
+                    setState(() {
+                      view = refreshed;
+                    });
+                    return refreshed;
+                  },
+                );
+              },
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.enterText(
+        find.byKey(const ValueKey('agent-message-composer')),
+        'single refresh reply',
+      );
+      await tester.tap(find.byKey(const ValueKey('agent-message-send-button')));
+      await tester.pump();
+      expect(
+        find.byKey(const ValueKey('conversation-working-status-text')),
+        findsOneWidget,
+      );
+
+      repository.releaseReply();
+      controller.refreshLatest();
+      await tester.pumpAndSettle();
+
+      expect(refreshCount, 1);
+      expect(find.text('completed reply after idle'), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('conversation-working-status-text')),
+        findsNothing,
+      );
+    },
+  );
+
+  testWidgets(
     'paired terminal interruption takes priority until activity resumes',
     (tester) async {
       final secureStore = MemorySecureStore();

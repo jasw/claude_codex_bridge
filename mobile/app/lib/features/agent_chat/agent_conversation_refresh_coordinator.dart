@@ -11,7 +11,7 @@ typedef AgentChatIsMounted = bool Function();
 typedef AgentTimelineNearEnd = bool Function(String agentName);
 typedef AgentTimelineScrollToEnd = void Function(String agentName);
 typedef AgentConversationLoaded =
-    void Function(CcbAgentConversation conversation);
+    void Function(CcbAgentConversation conversation, CcbProjectView view);
 
 class AgentConversationRefreshCoordinator {
   AgentConversationRefreshCoordinator({
@@ -75,7 +75,7 @@ class AgentConversationRefreshCoordinator {
         agentName: agentName,
         conversation: conversation,
       );
-      onConversationLoaded?.call(conversation);
+      onConversationLoaded?.call(conversation, request.view);
     } catch (error) {
       if (!_isMounted()) {
         return;
