@@ -224,6 +224,12 @@ class RecordingExecutionService:
         return ()
 
 
+class FailingStartExecutionService(RecordingExecutionService):
+    def start(self, job, *, runtime_context=None) -> None:
+        self.calls.append((job, runtime_context))
+        raise RuntimeError('provider bootstrap exploded')
+
+
 class FailingRestoreExecutionService(RecordingExecutionService):
     def restore(self, job, *, runtime_context=None):
         del runtime_context
@@ -1300,13 +1306,18 @@ def test_dispatcher_passes_runtime_context_to_execution_service(tmp_path: Path) 
     dispatcher.tick()
 
     assert len(execution_service.calls) == 1
-    _, runtime_context = execution_service.calls[0]
+    execution_job, runtime_context = execution_service.calls[0]
     assert runtime_context is not None
     assert runtime_context.agent_name == 'codex'
     assert runtime_context.workspace_path == str(layout.workspace_path('codex'))
     assert runtime_context.runtime_ref == 'codex-runtime'
     assert runtime_context.session_ref == 'codex-session'
     assert runtime_context.runtime_pid == 101
+    expected_flag = layout.agent_dir('codex') / 'cancel_flags' / f'{execution_job.job_id}.cancel'
+    assert f'`{expected_flag}`' in execution_job.request.body
+    stored_job = dispatcher.get(execution_job.job_id)
+    assert stored_job is not None
+    assert stored_job.request.body == 'hello'
 
 
 def test_dispatcher_uses_latest_attached_binding_refs(tmp_path: Path) -> None:
@@ -1564,6 +1575,56 @@ def test_dispatcher_tick_runs_jobs_in_parallel_across_agents_but_serializes_per_
     assert first_state is not None and first_state.status is JobStatus.RUNNING
     assert second_state is not None and second_state.status is JobStatus.QUEUED
     assert claude_state is not None and claude_state.status is JobStatus.RUNNING
+
+
+def test_dispatcher_provider_start_exception_fails_job_and_releases_agent(tmp_path: Path) -> None:
+    project_root = tmp_path / 'repo-dispatch-provider-start-failure'
+    ctx = _bootstrap_test_project(project_root)
+    layout = PathLayout(project_root)
+    config = _provider_config('codex')
+    registry = AgentRegistry(layout, config)
+    registry.upsert(_runtime('codex', project_id=ctx.project_id, layout=layout, pid=101))
+    execution_service = FailingStartExecutionService()
+    dispatcher = JobDispatcher(
+        layout,
+        config,
+        registry,
+        execution_service=execution_service,
+        clock=StepClock(
+            '2026-03-18T00:00:00Z',
+            '2026-03-18T00:00:01Z',
+            '2026-03-18T00:00:02Z',
+        ),
+    )
+    receipt = dispatcher.submit(
+        MessageEnvelope(
+            project_id=ctx.project_id,
+            to_agent='codex',
+            from_actor='user',
+            body='fail visibly during provider start',
+            task_id=None,
+            reply_to=None,
+            message_type='ask',
+            delivery_scope=DeliveryScope.SINGLE,
+        )
+    )
+
+    started = dispatcher.tick()
+
+    assert len(started) == 1
+    terminal = dispatcher.get(receipt.jobs[0].job_id)
+    assert terminal is not None
+    assert terminal.status is JobStatus.FAILED
+    assert terminal.terminal_decision is not None
+    assert terminal.terminal_decision['reason'] == 'provider_start_failed'
+    assert terminal.terminal_decision['diagnostics'] == {
+        'error_type': 'RuntimeError',
+        'provider': 'codex',
+        'provider_start_error': 'provider bootstrap exploded',
+    }
+    runtime = registry.get('codex')
+    assert runtime is not None
+    assert runtime.state is AgentState.IDLE
 
 
 def test_dispatcher_tick_starts_healthy_agent_when_other_agent_binding_recovery_fails(tmp_path: Path) -> None:

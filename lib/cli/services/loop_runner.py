@@ -33,6 +33,10 @@ from .plan_tasks import find_first_actionable_task, plan_task
 from .questions import question_refs
 from .role_output_import import consume_activation_role_output, consume_explicit_role_output
 from .trace import trace_target
+from .watch_fallback import (
+    load_persisted_terminal_watch_payload,
+    persisted_delegated_callback_pending,
+)
 
 _ORCHESTRATOR_ROUTES = ('direct_execution', 'needs_detail', 'macro_adjustment_request', 'blocked', 'partial_completion')
 _ROUND_REVIEWER_FIELD = 'ccb_round_reviewer'
@@ -1008,6 +1012,16 @@ def _deps(services):
         loop_topology=getattr(services, 'loop_topology', loop_topology),
         submit_ask=getattr(services, 'submit_ask', submit_ask),
         trace_target=getattr(services, 'trace_target', trace_target),
+        persisted_terminal_watch=getattr(
+            services,
+            'persisted_terminal_watch',
+            load_persisted_terminal_watch_payload,
+        ),
+        delegated_callback_pending=getattr(
+            services,
+            'delegated_callback_pending',
+            persisted_delegated_callback_pending,
+        ),
         effective_capacity_snapshot=getattr(
             services,
             'effective_capacity_snapshot',
@@ -1282,11 +1296,21 @@ def _release_consumed_activation_topology(context, deps, payload: dict[str, obje
 def _wait_for_job_terminal(context, job_id: str, deps, command) -> dict[str, object]:
     poll_interval = max(0.0, float(getattr(command, 'poll_interval_s', 2.0) or 0.0))
     while True:
+        persisted = deps.persisted_terminal_watch(context, job_id)
+        if persisted is not None:
+            return {
+                'job_id': job_id,
+                'status': str(persisted.get('status') or 'completed').strip().lower(),
+                'reason': None,
+            }
         payload = deps.trace_target(context, ParsedTraceCommand(project=None, target=job_id))
         job = payload.get('job') if isinstance(payload, dict) else None
         status = str(job.get('status') or '').strip().lower() if isinstance(job, dict) else ''
         if status in {'completed', 'failed', 'cancelled', 'timed_out'}:
             decision = job.get('terminal_decision') if isinstance(job, dict) else None
+            if deps.delegated_callback_pending(context, job_id) or _delegated_job_waits_for_continuation(decision):
+                deps.sleep(poll_interval)
+                continue
             reason = str(decision.get('reason') or '') if isinstance(decision, dict) else ''
             return {'job_id': job_id, 'status': status, 'reason': reason or None}
         deps.sleep(poll_interval)
@@ -1301,15 +1325,30 @@ def _wait_for_any_job_terminal(
     poll_interval = max(0.0, float(getattr(command, 'poll_interval_s', 2.0) or 0.0))
     while True:
         for job_id in job_ids:
+            persisted = deps.persisted_terminal_watch(context, job_id)
+            if persisted is not None:
+                return {
+                    'job_id': job_id,
+                    'status': str(persisted.get('status') or 'completed').strip().lower(),
+                    'reason': None,
+                }
             payload = deps.trace_target(context, ParsedTraceCommand(project=None, target=job_id))
             job = payload.get('job') if isinstance(payload, dict) else None
             status = str(job.get('status') or '').strip().lower() if isinstance(job, dict) else ''
             if status not in {'completed', 'failed', 'cancelled', 'timed_out'}:
                 continue
             decision = job.get('terminal_decision') if isinstance(job, dict) else None
+            if deps.delegated_callback_pending(context, job_id) or _delegated_job_waits_for_continuation(decision):
+                continue
             reason = str(decision.get('reason') or '') if isinstance(decision, dict) else ''
             return {'job_id': job_id, 'status': status, 'reason': reason or None}
         deps.sleep(poll_interval)
+
+
+def _delegated_job_waits_for_continuation(decision) -> bool:
+    return isinstance(decision, dict) and bool(
+        decision.get('delegated') or decision.get('chain_edge_id')
+    )
 
 
 def _prepare_immaculate_activation(

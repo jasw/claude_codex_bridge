@@ -432,6 +432,11 @@ def _build_report(
         worker_rework = _mapping(node.get('worker_rework'))
         reviewer = _mapping(node.get('reviewer'))
         reviewer_recheck = _mapping(node.get('reviewer_recheck'))
+        chain_evidence = [
+            _mapping(item)
+            for item in worker.get('chain_evidence') or ()
+            if isinstance(item, dict)
+        ]
         node_records.append(
             {
                 'node_id': node_id,
@@ -448,6 +453,12 @@ def _build_report(
                 'reviewer_job_status': reviewer.get('status'),
                 'reviewer_recheck_job_id': reviewer_recheck.get('job_id'),
                 'reviewer_recheck_job_status': reviewer_recheck.get('status'),
+                'review_chain': chain_evidence,
+                'review_chain_job_ids': [
+                    str(item.get('child_job_id') or '')
+                    for item in chain_evidence
+                    if str(item.get('child_job_id') or '')
+                ],
                 'rework_count': node.get('rework_count'),
                 'rework_history': node.get('rework_history'),
                 'review_history': integration_node.get('reviews'),
@@ -495,32 +506,25 @@ def _build_report(
         item for item in jobs.values()
         if item.get('agent_name') and 'orchestrator' in str(item.get('agent_name'))
     ]
-    referenced_job_ids = [
-        str(value)
-        for item in node_records
-        for field in (
-            'worker_job_id',
-            'worker_rework_job_id',
-            'reviewer_job_id',
-            'reviewer_recheck_job_id',
-        )
-        for value in (item.get(field),)
-        if value
-    ]
+    referenced_job_ids = []
+    for item in node_records:
+        if item.get('worker_job_id'):
+            referenced_job_ids.append(str(item['worker_job_id']))
+        referenced_job_ids.extend(str(value) for value in item['review_chain_job_ids'])
     if round_reviewer.get('job_id'):
         referenced_job_ids.append(str(round_reviewer['job_id']))
     referenced_job_evidence = {
         job_id: jobs.get(job_id, {}) for job_id in referenced_job_ids
     }
-    workflow_task_ids = [
-        str(_mapping(item.get('request')).get('task_id') or '')
-        for item in jobs.values()
-        if str(_mapping(item.get('request')).get('task_id') or '').startswith(loop_id)
+    controller_intents = _controller_submission_intents(loop_dir)
+    controller_intent_ids = [
+        str(item.get('intent_id') or '')
+        for item in controller_intents
+        if item.get('status') == 'accepted'
     ]
-    workflow_task_id_counts = {
-        task_id: workflow_task_ids.count(task_id)
-        for task_id in sorted(set(workflow_task_ids))
-    }
+    expected_controller_intent_count = sum(
+        1 for item in node_records if item.get('worker_job_id')
+    ) + (1 if round_reviewer.get('job_id') else 0)
     runner_steps = [
         step
         for result in runner_results
@@ -579,8 +583,9 @@ def _build_report(
         'classification_matches': observed_classification == expectation['classification'],
         'referenced_jobs_unique': len(referenced_job_ids) == len(set(referenced_job_ids)),
         'scheduler_job_intents_unique': all(
-            count_value == 1 for count_value in workflow_task_id_counts.values()
-        ),
+            controller_intent_ids.count(intent_id) == 1
+            for intent_id in set(controller_intent_ids)
+        ) and len(controller_intent_ids) == expected_controller_intent_count,
         'referenced_jobs_terminal': all_referenced_jobs_terminal,
         'root_paths_match_scenario': actual_paths == expected_root_paths,
         'failed_scope_absent': selected_path not in actual_paths if failed_node_ids else True,
@@ -609,40 +614,21 @@ def _build_report(
         ),
         'rework_exactly_once': (
             int(rework_node.get('rework_count') or 0) == 1
-            and bool(rework_node.get('worker_rework_job_id'))
-            and bool(rework_node.get('reviewer_recheck_job_id'))
+            and len(rework_node.get('review_chain') or ()) == 2
             and [
-                _mapping(item).get('result')
-                for item in rework_node.get('review_history') or ()
-            ] == ['rework', 'pass']
-            and {
-                _mapping(item).get('kind')
+                _mapping(item).get('decision')
                 for item in rework_node.get('rework_history') or ()
-            } == {
-                'rework_requested',
-                'worker_submission',
-                'worker_terminal',
-                'reviewer_submission',
-                'reviewer_terminal',
-            }
+            ] == ['rework_required', 'pass']
+            and [_mapping(item).get('result') for item in rework_node.get('review_history') or ()]
+            == ['pass']
         ) if scenario == 'reviewer_rework_pass' else (
             int(rework_node.get('rework_count') or 0) == 1
-            and bool(rework_node.get('worker_rework_job_id'))
-            and bool(rework_node.get('reviewer_recheck_job_id'))
+            and len(rework_node.get('review_chain') or ()) == 2
             and [
-                _mapping(item).get('result')
-                for item in rework_node.get('review_history') or ()
-            ] == ['rework', 'failed']
-            and {
-                _mapping(item).get('kind')
+                _mapping(item).get('decision')
                 for item in rework_node.get('rework_history') or ()
-            } == {
-                'rework_requested',
-                'worker_submission',
-                'worker_terminal',
-                'reviewer_submission',
-                'reviewer_terminal',
-            }
+            ] == ['rework_required', 'rework_required']
+            and not (rework_node.get('review_history') or ())
         ) if scenario == 'reviewer_rework_exhausted_blocked' else all(
             int(item.get('rework_count') or 0) == 0 for item in node_records
         ),
@@ -717,7 +703,8 @@ def _build_report(
             'nodes': node_records,
             'round_reviewer': round_reviewer,
             'referenced': referenced_job_evidence,
-            'scheduler_task_id_counts': workflow_task_id_counts,
+            'controller_intent_ids': controller_intent_ids,
+            'expected_controller_intent_count': expected_controller_intent_count,
         },
         'integration': {
             'state_path': str(integration_path),
@@ -908,13 +895,12 @@ def _run_until_terminal(
     label_prefix: str = 'loop_runner_auto',
 ) -> list[dict[str, Any]]:
     results = []
-    for attempt in range(1, 5):
+    for attempt in range(1, 97):
         runner = _run_logged(
             command_log,
             f'{label_prefix}_{attempt}',
             [
-                str(ccb_test), '--project', str(project_root), 'loop', 'runner', '--auto',
-                '--max-steps', '64', '--poll-interval', '0.05', '--json',
+                str(ccb_test), '--project', str(project_root), 'loop', 'runner', '--once', '--json',
             ],
             cwd=test_root,
             env=env,
@@ -923,6 +909,16 @@ def _run_until_terminal(
             allow_failure=True,
         )
         results.append(_json_object(runner['stdout']))
+        _submit_pending_worker_reviews(
+            command_log,
+            ccb_test=ccb_test,
+            project_root=project_root,
+            test_root=test_root,
+            env=env,
+            logs_dir=logs_dir,
+            timeout_s=timeout_s,
+            attempt=attempt,
+        )
         shown = _task_show(
             command_log,
             ccb_test=ccb_test,
@@ -935,7 +931,147 @@ def _run_until_terminal(
         )
         if _task_record(shown).get('status') in TERMINAL_TASK_STATUSES:
             return results
-    raise SmokeFailure('loop runner did not reach terminal task authority in four auto activations')
+        time.sleep(0.1)
+    raise SmokeFailure('loop runner did not reach terminal task authority in 96 activations')
+
+
+def _submit_pending_worker_reviews(
+    command_log: list[dict[str, Any]],
+    *,
+    ccb_test: Path,
+    project_root: Path,
+    test_root: Path,
+    env: dict[str, str],
+    logs_dir: Path,
+    timeout_s: int,
+    attempt: int,
+) -> list[dict[str, Any]]:
+    loop_id = _find_loop_id(project_root, TASK_ID)
+    if not loop_id:
+        return []
+    state = _read_json(
+        project_root / '.ccb' / 'runtime' / 'loops' / loop_id / 'workgroup_scheduler_state.json'
+    )
+    nodes = _mapping(state.get('nodes'))
+    maximum = int(_mapping(_mapping(state.get('bundle')).get('policy')).get('max_node_rework_rounds') or 0)
+    submitted = []
+    for node_id in sorted(nodes):
+        node = _mapping(nodes.get(node_id))
+        if node.get('status') not in {'worker_pending', 'worker_submission_unknown'}:
+            continue
+        worker = str(node.get('worker_agent') or '')
+        reviewer = str(node.get('reviewer_agent') or '')
+        if not worker or not reviewer:
+            continue
+        edges = _review_edges(project_root, reviewer=reviewer)
+        if edges:
+            latest = edges[-1]
+            decision = _callback_edge_decision(project_root, latest)
+            if decision != 'rework_required' or len(edges) >= maximum + 1:
+                continue
+            purpose = 'reviewer_recheck'
+        else:
+            purpose = 'reviewer'
+        task_packet = next(
+            project_root.glob(
+                f'docs/plantree/plans/*/tasks/{TASK_ID}/task_packet.md'
+            ),
+            None,
+        )
+        marker = ''
+        if task_packet is not None:
+            marker = next(
+                (
+                    line.strip()
+                    for line in task_packet.read_text(encoding='utf-8').splitlines()
+                    if line.strip().startswith('g5_multi_workgroup_smoke:')
+                ),
+                '',
+            )
+        message = (
+            f'Task: {TASK_ID}\nNode: {node_id}\nPurpose: {purpose}\n'
+            f'Role: code_reviewer\nWorktree: {node.get("worktree_path")}\n'
+            f'{marker}\nReview the current node tree against its canonical packet.\n'
+            'First non-empty line must be status: pass|rework_required|blocked|non_converged.'
+        )
+        result = _run_logged(
+            command_log,
+            f'worker_chain_{node_id}_{len(edges) + 1}_{attempt}',
+            [
+                str(ccb_test), '--project', str(project_root), 'ask', '--chain',
+                '--artifact-reply', reviewer, 'from', worker, '--', message,
+            ],
+            cwd=test_root,
+            env=env,
+            logs_dir=logs_dir,
+            timeout_s=timeout_s,
+            allow_failure=True,
+        )
+        if result['returncode'] == 0:
+            submitted.append(_json_object(result['stdout']))
+    return submitted
+
+
+def _review_edges(project_root: Path, *, reviewer: str) -> list[dict[str, Any]]:
+    latest: dict[str, dict[str, Any]] = {}
+    path = project_root / '.ccb' / 'ccbd' / 'callbacks' / 'edges.jsonl'
+    if not path.is_file():
+        return []
+    for line in path.read_text(encoding='utf-8').splitlines():
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(record, dict):
+            continue
+        edge_id = str(record.get('edge_id') or '')
+        child = str(_mapping(record.get('diagnostics')).get('child_agent') or '')
+        if edge_id and child == reviewer:
+            latest[edge_id] = record
+    return sorted(latest.values(), key=lambda item: (str(item.get('created_at') or ''), str(item.get('edge_id') or '')))
+
+
+def _controller_submission_intents(loop_dir: Path) -> list[dict[str, Any]]:
+    path = loop_dir / 'ask_first_submission_intents.jsonl'
+    if not path.is_file():
+        return []
+    records = []
+    for line in path.read_text(encoding='utf-8').splitlines():
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(record, dict):
+            records.append(record)
+    return records
+
+
+def _callback_edge_decision(project_root: Path, edge: dict[str, Any]) -> str:
+    reply_id = str(edge.get('child_reply_id') or '')
+    if not reply_id:
+        return 'pending'
+    latest: dict[str, Any] | None = None
+    path = project_root / '.ccb' / 'ccbd' / 'replies' / 'replies.jsonl'
+    if path.is_file():
+        for line in path.read_text(encoding='utf-8').splitlines():
+            try:
+                record = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(record, dict) and str(record.get('reply_id') or '') == reply_id:
+                latest = record
+    reply_text = str(_mapping(latest).get('reply') or '')
+    artifact = _mapping(_mapping(latest).get('reply_artifact'))
+    artifact_path = Path(str(artifact.get('path') or ''))
+    if artifact_path.is_file():
+        body = artifact_path.read_bytes()
+        if hashlib.sha256(body).hexdigest() == str(artifact.get('sha256') or ''):
+            reply_text = body.decode('utf-8')
+    for line in reply_text.splitlines():
+        text = line.strip().lower()
+        if text.startswith('status:'):
+            return text.split(':', 1)[1].strip()
+    return 'malformed'
 
 
 def _run_restart_replay(
@@ -950,6 +1086,7 @@ def _run_restart_replay(
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     results: list[dict[str, Any]] = []
     pending_job: dict[str, Any] | None = None
+    pending_edge: dict[str, Any] | None = None
     loop_id = ''
     for attempt in range(1, 9):
         runner = _run_logged(
@@ -965,18 +1102,37 @@ def _run_restart_replay(
             allow_failure=True,
         )
         results.append(_json_object(runner['stdout']))
+        _submit_pending_worker_reviews(
+            command_log,
+            ccb_test=ccb_test,
+            project_root=project_root,
+            test_root=test_root,
+            env=env,
+            logs_dir=logs_dir,
+            timeout_s=timeout_s,
+            attempt=attempt,
+        )
         loop_id = _find_loop_id(project_root, TASK_ID)
         if loop_id:
             state = _read_json(
                 project_root / '.ccb' / 'runtime' / 'loops' / loop_id / 'workgroup_scheduler_state.json'
             )
             node = _mapping(_mapping(state.get('nodes')).get('node-001'))
-            reviewer = _mapping(node.get('reviewer'))
-            if reviewer.get('job_id') and not bool(reviewer.get('terminal')):
-                pending_job = reviewer
-                break
+            reviewer = str(node.get('reviewer_agent') or '')
+            edges = _review_edges(project_root, reviewer=reviewer) if reviewer else []
+            if edges:
+                candidate_edge = edges[-1]
+                child_job_id = str(candidate_edge.get('child_job_id') or '')
+                candidate_job = _collect_jobs(project_root).get(child_job_id)
+                if (
+                    candidate_job is not None
+                    and str(candidate_job.get('status') or '') not in TERMINAL_JOB_STATUSES
+                ):
+                    pending_edge = candidate_edge
+                    pending_job = candidate_job
+                    break
         time.sleep(0.25)
-    if pending_job is None:
+    if pending_job is None or pending_edge is None:
         raise SmokeFailure('restart replay did not establish a durable pending reviewer job')
 
     lease_path = project_root / '.ccb' / 'ccbd' / 'lease.json'
@@ -989,7 +1145,12 @@ def _run_restart_replay(
         command_log,
         logs_dir=logs_dir,
         label='restart_daemon_sigkill',
-        payload={'pid': daemon_pid, 'pending_job_id': pending_job.get('job_id'), 'loop_id': loop_id},
+        payload={
+            'pid': daemon_pid,
+            'pending_job_id': pending_job.get('job_id'),
+            'pending_edge_id': pending_edge.get('edge_id'),
+            'loop_id': loop_id,
+        },
     )
     if not _wait_pid_exit(daemon_pid, timeout_s=10.0):
         raise SmokeFailure(f'restart replay daemon did not exit after SIGKILL: {daemon_pid}')
@@ -1019,7 +1180,8 @@ def _run_restart_replay(
     return results, {
         'loop_id': loop_id,
         'pending_job_id': pending_job.get('job_id'),
-        'pending_submission_identity': pending_job.get('submission_identity'),
+        'pending_edge_id': pending_edge.get('edge_id'),
+        'pending_submission_identity': pending_edge.get('edge_id'),
         'pending_status_before_restart': pending_job.get('status'),
         'daemon_pid_before': daemon_pid,
         'daemon_pid_after': daemon_after,
@@ -1308,6 +1470,7 @@ def _restart_evidence_valid(
         bool(pending_job_id)
         and referenced_job_ids.count(pending_job_id) == 1
         and bool(evidence.get('pending_submission_identity'))
+        and evidence.get('pending_submission_identity') == evidence.get('pending_edge_id')
         and int(evidence.get('daemon_pid_before') or 0) > 1
         and int(evidence.get('daemon_pid_after') or 0) > 1
         and evidence.get('daemon_pid_before') != evidence.get('daemon_pid_after')

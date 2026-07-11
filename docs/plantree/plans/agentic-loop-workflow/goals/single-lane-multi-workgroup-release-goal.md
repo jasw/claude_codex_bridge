@@ -1,7 +1,7 @@
 # Single-Lane Multi-Workgroup Release Goal
 
-Date: 2026-07-11
-Status: In progress; G5 source/fake acceptance landed, G6 visible real-provider acceptance active
+Date: 2026-07-12
+Status: In progress; G6 two-workgroup Codex baseline passed, remaining matrix active
 
 ## Goal
 
@@ -15,7 +15,7 @@ frontdesk
   -> optional task_detailer
   -> one orchestrator bundle
   -> deterministic controller
-  -> 1..4 (worker + reviewer) workgroups
+  -> 1..4 (worker --chain--> reviewer) workgroups
   -> integration worktree and tests
   -> project-root promotion and verification
   -> ccb_round_reviewer
@@ -73,10 +73,10 @@ Already available and preserved:
 
 Remaining acceptance gaps:
 
-- Config V3 source validation is implemented, but opened-project enablement
-  remains gated until visible G6 acceptance completes;
-- visible Codex/Claude real-provider one-to-four-workgroup evidence is still
-  missing;
+- Config V3 visible two-workgroup Codex execution is proven, but broader
+  opened-project enablement remains gated until all G6 rows complete;
+- visible three/four-workgroup, restart, rework, busy-retain, and qualified
+  non-Codex provider evidence is still missing;
 - no packed-candidate install/update/rollback evidence exists for this branch.
 
 ## Scope
@@ -125,6 +125,8 @@ Remaining acceptance gaps:
    evidence; resident frontdesk/planner remain visible.
 10. V2 static config behavior remains byte/behavior compatible where the
     existing contract is defined.
+11. Worker/Reviewer semantic communication is node-local `ask --chain`;
+    controller code does not relay reviewer or rework prompts.
 
 ## Production-Ready Definition
 
@@ -213,8 +215,9 @@ The required order is complete through `c64ab341`; the combined gate passed
 ### Wave 3: Central Scheduler Closure - Landed
 
 The complete G3 scheduler block is integrated through `bca51abd`:
-ready-frontier computation, submit-all-ready behavior, per-node reviewer and
-bounded rework, dependency unblocking, callback/persisted-terminal recovery,
+ready-frontier computation, submit-all-ready behavior, the original
+controller-relayed per-node review/rework flow, dependency unblocking,
+callback/persisted-terminal recovery,
 structured final results, real R2 integration, raw T1 release authority, and
 full dynamic release. Runtime ownership hardening through `94ea6d73` closes
 the process-residue defect exposed by the direct full-suite gate.
@@ -363,7 +366,7 @@ Gate result: passed for source/fake scope. Direct evidence: commits
 `pyflakes`, `git diff --check`, and narrow residue scans passed. See
 [../history/single-lane-g5-source-fake-acceptance-20260711.md](../history/single-lane-g5-source-fake-acceptance-20260711.md).
 
-### G6 Visible Real-Provider Acceptance - Active
+### G6 Visible Real-Provider Acceptance - Active, Two-Group Baseline Passed
 
 - From `/home/bfly/yunwei/test_ccb2`, use the current source `ccb_test`, inherit
   system provider environment, use a lab-local Role store, and open a visible
@@ -374,11 +377,21 @@ Gate result: passed for source/fake scope. Direct evidence: commits
 - Prove actual worker overlap, per-node reviewer order, integration, tests,
   project-root output, round review, pane/sidebar state, and zero final dynamic
   residue.
+- Prove each node has one controller-submitted root Worker job, Reviewer jobs
+  are Worker-initiated chain children, and the controller accepts only a
+  bounded assigned-Reviewer lineage ending in pass.
 - Restart ccbd during active work once and inject one provider/node failure in
   a separate run.
 
 Gate: raw project/task/job/topology/Git/UI evidence agrees with B7. Scripts may
 prepare and collect evidence but cannot substitute for the opened project.
+
+Checkpoint: the 2026-07-12 visible Codex run passed a natural two-workgroup
+mixed DAG with Worker-owned Reviewer chains, deterministic Git integration,
+`79` root tests, Round Reviewer pass, complete worktree cleanup, and zero
+dynamic residue. See
+[../history/g6-worker-owned-review-chain-real-provider-20260712.md](../history/g6-worker-owned-review-chain-real-provider-20260712.md).
+The remaining bullets above still gate G6 closure.
 
 ### G7 Release Candidate And Deployment Gate - Pending
 

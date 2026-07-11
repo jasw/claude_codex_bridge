@@ -447,6 +447,14 @@ recoverable workflow loops.
   decision that freezes task revision, effective capacity digest, semantic
   bundle fields, node-keyed exact-once state, and orchestrator-owned adaptive
   one-to-four workgroup selection with V2-only one-group fallback.
+- [decisions/027-worker-owned-review-chain-and-minimal-controller.md](decisions/027-worker-owned-review-chain-and-minimal-controller.md):
+  decision that each Worker owns its bounded `ask --chain` review loop with
+  the assigned Reviewer while controller code retains only deterministic
+  authority, integration, recovery, and lifecycle duties.
+- [history/g6-worker-owned-review-chain-real-provider-20260712.md](history/g6-worker-owned-review-chain-real-provider-20260712.md):
+  strict live-provider checkpoint for the Decision 027 two-workgroup Codex
+  baseline, preserved provider-protocol failures, integration, round review,
+  release, cleanup, and remaining G6 gates.
 - [history/review-2026-06-26-loop-runner-readiness.md](history/review-2026-06-26-loop-runner-readiness.md):
   reviewer/coworker readiness review that narrowed the next implementation
   slice to task-loop binding, round-result import, `run-once --task-id`, and

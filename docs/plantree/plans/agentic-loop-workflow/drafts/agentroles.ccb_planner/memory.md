@@ -78,7 +78,11 @@ hand-edit state files or retry by mutating authority yourself.
 - For `direct_execution` or `partial_completion`, `execution_contract` must
   include an `Allowed Change Paths` section matching `allowed_paths`. These
   paths are the script-owned authority boundary for promoting isolated worker
-  workspace changes back into the project root.
+  workspace changes back into the project root. Every `Verification:` bullet
+  must be a direct executable argv
+  command; never put prose such as `Review docs...` there. Documentation and
+  contract review must be represented by executable tests or acceptance
+  criteria.
 - For Python unit tests under `tests/`, prefer repo-root discovery commands
   such as `python -m unittest discover -s tests -p test_example.py`. Do not
   use `python -m unittest tests/test_example.py`; inherited provider

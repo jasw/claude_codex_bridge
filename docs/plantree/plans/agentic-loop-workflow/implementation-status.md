@@ -1,6 +1,6 @@
 # Agentic Loop Workflow Implementation Status
 
-Date: 2026-07-11
+Date: 2026-07-12
 Status: In progress
 Branch: `workflow/agentic-loop-topology`
 Worktree: `/home/bfly/yunwei/ccb_worktrees/agentic-loop-topology`
@@ -16,9 +16,11 @@ G0-G5 source/fake scope is complete. Wave 3 landed the controller-owned G3
 ready-frontier scheduler, real R2 Git transactions, T1 topology authority,
 crash recovery, strict release, and runtime accelerator ownership. G5 then
 proved the integrated scheduler through one-to-four-workgroup source/fake
-runtime flows. The current phase is G6 visible real-provider acceptance. This
-is not yet a claim that live multi-workgroup providers, Config V3 opened
-projects, packaged candidates, or default enablement pass.
+runtime flows. Decision 027 and a visible two-workgroup Codex baseline now pass
+in G6. The remaining phase is the broader visible real-provider matrix:
+three/four workgroups, restart, real rework, busy-retain, and provider-profile
+qualification. This is not yet a packaged-candidate or default-enablement
+claim.
 
 ## Authority
 
@@ -30,10 +32,16 @@ projects, packaged candidates, or default enablement pass.
   [decisions/025-single-lane-multi-workgroup-release-gate.md](decisions/025-single-lane-multi-workgroup-release-gate.md)
 - Frozen interfaces:
   [decisions/026-authority-envelope-and-adaptive-workgroup-selection.md](decisions/026-authority-envelope-and-adaptive-workgroup-selection.md)
+- Worker-owned review and minimal controller:
+  [decisions/027-worker-owned-review-chain-and-minimal-controller.md](decisions/027-worker-owned-review-chain-and-minimal-controller.md)
 
 Provider replies remain evidence only. Scripts own bundle, task, node,
 integration, topology, round, and release authority. Mount topology remains
 physical placement/lifecycle state, not a semantic dispatch graph.
+Decision 027 now supersedes the controller-owned Reviewer/rework relay:
+Workers must collaborate directly with their assigned Reviewer through a
+bounded restricted chain, while the controller validates lineage and retains
+only mechanical authority.
 
 ## Last Landed
 
@@ -53,39 +61,41 @@ Wave 3 evidence:
 G5 evidence:
 [history/single-lane-g5-source-fake-acceptance-20260711.md](history/single-lane-g5-source-fake-acceptance-20260711.md).
 
+Decision 027 real-provider checkpoint:
+[history/g6-worker-owned-review-chain-real-provider-20260712.md](history/g6-worker-owned-review-chain-real-provider-20260712.md).
+
 Earlier accepted checkpoints remain in the G1, R1, Wave 1, and Wave 2 history
 records linked from the goal, including
 [history/single-lane-r1-authority-runtime-closure-20260711.md](history/single-lane-r1-authority-runtime-closure-20260711.md).
 
 ## Next Target
 
-Run G6 from fresh visible opened projects: inherited real Codex/Claude provider
-environment, lab-local `AGENT_ROLES_STORE`, frontdesk-started natural tasks,
-one-to-four workgroups, visible UI/sidebar evidence, restart/failure semantics,
-busy-retain, deterministic integration, release, and raw evidence matching B7.
+Complete the remaining G6 rows from fresh visible opened projects: three/four
+workgroups, real overlap, in-flight restart, real rework, busy-retain, and
+strict provider-profile qualification. Preserve the accepted Codex
+Worker-owned chain baseline and aggregate raw evidence into B7 without
+normalizing protocol failures.
 
 ## Execution Queue
 
 - Waves 0-3, complete: F1, R1, C1/P1, R2/T1/E1, and G3 are integrated.
 - G5, complete: direct source/fake full-flow acceptance owned by `talk2`.
-- G6, active: visible opened-project Codex/Claude acceptance.
+- G6, active: two-workgroup Codex baseline passed; remaining visible matrix
+  and provider-profile qualification pending.
 - G7, gated: package/install/update/rollback readiness.
 - G8, separate: publication requires explicit user authorization.
 
 ## Active TODO
 
-1. Prepare a fresh G6 visible project root under `/home/bfly/yunwei/test_ccb2`
-   with explicit source `ccb_test`, inherited provider environment, and
-   project-local role store.
-2. Run frontdesk-started V0/V1/V2/V3 natural tasks proving one to four
-   workgroups, actual overlap where applicable, review order, integration,
-   root output, sidebar/window evidence, and zero final dynamic residue.
-3. Run a separate restart/failure G6 scenario covering durable intent replay,
+1. Run frontdesk-started three- and four-workgroup natural tasks proving real
+   overlap, Worker-owned Reviewer order, deterministic integration, root
+   output, sidebar/window evidence, and zero residue.
+2. Run a separate restart/failure G6 scenario covering durable intent replay,
    node failure or reviewer rework, rollback/busy-retain behavior, and cleanup.
+3. Qualify each claimed provider/profile against the strict first-line role
+   protocol; retain non-compliant rows as non-success.
 4. Normalize and audit raw task/job/topology/Git/UI evidence against B7 before
    accepting any real-provider row.
-5. After G6 passes, freeze the G7 packed-candidate/install/update/rollback
-   gate.
 
 ## Blocked By
 
@@ -119,13 +129,27 @@ terminal/UI. Script output cannot substitute for opened-project evidence.
 - Post-G5 full non-provider-blackbox gate:
   `4263 passed, 2 skipped, 21 deselected in 569.98s`. No current pytest-root
   runtime process remained; five pytest socket files were not connectable.
+- Decision 027 visible Codex checkpoint: two mixed-DAG nodes integrated,
+  Worker root jobs `job_f2ed8ef562ba` and `job_889b4e0bb44e` each created one
+  Reviewer chain child, Round Reviewer returned `pass`, project-root unittest
+  discovery passed `79` tests, post-round dynamic/retained/incomplete counts
+  were `0/0/0`, and project-level shutdown left no process or socket residue.
+- Post-checkpoint focused gate: Worker-owned scheduler/RolePack/smoke/ask/
+  dispatcher bundle `274 passed`; adjacent capacity/task/topology/RolePack
+  bundle `294 passed`; dispatcher/callback bundle `112 passed`; ask service
+  `44 passed`.
+- Final non-provider-blackbox repository gate: `4306 passed, 2 skipped,
+  21 deselected in 707.09s`. Its pytest root left no process or socket
+  residue. The accepted G6 project and one discovered stale 2026-07-10 test
+  project were both closed with project-level `ccb_test kill -f`; no runtime
+  owned by this workflow worktree remained.
 
 ## Non-Claims
 
-The branch is not production-ready. G5 source/fake closure does not prove a
-visible real multi-workgroup project, Config V3 opened-project behavior,
-packaged candidate behavior, production/default enablement, or publication.
-Those claims remain behind G6-G8.
+The branch is not production-ready. The accepted two-workgroup Codex row does
+not prove the complete three/four-group, restart, rework, busy-retain, or
+cross-provider G6 matrix, packaged candidate behavior, production/default
+enablement, or publication. Those claims remain behind G6-G8.
 
 The bounded earlier Phase 1-6 claim remains archived in
 [history/phase1-6-acceptance-report-20260705.md](history/phase1-6-acceptance-report-20260705.md).

@@ -19,10 +19,11 @@ allowed paths, and verification refs.
 3. Make the smallest change that satisfies the packet inside its allowed
    paths. Do not expand scope or inspect sibling packets.
 4. Run focused verification when possible.
-5. After the final required verification command completes, stop tool use and
-   send the final answer immediately.
-6. Return changed paths, verification evidence, blockers, and the result:
-   `done`, `blocked`, or `needs_rework`.
+5. After verification, use only the assigned-review chain skill to submit the
+   evidence to the assigned Reviewer, then stop for continuation.
+6. Apply bounded requested rework when returned. After Reviewer pass, perform
+   no more file/tool mutation and immediately return changed paths,
+   verification evidence, blockers, and `done`.
 
 ## Boundaries
 
@@ -30,9 +31,9 @@ allowed paths, and verification refs.
 - Do not silently substitute fallback behavior.
 - Do not claim whole-round success.
 - Do not directly edit authoritative CCB state or runtime files.
-- Do not run CCB commands or workflow wrappers; the supervisor/runner owns
-  task authority and runtime transitions.
-- Do not submit downstream asks, create authority commits, integrate sibling
+- Do not run CCB commands or workflow wrappers except the exact assigned
+  Reviewer `ask --chain --artifact-reply` operation.
+- Do not submit other downstream asks, create authority commits, integrate sibling
   work, promote project-root state, or release agents.
 - Provider and model selection remain project configuration concerns. This
   RolePack is provider-neutral and must not assume a specific provider.

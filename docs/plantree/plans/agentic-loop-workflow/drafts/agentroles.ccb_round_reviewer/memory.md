@@ -53,7 +53,10 @@ as `partial`, `replan_required`, or `blocked`.
 A `pass` requires every required node review, unchanged reviewed-tree evidence,
 deterministic integration order and digest, successful integration and
 project-root verification, accepted promotion evidence, clean authority
-checks, and proven cleanup/release with no active dynamic residue. Reject as
+checks, and proven pre-review cleanup with no unexpected dynamic residue. The
+current immaculate Round Reviewer is the only allowed active dynamic agent
+during its own review; the controller must release it and prove zero residue
+after the reply. Reject as
 `partial`, `replan_required`, or `blocked` when evidence shows or fails to rule
 out missing node review, integration drift, scope violation, hidden fallback,
 partial promoted delta, rollback drift, or unproven cleanup.

@@ -52,8 +52,13 @@ Route: <direct_execution|needs_detail|macro_adjustment_request|blocked|partial_c
 Allowed paths:
 - <relative path, or leave empty when route is needs_detail/blocked>
 Verification:
-- <command or evidence review>
+- <direct executable argv command>
 ```
+
+Every `Verification:` item is executed literally without a shell. Do not put
+prose such as `Review docs...` in this list. Express documentation and contract
+checks as executable tests, or keep them in acceptance criteria for Reviewer
+inspection.
 
 **readiness.json**
 ```json

@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 import re
 import shlex
+import shutil
 from types import SimpleNamespace
 from typing import Callable, Iterable
 from uuid import uuid4
@@ -38,8 +39,6 @@ TERMINAL_STATUSES = {'pass', 'partial', 'replan_required', 'blocked'}
 PENDING_NODE_STATUSES = {
     'worker_pending',
     'worker_submission_unknown',
-    'reviewer_pending',
-    'reviewer_submission_unknown',
 }
 
 
@@ -123,11 +122,12 @@ class MultiWorkgroupScheduler:
                 previous = str(node['status'])
                 result = self._submit_node_job(state, node, purpose='worker')
                 node['worker'] = result
-                node['status'] = (
-                    ('worker_complete' if str(result.get('status') or '') == 'completed' else 'worker_failed')
-                    if bool(result.get('terminal'))
-                    else _pending_status(result, purpose='worker')
-                )
+                if not bool(result.get('terminal')):
+                    node['status'] = _pending_status(result, purpose='worker')
+                elif str(result.get('status') or '') == 'completed':
+                    self._consume_worker_chain_result(state, node, result, integration)
+                else:
+                    node['status'] = 'worker_failed'
                 if node['status'] == 'worker_failed':
                     node['failure'] = {'source': 'worker_submission_failed', 'job': result}
                 self._transition(state, node_id, previous, str(node['status']), result)
@@ -141,7 +141,6 @@ class MultiWorkgroupScheduler:
             self._save(state)
             return self._payload(state, action='submitted_ready_frontier')
 
-        self._start_ready_reviewers(state, integration)
         if any(_node(state, node_id)['status'] in PENDING_NODE_STATUSES for node_id in state['nodes']):
             return self._payload(state, action='provider_jobs_pending')
 
@@ -439,154 +438,114 @@ class MultiWorkgroupScheduler:
                 node['status'] = _pending_status(result, purpose=purpose)
                 continue
             if str(result.get('status') or '') != 'completed':
-                node['status'] = 'worker_failed' if purpose in {'worker', 'worker_rework'} else 'review_failed'
+                node['status'] = 'worker_failed'
                 node['failure'] = {'source': 'provider_job_failed', 'purpose': purpose, 'job': result}
                 self._transition(state, node_id, status, node['status'], result)
                 continue
-            if purpose == 'worker':
-                node['status'] = 'worker_complete'
-            elif purpose == 'worker_rework':
-                node['status'] = 'worker_complete'
-                self._append_rework_evidence(node, kind='worker_terminal', evidence=result)
-            else:
-                self._consume_reviewer_result(state, node, purpose, result, integration)
+            self._consume_worker_chain_result(state, node, result, integration)
             self._transition(state, node_id, status, str(node['status']), result)
         self._save(state)
 
-    def _start_ready_reviewers(self, state: dict[str, object], integration) -> None:
-        for node_id in state['nodes']:
-            node = _node(state, node_id)
-            if node['status'] != 'worker_complete':
-                continue
-            review_input = integration.capture_review_input(
-                node_id,
-                worker_job_id=str(_latest_worker(node).get('job_id') or ''),
-            )
-            node['review_input'] = review_input
-            purpose = 'reviewer_recheck' if node.get('worker_rework') else 'reviewer'
-            result = self._submit_node_job(state, node, purpose=purpose)
-            _set_job_result(node, purpose, result)
-            if purpose == 'reviewer_recheck':
-                self._append_rework_evidence(
-                    node,
-                    kind='reviewer_submission',
-                    evidence=result,
-                )
-            if bool(result.get('terminal')) and str(result.get('status') or '') == 'completed':
-                self._consume_reviewer_result(state, node, purpose, result, integration)
-            else:
-                node['status'] = (
-                    'review_failed'
-                    if bool(result.get('terminal'))
-                    else _pending_status(result, purpose=purpose)
-                )
-            if node['status'] == 'review_failed':
-                node['failure'] = {'source': 'reviewer_submission_failed', 'job': result}
-            self._transition(state, node_id, 'worker_complete', str(node['status']), result)
-        self._save(state)
-
-    def _consume_reviewer_result(
+    def _consume_worker_chain_result(
         self,
         state: dict[str, object],
         node: dict[str, object],
-        purpose: str,
         result: dict[str, object],
         integration,
     ) -> None:
-        decision = _review_decision(str(result.get('reply') or ''))
-        node_id = str(node['node_id'])
+        chain = result.get('chain_evidence')
+        records = [dict(item) for item in chain if isinstance(item, dict)] if isinstance(chain, list) else []
+        expected_reviewer = str(node.get('reviewer_agent') or '')
         maximum = int(self.bundle['policy']['max_node_rework_rounds'])
-        rework_count = int(node.get('rework_count') or 0)
-        accepted_rework = decision == 'rework_required' and rework_count < maximum
-        review = _mapping(node['review_input'])
-        if decision == 'pass':
-            review_result = 'pass'
-        elif accepted_rework:
-            review_result = 'rework'
-        else:
-            review_result = 'failed'
-        integration.record_review(
-            node_id,
-            reviewer_job_id=str(result.get('job_id') or ''),
-            result=review_result,
-            input_digest=str(review['input_digest']),
-            tree_digest=str(review['tree_digest']),
-        )
-        if purpose == 'reviewer_recheck':
-            self._append_rework_evidence(
-                node,
-                kind='reviewer_terminal',
-                evidence={**result, 'decision': decision},
-            )
-        if decision == 'pass':
-            self._checkpoint('after_reviewer_pass_before_node_commit', state)
-            finalized = integration.finalize_node(node_id)
-            node['reviewed_commit'] = finalized['reviewed_commit']
-            node['status'] = 'integration_ready'
+        decisions = [_review_decision(str(item.get('reply') or '')) for item in records]
+        node['rework_count'] = max(0, len(records) - 1)
+        node['rework_history'] = [
+            {
+                'cycle': index,
+                'kind': 'worker_owned_reviewer_terminal',
+                'purpose': 'reviewer' if index == 0 else 'reviewer_recheck',
+                'job_id': item.get('child_job_id'),
+                'status': item.get('child_status'),
+                'decision': decisions[index],
+                'evidence_digest': _digest(item),
+            }
+            for index, item in enumerate(records)
+        ]
+        reasons = []
+        if not records:
+            reasons.append('review_chain_missing')
+        if len(records) > maximum + 1:
+            reasons.append('review_chain_rework_limit_exceeded')
+        for item in records:
+            if str(item.get('child_agent') or '') != expected_reviewer:
+                reasons.append('review_chain_target_mismatch')
+            if str(item.get('state') or '') != 'done':
+                reasons.append('review_chain_edge_not_done')
+            if str(item.get('child_status') or '') != 'completed':
+                reasons.append('review_chain_child_not_completed')
+            if not str(item.get('review_tree_digest') or '').strip():
+                reasons.append('review_chain_tree_binding_missing')
+            if item.get('reply_artifact_valid') is False:
+                reasons.append('review_chain_reply_artifact_invalid')
+        if decisions and decisions[-1] != 'pass':
+            reasons.append(f'review_chain_final_{decisions[-1]}')
+        if any(decision != 'rework_required' for decision in decisions[:-1]):
+            reasons.append('review_chain_nonfinal_verdict_invalid')
+        if reasons:
+            node['status'] = 'review_failed'
+            node['failure'] = {
+                'source': 'worker_owned_review_chain_invalid',
+                'reasons': list(dict.fromkeys(reasons)),
+                'worker_job_id': result.get('job_id'),
+                'chain_evidence': records,
+            }
             return
-        if accepted_rework:
-            self._checkpoint('after_r2_nonpass_review_before_rework_submit', state)
-            node['rework_count'] = rework_count + 1
-            self._append_rework_evidence(
-                node,
-                kind='rework_requested',
-                evidence={**result, 'decision': decision},
-            )
-            result = self._submit_node_job(state, node, purpose='worker_rework')
-            node['worker_rework'] = result
-            self._append_rework_evidence(
-                node,
-                kind='worker_submission',
-                evidence=result,
-            )
-            self._checkpoint('after_rework_submission_before_state_write', state)
-            node['status'] = (
-                ('worker_complete' if str(result.get('status') or '') == 'completed' else 'worker_failed')
-                if bool(result.get('terminal'))
-                else _pending_status(result, purpose='worker_rework')
-            )
-            if node['status'] == 'worker_failed':
-                node['failure'] = {'source': 'worker_rework_submission_failed', 'job': result}
-            return
-        node['status'] = 'review_failed'
-        node['failure'] = {
-            'source': (
-                'node_rework_exhausted'
-                if decision == 'rework_required' and rework_count >= maximum
-                else 'reviewer_nonpass'
-            ),
-            'decision': decision,
-            'job': result,
-            'rework_count': rework_count,
-            'max_node_rework_rounds': maximum,
-        }
 
-    def _append_rework_evidence(
-        self,
-        node: dict[str, object],
-        *,
-        kind: str,
-        evidence: dict[str, object],
-    ) -> None:
-        record = {
-            'cycle': int(node.get('rework_count') or 0),
-            'kind': kind,
-            'purpose': evidence.get('purpose'),
-            'job_id': evidence.get('job_id'),
-            'status': evidence.get('status'),
-            'decision': evidence.get('decision'),
-            'submission_identity': deepcopy(evidence.get('submission_identity')),
-        }
-        record['evidence_digest'] = _digest(record)
-        history = node.setdefault('rework_history', [])
-        if not isinstance(history, list):
-            raise ValueError(f'node {node["node_id"]} rework history is invalid')
-        if any(
-            isinstance(item, dict) and item.get('evidence_digest') == record['evidence_digest']
-            for item in history
-        ):
+        review_input = integration.capture_review_input(
+            str(node['node_id']),
+            worker_job_id=str(result.get('job_id') or ''),
+        )
+        final_tree_digest = str(records[-1].get('review_tree_digest') or '')
+        if final_tree_digest != str(review_input['tree_digest']):
+            integration.record_review(
+                str(node['node_id']),
+                reviewer_job_id=str(records[-1].get('child_job_id') or ''),
+                result='failed',
+                input_digest=str(review_input['input_digest']),
+                tree_digest=str(review_input['tree_digest']),
+            )
+            node['status'] = 'review_failed'
+            node['failure'] = {
+                'source': 'worker_owned_review_chain_invalid',
+                'reasons': ['review_chain_tree_digest_mismatch'],
+                'worker_job_id': result.get('job_id'),
+                'expected_tree_digest': final_tree_digest,
+                'observed_tree_digest': review_input['tree_digest'],
+                'chain_evidence': records,
+            }
             return
-        history.append(record)
+        node['review_input'] = review_input
+        final_review = records[-1]
+        node['reviewer'] = {
+            'target': expected_reviewer,
+            'purpose': 'worker_owned_review_chain',
+            'job_id': final_review.get('child_job_id'),
+            'status': final_review.get('child_status'),
+            'reply': final_review.get('reply'),
+            'terminal': True,
+            'chain_owned': True,
+        }
+        integration.record_review(
+            str(node['node_id']),
+            reviewer_job_id=str(final_review.get('child_job_id') or ''),
+            result='pass',
+            input_digest=str(review_input['input_digest']),
+            tree_digest=str(review_input['tree_digest']),
+        )
+        self._checkpoint('after_reviewer_pass_before_node_commit', state)
+        finalized = integration.finalize_node(str(node['node_id']))
+        node['reviewed_commit'] = finalized['reviewed_commit']
+        node['status'] = 'integration_ready'
 
     def _sync_integration(self, state: dict[str, object], integration) -> tuple[str, ...]:
         ready = [
@@ -641,7 +600,11 @@ class MultiWorkgroupScheduler:
                 node_id='round',
                 attempt=1,
                 task_id=f'{self.loop_id}-round-reviewer',
-                message=self._round_reviewer_message(state, integration.state()),
+                message=self._round_reviewer_message(
+                    state,
+                    integration.state(),
+                    round_reviewer_target=target,
+                ),
                 services=self.deps.services,
             )
             state['round_reviewer'] = result
@@ -667,7 +630,11 @@ class MultiWorkgroupScheduler:
             node_id='round',
             attempt=1,
             task_id=f'{self.loop_id}-round-reviewer',
-            message=self._round_reviewer_message(state, integration.state()),
+            message=self._round_reviewer_message(
+                state,
+                integration.state(),
+                round_reviewer_target=str(reviewer['target']),
+            ),
             services=self.deps.services,
         )
         state['round_reviewer'] = result
@@ -938,61 +905,110 @@ class MultiWorkgroupScheduler:
         *,
         purpose: str,
     ) -> dict[str, object]:
-        target = str(node['reviewer_agent'] if purpose in {'reviewer', 'reviewer_recheck'} else node['worker_agent'])
-        attempt = (
-            int(node.get('rework_count') or 0)
-            if purpose in {'worker_rework', 'reviewer_recheck'}
-            else 1
-        )
+        if purpose != 'worker':
+            raise ValueError('controller may submit only the root Worker job for a workgroup node')
+        target = str(node['worker_agent'])
         return self.deps.submit_once(
             self.context,
             loop_dir=self.loop_dir,
             loop_id=self.loop_id,
             target=target,
-            sender='ccb_orchestrator' if purpose == 'worker' else str(node['worker_agent']),
+            sender='ccb_orchestrator',
             purpose=purpose,
             bundle_revision=int(self.bundle['bundle_revision']),
             node_id=str(node['node_id']),
-            attempt=attempt,
+            attempt=1,
             task_id=f'{self.loop_id}-{node["node_id"]}-{purpose}',
             message=self._node_message(state, node, purpose=purpose),
+            allowed_chain_targets=(str(node['reviewer_agent']),),
+            bind_chain_workspace_tree=True,
             services=self.deps.services,
         )
 
     def _node_message(self, state: dict[str, object], node: dict[str, object], *, purpose: str) -> str:
+        if purpose != 'worker':
+            raise ValueError('controller does not author Reviewer or rework messages')
         source = next(item for item in self.bundle['nodes'] if item['node_id'] == node['node_id'])
         task_text = self.deps.task_text(self.context, self.task_id)
-        evidence = ''
-        if purpose in {'reviewer', 'reviewer_recheck'}:
-            review = _mapping(node['review_input'])
-            evidence = (
-                f'\nReview input digest: {review["input_digest"]}'
-                f'\nExact tree digest: {review["tree_digest"]}'
-                f'\nWorker job: {_latest_worker(node).get("job_id")}'
-            )
-        elif purpose == 'worker_rework':
-            reviewer_evidence = node.get('reviewer_recheck') or node.get('reviewer')
-            evidence = f'\nReviewer evidence: {json.dumps(reviewer_evidence, sort_keys=True)}'
+        review_protocol = (
+            f'\nAssigned reviewer: {node["reviewer_agent"]}'
+            f'\nMaximum rework rounds: {int(self.bundle["policy"]["max_node_rework_rounds"])}'
+            '\nAfter implementation and verification, submit exactly one `ask --chain --artifact-reply` '
+            'to the assigned reviewer with node/worktree identity, changed paths, tests, and blockers, then stop.'
+            '\nThe Reviewer request must explicitly require its first non-empty reply line to be exactly one of: '
+            '`status: pass`, `status: rework_required`, `status: blocked`, or `status: non_converged`; '
+            'no preamble or code fence may precede that line.'
+            '\nOn `status: rework_required`, repair only the requested node scope and chain to the same reviewer again.'
+            '\nOn `status: pass`, do not modify files or run more tools; immediately return the final node result.'
+            '\nOn `status: blocked` or `status: non_converged`, return a non-pass final result.'
+            '\nDo not use plain ask, silence, another target, or any CCB authority command.'
+        )
         return (
             f'Loop: {self.loop_id}\nTask: {self.task_id}\nNode: {node["node_id"]}\n'
             f'Purpose: {purpose}\nWorktree: {node["worktree_path"]}\nBranch: {node["branch"]}\n'
             f'Allowed paths: {json.dumps(source["allowed_paths"])}\n'
             f'Work packet ref: {source["work_packet_ref"]}\n'
             f'Acceptance refs: {json.dumps(source["acceptance_refs"])}\n'
-            f'Verification refs: {json.dumps(source["verification_refs"])}{evidence}'
-            f'{_node_reviewer_response_contract(purpose)}\n\n{task_text}'
+            f'Verification refs: {json.dumps(source["verification_refs"])}{review_protocol}\n\n{task_text}'
         )
 
-    def _round_reviewer_message(self, state: dict[str, object], integration_state: dict[str, object]) -> str:
+    def _round_reviewer_message(
+        self,
+        state: dict[str, object],
+        integration_state: dict[str, object],
+        *,
+        round_reviewer_target: str,
+    ) -> str:
+        integration_nodes = _mapping(integration_state['nodes'])
         compact_nodes = {
             node_id: {
                 'status': _node(state, node_id)['status'],
                 'worker_job_id': (_mapping(_node(state, node_id).get('worker') or {})).get('job_id'),
-                'reviewer_job_id': (_mapping(_node(state, node_id).get('reviewer_recheck') or _node(state, node_id).get('reviewer') or {})).get('job_id'),
+                'reviewer_job_id': (_mapping(_node(state, node_id).get('reviewer') or {})).get('job_id'),
                 'reviewed_commit': _node(state, node_id).get('reviewed_commit'),
-                'review_input': _node(state, node_id).get('review_input'),
+                'review_input': _mapping(_mapping(integration_nodes[node_id]).get('review') or {}),
             }
             for node_id in state['nodes']
+        }
+        topology = _mapping(state.get('topology'))
+        apply = _mapping(topology.get('apply'))
+        committed = _mapping(apply.get('committed'))
+        reconcile = _mapping(committed.get('reconcile'))
+        observed = _mapping(reconcile.get('observed'))
+        validation = _mapping(committed.get('validation'))
+        observed_agents = [
+            str(item.get('id') or '')
+            for item in observed.get('agents', [])
+            if isinstance(item, dict) and str(item.get('id') or '')
+        ]
+        unexpected_residue = [
+            agent for agent in observed_agents if agent != round_reviewer_target
+        ]
+        reviews = [_mapping(compact_nodes[node_id]['review_input']) for node_id in compact_nodes]
+        authority = {
+            'provider_reply_mutates_authority': False,
+            'controller_authored_node_reviewer_jobs': False,
+            'controller_owned_git_integration': True,
+            'worker_owned_review_chain_verified': all(
+                bool(_mapping(_node(state, node_id).get('reviewer') or {}).get('chain_owned'))
+                for node_id in state['nodes']
+            ),
+            'review_tree_digests_match': all(
+                str(review.get('tree_digest') or '')
+                == str(_mapping(integration_nodes[node_id]).get('reviewed_tree_digest') or '')
+                for node_id, review in zip(compact_nodes, reviews)
+            ),
+            'validated_topology_edge_count': validation.get('edge_count'),
+        }
+        cleanup = {
+            'phase': 'pre_round_review',
+            'observed_available': bool(observed),
+            'observed_active_dynamic_agents': observed_agents,
+            'expected_active_round_reviewer': round_reviewer_target,
+            'unexpected_dynamic_residue': unexpected_residue,
+            'retained_count': observed.get('retained_count'),
+            'release_incomplete_count': observed.get('release_incomplete_count', 0),
+            'final_round_reviewer_release_required_after_reply': True,
         }
         return (
             f'Loop: {self.loop_id}\nTask: {self.task_id}\nRole: ccb_round_reviewer\n'
@@ -1000,6 +1016,8 @@ class MultiWorkgroupScheduler:
             f'Nodes: {json.dumps(compact_nodes, sort_keys=True)}\n'
             f'Integration: {json.dumps(integration_state["integration"], sort_keys=True)}\n'
             f'Root: {json.dumps(integration_state["root"], sort_keys=True)}\n'
+            f'Authority: {json.dumps(authority, sort_keys=True)}\n'
+            f'Cleanup: {json.dumps(cleanup, sort_keys=True)}\n'
             'First non-empty line must be exactly round result: pass|partial|replan_required|blocked.'
         )
 
@@ -1302,6 +1320,10 @@ def _verification_commands(
             if not re.match(r'^[-*]\s+', line):
                 break
             argv = tuple(shlex.split(re.sub(r'^[-*]\s+', '', line)))
+            if argv and not _verification_executable_exists(project_root, argv[0]):
+                raise ValueError(
+                    f'{prefix} verification entry is not an executable argv command: {line}'
+                )
             if argv and argv not in seen:
                 seen.add(argv)
                 commands.append(
@@ -1316,35 +1338,36 @@ def _verification_commands(
         )
     return tuple(commands)
 
+
+def _verification_executable_exists(project_root: Path, executable: str) -> bool:
+    token = str(executable or '').strip()
+    if not token:
+        return False
+    if '/' not in token:
+        return shutil.which(token) is not None
+    path = Path(token)
+    if not path.is_absolute():
+        path = project_root / path
+    try:
+        resolved = path.resolve()
+    except OSError:
+        return False
+    return resolved.is_file()
+
 def _review_decision(reply: str) -> str:
     allowed = {'pass', 'rework_required', 'blocked', 'non_converged'}
-    first_nonempty = True
     for raw_line in reply.splitlines():
         line = raw_line.strip().lstrip('-').strip()
         if not line:
             continue
         lowered = line.lower()
-        if first_nonempty:
-            first_nonempty = False
-            if lowered in allowed:
-                return lowered
         if not lowered.startswith('status:'):
-            continue
+            return 'malformed'
         value = line.split(':', 1)[1].strip().lower()
         if value in allowed:
             return value
         return 'malformed'
     return 'malformed'
-
-
-def _node_reviewer_response_contract(purpose: str) -> str:
-    if purpose not in {'reviewer', 'reviewer_recheck'}:
-        return ''
-    return (
-        '\nReviewer response contract: first non-empty line must be exactly '
-        'status: pass|rework_required|blocked|non_converged. '
-        'Any explanatory evidence must follow after that machine line.'
-    )
 
 
 def _round_decision(reply: str) -> tuple[str | None, str]:
@@ -1494,16 +1517,12 @@ def _raw_observed_evidence(
 
 
 def _pending_purpose(node: dict[str, object]) -> str:
-    for purpose, field in (
-        ('reviewer_recheck', 'reviewer_recheck'),
-        ('worker_rework', 'worker_rework'),
-        ('reviewer', 'reviewer'),
-        ('worker', 'worker'),
-    ):
-        result = node.get(field)
-        if isinstance(result, dict) and not bool(result.get('terminal')):
-            return purpose
-    raise ValueError(f'node {node["node_id"]} pending status has no pending job')
+    result = node.get('worker')
+    if isinstance(result, dict) and not bool(result.get('terminal')):
+        return 'worker'
+    raise ValueError(
+        f'node {node["node_id"]} pending status has no pending root Worker job'
+    )
 
 
 def _pending_job_ids(state: dict[str, object]) -> list[str]:
@@ -1512,10 +1531,8 @@ def _pending_job_ids(state: dict[str, object]) -> list[str]:
         node = _node(state, node_id)
         if str(node.get('status') or '').endswith('_submission_unknown'):
             continue
-        for field in ('worker', 'worker_rework', 'reviewer', 'reviewer_recheck'):
-            job = node.get(field)
-            if not isinstance(job, dict) or bool(job.get('terminal')):
-                continue
+        job = node.get('worker')
+        if isinstance(job, dict) and not bool(job.get('terminal')):
             job_id = str(job.get('job_id') or '').strip()
             if job_id and job_id not in job_ids:
                 job_ids.append(job_id)
@@ -1533,15 +1550,10 @@ def _set_job_result(node: dict[str, object], purpose: str, result: dict[str, obj
 
 
 def _pending_status(result: dict[str, object], *, purpose: str) -> str:
+    if purpose != 'worker':
+        raise ValueError(f'controller may only track a root Worker job, got {purpose}')
     unknown = str(result.get('pending_source') or '') == 'ask_submission_unknown'
-    reviewer = purpose in {'reviewer', 'reviewer_recheck'}
-    if reviewer:
-        return 'reviewer_submission_unknown' if unknown else 'reviewer_pending'
     return 'worker_submission_unknown' if unknown else 'worker_pending'
-
-
-def _latest_worker(node: dict[str, object]) -> dict[str, object]:
-    return _mapping(node.get('worker_rework') or node.get('worker') or {})
 
 
 def _node(state: dict[str, object], node_id: str) -> dict[str, object]:

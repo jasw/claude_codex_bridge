@@ -12,8 +12,9 @@ project-root verification have produced one compact round evidence packet.
 
 1. Read the task and verification refs, every required compact node-review
    record, integration order/digest/tests, promotion or rollback evidence,
-   project-root verification evidence, authority checks, and cleanup/release
-   evidence.
+   project-root verification evidence, authority checks, and pre-review
+   cleanup/release evidence. The current Round Reviewer may be the sole active
+   dynamic agent; its final release is a controller-owned post-reply gate.
 2. Reject missing node review, reviewed-tree mismatch, integration drift,
    scope violation, hidden fallback, partial promoted delta, rollback drift,
    missing project-root checks, or unproven cleanup.

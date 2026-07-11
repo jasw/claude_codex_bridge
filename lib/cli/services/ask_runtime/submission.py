@@ -127,6 +127,15 @@ def _route_options(command) -> dict[str, object]:
         options['artifact_request'] = True
     if bool(getattr(command, 'artifact_reply', False)):
         options['artifact_reply'] = True
+    allowed_chain_targets = tuple(
+        str(value or '').strip().lower()
+        for value in (getattr(command, 'allowed_chain_targets', ()) or ())
+        if str(value or '').strip()
+    )
+    if allowed_chain_targets:
+        options['allowed_chain_targets'] = list(dict.fromkeys(allowed_chain_targets))
+    if bool(getattr(command, 'bind_chain_workspace_tree', False)):
+        options['bind_chain_workspace_tree'] = True
     return options
 
 

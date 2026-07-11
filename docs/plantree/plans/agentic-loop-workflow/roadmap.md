@@ -17,9 +17,15 @@ Date: 2026-06-24
 - G5 direct source/fake acceptance is integrated through `b42ec3b2`; direct
   evidence is in
   [history/single-lane-g5-source-fake-acceptance-20260711.md](history/single-lane-g5-source-fake-acceptance-20260711.md).
-- Current work is G6 visible real-provider acceptance from opened projects
-  under `/home/bfly/yunwei/test_ccb2`, using inherited provider environment
-  and project-local role authority.
+- Decision 027 replaces controller-relayed Reviewer/rework messages with one
+  restricted Worker-owned review chain while preserving controller-owned
+  authority and integration.
+- Decision 027 and its visible two-workgroup Codex baseline now pass. Evidence
+  is in
+  [history/g6-worker-owned-review-chain-real-provider-20260712.md](history/g6-worker-owned-review-chain-real-provider-20260712.md).
+- Current work is completing the remaining G6 three/four-group, restart,
+  rework, busy-retain, and provider-profile matrix from fresh opened projects
+  under `/home/bfly/yunwei/test_ccb2`.
 
 ## Done
 
@@ -1278,6 +1284,13 @@ rework, partial, blocked, integration/root verification failure, round blocked,
 release, cleanup, and B7 normalization. G6 visible real-provider acceptance is
 now active. See
 [history/single-lane-g5-source-fake-acceptance-20260711.md](history/single-lane-g5-source-fake-acceptance-20260711.md).
+
+2026-07-12 Decision 027 checkpoint: a visible two-workgroup mixed-DAG Codex
+task passed Worker-owned Reviewer chains, controller-owned Git integration,
+root verification, Round Reviewer, release, cleanup, and zero dynamic residue.
+G6 remains active for three/four groups, restart, rework, busy-retain, and
+provider qualification. See
+[history/g6-worker-owned-review-chain-real-provider-20260712.md](history/g6-worker-owned-review-chain-real-provider-20260712.md).
 
 1. Freeze the current one-workgroup and Config V2 source/test baselines and
    land the orchestration-bundle/node-state/evidence contracts from

@@ -17,14 +17,16 @@ responsibilities = [
   "Consume only the canonical node work packet and its declared refs",
   "Respect allowed paths, scope, non-goals, dependencies, and acceptance criteria",
   "Report changed paths, verification commands and results, evidence, and blockers",
-  "Return done, blocked, or needs_rework"
+  "Run the bounded review loop only with the assigned Reviewer through ask --chain",
+  "Return done only after Reviewer pass, otherwise blocked or non-converged"
 ]
 non_goals = [
   "Changing task scope",
   "Reading undeclared workflow context or predecessor evidence",
   "Silent fallback or degradation",
   "Claiming global success",
-  "Creating commits, integration state, or downstream asks",
+  "Creating commits or integration state",
+  "Asking any agent except the assigned Reviewer",
   "Direct plan/runtime authority writes"
 ]
 interaction_mode = "short_lived_execution_node"
@@ -32,7 +34,7 @@ initiates_actions = true
 
 [contents]
 memory = ["memory.md"]
-skills = ["skills/bounded-work-item"]
+skills = ["skills/bounded-work-item", "skills/assigned-review-chain"]
 
 [permissions]
 read_files = true
@@ -44,7 +46,7 @@ secrets = "none"
 context_lifecycle = "immaculate"
 context_scope = "activation"
 history_reuse = false
-rehydration_source = "controller_supplied_node_work_packet"
+rehydration_source = "controller_supplied_node_work_packet_and_chain_continuation"
 
 [adapters.ccb]
 display_name = "coder"

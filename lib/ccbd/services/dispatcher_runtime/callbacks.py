@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-from datetime import timedelta
 from dataclasses import replace
+from pathlib import Path
 
 from ccbd.api_models import DeliveryScope, JobRecord, JobStatus, MessageEnvelope, TargetKind
-from ccbd.system import parse_utc_timestamp
 from completion.models import CompletionDecision
 from mailbox_runtime.targets import NON_AGENT_ACTORS
 from message_bureau import CallbackEdgeRecord, CallbackEdgeState, MessageState, ReplyTerminalStatus
@@ -15,7 +14,6 @@ from .runtime_state import sync_runtime
 
 CALLBACK_ROUTE_MODE = 'chain'
 CALLBACK_CONTINUATION_MESSAGE_TYPE = 'chain_continuation'
-DEFAULT_CALLBACK_TIMEOUT_S = 30 * 60
 DEFAULT_MAX_CALLBACK_DEPTH = 5
 _TERMINAL_CALLBACK_STATES = frozenset(
     {
@@ -66,7 +64,7 @@ def register_callback_edge(dispatcher, *, request: MessageEnvelope, jobs: tuple,
         original_caller=parent.request.from_actor,
         original_task_id=parent.request.task_id or parent_message.message_id,
         state=CallbackEdgeState.PENDING,
-        timeout_at=_callback_timeout_at(dispatcher, accepted_at),
+        timeout_at=None,
         created_at=accepted_at,
         updated_at=accepted_at,
         diagnostics={
@@ -76,6 +74,10 @@ def register_callback_edge(dispatcher, *, request: MessageEnvelope, jobs: tuple,
             'child_body': _callback_body_summary(child.request),
             'parent_body_artifact': dict(parent.request.body_artifact) if parent.request.body_artifact else None,
             'child_body_artifact': dict(child.request.body_artifact) if child.request.body_artifact else None,
+            'allowed_chain_targets': list(_allowed_chain_targets(parent)),
+            'bind_chain_workspace_tree': bool(request.route_options.get('bind_chain_workspace_tree')),
+            'review_workspace_path': request.route_options.get('review_workspace_path'),
+            'review_tree_digest': request.route_options.get('review_tree_digest'),
         },
     )
     dispatcher._message_bureau.record_callback_edge(edge)
@@ -95,19 +97,32 @@ def register_callback_edge(dispatcher, *, request: MessageEnvelope, jobs: tuple,
 
 
 def validate_callback_request(dispatcher, request: MessageEnvelope) -> None:
+    parent = _active_parent_job(dispatcher, request.from_actor)
+    allowed_targets = _allowed_chain_targets(parent)
     if not request_callback_route(request):
+        if allowed_targets:
+            raise dispatcher._dispatch_error(
+                'restricted workflow job may only use ask --chain to its assigned target'
+            )
         validate_nested_ask_request(dispatcher, request)
         return
     if dispatcher._message_bureau is None:
         raise dispatcher._dispatch_error('ask --chain requires message bureau support')
     if request.delivery_scope is not DeliveryScope.SINGLE:
         raise dispatcher._dispatch_error('ask --chain supports exactly one target agent')
-    parent = _active_parent_job(dispatcher, request.from_actor)
     if parent is None:
         raise dispatcher._dispatch_error('ask --chain requires an active parent job for the sender')
     if _message_for_job(dispatcher, parent) is None:
         raise dispatcher._dispatch_error('ask --chain could not resolve parent message')
     _validate_callback_continuation_target(dispatcher, parent=parent, child_agent=request.to_agent)
+    if allowed_targets and str(request.to_agent or '').strip().lower() not in allowed_targets:
+        raise dispatcher._dispatch_error(
+            'ask --chain target is not the assigned reviewer for this workflow job'
+        )
+    parent_options = dict(getattr(parent.request, 'route_options', None) or {})
+    if bool(parent_options.get('bind_chain_workspace_tree')):
+        request.route_options['bind_chain_workspace_tree'] = True
+        _bind_callback_workspace_tree(dispatcher, request=request, parent=parent)
     if dispatcher._message_bureau.callback_edge_for_parent_job(parent.job_id) is not None:
         raise dispatcher._dispatch_error('ask --chain allows one outstanding chain edge per parent job')
     _validate_callback_chain(dispatcher, parent=parent, child_agent=request.to_agent)
@@ -214,12 +229,9 @@ def repair_callback_edges(dispatcher) -> tuple[CallbackEdgeRecord, ...]:
     if dispatcher._message_bureau is None:
         return ()
     repaired: list[CallbackEdgeRecord] = []
-    repaired.extend(sweep_callback_timeouts(dispatcher))
     for edge in dispatcher._message_bureau.pending_callback_edges():
         latest = dispatcher._message_bureau.callback_edge(edge.edge_id) or edge
         if latest.state in _TERMINAL_CALLBACK_STATES:
-            continue
-        if _callback_edge_expired(latest, dispatcher._clock()):
             continue
         if latest.continuation_job_id:
             continue
@@ -258,30 +270,7 @@ def repair_callback_edges(dispatcher) -> tuple[CallbackEdgeRecord, ...]:
 
 
 def sweep_callback_timeouts(dispatcher) -> tuple[CallbackEdgeRecord, ...]:
-    if dispatcher._message_bureau is None:
-        return ()
-    edges = dispatcher._message_bureau.pending_callback_edges()
-    if not edges:
-        return ()
-    now = dispatcher._clock()
-    expired: list[CallbackEdgeRecord] = []
-    for edge in edges:
-        latest = dispatcher._message_bureau.callback_edge(edge.edge_id) or edge
-        if latest.state in _TERMINAL_CALLBACK_STATES:
-            continue
-        if not _callback_edge_expired(latest, now):
-            continue
-        expired.append(
-            fail_callback_edge(
-                dispatcher,
-                latest,
-                reason='callback_timeout',
-                detail='callback child did not produce a continuation before timeout',
-                updated_at=now,
-                state=CallbackEdgeState.TIMED_OUT,
-            )
-        )
-    return tuple(expired)
+    return ()
 
 
 def fail_callback_edge(
@@ -391,6 +380,9 @@ def _submit_continuation_job(dispatcher, *, request: MessageEnvelope, parent_mes
     dispatcher._registry.spec_for(request.to_agent)
     dispatcher._validate_targets_available((request.to_agent,))
     spec = dispatcher._registry.spec_for(request.to_agent)
+    parent_job_id = str(request.route_options.get('chain_parent_job_id') or '').strip()
+    parent_job = get_job(dispatcher, parent_job_id) if parent_job_id else None
+    parent_runtime = dispatcher._registry.get(request.to_agent)
     job_id = dispatcher._new_id('job')
     status = JobStatus.QUEUED if dispatcher._state.has_outstanding_for(TargetKind.AGENT, request.to_agent) else JobStatus.ACCEPTED
     job = JobRecord(
@@ -400,7 +392,10 @@ def _submit_continuation_job(dispatcher, *, request: MessageEnvelope, parent_mes
         provider=spec.provider,
         provider_instance=None,
         provider_options={},
-        workspace_path=None,
+        workspace_path=(
+            getattr(parent_job, 'workspace_path', None)
+            or getattr(parent_runtime, 'workspace_path', None)
+        ),
         target_kind=TargetKind.AGENT,
         target_name=request.to_agent,
         request=request,
@@ -587,33 +582,6 @@ def _callback_failure_reply(*, edge: CallbackEdgeRecord, reason: str, detail: st
     )
 
 
-def _callback_timeout_at(dispatcher, accepted_at: str) -> str:
-    timeout_s = _callback_timeout_s(dispatcher)
-    try:
-        return (
-            parse_utc_timestamp(accepted_at) + timedelta(seconds=max(0.0, timeout_s))
-        ).isoformat().replace('+00:00', 'Z')
-    except Exception:
-        return accepted_at
-
-
-def _callback_edge_expired(edge: CallbackEdgeRecord, now: str) -> bool:
-    if not edge.timeout_at:
-        return False
-    try:
-        return parse_utc_timestamp(now) >= parse_utc_timestamp(edge.timeout_at)
-    except Exception:
-        return False
-
-
-def _callback_timeout_s(dispatcher) -> float:
-    value = getattr(dispatcher._config, 'callback_timeout_s', DEFAULT_CALLBACK_TIMEOUT_S)
-    try:
-        return max(0.0, float(value))
-    except (TypeError, ValueError):
-        return float(DEFAULT_CALLBACK_TIMEOUT_S)
-
-
 def _max_callback_depth(dispatcher) -> int:
     value = getattr(dispatcher._config, 'max_callback_depth', DEFAULT_MAX_CALLBACK_DEPTH)
     try:
@@ -624,6 +592,50 @@ def _max_callback_depth(dispatcher) -> int:
 
 def _callback_child_agent(edge: CallbackEdgeRecord) -> str:
     return str(edge.diagnostics.get('child_agent') or '').strip().lower()
+
+
+def _allowed_chain_targets(job) -> tuple[str, ...]:
+    if job is None:
+        return ()
+    request = getattr(job, 'request', None)
+    options = dict(getattr(request, 'route_options', None) or {})
+    values = options.get('allowed_chain_targets')
+    if not isinstance(values, (list, tuple)):
+        return ()
+    return tuple(
+        dict.fromkeys(
+            str(value or '').strip().lower()
+            for value in values
+            if str(value or '').strip()
+        )
+    )
+
+
+def _bind_callback_workspace_tree(dispatcher, *, request: MessageEnvelope, parent) -> None:
+    parent_runtime = dispatcher._registry.get(parent.agent_name)
+    workspace = str(
+        getattr(parent, 'workspace_path', None)
+        or getattr(parent_runtime, 'workspace_path', None)
+        or ''
+    ).strip()
+    if not workspace:
+        raise dispatcher._dispatch_error(
+            'restricted review chain requires a bound parent workspace'
+        )
+    try:
+        from cli.services.workgroup_integration.git_ops import GitOperations
+
+        path = Path(workspace).expanduser().resolve()
+        digest = GitOperations(path).current_tree_digest(
+            path,
+            ignore_controller_state=True,
+        )
+    except Exception as exc:
+        raise dispatcher._dispatch_error(
+            f'restricted review chain could not bind parent workspace tree: {exc}'
+        ) from exc
+    request.route_options['review_workspace_path'] = str(path)
+    request.route_options['review_tree_digest'] = digest
 
 
 def _continuation_request(dispatcher, *, edge: CallbackEdgeRecord, child_job, decision: CompletionDecision) -> MessageEnvelope:
@@ -651,6 +663,8 @@ def _continuation_request(dispatcher, *, edge: CallbackEdgeRecord, child_job, de
             'chain_parent_job_id': edge.parent_job_id,
             'chain_child_job_id': edge.child_job_id,
             'chain_child_message_id': edge.child_message_id,
+            'allowed_chain_targets': list(edge.diagnostics.get('allowed_chain_targets') or []),
+            'bind_chain_workspace_tree': bool(edge.diagnostics.get('bind_chain_workspace_tree')),
         },
         body_artifact=body_artifact,
     )

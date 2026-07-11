@@ -1233,18 +1233,6 @@ def test_persisted_watch_fallback_resolves_callback_root_final_reply(tmp_path: P
             attempt_state=AttemptState.COMPLETED,
         )
     )
-    ReplyStore(layout).append(
-        ReplyRecord(
-            reply_id='rep_final',
-            message_id='msg_root',
-            attempt_id='att_continuation',
-            agent_name='agent1',
-            terminal_status=ReplyTerminalStatus.COMPLETED,
-            reply='FINAL CALLBACK RESULT',
-            diagnostics={'reason': 'task_complete'},
-            finished_at='2026-03-18T00:00:20Z',
-        )
-    )
     CompletionSnapshotStore(layout).save(
         CompletionSnapshot(
             job_id='job_callback_root',
@@ -1270,10 +1258,111 @@ def test_persisted_watch_fallback_resolves_callback_root_final_reply(tmp_path: P
         )
     )
 
+    assert load_persisted_terminal_watch_payload(context, 'job_callback_root') is None
+
+    ReplyStore(layout).append(
+        ReplyRecord(
+            reply_id='rep_final',
+            message_id='msg_root',
+            attempt_id='att_continuation',
+            agent_name='agent1',
+            terminal_status=ReplyTerminalStatus.COMPLETED,
+            reply='FINAL CALLBACK RESULT',
+            diagnostics={'reason': 'task_complete'},
+            finished_at='2026-03-18T00:00:20Z',
+        )
+    )
     payload = load_persisted_terminal_watch_payload(context, 'job_callback_root')
 
     assert payload is not None
     assert payload['reply'] == 'FINAL CALLBACK RESULT'
+    assert payload['visible_reply_source'] == 'message_bureau_reply'
+
+
+def test_persisted_watch_fallback_recovers_callback_with_legacy_snapshot(tmp_path: Path) -> None:
+    project_root = tmp_path / 'repo-ask-watch-legacy-callback'
+    project_root.mkdir()
+    context = _build_context(project_root)
+    layout = PathLayout(project_root)
+    finished_at = '2026-03-18T00:00:10Z'
+    request = MessageEnvelope(
+        project_id=context.project.project_id,
+        to_agent='agent1',
+        from_actor='user',
+        body='delegate and finish',
+        task_id='task-legacy-callback',
+        reply_to=None,
+        message_type='ask',
+        delivery_scope=DeliveryScope.SINGLE,
+    )
+    JobStore(layout).append(
+        JobRecord(
+            job_id='job_legacy_callback_root',
+            submission_id=None,
+            agent_name='agent1',
+            target_kind='agent',
+            target_name='agent1',
+            provider='codex',
+            provider_instance=None,
+            provider_options={},
+            request=request,
+            status=JobStatus.COMPLETED,
+            terminal_decision={
+                'terminal': True,
+                'status': 'completed',
+                'reason': 'task_complete',
+                'reply': 'delegated to child',
+                'finished_at': finished_at,
+                'delegated': True,
+                'suppress_reply': True,
+                'chain_edge_id': 'cb_legacy',
+                'chain_child_job_id': 'job_child',
+            },
+            cancel_requested_at=None,
+            created_at='2026-03-18T00:00:00Z',
+            updated_at=finished_at,
+        )
+    )
+    AttemptStore(layout).append(
+        AttemptRecord(
+            attempt_id='att_legacy_root',
+            message_id='msg_legacy_root',
+            agent_name='agent1',
+            provider='codex',
+            job_id='job_legacy_callback_root',
+            retry_index=0,
+            health_snapshot_ref=None,
+            started_at='2026-03-18T00:00:00Z',
+            updated_at=finished_at,
+            attempt_state=AttemptState.COMPLETED,
+        )
+    )
+    snapshot_path = layout.snapshot_path('job_legacy_callback_root')
+    snapshot_path.parent.mkdir(parents=True, exist_ok=True)
+    snapshot_path.write_text(
+        '{"schema_version":2,"record_type":"completion_snapshot",'
+        '"job_id":"job_legacy_callback_root","agent_name":"agent1"}\n',
+        encoding='utf-8',
+    )
+
+    assert load_persisted_terminal_watch_payload(context, 'job_legacy_callback_root') is None
+
+    ReplyStore(layout).append(
+        ReplyRecord(
+            reply_id='rep_legacy_final',
+            message_id='msg_legacy_root',
+            attempt_id='att_legacy_continuation',
+            agent_name='agent1',
+            terminal_status=ReplyTerminalStatus.COMPLETED,
+            reply='LEGACY CALLBACK RESULT',
+            diagnostics={'reason': 'task_complete'},
+            finished_at='2026-03-18T00:00:20Z',
+        )
+    )
+    payload = load_persisted_terminal_watch_payload(context, 'job_legacy_callback_root')
+
+    assert payload is not None
+    assert payload['reply'] == 'LEGACY CALLBACK RESULT'
     assert payload['visible_reply_source'] == 'message_bureau_reply'
 
 

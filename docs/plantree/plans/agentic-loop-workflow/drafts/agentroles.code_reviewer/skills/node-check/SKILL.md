@@ -5,13 +5,14 @@ description: Verify one coder node against the assigned execution contract and r
 
 # Node Check
 
-Use this skill when the controller supplies a bounded node review packet for
-one exact node workspace and tree.
+Use this skill when the assigned Worker supplies a bounded node review packet
+for its current node workspace.
 
 ## Workflow
 
 1. Bind the review to the supplied node id, workspace identity, base commit,
-   head commit, and tree digest. Missing or mismatched identity is `blocked`.
+   and head commit. CCB records the canonical tree digest outside provider
+   text. Missing or mismatched visible identity is `blocked`.
 2. Read the canonical node work packet, coder result, changed paths, acceptance
    refs, verification refs, and dependency evidence.
 3. Check that every changed path is allowed and that no scope violation or

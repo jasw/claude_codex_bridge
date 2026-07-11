@@ -702,6 +702,8 @@ def submit_or_recover_ask_once(
     attempt: int,
     task_id: str,
     message: str,
+    allowed_chain_targets: tuple[str, ...] = (),
+    bind_chain_workspace_tree: bool = False,
     services=None,
 ) -> dict[str, object]:
     """Submit once or consume persisted terminal state without live provider polling."""
@@ -719,6 +721,8 @@ def submit_or_recover_ask_once(
             attempt=attempt,
             task_id=task_id,
             message=message,
+            allowed_chain_targets=allowed_chain_targets,
+            bind_chain_workspace_tree=bind_chain_workspace_tree,
             timeout=None,
             defer_observation=True,
         )
@@ -1731,6 +1735,8 @@ def _submit_and_watch(
     task_id: str,
     message: str,
     timeout: float | None,
+    allowed_chain_targets: tuple[str, ...] = (),
+    bind_chain_workspace_tree: bool = False,
     defer_observation: bool = False,
 ) -> dict[str, object]:
     # The intent check and daemon submission are one exact-once critical section.
@@ -1749,6 +1755,8 @@ def _submit_and_watch(
             attempt=attempt,
             task_id=task_id,
             message=message,
+            allowed_chain_targets=allowed_chain_targets,
+            bind_chain_workspace_tree=bind_chain_workspace_tree,
             timeout=timeout,
             defer_observation=defer_observation,
         )
@@ -1769,6 +1777,8 @@ def _submit_and_watch_locked(
     task_id: str,
     message: str,
     timeout: float | None,
+    allowed_chain_targets: tuple[str, ...] = (),
+    bind_chain_workspace_tree: bool = False,
     defer_observation: bool = False,
 ) -> dict[str, object]:
     stage = f'{purpose}_ask'
@@ -1907,6 +1917,8 @@ def _submit_and_watch_locked(
                 sender=RUNNER_ASK_SENDER,
                 message=message,
                 task_id=task_id,
+                allowed_chain_targets=allowed_chain_targets,
+                bind_chain_workspace_tree=bind_chain_workspace_tree,
             ),
         )
     except Exception as exc:
@@ -2367,6 +2379,9 @@ def _ask_result_from_watch_payload(
     visible_reply_source = _payload_value(payload, 'visible_reply_source')
     if visible_reply_source:
         result['visible_reply_source'] = str(visible_reply_source)
+    chain_evidence = _payload_value(payload, 'chain_evidence')
+    if isinstance(chain_evidence, list):
+        result['chain_evidence'] = [dict(item) for item in chain_evidence if isinstance(item, dict)]
     if observation_error:
         result['observation_error'] = observation_error
     if not terminal:

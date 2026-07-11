@@ -26,7 +26,9 @@ effective-capacity snapshot, and expected bundle revision.
 Candidate root fields are exactly `schema`, `task_id`, `bundle_revision`,
 `selection`, `nodes`, `integration`, and `policy`. Selection fields are exactly
 `workgroup_count`, `complexity`, `cutability`, `execution_shape`, and
-`rationale`. `workgroup_count` must equal the node count. `integration` fields
+`rationale`. `workgroup_count` must equal the node count. `rationale` must be
+one non-empty line of at most 500 characters; target 300 characters or fewer
+and do not repeat node work packets in it. `integration` fields
 are exactly `verification_refs` and `project_root_verification_refs`; do not
 emit `mode`, `order`, merge strategy, dependency order, execution order, or
 controller-owned integration settings. Both integration arrays must be

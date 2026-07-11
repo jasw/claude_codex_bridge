@@ -369,6 +369,53 @@ def test_fake_orchestrator_spilled_ask_uses_same_project_durable_contract(
         )
 
 
+def test_fake_worker_continuation_recovers_contract_from_verified_project_artifact(
+    tmp_path: Path,
+) -> None:
+    project = tmp_path / 'project'
+    workspace = project / '.ccb/workspaces/workgroups/group/nodes/node-001'
+    workspace.mkdir(parents=True)
+    artifact_dir = project / '.ccb/ccbd/artifacts/text/result-chain-continuation'
+    artifact_dir.mkdir(parents=True)
+    full_body = (
+        'CCB result-chain continuation.\n'
+        'Task: g5-multi-workgroup-task\n'
+        'Node: node-001\n'
+        'Purpose: worker\n'
+        f'Worktree: {workspace}\n'
+        'Allowed paths: ["g5_outputs/node-001.txt"]\n'
+        'g5_multi_workgroup_smoke: '
+        + json.dumps(
+            _scenario_contract(count=1, shape='parallel', scenario='reviewer_rework_pass'),
+            sort_keys=True,
+        )
+        + '\n'
+    )
+    artifact_path = artifact_dir / 'cb_chain-art_verified.txt'
+    artifact_path.write_text(full_body, encoding='utf-8')
+    data = full_body.encode('utf-8')
+
+    submission = FakeProviderAdapter(latency_seconds=0).start(
+        _job(
+            agent_name='loop-lp-g5-node-001-coder',
+            body='CCB result-chain continuation was stored as an artifact.',
+            workspace=workspace,
+            project_id=compute_project_id(project),
+            body_artifact={
+                'kind': 'result-chain-continuation',
+                'path': str(artifact_path),
+                'bytes': len(data),
+                'sha256': hashlib.sha256(data).hexdigest(),
+            },
+        ),
+        context=SimpleNamespace(workspace_path=str(workspace)),
+        now='2026-07-11T00:00:00Z',
+    )
+
+    assert submission.ready_at == '2026-07-11T00:00:01Z'
+    assert 'status: done' in submission.reply
+
+
 def test_fake_scenario_contract_requires_exact_versioned_shape() -> None:
     valid = 'g5_multi_workgroup_smoke: ' + json.dumps(
         _scenario_contract(count=2, shape='parallel'), sort_keys=True

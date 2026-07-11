@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from dataclasses import replace
 from pathlib import Path
+import subprocess
 
 import pytest
 
@@ -1742,12 +1743,11 @@ def test_dispatcher_callback_repair_reuses_existing_continuation_job(tmp_path: P
     assert latest_codex_job_ids == original_codex_job_ids
 
 
-def test_dispatcher_callback_timeout_fails_parent_message_and_notifies_original_caller(tmp_path: Path) -> None:
-    project_root = tmp_path / 'repo-callback-timeout'
+def test_dispatcher_callback_has_no_elapsed_time_business_timeout(tmp_path: Path) -> None:
+    project_root = tmp_path / 'repo-callback-no-timeout'
     ctx = _bootstrap_test_project(project_root)
     layout = PathLayout(project_root)
     config = _provider_config('codex', 'claude')
-    object.__setattr__(config, 'callback_timeout_s', 1.0)
     now = {'value': '2026-03-30T00:00:00Z'}
     registry = AgentRegistry(layout, config)
     registry.upsert(_runtime('codex', project_id=ctx.project_id, layout=layout, pid=101))
@@ -1782,22 +1782,148 @@ def test_dispatcher_callback_timeout_fails_parent_message_and_notifies_original_
     ).jobs[0].job_id
     edge = CallbackEdgeStore(layout).get_latest_for_child_job(child_job_id)
     assert edge is not None
-    assert edge.timeout_at == '2026-03-30T00:00:01Z'
+    assert edge.timeout_at is None
     dispatcher.complete(parent_job_id, _decision(reply='delegated'))
 
-    now['value'] = '2026-03-30T00:00:02Z'
+    now['value'] = '2026-04-30T00:00:02Z'
     dispatcher.tick()
 
     edge = CallbackEdgeStore(layout).get_latest(edge.edge_id)
     assert edge is not None
-    assert edge.state is CallbackEdgeState.TIMED_OUT
+    assert edge.state is CallbackEdgeState.PENDING
     parent_message = MessageStore(layout).get_latest(edge.parent_message_id)
     assert parent_message is not None
-    assert parent_message.message_state is MessageState.FAILED
-    replies = ReplyStore(layout).list_message(edge.parent_message_id)
-    assert len(replies) == 1
-    assert replies[0].terminal_status is ReplyTerminalStatus.FAILED
-    assert replies[0].diagnostics.get('chain_failure') is True
+    assert parent_message.message_state is MessageState.RUNNING
+    assert ReplyStore(layout).list_message(edge.parent_message_id) == []
+
+    dispatcher.complete(child_job_id, _decision(reply='eventual child result'))
+    edge = CallbackEdgeStore(layout).get_latest(edge.edge_id)
+    assert edge is not None
+    assert edge.state is CallbackEdgeState.CONTINUATION_SUBMITTED
+
+
+def test_dispatcher_restricts_workflow_chain_to_assigned_reviewer_and_propagates_policy(
+    tmp_path: Path,
+) -> None:
+    project_root = tmp_path / 'repo-restricted-workflow-chain'
+    ctx = _bootstrap_test_project(project_root)
+    layout = PathLayout(project_root)
+    config = _provider_config('codex', 'claude', 'gemini')
+    registry = AgentRegistry(layout, config)
+    worker_workspace = layout.workspace_path('codex')
+    worker_workspace.mkdir(parents=True)
+    subprocess.run(['git', 'init'], cwd=worker_workspace, check=True, capture_output=True)
+    subprocess.run(
+        ['git', 'config', 'user.name', 'Test User'],
+        cwd=worker_workspace,
+        check=True,
+    )
+    subprocess.run(
+        ['git', 'config', 'user.email', 'test@example.com'],
+        cwd=worker_workspace,
+        check=True,
+    )
+    (worker_workspace / 'result.txt').write_text('review me\n', encoding='utf-8')
+    subprocess.run(['git', 'add', '.'], cwd=worker_workspace, check=True)
+    subprocess.run(['git', 'commit', '-m', 'base'], cwd=worker_workspace, check=True)
+    (worker_workspace / 'result.txt').write_text('review this tree\n', encoding='utf-8')
+    for index, agent_name in enumerate(config.agents, start=1):
+        registry.upsert(_runtime(agent_name, project_id=ctx.project_id, layout=layout, pid=100 + index))
+    dispatcher = JobDispatcher(layout, config, registry, clock=lambda: '2026-03-30T00:00:00Z')
+
+    parent_job_id = dispatcher.submit(
+        MessageEnvelope(
+            project_id=ctx.project_id,
+            to_agent='codex',
+            from_actor='system',
+            body='implement then review',
+            task_id='task-restricted-chain',
+            reply_to=None,
+            message_type='ask',
+            delivery_scope=DeliveryScope.SINGLE,
+            route_options={
+                'allowed_chain_targets': ['claude'],
+                'bind_chain_workspace_tree': True,
+            },
+        )
+    ).jobs[0].job_id
+    dispatcher.tick()
+
+    with pytest.raises(DispatchError, match='only use ask --chain'):
+        dispatcher.submit(
+            MessageEnvelope(
+                project_id=ctx.project_id,
+                to_agent='claude',
+                from_actor='codex',
+                body='silent bypass',
+                task_id='task-restricted-chain',
+                reply_to=None,
+                message_type='ask',
+                delivery_scope=DeliveryScope.SINGLE,
+                silence_on_success=True,
+            )
+        )
+    with pytest.raises(DispatchError, match='not the assigned reviewer'):
+        dispatcher.submit(
+            MessageEnvelope(
+                project_id=ctx.project_id,
+                to_agent='gemini',
+                from_actor='codex',
+                body='wrong target',
+                task_id='task-restricted-chain',
+                reply_to=None,
+                message_type='ask',
+                delivery_scope=DeliveryScope.SINGLE,
+                route_options={'mode': 'chain'},
+            )
+        )
+
+    child_job_id = dispatcher.submit(
+        MessageEnvelope(
+            project_id=ctx.project_id,
+            to_agent='claude',
+            from_actor='codex',
+            body='review current node',
+            task_id='task-restricted-chain',
+            reply_to=None,
+            message_type='ask',
+            delivery_scope=DeliveryScope.SINGLE,
+            route_options={'mode': 'chain'},
+        )
+    ).jobs[0].job_id
+    dispatcher.complete(parent_job_id, _decision(reply='delegated'))
+    dispatcher.tick()
+    dispatcher.complete(child_job_id, _decision(reply='status: rework_required'))
+
+    edge = CallbackEdgeStore(layout).get_latest_for_child_job(child_job_id)
+    assert edge is not None and edge.continuation_job_id
+    assert edge.diagnostics['review_workspace_path'] == str(worker_workspace.resolve())
+    assert str(edge.diagnostics['review_tree_digest']).startswith('git-tree:sha1:')
+    dispatcher.tick()
+    continuation = dispatcher.get(edge.continuation_job_id)
+    assert continuation is not None
+    assert continuation.workspace_path == str(worker_workspace)
+    assert continuation.request.route_options['allowed_chain_targets'] == ['claude']
+    assert continuation.request.route_options['bind_chain_workspace_tree'] is True
+    first_tree_digest = edge.diagnostics['review_tree_digest']
+    (worker_workspace / 'result.txt').write_text('review repaired tree\n', encoding='utf-8')
+    recheck_job_id = dispatcher.submit(
+        MessageEnvelope(
+            project_id=ctx.project_id,
+            to_agent='claude',
+            from_actor='codex',
+            body='review repaired node',
+            task_id='task-restricted-chain',
+            reply_to=None,
+            message_type='ask',
+            delivery_scope=DeliveryScope.SINGLE,
+            route_options={'mode': 'chain'},
+        )
+    ).jobs[0].job_id
+    recheck_edge = CallbackEdgeStore(layout).get_latest_for_child_job(recheck_job_id)
+    assert recheck_edge is not None
+    assert recheck_edge.diagnostics['review_workspace_path'] == str(worker_workspace.resolve())
+    assert recheck_edge.diagnostics['review_tree_digest'] != first_tree_digest
 
 
 def test_dispatcher_callback_rejects_depth_limit(tmp_path: Path) -> None:

@@ -19,7 +19,7 @@ orchestration_bundle:
     "complexity": "<atomic|bounded|complex|very_complex>",
     "cutability": "<none|limited|high>",
     "execution_shape": "<single_unit|parallel|serial|mixed_dag>",
-    "rationale": "<short-semantic-reason-for-smallest-justified-count>"
+    "rationale": "<one-line reason, at most 500 characters; target 300 or fewer>"
   },
   "nodes": [
     {

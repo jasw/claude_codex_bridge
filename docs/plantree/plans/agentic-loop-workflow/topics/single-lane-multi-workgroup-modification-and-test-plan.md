@@ -1,15 +1,21 @@
 # Single-Lane Multi-Workgroup Modification And Test Plan
 
-Date: 2026-07-11
-Status: G5 source/fake direct acceptance complete; G6 visible real-provider acceptance active
+Date: 2026-07-12
+Status: G6 two-workgroup Codex baseline passed; remaining visible matrix active
 
 F1 authority interfaces and adaptive group selection are frozen by
 [Decision 026](../decisions/026-authority-envelope-and-adaptive-workgroup-selection.md).
-That decision controls where this older topic is less specific: Config V3
+Worker-to-Reviewer collaboration and the minimal controller boundary are
+frozen by
+[Decision 027](../decisions/027-worker-owned-review-chain-and-minimal-controller.md).
+Decision 026 controls where this older topic is less specific: Config V3
 always requires an explicit one-to-four-node candidate, Config V2 alone may
 use the deterministic one-node compatibility bundle, provenance is artifact
 metadata rather than semantic bundle content, and node count is selected by
 the orchestrator from complexity and cutability rather than by test scripts.
+Decision 027 applies to that Config V3/generalized scheduler path. The frozen
+Config V2 static single-node path remains a compatibility surface, not a
+template for new controller-owned review communication.
 
 R1 landed in commit `0c2f19ef`; direct evidence is recorded in
 [single-lane-r1-authority-runtime-closure-20260711.md](../history/single-lane-r1-authority-runtime-closure-20260711.md).
@@ -25,7 +31,10 @@ evidence is recorded in
 G5 source/fake direct acceptance landed through `b42ec3b2`; direct evidence is
 recorded in
 [single-lane-g5-source-fake-acceptance-20260711.md](../history/single-lane-g5-source-fake-acceptance-20260711.md).
-The next gate is G6 visible real-provider fanout from opened projects.
+The Decision 027 two-workgroup Codex baseline is recorded in
+[g6-worker-owned-review-chain-real-provider-20260712.md](../history/g6-worker-owned-review-chain-real-provider-20260712.md).
+The next gate is the remaining G6 three/four-group, restart, rework,
+busy-retain, and provider-profile matrix from fresh opened projects.
 
 ## Objective
 
@@ -34,10 +43,12 @@ engine that safely executes one to four `Worker + Reviewer` workgroups under a
 single orchestration bundle. This is the last workflow architecture expansion
 before the next release; concurrent roadmap lanes remain deferred.
 
-The target is not a larger sequential prompt chain. The controller must submit
-all currently ready independent work in one activation, stop, and resume from
-durable completion events. Serial depth follows real dependencies, while
-independent provider calls overlap.
+The target is not a larger controller-owned prompt chain. The controller must
+submit all currently ready root Worker jobs in one activation, stop, and
+resume from durable root-job completion events. Each Worker collaborates
+directly with its assigned Reviewer through bounded `ask --chain`. Serial
+depth follows real dependencies, while independent Workers and node-local
+reviews overlap.
 
 ## Baseline Findings
 
@@ -241,11 +252,13 @@ One `runner --once` activation performs bounded deterministic work:
 5. For every ready node without an intent/job, durably write an intent keyed by
    `(bundle_revision, node_id, purpose, attempt)`, submit once, and durably bind
    the returned job id.
-6. Submit reviewer only after that node's worker is terminal and its workspace
-   passes scope/tree checks.
-7. Run at most the configured node-local rework count.
-8. Commit a node result only after reviewer pass and unchanged reviewed-tree
-   digest.
+6. Keep a root Worker job pending while its Reviewer child or Worker
+   continuation is active; do not submit Reviewer or rework jobs from the
+   controller.
+7. Validate the persisted chain contains only the assigned Reviewer, stays
+   within the configured review count, and ends in `status: pass`.
+8. Capture and commit the final node tree only after the root Worker chain is
+   terminal and its final scope/tree checks pass.
 9. Integrate newly accepted nodes in deterministic order; unlock dependents
    whose predecessors are now integrated.
 10. If jobs remain, persist `pending` and return. Do not poll or infer failure
@@ -284,24 +297,33 @@ a newer attempt.
 
 - Create node worktree/branch from its dependency base.
 - Bind worker and reviewer to the same node workspace group.
-- Worker packet includes only task/contract refs, allowed paths, acceptance,
-  verification, dependency evidence, and role constraints.
-- After terminal success, scripts verify changed paths, Git state, forbidden
-  authority files, and required deterministic checks before review.
+- Worker packet includes task/contract refs, allowed paths, acceptance,
+  verification, dependency evidence, role constraints, the assigned Reviewer,
+  and the bounded review protocol.
+- After implementation and focused verification, Worker directly submits
+  `ask --chain` to only that Reviewer and stops for continuation.
+- On `rework_required`, Worker repairs the same worktree and chains to the same
+  Reviewer again within the configured bound. On `pass`, it performs no more
+  file/tool mutation and returns the final node result immediately.
+- Plain ask, silence, another target, task/topology authority commands,
+  commits, integration, promotion, and release remain prohibited.
 
 ### Reviewer
 
-- Reviewer receives exact worktree path, base/head diff, changed-file list,
-  worker evidence, acceptance refs, and verification refs.
+- Reviewer receives the node/worktree identity, Worker evidence, acceptance
+  refs, verification refs, and current changed-file evidence directly from
+  the Worker chain request.
 - Reviewer is reply-only and must not edit files or run CCB authority commands.
-- Script records the input tree digest. A pass is valid only if the tree still
-  has that digest when the result is imported.
-- Rework returns to the same worker/worktree. Structural graph/scope changes do
-  not enter node rework; they produce `replan_required`.
+- The Worker is quiescent while the Reviewer child runs. Rework returns by CCB
+  continuation to the same Worker/worktree. Structural graph/scope changes do
+  not enter node rework; they produce `blocked` or `non_converged` evidence.
+- Controller validates the persisted child job/verdict and captures the final
+  tree after the Worker root chain completes.
 
 ### Reviewed Commit
 
-After pass, the controller creates a node commit with generated CCB identity
+After the Worker-owned chain ends in Reviewer pass, the controller creates a
+node commit with generated CCB identity
 and trailers for project/task/loop/bundle/node/reviewer job/digest. Providers
 do not create authority commits. The exact reviewed tree is the commit tree.
 

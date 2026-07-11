@@ -818,14 +818,19 @@ def _g5_explicit_project_roots(job: JobRecord, *, context) -> tuple[Path, ...]:
         except OSError as exc:
             raise ValueError('G5 smoke request artifact is unavailable') from exc
         project_root = _project_root_from_ccb_path(artifact_path)
+        artifact_kind = str(artifact.get('kind') or '').strip()
+        artifact_subdir = {
+            'ask-request': 'ask-request',
+            'result-chain-continuation': 'result-chain-continuation',
+        }.get(artifact_kind)
         expected_dir = (
-            project_root / '.ccb/ccbd/artifacts/text/ask-request'
-            if project_root is not None
+            project_root / '.ccb/ccbd/artifacts/text' / artifact_subdir
+            if project_root is not None and artifact_subdir is not None
             else None
         )
         if (
             project_root is None
-            or artifact.get('kind') != 'ask-request'
+            or artifact_subdir is None
             or artifact_path.parent != expected_dir
             or compute_project_id(project_root) != job.request.project_id
         ):
@@ -883,6 +888,15 @@ def _g5_scenario_directive(
             status=CompletionStatus.FAILED,
             reason='g5_scenario_terminal_provider_failure',
             confidence=CompletionConfidence.EXACT,
+            script=(),
+        )
+    if purpose == 'worker':
+        # G5 drives the real CCB ask --chain boundary from outside the fake
+        # provider. Keep the Worker active long enough for that tool action;
+        # real providers execute it within their own turn.
+        return replace(
+            directive,
+            latency_seconds=max(1.0, directive.latency_seconds),
             script=(),
         )
     if (

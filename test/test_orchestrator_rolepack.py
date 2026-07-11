@@ -67,7 +67,7 @@ ROLE_EXPECTATIONS = {
     },
     'agentroles.coder': {
         'default': 'coder',
-        'skill': 'skills/bounded-work-item',
+        'skills': ('skills/bounded-work-item', 'skills/assigned-review-chain'),
         'templates': ('templates/node-work-result.md',),
     },
     'agentroles.code_reviewer': {
@@ -383,6 +383,8 @@ def test_planner_rolepack_is_closed_reply_only_planning_surface() -> None:
         policy.forbidden_effects
     )
     assert policy.allowed == ()
+    assert 'Every `Verification:` item is executed literally without a shell' in combined
+    assert 'Do not put\nprose such as `Review docs...`' in combined
     assert 'Do not run shell commands' in combined
     assert 'file searches' in combined
     assert 'Allowed Change Paths' in combined
@@ -500,6 +502,8 @@ def test_p1_orchestrator_rolepack_declares_adaptive_bundle_contract() -> None:
     assert 'direct_execution' in combined
     assert 'partial_completion' in combined
     assert 'smallest justified workgroup count from 1 to 4' in combined
+    assert '`rationale` must be one non-empty line of at most 500 characters' in combined_single_line
+    assert 'target 300 characters or fewer' in combined_single_line
     assert 'capacity is a ceiling, not a target' in ' '.join(combined.split()).lower()
     assert 'the smallest justified graph includes those units as separate' in combined_single_line
     assert 'A stable public interface, shared final root verification' in combined_single_line
@@ -545,6 +549,9 @@ def test_p1_node_rolepacks_bind_canonical_packet_and_exact_review_tree() -> None
     assert '\nresult: done|blocked|needs_rework' not in coder_template
     assert 'status: pass|rework_required|blocked|non_converged' in reviewer_template
     assert 'check result:' not in reviewer_template
+    assert 'first non-empty reply line' in coder_contract
+    assert 'Do not put a preamble or code fence' in coder_contract
+    assert 'do not rely on' in coder_contract.lower()
     for required in (
         'canonical node work packet',
         'declared refs',

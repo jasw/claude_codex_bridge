@@ -4,8 +4,10 @@ from dataclasses import replace
 
 from agents.models import AgentState
 from ccbd.api_models import JobRecord, JobStatus, TargetKind
+from completion.models import CompletionConfidence, CompletionDecision, CompletionStatus
 from provider_core.registry import TEST_DOUBLE_PROVIDER_NAMES
 
+from ..cancel_flags import cancel_flag_path
 from ..context import build_job_runtime_context
 from ..records import append_event, append_job
 from ..reply_delivery import is_reply_delivery_job
@@ -53,10 +55,13 @@ def start_running_job(
         sync_runtime(dispatcher, running.agent_name, state=AgentState.BUSY)
     submission = None
     if dispatcher._execution_service is not None and should_start_execution(dispatcher, running, runtime_context):
-        submission = dispatcher._execution_service.start(
-            with_cancel_flag_notice(dispatcher, running),
-            runtime_context=runtime_context,
-        )
+        try:
+            submission = dispatcher._execution_service.start(
+                with_cancel_flag_notice(dispatcher, running),
+                runtime_context=runtime_context,
+            )
+        except Exception as exc:
+            return fail_provider_start(dispatcher, running, exc, failed_at=dispatcher._clock())
     if is_reply_delivery_job(running) and dispatcher._execution_service is not None:
         return complete_reply_delivery_after_start(
             dispatcher,
@@ -65,6 +70,36 @@ def start_running_job(
             submission=submission,
         )
     return running
+
+
+def fail_provider_start(dispatcher, running: JobRecord, exc: Exception, *, failed_at: str) -> JobRecord:
+    diagnostics = {
+        'error_type': type(exc).__name__,
+        'provider': running.provider,
+        'provider_start_error': str(exc),
+    }
+    append_event(
+        dispatcher,
+        running,
+        'provider_start_failed',
+        diagnostics,
+        timestamp=failed_at,
+    )
+    decision = CompletionDecision(
+        terminal=True,
+        status=CompletionStatus.FAILED,
+        reason='provider_start_failed',
+        confidence=CompletionConfidence.EXACT,
+        reply='',
+        anchor_seen=False,
+        reply_started=False,
+        reply_stable=False,
+        provider_turn_ref=None,
+        source_cursor=None,
+        finished_at=failed_at,
+        diagnostics=diagnostics,
+    )
+    return dispatcher.complete(running.job_id, decision)
 
 
 def with_cancel_flag_notice(dispatcher, running: JobRecord) -> JobRecord:
@@ -76,6 +111,8 @@ def with_cancel_flag_notice(dispatcher, running: JobRecord) -> JobRecord:
     if running.target_kind is not TargetKind.AGENT or not running.agent_name:
         return running
     if is_reply_delivery_job(running):
+        return running
+    if str(running.provider or '').strip().lower() in TEST_DOUBLE_PROVIDER_NAMES:
         return running
     try:
         flag_path = cancel_flag_path(dispatcher._layout, running.agent_name, running.job_id)
@@ -106,4 +143,4 @@ def should_start_execution(dispatcher, current: JobRecord, runtime_context) -> b
     return ':' in runtime_ref
 
 
-__all__ = ['should_start_execution', 'start_running_job', 'write_running_snapshot']
+__all__ = ['fail_provider_start', 'should_start_execution', 'start_running_job', 'write_running_snapshot']

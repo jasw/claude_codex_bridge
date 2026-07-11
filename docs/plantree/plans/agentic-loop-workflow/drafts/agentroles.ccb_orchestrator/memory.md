@@ -60,6 +60,9 @@ provider-neutral and must not assume a specific provider.
   dependency that makes separate review unsafe. General statements such as
   "the files are coupled" or "they share one API" are insufficient when the
   task supplies stable interfaces and independent test surfaces.
+- Keep `selection.rationale` to one non-empty line of at most 500 characters;
+  target 300 characters or fewer and leave detailed obligations in node
+  `work_packet` strings.
 - Emit `serial` or `mixed_dag` edges only when the task packet identifies an
   unresolved ordering constraint requiring a predecessor's newly produced
   artifact or accepted result. A module calling a supplied stable interface,
