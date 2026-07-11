@@ -15,6 +15,7 @@ ROW_SCHEMA = 'ccb.g5.source_fake_runtime_evidence_row.v1'
 REQUIRED_SCENARIOS = (
     'pass',
     'reviewer_rework_pass',
+    'reviewer_rework_exhausted_blocked',
     'worker_failure_partial',
     'all_workers_failed_blocked',
     'reviewer_provider_failure',
@@ -23,6 +24,35 @@ REQUIRED_SCENARIOS = (
     'root_verification_failure',
     'restart_replay_pass',
 )
+SCENARIO_OUTCOMES = {
+    'pass': ('pass', 'done', 'pass', 'round_reviewer_reply'),
+    'reviewer_rework_pass': ('pass', 'done', 'pass', 'round_reviewer_reply'),
+    'reviewer_rework_exhausted_blocked': (
+        'valid_non_success', 'blocked', 'blocked', 'required_node_failure'
+    ),
+    'worker_failure_partial': ('valid_non_success', 'partial', 'partial', 'required_node_failure'),
+    'all_workers_failed_blocked': ('valid_non_success', 'blocked', 'blocked', 'required_node_failure'),
+    'reviewer_provider_failure': ('valid_non_success', 'partial', 'partial', 'required_node_failure'),
+    'round_reviewer_blocked': ('valid_non_success', 'blocked', 'blocked', 'round_reviewer_reply'),
+    'integration_verification_failure': (
+        'valid_non_success', 'replan_required', 'replan_required', 'integration_verification_failed'
+    ),
+    'root_verification_failure': (
+        'valid_non_success', 'replan_required', 'replan_required', 'root_verification_failed'
+    ),
+    'restart_replay_pass': ('pass', 'done', 'pass', 'round_reviewer_reply'),
+}
+REPORT_KEYS = {
+    'schema', 'status', 'execution_mode', 'coverage', 'project_root', 'project_id',
+    'role_store', 'provider', 'scenario', 'expected', 'observed', 'config_version',
+    'matrix', 'task_id', 'loop_id', 'bundle', 'jobs', 'integration', 'task', 'round',
+    'release', 'root_changes', 'runner_results', 'execution', 'checks', 'paths',
+    'raw_evidence_sha256', 'command_log', 'external_cleanup', 'post_cleanup',
+}
+OUTCOME_KEYS = {'classification', 'task_status', 'round_result', 'round_source'}
+PATH_KEYS = {'report', 'bundle', 'scheduler_state', 'round', 'integration_state', 'raw_observed'}
+RAW_DIGEST_KEYS = {'bundle', 'scheduler_state', 'round', 'integration_state', 'raw_observed'}
+POST_CLEANUP_KEYS = {'owned_processes', 'socket_entries', 'connectable_sockets', 'child_worktrees'}
 
 
 class CampaignFailure(RuntimeError):
@@ -33,7 +63,6 @@ def aggregate_reports(
     *,
     report_paths: list[Path],
     output_dir: Path,
-    required_scenarios: tuple[str, ...] = REQUIRED_SCENARIOS,
 ) -> dict[str, Any]:
     output_dir = output_dir.expanduser().resolve(strict=False)
     if '.ccb' in output_dir.parts:
@@ -54,8 +83,8 @@ def aggregate_reports(
         if _sha256_file(path) != before:
             raise CampaignFailure(f'raw report mutated during aggregation: {path}')
         rows.append(row)
-    missing = sorted(set(required_scenarios) - seen)
-    extra = sorted(seen - set(required_scenarios))
+    missing = sorted(set(REQUIRED_SCENARIOS) - seen)
+    extra = sorted(seen - set(REQUIRED_SCENARIOS))
     if missing or extra:
         raise CampaignFailure(f'scenario set mismatch: missing={missing}, extra={extra}')
     rows.sort(key=lambda item: str(item['scenario']))
@@ -69,7 +98,7 @@ def aggregate_reports(
             'live_provider': False,
             'disclaimer': 'Source/fake runtime campaign only; no live or real provider coverage.',
         },
-        'required_scenarios': sorted(required_scenarios),
+        'required_scenarios': sorted(REQUIRED_SCENARIOS),
         'row_count': len(rows),
         'rows': rows,
     }
@@ -89,6 +118,7 @@ def _validate_report(
     *,
     report_sha256: str,
 ) -> dict[str, Any]:
+    _require_exact_keys(payload, REPORT_KEYS, subject='report')
     if payload.get('schema') != REPORT_SCHEMA:
         raise CampaignFailure(f'unsupported report schema: {path}')
     if payload.get('status') != 'pass':
@@ -96,6 +126,11 @@ def _validate_report(
     if payload.get('execution_mode') != 'source_fake_runtime' or payload.get('provider') != 'fake':
         raise CampaignFailure(f'report mode/provider mismatch: {path}')
     coverage = _mapping(payload.get('coverage'))
+    _require_exact_keys(
+        coverage,
+        {'provider', 'real_provider', 'live_provider', 'disclaimer'},
+        subject='report.coverage',
+    )
     if coverage.get('real_provider') is not False or coverage.get('live_provider') is not False:
         raise CampaignFailure(f'report coverage disclaimer missing: {path}')
     scenario = str(payload.get('scenario') or '')
@@ -103,6 +138,16 @@ def _validate_report(
         raise CampaignFailure(f'unknown scenario: {scenario!r}')
     expected = _mapping(payload.get('expected'))
     observed = _mapping(payload.get('observed'))
+    _require_exact_keys(expected, OUTCOME_KEYS, subject='report.expected')
+    _require_exact_keys(observed, OUTCOME_KEYS, subject='report.observed')
+    expected_contract = dict(
+        zip(
+            ('classification', 'task_status', 'round_result', 'round_source'),
+            SCENARIO_OUTCOMES[scenario],
+        )
+    )
+    if expected != expected_contract:
+        raise CampaignFailure(f'{scenario} expected outcome contract mismatch')
     for expected_key, observed_key in (
         ('classification', 'classification'),
         ('task_status', 'task_status'),
@@ -120,6 +165,8 @@ def _validate_report(
         raise CampaignFailure(f'{scenario} report checks failed: {failed}')
     raw_digests = _mapping(payload.get('raw_evidence_sha256'))
     evidence_paths = _mapping(payload.get('paths'))
+    _require_exact_keys(raw_digests, RAW_DIGEST_KEYS, subject='report.raw_evidence_sha256')
+    _require_exact_keys(evidence_paths, PATH_KEYS, subject='report.paths')
     path_keys = {
         'bundle': 'bundle',
         'scheduler_state': 'scheduler_state',
@@ -134,7 +181,11 @@ def _validate_report(
             raise CampaignFailure(f'{scenario} raw evidence digest mismatch: {digest_key}')
     project_root = Path(str(payload.get('project_root') or '')).resolve(strict=True)
     post_cleanup = _mapping(payload.get('post_cleanup'))
-    if any(post_cleanup.get(key) for key in ('owned_processes', 'connectable_sockets', 'child_worktrees')):
+    _require_exact_keys(post_cleanup, POST_CLEANUP_KEYS, subject='report.post_cleanup')
+    if any(
+        post_cleanup.get(key)
+        for key in ('owned_processes', 'socket_entries', 'connectable_sockets', 'child_worktrees')
+    ):
         raise CampaignFailure(f'{scenario} cleanup residue is non-empty')
     return {
         'schema': ROW_SCHEMA,
@@ -178,6 +229,13 @@ def _mapping(value: object) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
 
+def _require_exact_keys(value: dict[str, Any], expected: set[str], *, subject: str) -> None:
+    missing = sorted(expected - set(value))
+    extra = sorted(set(value) - expected)
+    if missing or extra:
+        raise CampaignFailure(f'{subject} key mismatch: missing={missing}, extra={extra}')
+
+
 def _read_json(path: Path) -> dict[str, Any]:
     try:
         payload = json.loads(path.read_text(encoding='utf-8'))
@@ -203,19 +261,16 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description='Aggregate explicit G5 source/fake runtime reports.')
     parser.add_argument('--report', action='append', required=True)
     parser.add_argument('--output-dir', required=True)
-    parser.add_argument('--required-scenario', action='append', choices=REQUIRED_SCENARIOS)
     parser.add_argument('--json', action='store_true')
     return parser.parse_args(argv)
 
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(list(argv or sys.argv[1:]))
-    required = tuple(args.required_scenario or REQUIRED_SCENARIOS)
     try:
         campaign = aggregate_reports(
             report_paths=[Path(value) for value in args.report],
             output_dir=Path(args.output_dir),
-            required_scenarios=required,
         )
     except Exception as exc:
         print(json.dumps({'status': 'failed', 'error': str(exc)}, sort_keys=True))

@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import signal
 import socket
+import stat
 import subprocess
 import sys
 import time
@@ -42,6 +43,12 @@ SCENARIO_EXPECTATIONS = {
         'task_status': 'done',
         'round_result': 'pass',
         'round_source': 'round_reviewer_reply',
+    },
+    'reviewer_rework_exhausted_blocked': {
+        'classification': 'valid_non_success',
+        'task_status': 'blocked',
+        'round_result': 'blocked',
+        'round_source': 'required_node_failure',
     },
     'worker_failure_partial': {
         'classification': 'valid_non_success',
@@ -341,6 +348,7 @@ def run_smoke(
             report['checks']['external_cleanup_succeeded'] = cleanup_result['returncode'] == 0
             report['checks']['process_residue_absent'] = not report['post_cleanup']['owned_processes']
             report['checks']['socket_residue_absent'] = not report['post_cleanup']['connectable_sockets']
+            report['checks']['socket_filesystem_entries_absent'] = not report['post_cleanup']['socket_entries']
             report['checks']['child_worktree_residue_absent'] = not report['post_cleanup']['child_worktrees']
             report['command_log'] = [_compact_command(item) for item in command_log]
         else:
@@ -429,6 +437,7 @@ def _build_report(
                 'node_id': node_id,
                 'dependencies': list(node.get('depends_on') or ()),
                 'status': node.get('status'),
+                'integration_status': integration_node.get('status'),
                 'worker_agent': node.get('worker_agent'),
                 'reviewer_agent': node.get('reviewer_agent'),
                 'worker_job_id': worker.get('job_id'),
@@ -462,13 +471,14 @@ def _build_report(
     raw_observed = _read_json(observed_path)
     integration_section = _mapping(integration.get('integration'))
     root_section = _mapping(integration.get('root'))
-    expected_merge_order = _expected_merge_order(integration)
+    expected_merge_order = _expected_bundle_merge_order(bundle)
     expected_paths = [f'g5_outputs/node-{index:03d}.txt' for index in range(1, count + 1)]
     actual_paths = [path for path in expected_paths if (project_root / path).is_file()]
     selected_path = expected_paths[0]
     if scenario in {
         'worker_failure_partial',
         'reviewer_provider_failure',
+        'reviewer_rework_exhausted_blocked',
         'all_workers_failed_blocked',
         'round_reviewer_blocked',
         'integration_verification_failure',
@@ -530,11 +540,6 @@ def _build_report(
         {},
     )
     expected_initial_frontier_size = count if shape == 'parallel' else count - 1
-    rollback_scenario = scenario in {
-        'round_reviewer_blocked',
-        'integration_verification_failure',
-        'root_verification_failure',
-    }
     root_after = _root_authority(project_root)
     observed_classification = _observed_classification(
         task_status=str(task.get('status') or ''),
@@ -545,11 +550,14 @@ def _build_report(
         str(record.get('status') or '') in TERMINAL_JOB_STATUSES
         for record in referenced_job_evidence.values()
     ) and len(referenced_job_evidence) == len(referenced_job_ids)
-    expected_node_failures = scenario in {
-        'worker_failure_partial',
-        'all_workers_failed_blocked',
-        'reviewer_provider_failure',
-    }
+    failed_node_ids = _expected_failed_node_ids(scenario=scenario, count=count)
+    expected_scenario_merge_order = _expected_scenario_merge_order(
+        expected_merge_order,
+        failed_node_ids=failed_node_ids,
+    )
+    failed_node_records = [
+        item for item in node_records if item['node_id'] in failed_node_ids
+    ]
     checks = {
         'config_v3_valid': (
             config_validate.get('config_version') == 3
@@ -575,14 +583,24 @@ def _build_report(
         ),
         'referenced_jobs_terminal': all_referenced_jobs_terminal,
         'root_paths_match_scenario': actual_paths == expected_root_paths,
-        'failed_scope_absent': selected_path not in actual_paths if expected_node_failures else True,
-        'root_authority_restored': root_after == root_preflight if rollback_scenario else True,
-        'merge_order_deterministic': (
+        'failed_scope_absent': selected_path not in actual_paths if failed_node_ids else True,
+        'nonpass_root_authority_restored': (
+            root_after == root_preflight
+            if expectation['classification'] == 'valid_non_success'
+            else True
+        ),
+        'merge_order_exact': (
             list(integration_section.get('merge_order') or ())
-            == [
-                node_id for node_id in expected_merge_order
-                if node_id in set(integration_section.get('merge_order') or ())
-            ]
+            == expected_scenario_merge_order
+        ),
+        'expected_failed_nodes_complete': len(failed_node_records) == len(failed_node_ids),
+        'expected_failed_nodes_quarantined': all(
+            _node_failure_evidence_valid(
+                item,
+                loop_id=loop_id,
+                expected_path=f'g5_outputs/{item["node_id"]}.txt',
+            )
+            for item in failed_node_records
         ),
         'reviewed_commits_present_for_integrated_nodes': all(
             bool(item['reviewed_commit'])
@@ -607,7 +625,25 @@ def _build_report(
                 'reviewer_submission',
                 'reviewer_terminal',
             }
-        ) if scenario == 'reviewer_rework_pass' else all(
+        ) if scenario == 'reviewer_rework_pass' else (
+            int(rework_node.get('rework_count') or 0) == 1
+            and bool(rework_node.get('worker_rework_job_id'))
+            and bool(rework_node.get('reviewer_recheck_job_id'))
+            and [
+                _mapping(item).get('result')
+                for item in rework_node.get('review_history') or ()
+            ] == ['rework', 'failed']
+            and {
+                _mapping(item).get('kind')
+                for item in rework_node.get('rework_history') or ()
+            } == {
+                'rework_requested',
+                'worker_submission',
+                'worker_terminal',
+                'reviewer_submission',
+                'reviewer_terminal',
+            }
+        ) if scenario == 'reviewer_rework_exhausted_blocked' else all(
             int(item.get('rework_count') or 0) == 0 for item in node_records
         ),
         'release_clean': release.get('loop_topology_status') == 'released'
@@ -688,6 +724,7 @@ def _build_report(
             'status': integration.get('status'),
             'merge_order': integration_section.get('merge_order'),
             'expected_merge_order': expected_merge_order,
+            'scenario_expected_merge_order': expected_scenario_merge_order,
             'checks': integration_section.get('checks'),
             'root': root_section,
         },
@@ -1129,15 +1166,102 @@ def _find_loop_id(project_root: Path, task_id: str) -> str:
     return ''
 
 
-def _expected_merge_order(integration: dict[str, Any]) -> list[str]:
-    nodes = _mapping(integration.get('nodes'))
-    return sorted(
-        nodes,
-        key=lambda node_id: (
-            int(_mapping(nodes[node_id]).get('layer') or 0),
-            int(_mapping(nodes[node_id]).get('integration_order') or 0),
-            node_id,
-        ),
+def _expected_bundle_merge_order(bundle: dict[str, Any]) -> list[str]:
+    nodes = {
+        str(node.get('node_id') or ''): node
+        for value in bundle.get('nodes') or ()
+        if isinstance(value, dict)
+        for node in (value,)
+        if str(node.get('node_id') or '')
+    }
+    ordered: list[str] = []
+    remaining = set(nodes)
+    completed: set[str] = set()
+    while remaining:
+        layer = [
+            node_id
+            for node_id in remaining
+            if set(str(item) for item in nodes[node_id].get('depends_on') or ()) <= completed
+        ]
+        if not layer:
+            return []
+        layer.sort(
+            key=lambda node_id: (
+                int(nodes[node_id].get('integration_order') or 0),
+                node_id,
+            )
+        )
+        ordered.extend(layer)
+        completed.update(layer)
+        remaining.difference_update(layer)
+    return ordered
+
+
+def _expected_failed_node_ids(*, scenario: str, count: int) -> set[str]:
+    if scenario == 'all_workers_failed_blocked':
+        return {f'node-{index:03d}' for index in range(1, count + 1)}
+    if scenario in {
+        'worker_failure_partial',
+        'reviewer_provider_failure',
+        'reviewer_rework_exhausted_blocked',
+    }:
+        return {'node-001'}
+    return set()
+
+
+def _expected_scenario_merge_order(
+    ordered_node_ids: list[str],
+    *,
+    failed_node_ids: set[str],
+) -> list[str]:
+    return [node_id for node_id in ordered_node_ids if node_id not in failed_node_ids]
+
+
+def _node_failure_evidence_valid(
+    node: dict[str, Any],
+    *,
+    loop_id: str,
+    expected_path: str,
+) -> bool:
+    terminal = _mapping(node.get('terminal_failure'))
+    scheduler_failure = _mapping(node.get('failure'))
+    failure_job = _mapping(scheduler_failure.get('job'))
+    job_id = str(terminal.get('job_id') or '')
+    if job_id:
+        authority_valid = (
+            terminal.get('authority_id') == f'job:{job_id}'
+            and failure_job.get('job_id') == job_id
+        )
+    else:
+        authority_valid = terminal.get('authority_id') == (
+            f'controller:{loop_id}:{node.get("node_id")}:{node.get("status")}'
+        )
+    worktree_status = terminal.get('worktree_status')
+    quarantine = _mapping(terminal.get('quarantine'))
+    manifest_path = Path(str(quarantine.get('manifest_path') or ''))
+    manifest = _read_json(manifest_path)
+    manifest_digest = str(manifest.get('digest') or '')
+    digest_payload = dict(manifest)
+    digest_payload.pop('digest', None)
+    expected_digest = 'sha256:' + hashlib.sha256(
+        json.dumps(digest_payload, sort_keys=True, separators=(',', ':')).encode('utf-8')
+    ).hexdigest()
+    return (
+        node.get('integration_status') == 'excluded'
+        and terminal.get('schema') == 'ccb.loop.workgroup_node_failure.v1'
+        and terminal.get('status') == 'restored'
+        and terminal.get('source') == scheduler_failure.get('source')
+        and authority_valid
+        and isinstance(worktree_status, list)
+        and bool(worktree_status)
+        and quarantine.get('status') == 'preserved'
+        and manifest_path.is_file()
+        and manifest.get('schema') == 'ccb.loop.node_failure_quarantine.v1'
+        and manifest.get('evidence_kind') == 'node-failure'
+        and manifest.get('project_root') == node.get('worktree_path')
+        and manifest.get('changed_paths') == [expected_path]
+        and manifest_digest == expected_digest
+        and quarantine.get('manifest_digest') == manifest_digest
     )
 
 
@@ -1201,22 +1325,40 @@ def _post_cleanup_evidence(project_root: Path) -> dict[str, Any]:
                 continue
             if int(proc.name) in excluded_pids:
                 continue
+            cmdline: str | None = None
+            cwd: Path | None = None
             try:
                 cmdline = (proc / 'cmdline').read_bytes().replace(b'\0', b' ').decode(
                     'utf-8', errors='replace'
                 ).strip()
+            except (FileNotFoundError, OSError, PermissionError):
+                pass
+            try:
                 cwd = (proc / 'cwd').resolve(strict=True)
             except (FileNotFoundError, OSError, PermissionError):
-                continue
-            command_owned = str(project_root) in cmdline
-            cwd_owned = cwd == project_root or project_root in cwd.parents
+                pass
+            command_owned = cmdline is not None and str(project_root) in cmdline
+            cwd_owned = cwd is not None and (cwd == project_root or project_root in cwd.parents)
             if command_owned or cwd_owned:
                 owned_processes.append(
-                    {'pid': int(proc.name), 'cmdline': cmdline, 'cwd': str(cwd)}
+                    {
+                        'pid': int(proc.name),
+                        'cmdline': cmdline,
+                        'cwd': str(cwd) if cwd is not None else None,
+                    }
                 )
 
+    socket_entries = []
+    for path in project_root.rglob('*'):
+        try:
+            mode = path.lstat().st_mode
+        except OSError:
+            continue
+        if stat.S_ISSOCK(mode):
+            socket_entries.append(str(path))
     connectable_sockets = []
-    for path in project_root.glob('.ccb/**/*.sock'):
+    for path_text in socket_entries:
+        path = Path(path_text)
         client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         client.settimeout(0.1)
         try:
@@ -1244,6 +1386,7 @@ def _post_cleanup_evidence(project_root: Path) -> dict[str, Any]:
                 child_worktrees.append(str(path))
     return {
         'owned_processes': owned_processes,
+        'socket_entries': socket_entries,
         'connectable_sockets': connectable_sockets,
         'child_worktrees': child_worktrees,
     }

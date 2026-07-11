@@ -837,7 +837,71 @@ def test_real_r2_blocked_reviewer_records_failed_authority(tmp_path: Path) -> No
 
     assert final['round_result'] == 'blocked'
     assert integration['nodes']['node-001']['reviews'][0]['result'] == 'failed'
-    assert integration['nodes']['node-001']['status'] == 'review_rejected'
+    assert integration['nodes']['node-001']['status'] == 'excluded'
+    assert integration['nodes']['node-001']['terminal_failure']['status'] == 'restored'
+
+
+def test_real_r2_all_failed_dirty_worker_is_quarantined_before_cleanup(tmp_path: Path) -> None:
+    scheduler, harness, _root = _real_r2_scheduler(tmp_path, max_rework=1)
+    scheduler.run_once()
+    _write_node_result(scheduler, 'failed-worker-delta\n')
+    harness.complete('node-001', 'worker', status='failed')
+
+    final = scheduler.run_once()
+    integration = json.loads(
+        (scheduler.loop_dir / 'git-transaction.json').read_text(encoding='utf-8')
+    )
+    failure = integration['nodes']['node-001']['terminal_failure']
+
+    assert final['round_result'] == 'blocked'
+    assert final['controller_status'] == 'blocked'
+    assert integration['nodes']['node-001']['status'] == 'excluded'
+    assert failure['schema'] == 'ccb.loop.workgroup_node_failure.v1'
+    assert failure['status'] == 'restored'
+    assert failure['worktree_status']
+    assert Path(failure['quarantine']['manifest_path']).is_file()
+    assert final['cleanup']['result']['status'] == 'complete'
+    assert not Path(integration['nodes']['node-001']['worktree_path']).exists()
+
+
+def test_real_r2_exhausted_rework_dirty_delta_is_quarantined_before_cleanup(
+    tmp_path: Path,
+) -> None:
+    scheduler, harness, _root = _real_r2_scheduler(tmp_path, max_rework=1)
+    scheduler.run_once()
+    _write_node_result(scheduler, 'initial\n')
+    harness.complete('node-001', 'worker')
+    scheduler.run_once()
+    harness.complete('node-001', 'reviewer', reply='status: rework_required')
+    scheduler.run_once()
+    _write_node_result(scheduler, 'rework-exhausted\n')
+    harness.complete('node-001', 'worker_rework', attempt=1)
+    scheduler.run_once()
+    harness.complete(
+        'node-001',
+        'reviewer_recheck',
+        attempt=1,
+        reply='status: rework_required',
+    )
+
+    final = scheduler.run_once()
+    integration = json.loads(
+        (scheduler.loop_dir / 'git-transaction.json').read_text(encoding='utf-8')
+    )
+    failure = integration['nodes']['node-001']['terminal_failure']
+
+    assert final['round_result'] == 'blocked'
+    assert final['controller_status'] == 'blocked'
+    assert integration['nodes']['node-001']['status'] == 'excluded'
+    assert [item['result'] for item in integration['nodes']['node-001']['reviews']] == [
+        'rework',
+        'failed',
+    ]
+    assert failure['status'] == 'restored'
+    assert failure['worktree_status']
+    assert Path(failure['quarantine']['manifest_path']).is_file()
+    assert final['cleanup']['result']['status'] == 'complete'
+    assert not Path(integration['nodes']['node-001']['worktree_path']).exists()
 
 
 def test_malformed_round_review_rolls_back_and_imports_replan(tmp_path: Path) -> None:

@@ -167,22 +167,22 @@ class MultiWorkgroupScheduler:
                 for node_id in state['nodes']
                 if _node(state, node_id)['status'] in {'integration_ready', 'integrated'}
             ]
+            for node_id in failures:
+                node = _node(state, node_id)
+                failure = _mapping(node.get('failure'))
+                job = _mapping(failure.get('job'))
+                job_id = str(job.get('job_id') or '').strip()
+                integration.record_node_failure(
+                    node_id,
+                    authority_id=(
+                        f'job:{job_id}'
+                        if job_id
+                        else f'controller:{self.loop_id}:{node_id}:{node["status"]}'
+                    ),
+                    job_id=job_id or None,
+                    source=str(failure.get('source') or 'required_node_failure'),
+                )
             if accepted:
-                for node_id in failures:
-                    node = _node(state, node_id)
-                    failure = _mapping(node.get('failure'))
-                    job = _mapping(failure.get('job'))
-                    job_id = str(job.get('job_id') or '').strip()
-                    integration.record_node_failure(
-                        node_id,
-                        authority_id=(
-                            f'job:{job_id}'
-                            if job_id
-                            else f'controller:{self.loop_id}:{node_id}:{node["status"]}'
-                        ),
-                        job_id=job_id or None,
-                        source=str(failure.get('source') or 'required_node_failure'),
-                    )
                 integration.integrate_ready()
                 self._sync_integration(state, integration)
             self._finish_nonpass(

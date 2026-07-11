@@ -411,11 +411,7 @@ def _workflow_execution_reply(
     scheduler_purpose = _scheduler_purpose(body) if g5_smoke is not None else ''
     if 'Role: worker' in body or scheduler_purpose in {'worker', 'worker_rework'}:
         status = 'done'
-        changed_files = (
-            []
-            if _g5_terminal_provider_failure(g5_smoke, body=body)
-            else _materialize_fake_worker_changes(job, context, body)
-        )
+        changed_files = _materialize_fake_worker_changes(job, context, body)
         changed_files_text = ', '.join(changed_files) if changed_files else 'none'
         if 'Purpose: bounded_rework' in body:
             return (
@@ -442,9 +438,15 @@ def _workflow_execution_reply(
     )
     if (
         g5_smoke is not None
-        and str(g5_smoke.get('scenario')) == 'reviewer_rework_pass'
+        and str(g5_smoke.get('scenario')) in {
+            'reviewer_rework_pass',
+            'reviewer_rework_exhausted_blocked',
+        }
         and _scheduler_node_id(body) == str(g5_smoke.get('selected_node'))
-        and not recheck
+        and (
+            not recheck
+            or str(g5_smoke.get('scenario')) == 'reviewer_rework_exhausted_blocked'
+        )
     ):
         return (
             'status: rework_required\n'
@@ -713,6 +715,7 @@ def _g5_smoke_contract(body: str) -> dict[str, object] | None:
             if scenario not in {
                 'pass',
                 'reviewer_rework_pass',
+                'reviewer_rework_exhausted_blocked',
                 'worker_failure_partial',
                 'all_workers_failed_blocked',
                 'reviewer_provider_failure',

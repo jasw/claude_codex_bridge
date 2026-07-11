@@ -304,7 +304,32 @@ def test_g5_rework_and_provider_failure_are_strictly_scenario_gated(tmp_path: Pa
         now='2026-07-11T00:00:00Z',
     )
     assert failed.status.value == 'failed'
-    assert not (workspace / 'g5_outputs/node-001.txt').exists()
+    assert (workspace / 'g5_outputs/node-001.txt').is_file()
+
+
+def test_g5_exhausted_rework_requests_rework_on_initial_and_recheck() -> None:
+    marker = json.dumps(
+        _scenario_contract(
+            count=1,
+            shape='parallel',
+            scenario='reviewer_rework_exhausted_blocked',
+        ),
+        sort_keys=True,
+    )
+    adapter = FakeProviderAdapter(latency_seconds=0)
+    for purpose in ('reviewer', 'reviewer_recheck'):
+        submission = adapter.start(
+            _job(
+                agent_name='loop-lp-node-001-code_reviewer',
+                body=(
+                    f'Task: g5-multi-workgroup-task\nNode: node-001\nPurpose: {purpose}\n'
+                    f'Role: code_reviewer\ng5_multi_workgroup_smoke: {marker}\n'
+                ),
+            ),
+            context=None,
+            now='2026-07-11T00:00:00Z',
+        )
+        assert submission.reply.startswith('status: rework_required')
 
 
 def test_fake_multi_workgroup_round_reviewer_uses_scheduler_contract() -> None:
@@ -352,16 +377,16 @@ def test_v3_config_is_fake_git_worktree_required() -> None:
 
 def test_report_merge_order_uses_dependency_layer_then_integration_order() -> None:
     module = _load_script()
-    integration = {
-        'nodes': {
-            'node-003': {'layer': 1, 'integration_order': 30},
-            'node-004': {'layer': 0, 'integration_order': 40},
-            'node-002': {'layer': 0, 'integration_order': 20},
-            'node-001': {'layer': 0, 'integration_order': 10},
-        }
+    bundle = {
+        'nodes': [
+            {'node_id': 'node-003', 'depends_on': ['node-001'], 'integration_order': 30},
+            {'node_id': 'node-004', 'depends_on': [], 'integration_order': 40},
+            {'node_id': 'node-002', 'depends_on': [], 'integration_order': 20},
+            {'node_id': 'node-001', 'depends_on': [], 'integration_order': 10},
+        ]
     }
 
-    assert module._expected_merge_order(integration) == [
+    assert module._expected_bundle_merge_order(bundle) == [
         'node-001',
         'node-002',
         'node-004',
@@ -504,6 +529,7 @@ def test_real_cli_fake_multi_workgroup_full_flow(
     ('scenario', 'count', 'expected_classification'),
     (
         ('reviewer_rework_pass', 1, 'pass'),
+        ('reviewer_rework_exhausted_blocked', 1, 'valid_non_success'),
         ('worker_failure_partial', 2, 'valid_non_success'),
         ('all_workers_failed_blocked', 1, 'valid_non_success'),
         ('reviewer_provider_failure', 2, 'valid_non_success'),
@@ -541,6 +567,7 @@ def test_real_cli_fake_runtime_scenarios(
     assert all(report['checks'].values())
     assert report['post_cleanup'] == {
         'owned_processes': [],
+        'socket_entries': [],
         'connectable_sockets': [],
         'child_worktrees': [],
     }
