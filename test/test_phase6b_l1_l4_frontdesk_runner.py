@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import hashlib
 import json
 import subprocess
 import sys
@@ -50,6 +51,49 @@ def _command_log_records(path: Path) -> list[dict[str, object]]:
     if not path.is_file():
         return []
     return [json.loads(line) for line in path.read_text(encoding='utf-8').splitlines() if line.strip()]
+
+
+def _canonical_digest(value: object, *, prefixed: bool = False) -> str:
+    encoded = json.dumps(
+        value,
+        ensure_ascii=True,
+        sort_keys=True,
+        separators=(',', ':'),
+    ).encode('utf-8')
+    digest = hashlib.sha256(encoded).hexdigest()
+    return f'sha256:{digest}' if prefixed else digest
+
+
+def _frontdesk_activation_digest(activation: dict[str, object]) -> str:
+    source_job = activation['source_job']
+    source_request = activation['source_request']
+    assert isinstance(source_job, dict)
+    assert isinstance(source_request, dict)
+    mechanical = {
+        key: activation[key]
+        for key in (
+            'schema_version', 'record_type', 'activation_id', 'project_id',
+            'project_root', 'action', 'source', 'plan_slug', 'request_id',
+            'intake_sha256', 'source_intake', 'planner_contract',
+            'required_next_output', 'script_write_rules', 'expected_task_ids',
+            'source_task_id', 'direct_ask',
+        )
+        if key in activation
+    }
+    mechanical['source_job'] = {
+        key: source_job[key]
+        for key in ('job_id', 'agent_name', 'reply_sha256')
+        if key in source_job
+    }
+    mechanical['source_request'] = {
+        key: source_request[key]
+        for key in (
+            'source_job_id', 'agent_name', 'project_id', 'to_agent',
+            'from_actor', 'message_type', 'text', 'bytes', 'sha256',
+        )
+        if key in source_request
+    }
+    return _canonical_digest(mechanical, prefixed=True)
 
 
 def _resident_ps(state: str = 'idle') -> str:
@@ -1536,7 +1580,15 @@ def _write_frontdesk_task_set_parent_authority(
 ) -> str:
     project = Path(str(manifest['project']))
     source_task_id = 'job_da3510bbfe19'
+    activation_id = f'act-frontdesk-{source_task_id}'
+    planner_job_id = 'job_31e0de7cb0fd'
     task_set_id = 'ts-017b23211d6230850c98'
+    project_id = 'project-root7'
+    body = f'CCB_REQ_ID: {source_task_id}\nRoute mix intake\n'
+    body_bytes = len(body.encode('utf-8'))
+    body_sha256 = hashlib.sha256(body.encode('utf-8')).hexdigest()
+    planner_reply = '**task-set.json**\n```json\n{"tasks": []}\n```\n'
+    planner_reply_sha256 = hashlib.sha256(planner_reply.encode('utf-8')).hexdigest()
     required_children = [str(case['task_id']) for case in runner.TASKS]
     parent_binding = {
         'schema': 'ccb.plan.task_set_binding.v1',
@@ -1547,21 +1599,173 @@ def _write_frontdesk_task_set_parent_authority(
     }
     parent = {
         'task_id': source_task_id,
+        'task_revision': 2,
         'status': 'decomposed',
         'task_set_parent': parent_binding,
     }
+    child_records = []
+    task_set_children = []
+    import_children = []
+    identity_children = []
+    for order, task_id in enumerate(required_children):
+        binding = {
+            'schema': 'ccb.plan.task_set_binding.v1',
+            'task_set_id': task_set_id,
+            'task_set_revision': 1,
+            'binding_role': 'child',
+            'bound_task_revision': 3,
+            'required': True,
+            'order': order,
+        }
+        child_records.append(
+            {
+                'task_id': task_id,
+                'task_revision': 3,
+                'task_set': binding,
+            }
+        )
+        task_set_children.append(
+            {'task_id': task_id, 'task_revision': 3, 'required': True, 'order': order}
+        )
+        import_children.append(
+            {'task_id': task_id, 'task_revision': 3, 'task_set': dict(binding)}
+        )
+        identity_children.append({'task_id': task_id, 'required': True})
+    source_request = {
+        'status': 'ok',
+        'source_job_id': source_task_id,
+        'agent_name': 'frontdesk',
+        'project_id': project_id,
+        'to_agent': 'planner',
+        'from_actor': 'frontdesk',
+        'message_type': 'ask',
+        'text': body,
+        'bytes': body_bytes,
+        'sha256': body_sha256,
+    }
+    activation = {
+        'schema_version': 1,
+        'record_type': 'ccb_loop_frontdesk_planner_activation',
+        'activation_id': activation_id,
+        'project_id': project_id,
+        'project_root': str(project),
+        'action': 'activate_planner_from_frontdesk',
+        'source': 'frontdesk_direct_silence_ask',
+        'plan_slug': runner.PLAN_SLUG,
+        'request_id': source_task_id,
+        'intake_sha256': body_sha256,
+        'source_intake': {
+            'sha256': body_sha256,
+            'bytes': body_bytes,
+            'preview': body.strip()[:400],
+        },
+        'planner_contract': 'task_set',
+        'required_next_output': 'task-set.json',
+        'script_write_rules': {'mode': 'reply_only'},
+        'expected_task_ids': required_children,
+        'source_task_id': source_task_id,
+        'source_job': {
+            'job_id': source_task_id,
+            'agent_name': 'frontdesk',
+            'terminal_status': 'forwarded',
+            'finished_at': None,
+            'reply_sha256': body_sha256,
+        },
+        'source_request': source_request,
+        'direct_ask': {
+            'from_actor': 'frontdesk',
+            'target': 'planner',
+            'silence': True,
+            'task_id': activation_id,
+            'body_sha256': body_sha256,
+            'controller_rewrote_body': False,
+        },
+        'ask': {'target': 'planner', 'job_id': planner_job_id, 'sender': 'frontdesk'},
+    }
     task_set = {
         'schema': 'ccb.plan.task_set.v1',
+        'schema_version': 1,
         'task_set_id': task_set_id,
         'task_set_revision': 1,
+        'project_id': project_id,
+        'plan_slug': runner.PLAN_SLUG,
         'source_task_id': source_task_id,
-        'children': [
-            {'task_id': task_id, 'required': True}
-            for task_id in required_children
-        ],
+        'source_request': source_request,
+        'planner_job': {'job_id': planner_job_id, 'reply_sha256': planner_reply_sha256},
+        'plan_revision': {'revision': 1},
+        'children': task_set_children,
         'ordered_required_children': required_children,
+        'state': 'running',
+        'aggregate_result': None,
+        'closure': None,
+        'created_at': '2026-07-08T00:00:00+00:00',
+        'updated_at': '2026-07-08T00:00:01+00:00',
     }
-    if mutation == 'task_set_id':
+    request = {
+        'project_id': project_id,
+        'to_agent': 'planner',
+        'from_actor': 'frontdesk',
+        'body': body,
+        'task_id': activation_id,
+        'message_type': 'ask',
+    }
+    activation_digest = _frontdesk_activation_digest(activation)
+    admission_authority = {
+        'project_id': project_id,
+        'activation_id': activation_id,
+        'request_id': source_task_id,
+        'plan_slug': runner.PLAN_SLUG,
+        'request': request,
+        'body_bytes': body_bytes,
+        'body_sha256': body_sha256,
+        'planner_contract': 'task_set',
+        'source_task_id': source_task_id,
+        'activation_digest': activation_digest,
+    }
+    admission = {
+        'schema': 'ccb.frontdesk.direct_handoff_admission_transaction.v1',
+        'record_type': 'ccb_frontdesk_direct_handoff_admission_transaction',
+        'status': 'committed',
+        **admission_authority,
+        'transaction_digest': _canonical_digest(admission_authority, prefixed=True),
+        'activation_record': dict(activation),
+    }
+    import_identity = {
+        'project_id': project_id,
+        'plan_slug': runner.PLAN_SLUG,
+        'plan_revision': task_set['plan_revision'],
+        'activation_id': activation_id,
+        'source_task_id': source_task_id,
+        'source_request': source_request,
+        'source_job': activation['source_job'],
+        'planner_job_id': planner_job_id,
+        'planner_reply_sha256': planner_reply_sha256,
+        'task_set_id': task_set_id,
+        'ordered_children': identity_children,
+    }
+    import_authority = {
+        'task_set_id': task_set_id,
+        'task_set_revision': 1,
+        'task_set': task_set,
+        'source_task_id': source_task_id,
+        'children': import_children,
+    }
+    planner_import = {
+        'schema': 'ccb.plan.planner_task_set_import_transaction.v1',
+        'schema_version': 1,
+        'status': 'committed',
+        'journal_ref': (
+            f'.ccb/runtime/role-output-imports/{planner_job_id}/'
+            'planner-task-set-import.transaction.json'
+        ),
+        'transaction_digest': _canonical_digest(import_identity),
+        'identity': import_identity,
+        'authority': import_authority,
+        'conflicts': [],
+    }
+    if mutation == 'parent_task_revision':
+        parent['task_revision'] = 3
+    elif mutation == 'task_set_id':
         parent_binding['task_set_id'] = 'ts-wrong'
     elif mutation == 'revision':
         parent_binding['task_set_revision'] = 2
@@ -1571,11 +1775,57 @@ def _write_frontdesk_task_set_parent_authority(
         parent['status'] = 'ready_for_orchestration'
     elif mutation == 'source_task_id':
         task_set['source_task_id'] = 'job_other'
+    elif mutation == 'planner_contract':
+        activation['planner_contract'] = 'legacy_tasks'
+    elif mutation == 'to_agent':
+        activation['source_request']['to_agent'] = 'orchestrator'
+    elif mutation == 'forwarded_flow':
+        activation['source_job']['terminal_status'] = 'completed'
+    elif mutation == 'admission_schema':
+        admission['schema'] = 'ccb.wrong.v1'
+    elif mutation == 'admission_status':
+        admission['status'] = 'prepared'
+    elif mutation == 'admission_activation':
+        admission['activation_id'] = 'act-frontdesk-other'
+    elif mutation == 'admission_body_digest':
+        admission['body_sha256'] = '0' * 64
+    elif mutation == 'import_status':
+        planner_import['status'] = 'prepared'
+    elif mutation == 'import_conflicts':
+        planner_import['conflicts'] = [{'reason': 'identity_conflict'}]
+    elif mutation == 'import_activation':
+        import_identity['activation_id'] = 'act-frontdesk-other'
+    elif mutation == 'import_source_task':
+        import_identity['source_task_id'] = 'job_other'
+    elif mutation == 'import_task_set_id':
+        import_identity['task_set_id'] = 'ts-other'
+    elif mutation == 'import_revision':
+        import_authority['task_set_revision'] = 2
+    elif mutation == 'import_reply_digest':
+        import_identity['planner_reply_sha256'] = '0' * 64
+    elif mutation == 'import_source_digest':
+        import_identity['source_request'] = {**source_request, 'sha256': '0' * 64}
+    elif mutation == 'task_set_state':
+        task_set['state'] = 'closed'
+    elif mutation == 'task_set_project':
+        task_set['project_id'] = 'other-project'
+    elif mutation == 'task_set_plan':
+        task_set['plan_slug'] = 'other-plan'
+    elif mutation == 'child_revision':
+        task_set_children[0]['task_revision'] = 4
+    elif mutation == 'child_order':
+        task_set_children[0]['order'] = 1
+    elif mutation == 'child_binding_revision':
+        child_records[0]['task_set']['task_set_revision'] = 2
+    elif mutation == 'extra_child':
+        task_set_children.append(
+            {'task_id': 'extra-child', 'task_revision': 1, 'required': False, 'order': 5}
+        )
     runner._write_json(
         project / 'docs' / 'plantree' / 'plans' / runner.PLAN_SLUG / 'tasks' / 'index.json',
         {
             'schema': 'ccb.plan.tasks.v1',
-            'tasks': [parent, *({'task_id': task_id} for task_id in required_children)],
+            'tasks': [parent, *child_records, *([dict(parent)] if mutation == 'duplicate_parent' else [])],
         },
     )
     runner._write_json(
@@ -1584,14 +1834,34 @@ def _write_frontdesk_task_set_parent_authority(
         / 'runtime'
         / 'loops'
         / 'activations'
-        / f'act-frontdesk-{source_task_id}.json',
-        {
-            'record_type': 'ccb_loop_frontdesk_planner_activation',
-            'request_id': source_task_id,
-            'source_task_id': source_task_id,
-            'source_job': {'job_id': source_task_id, 'agent_name': 'frontdesk'},
-        },
+        / f'{activation_id}.json',
+        activation,
     )
+    if mutation == 'duplicate_activation':
+        duplicate = dict(activation)
+        duplicate['activation_id'] = f'{activation_id}-duplicate'
+        runner._write_json(
+            project
+            / '.ccb'
+            / 'runtime'
+            / 'loops'
+            / 'activations'
+            / f'{activation_id}-duplicate.json',
+            duplicate,
+        )
+    admission_path = (
+        project
+        / '.ccb'
+        / 'runtime'
+        / 'loops'
+        / 'activations'
+        / f'{activation_id}.direct-handoff.transaction.json'
+    )
+    if mutation == 'bad_admission_json':
+        admission_path.parent.mkdir(parents=True, exist_ok=True)
+        admission_path.write_text('{', encoding='utf-8')
+    else:
+        runner._write_json(admission_path, admission)
     runner._write_json(
         project
         / 'docs'
@@ -1603,6 +1873,40 @@ def _write_frontdesk_task_set_parent_authority(
         / 'task-set.json',
         task_set,
     )
+    reply_path = (
+        project
+        / '.ccb'
+        / 'ccbd'
+        / 'artifacts'
+        / 'text'
+        / 'completion-reply'
+        / f'{planner_job_id}-art_root7.txt'
+    )
+    reply_path.parent.mkdir(parents=True, exist_ok=True)
+    reply_path.write_text(planner_reply, encoding='utf-8')
+    import_path = (
+        project
+        / '.ccb'
+        / 'runtime'
+        / 'role-output-imports'
+        / planner_job_id
+        / 'planner-task-set-import.transaction.json'
+    )
+    if mutation == 'bad_import_json':
+        import_path.parent.mkdir(parents=True, exist_ok=True)
+        import_path.write_text('{', encoding='utf-8')
+    else:
+        runner._write_json(import_path, planner_import)
+    if mutation == 'duplicate_import':
+        runner._write_json(
+            project
+            / '.ccb'
+            / 'runtime'
+            / 'role-output-imports'
+            / 'job_duplicate'
+            / 'planner-task-set-import.transaction.json',
+            planner_import,
+        )
     return source_task_id
 
 
@@ -1618,7 +1922,18 @@ def test_authoritative_frontdesk_task_set_source_parent_is_not_unexpected(tmp_pa
 
 @pytest.mark.parametrize(
     'mutation',
-    ('task_set_id', 'revision', 'binding_role', 'status', 'source_task_id'),
+    (
+        'parent_task_revision', 'task_set_id', 'revision', 'binding_role', 'status',
+        'source_task_id', 'planner_contract', 'to_agent', 'forwarded_flow',
+        'admission_schema', 'admission_status', 'admission_activation',
+        'admission_body_digest', 'bad_admission_json', 'import_status',
+        'import_conflicts', 'import_activation', 'import_source_task',
+        'import_task_set_id', 'import_revision', 'import_reply_digest',
+        'import_source_digest', 'bad_import_json', 'duplicate_activation',
+        'duplicate_parent', 'duplicate_import', 'task_set_state', 'task_set_project',
+        'task_set_plan', 'child_revision', 'child_order', 'child_binding_revision',
+        'extra_child',
+    ),
 )
 def test_frontdesk_task_set_source_parent_requires_exact_authority(
     tmp_path: Path,

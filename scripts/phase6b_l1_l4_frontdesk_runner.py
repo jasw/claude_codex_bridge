@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -985,90 +986,427 @@ def resolve_sequence_task_id(manifest: dict[str, Any], task_id: str) -> str:
     return sequence_task_aliases(manifest).get(task_id, task_id)
 
 
+def _canonical_digest(value: object, *, prefixed: bool = False) -> str:
+    encoded = json.dumps(
+        value,
+        ensure_ascii=True,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    digest = hashlib.sha256(encoded).hexdigest()
+    return f"sha256:{digest}" if prefixed else digest
+
+
+def _frontdesk_activation_digest(activation: dict[str, Any]) -> str | None:
+    source_job = activation.get("source_job")
+    source_request = activation.get("source_request")
+    if not isinstance(source_job, dict) or not isinstance(source_request, dict):
+        return None
+    mechanical = {
+        key: activation[key]
+        for key in (
+            "schema_version",
+            "record_type",
+            "activation_id",
+            "project_id",
+            "project_root",
+            "action",
+            "source",
+            "plan_slug",
+            "request_id",
+            "intake_sha256",
+            "source_intake",
+            "planner_contract",
+            "required_next_output",
+            "script_write_rules",
+            "expected_task_ids",
+            "source_task_id",
+            "direct_ask",
+        )
+        if key in activation
+    }
+    mechanical["source_job"] = {
+        key: source_job[key]
+        for key in ("job_id", "agent_name", "reply_sha256")
+        if key in source_job
+    }
+    mechanical["source_request"] = {
+        key: source_request[key]
+        for key in (
+            "source_job_id",
+            "agent_name",
+            "project_id",
+            "to_agent",
+            "from_actor",
+            "message_type",
+            "text",
+            "bytes",
+            "sha256",
+        )
+        if key in source_request
+    }
+    return _canonical_digest(mechanical, prefixed=True)
+
+
+def _valid_frontdesk_activation(
+    project: Path,
+    path: Path,
+    activation: dict[str, Any],
+    task_id: str,
+) -> bool:
+    source_job = activation.get("source_job")
+    source_request = activation.get("source_request")
+    source_intake = activation.get("source_intake")
+    direct_ask = activation.get("direct_ask")
+    ask = activation.get("ask")
+    if not all(
+        isinstance(item, dict)
+        for item in (source_job, source_request, source_intake, direct_ask, ask)
+    ):
+        return False
+    assert isinstance(source_job, dict)
+    assert isinstance(source_request, dict)
+    assert isinstance(source_intake, dict)
+    assert isinstance(direct_ask, dict)
+    assert isinstance(ask, dict)
+    activation_id = path.stem
+    body = source_request.get("text")
+    if not isinstance(body, str):
+        return False
+    body_bytes = body.encode("utf-8")
+    body_sha256 = hashlib.sha256(body_bytes).hexdigest()
+    project_id = _first_text(activation.get("project_id"))
+    return bool(
+        activation.get("schema_version") == 1
+        and activation.get("record_type") == "ccb_loop_frontdesk_planner_activation"
+        and activation.get("activation_id") == activation_id
+        and activation_id == f"act-frontdesk-{task_id}"
+        and Path(str(activation.get("project_root") or "")).resolve() == project.resolve()
+        and activation.get("action") == "activate_planner_from_frontdesk"
+        and activation.get("source") == "frontdesk_direct_silence_ask"
+        and activation.get("plan_slug") == PLAN_SLUG
+        and activation.get("planner_contract") == "task_set"
+        and activation.get("request_id") == task_id
+        and activation.get("source_task_id") == task_id
+        and activation.get("intake_sha256") == body_sha256
+        and source_intake.get("sha256") == body_sha256
+        and source_intake.get("bytes") == len(body_bytes)
+        and isinstance(activation.get("required_next_output"), str)
+        and isinstance(activation.get("script_write_rules"), dict)
+        and activation.get("expected_task_ids")
+        == [str(item["task_id"]) for item in TASKS]
+        and source_job.get("job_id") == task_id
+        and source_job.get("agent_name") == "frontdesk"
+        and source_job.get("terminal_status") == "forwarded"
+        and source_job.get("reply_sha256") == body_sha256
+        and source_request.get("status") == "ok"
+        and source_request.get("source_job_id") == task_id
+        and source_request.get("agent_name") == "frontdesk"
+        and source_request.get("project_id") == project_id
+        and source_request.get("to_agent") == "planner"
+        and source_request.get("from_actor") == "frontdesk"
+        and source_request.get("message_type") == "ask"
+        and source_request.get("bytes") == len(body_bytes)
+        and source_request.get("sha256") == body_sha256
+        and direct_ask.get("from_actor") == "frontdesk"
+        and direct_ask.get("target") == "planner"
+        and direct_ask.get("silence") is True
+        and direct_ask.get("task_id") == activation_id
+        and direct_ask.get("body_sha256") == body_sha256
+        and direct_ask.get("controller_rewrote_body") is False
+        and ask.get("target") == "planner"
+        and ask.get("sender") == "frontdesk"
+        and LABEL_RE.fullmatch(str(ask.get("job_id") or ""))
+    )
+
+
+def _valid_admission_transaction(
+    path: Path,
+    activation: dict[str, Any],
+    task_id: str,
+) -> bool:
+    transaction = _read_json(path.with_name(f"{path.stem}.direct-handoff.transaction.json"))
+    if not isinstance(transaction, dict):
+        return False
+    source_request = activation["source_request"]
+    assert isinstance(source_request, dict)
+    request = transaction.get("request")
+    activation_record = transaction.get("activation_record")
+    activation_digest = _frontdesk_activation_digest(activation)
+    if not isinstance(request, dict) or not isinstance(activation_record, dict) or not activation_digest:
+        return False
+    authority = {
+        key: transaction.get(key)
+        for key in (
+            "project_id",
+            "activation_id",
+            "request_id",
+            "plan_slug",
+            "request",
+            "body_bytes",
+            "body_sha256",
+            "planner_contract",
+            "source_task_id",
+            "activation_digest",
+        )
+    }
+    activation_id = activation["activation_id"]
+    return bool(
+        transaction.get("schema") == "ccb.frontdesk.direct_handoff_admission_transaction.v1"
+        and transaction.get("record_type")
+        == "ccb_frontdesk_direct_handoff_admission_transaction"
+        and transaction.get("status") == "committed"
+        and transaction.get("project_id") == activation.get("project_id")
+        and transaction.get("activation_id") == activation_id
+        and transaction.get("request_id") == task_id
+        and transaction.get("plan_slug") == PLAN_SLUG
+        and transaction.get("body_bytes") == source_request.get("bytes")
+        and transaction.get("body_sha256") == source_request.get("sha256")
+        and transaction.get("planner_contract") == "task_set"
+        and transaction.get("source_task_id") == task_id
+        and transaction.get("activation_digest") == activation_digest
+        and transaction.get("transaction_digest")
+        == _canonical_digest(authority, prefixed=True)
+        and _frontdesk_activation_digest(activation_record) == activation_digest
+        and request.get("project_id") == activation.get("project_id")
+        and request.get("to_agent") == "planner"
+        and request.get("from_actor") == "frontdesk"
+        and request.get("body") == source_request.get("text")
+        and request.get("task_id") == activation_id
+        and request.get("message_type") == "ask"
+    )
+
+
+def _valid_task_set_children(
+    records: list[dict[str, Any]],
+    task_set: dict[str, Any],
+    task_set_id: str,
+    revision: int,
+) -> bool:
+    required_ids = [str(item["task_id"]) for item in TASKS]
+    children = task_set.get("children")
+    if not isinstance(children, list) or len(children) != len(required_ids):
+        return False
+    for order, (task_id, child) in enumerate(zip(required_ids, children)):
+        matches = [record for record in records if task_record_id(record) == task_id]
+        if len(matches) != 1 or not isinstance(child, dict):
+            return False
+        record = matches[0]
+        binding = record.get("task_set") if isinstance(record.get("task_set"), dict) else {}
+        task_revision = record.get("task_revision")
+        if (
+            child != {
+                "task_id": task_id,
+                "task_revision": task_revision,
+                "required": True,
+                "order": order,
+            }
+            or binding.get("schema") != "ccb.plan.task_set_binding.v1"
+            or binding.get("task_set_id") != task_set_id
+            or binding.get("task_set_revision") != revision
+            or binding.get("binding_role") != "child"
+            or binding.get("bound_task_revision") != task_revision
+            or binding.get("required") is not True
+            or binding.get("order") != order
+        ):
+            return False
+    return task_set.get("ordered_required_children") == required_ids
+
+
+def _valid_planner_import_transaction(
+    project: Path,
+    activation: dict[str, Any],
+    task_set: dict[str, Any],
+    records: list[dict[str, Any]],
+) -> bool:
+    paths = sorted(
+        (project / ".ccb" / "runtime" / "role-output-imports").glob(
+            "*/planner-task-set-import.transaction.json"
+        )
+    )
+    if len(paths) != 1:
+        return False
+    transaction = _read_json(paths[0])
+    if not isinstance(transaction, dict):
+        return False
+    identity = transaction.get("identity")
+    authority = transaction.get("authority")
+    if not isinstance(identity, dict) or not isinstance(authority, dict):
+        return False
+    planner_job_id = str(activation["ask"]["job_id"])
+    task_set_id = str(task_set["task_set_id"])
+    revision = task_set["task_set_revision"]
+    reply_paths = sorted(
+        (project / ".ccb" / "ccbd" / "artifacts" / "text" / "completion-reply").glob(
+            f"{planner_job_id}-art_*.txt"
+        )
+    )
+    if len(reply_paths) != 1:
+        return False
+    reply_sha256 = hashlib.sha256(reply_paths[0].read_bytes()).hexdigest()
+    expected_ref = (
+        f".ccb/runtime/role-output-imports/{planner_job_id}/"
+        "planner-task-set-import.transaction.json"
+    )
+    if (
+        transaction.get("schema") != "ccb.plan.planner_task_set_import_transaction.v1"
+        or transaction.get("schema_version") != 1
+        or transaction.get("status") != "committed"
+        or transaction.get("journal_ref") != expected_ref
+        or paths[0] != project / expected_ref
+        or transaction.get("conflicts") != []
+        or paths[0].with_name("planner-task-set-import.transaction.conflicts.json").exists()
+        or transaction.get("transaction_digest") != _canonical_digest(identity)
+        or identity.get("project_id") != activation.get("project_id")
+        or identity.get("plan_slug") != PLAN_SLUG
+        or identity.get("plan_revision") != task_set.get("plan_revision")
+        or identity.get("activation_id") != activation.get("activation_id")
+        or identity.get("source_task_id") != activation.get("source_task_id")
+        or identity.get("source_request") != activation.get("source_request")
+        or identity.get("source_job") != activation.get("source_job")
+        or identity.get("planner_job_id") != planner_job_id
+        or identity.get("planner_reply_sha256") != reply_sha256
+        or identity.get("task_set_id") != task_set_id
+        or authority.get("task_set_id") != task_set_id
+        or authority.get("task_set_revision") != revision
+        or authority.get("source_task_id") != activation.get("source_task_id")
+        or authority.get("task_set") != task_set
+    ):
+        return False
+    identity_children = identity.get("ordered_children")
+    authority_children = authority.get("children")
+    required_ids = [str(item["task_id"]) for item in TASKS]
+    if not isinstance(identity_children, list) or not isinstance(authority_children, list):
+        return False
+    if [child.get("task_id") for child in identity_children if isinstance(child, dict)] != required_ids:
+        return False
+    if any(not isinstance(child, dict) or child.get("required", True) is not True for child in identity_children):
+        return False
+    for task_id, observed in zip(required_ids, authority_children):
+        matches = [record for record in records if task_record_id(record) == task_id]
+        if len(matches) != 1 or not isinstance(observed, dict):
+            return False
+        record = matches[0]
+        if (
+            observed.get("task_id") != task_id
+            or observed.get("task_revision") != record.get("task_revision")
+            or observed.get("task_set") != record.get("task_set")
+        ):
+            return False
+    return len(authority_children) == len(required_ids)
+
+
 def controlled_task_set_source_parent_ids(manifest: dict[str, Any]) -> set[str]:
     project = Path(str(manifest["project"]))
-    required_children = [str(item["task_id"]) for item in TASKS]
-    activations: dict[str, dict[str, Any]] = {}
-    for path in (project / ".ccb" / "runtime" / "loops" / "activations").glob(
-        "act-frontdesk-*.json"
-    ):
-        if not CANONICAL_FRONTDESK_ACTIVATION_RE.fullmatch(path.name):
-            continue
+    records = task_index_records(manifest)
+    activation_paths = sorted(
+        path
+        for path in (project / ".ccb" / "runtime" / "loops" / "activations").glob(
+            "act-frontdesk-*.json"
+        )
+        if CANONICAL_FRONTDESK_ACTIVATION_RE.fullmatch(path.name)
+    )
+    candidates: list[tuple[Path, dict[str, Any]]] = []
+    for path in activation_paths:
         payload = _read_json(path)
-        if not isinstance(payload, dict):
-            continue
-        source_job = payload.get("source_job") if isinstance(payload.get("source_job"), dict) else {}
-        source_task_id = _first_text(payload.get("source_task_id"))
-        if (
-            payload.get("record_type") == "ccb_loop_frontdesk_planner_activation"
-            and source_job.get("agent_name") == "frontdesk"
-            and source_task_id
-            and source_task_id == _first_text(payload.get("request_id"), source_job.get("job_id"))
-            and source_task_id == _first_text(source_job.get("job_id"))
-        ):
-            activations[source_task_id] = payload
-
-    controlled: set[str] = set()
-    for record in task_index_records(manifest):
-        task_id = task_record_id(record)
-        binding = (
-            record.get("task_set_parent")
-            if isinstance(record.get("task_set_parent"), dict)
-            else {}
-        )
-        task_set_id = _first_text(binding.get("task_set_id"))
-        revision = binding.get("task_set_revision")
-        if (
-            task_id not in activations
-            or record.get("status") != "decomposed"
-            or binding.get("schema") != "ccb.plan.task_set_binding.v1"
-            or binding.get("binding_role") != "parent"
-            or not task_set_id
-            or not LABEL_RE.fullmatch(task_set_id)
-            or isinstance(revision, bool)
-            or not isinstance(revision, int)
-            or revision < 1
-        ):
-            continue
-        task_set = _read_json(
-            project
-            / "docs"
-            / "plantree"
-            / "plans"
-            / PLAN_SLUG
-            / "task-sets"
-            / task_set_id
-            / "task-set.json"
-        )
-        if not isinstance(task_set, dict):
-            continue
-        children = task_set.get("children")
-        if (
-            task_set.get("schema") != "ccb.plan.task_set.v1"
-            or task_set.get("task_set_id") != task_set_id
-            or task_set.get("task_set_revision") != revision
-            or task_set.get("source_task_id") != task_id
-            or task_set.get("ordered_required_children") != required_children
-            or not isinstance(children, list)
-            or len(children) != len(required_children)
-            or [child.get("task_id") for child in children if isinstance(child, dict)]
-            != required_children
-            or any(not isinstance(child, dict) or child.get("required") is not True for child in children)
-        ):
-            continue
-        controlled.add(task_id)
-    return controlled if len(controlled) == 1 else set()
+        if isinstance(payload, dict) and _first_text(payload.get("source_task_id")):
+            candidates.append((path, payload))
+    if len(candidates) != 1:
+        return set()
+    activation_path, activation = candidates[0]
+    task_id = str(activation["source_task_id"])
+    parents = [record for record in records if task_record_id(record) == task_id]
+    if len(parents) != 1 or not _valid_frontdesk_activation(
+        project, activation_path, activation, task_id
+    ):
+        return set()
+    parent = parents[0]
+    binding = parent.get("task_set_parent") if isinstance(parent.get("task_set_parent"), dict) else {}
+    task_set_id = _first_text(binding.get("task_set_id"))
+    revision = binding.get("task_set_revision")
+    task_revision = parent.get("task_revision")
+    if (
+        parent.get("status") != "decomposed"
+        or binding.get("schema") != "ccb.plan.task_set_binding.v1"
+        or binding.get("binding_role") != "parent"
+        or binding.get("bound_task_revision") != task_revision
+        or isinstance(task_revision, bool)
+        or not isinstance(task_revision, int)
+        or task_revision < 1
+        or not task_set_id
+        or not LABEL_RE.fullmatch(task_set_id)
+        or isinstance(revision, bool)
+        or not isinstance(revision, int)
+        or revision < 1
+        or not _valid_admission_transaction(activation_path, activation, task_id)
+    ):
+        return set()
+    task_set = _read_json(
+        project
+        / "docs"
+        / "plantree"
+        / "plans"
+        / PLAN_SLUG
+        / "task-sets"
+        / task_set_id
+        / "task-set.json"
+    )
+    source_request = activation.get("source_request")
+    planner_job = task_set.get("planner_job") if isinstance(task_set, dict) else None
+    if (
+        not isinstance(task_set, dict)
+        or not isinstance(source_request, dict)
+        or not isinstance(planner_job, dict)
+        or set(task_set)
+        != {
+            "schema",
+            "schema_version",
+            "task_set_id",
+            "task_set_revision",
+            "project_id",
+            "plan_slug",
+            "source_task_id",
+            "source_request",
+            "planner_job",
+            "plan_revision",
+            "children",
+            "ordered_required_children",
+            "state",
+            "aggregate_result",
+            "closure",
+            "created_at",
+            "updated_at",
+        }
+        or task_set.get("schema") != "ccb.plan.task_set.v1"
+        or task_set.get("schema_version") != 1
+        or task_set.get("task_set_id") != task_set_id
+        or task_set.get("task_set_revision") != revision
+        or task_set.get("project_id") != activation.get("project_id")
+        or task_set.get("plan_slug") != PLAN_SLUG
+        or task_set.get("source_task_id") != task_id
+        or task_set.get("source_request") != source_request
+        or not isinstance(task_set.get("plan_revision"), dict)
+        or task_set.get("state") != "running"
+        or task_set.get("aggregate_result") is not None
+        or task_set.get("closure") is not None
+        or planner_job.get("job_id") != activation["ask"].get("job_id")
+        or not re.fullmatch(r"[0-9a-f]{64}", str(planner_job.get("reply_sha256") or ""))
+        or not _valid_task_set_children(records, task_set, task_set_id, revision)
+        or not _valid_planner_import_transaction(project, activation, task_set, records)
+    ):
+        return set()
+    return {task_id}
 
 
 def unexpected_plan_task_ids(manifest: dict[str, Any]) -> list[str]:
     allowed = {str(item["task_id"]) for item in TASKS}
     allowed.update(sequence_task_aliases(manifest).values())
     allowed.update(controlled_task_set_source_parent_ids(manifest))
-    unexpected: list[str] = []
+    unexpected: set[str] = set()
     for record in task_index_records(manifest):
         task_id = task_record_id(record)
         if task_id and task_id not in allowed:
-            unexpected.append(task_id)
+            unexpected.add(task_id)
     return sorted(unexpected)
 
 
