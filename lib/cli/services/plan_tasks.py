@@ -101,6 +101,7 @@ _PLANNER_COMPACT_IMPORT_POLICIES = {
 _MAINLINE_STATUSES = frozenset(
     {
         'draft',
+        'decomposed',
         'ready_for_orchestration',
         'running',
         'partial',
@@ -112,7 +113,8 @@ _MAINLINE_STATUSES = frozenset(
 _LEGACY_STATUSES = frozenset({'needs_clarification', 'detail_ready', 'ready'})
 _VALID_STATUSES = _MAINLINE_STATUSES | _LEGACY_STATUSES
 _STATUS_EDGES = {
-    'draft': {'draft', 'needs_clarification', 'detail_ready', 'ready', 'ready_for_orchestration', 'done'},
+    'draft': {'draft', 'decomposed', 'needs_clarification', 'detail_ready', 'ready', 'ready_for_orchestration', 'done'},
+    'decomposed': {'decomposed'},
     'needs_clarification': {'needs_clarification', 'draft'},
     'detail_ready': {'detail_ready', 'ready', 'ready_for_orchestration'},
     'ready': {'ready', 'running'},
@@ -145,6 +147,10 @@ def plan_task(context, command) -> dict[str, object]:
         return _task_bind_loop(context, command)
     if action == 'task-import-round':
         return _task_import_round(context, command)
+    if action == 'task-bind-task-set':
+        return _task_bind_task_set(context, command)
+    if action == 'task-unbind-task-set':
+        return _task_unbind_task_set(context, command)
     if action == 'task-show':
         return _task_show(context, command)
     if action == 'task-list':
@@ -524,6 +530,98 @@ def _task_import_round(context, command) -> dict[str, object]:
         return payload
 
 
+def _task_bind_task_set(context, command) -> dict[str, object]:
+    task_set_id = _normalize_segment(getattr(command, 'task_set_id', None), label='task_set_id')
+    task_set_revision = _positive_record_int(
+        getattr(command, 'task_set_revision', None),
+        field='task_set_revision',
+    )
+    binding_role = str(getattr(command, 'binding_role', None) or '').strip().lower()
+    if binding_role not in {'parent', 'child'}:
+        raise ValueError('plan task-set binding_role must be parent or child')
+    task = _require_task(context, command.task_id)
+    with file_lock(_task_lock_path(context, task['record'])):
+        task = _require_task(context, command.task_id)
+        record = _materialize_task_revision(task['record'])
+        _assert_expected_task_revision(command, record)
+        field = 'task_set_parent' if binding_role == 'parent' else 'task_set'
+        required = getattr(command, 'required', True)
+        if not isinstance(required, bool):
+            raise ValueError('plan task-set child required must be boolean')
+        order = getattr(command, 'order', None)
+        if binding_role == 'child':
+            if isinstance(order, bool) or not isinstance(order, int) or order < 0:
+                raise ValueError('plan task-set child order must be a non-negative integer')
+        binding = {
+            'schema': 'ccb.plan.task_set_binding.v1',
+            'task_set_id': task_set_id,
+            'task_set_revision': task_set_revision,
+            'binding_role': binding_role,
+            'bound_task_revision': task_revision(record),
+        }
+        if binding_role == 'child':
+            binding['required'] = required
+            binding['order'] = order
+        existing = record.get(field) if isinstance(record.get(field), dict) else None
+        if existing is not None:
+            existing_revision = _positive_record_int(
+                existing.get('task_set_revision'),
+                field='task_set_revision',
+            )
+            if str(existing.get('task_set_id') or '') != task_set_id:
+                raise ValueError('plan task is already bound to a different task set')
+            if existing_revision > task_set_revision:
+                raise ValueError('plan task-set binding revision is stale')
+            if existing_revision == task_set_revision:
+                if existing != binding:
+                    raise ValueError('plan task-set binding conflicts with existing authority')
+                payload = _payload(context, action='task-bind-task-set', record=record)
+                payload['binding'] = dict(existing)
+                payload['idempotent'] = True
+                return payload
+        if binding_role == 'parent':
+            status = str(record.get('status') or 'draft')
+            if status not in {'draft', 'decomposed', 'ready_for_orchestration'}:
+                raise ValueError(f'plan task-set parent cannot bind from status {status}')
+            record['status'] = 'decomposed'
+            record['owner'] = 'planner'
+            record['next_owner'] = 'planner'
+            record['activation_reason'] = f'task_set_decomposed:{task_set_id}:r{task_set_revision}'
+        record[field] = binding
+        record['updated_at'] = _utc_now()
+        _replace_record(task['tasks_root'], task['index'], record)
+        _write_task_readme(context, record)
+        payload = _payload(context, action='task-bind-task-set', record=record)
+        payload['binding'] = binding
+        payload['idempotent'] = False
+        return payload
+
+
+def _task_unbind_task_set(context, command) -> dict[str, object]:
+    task_set_id = _normalize_segment(getattr(command, 'task_set_id', None), label='task_set_id')
+    expected_revision = _positive_record_int(
+        getattr(command, 'task_set_revision', None),
+        field='task_set_revision',
+    )
+    task = _require_task(context, command.task_id)
+    with file_lock(_task_lock_path(context, task['record'])):
+        task = _require_task(context, command.task_id)
+        record = _materialize_task_revision(task['record'])
+        binding = record.get('task_set') if isinstance(record.get('task_set'), dict) else None
+        if binding is None:
+            return _payload(context, action='task-unbind-task-set', record=record)
+        if (
+            str(binding.get('task_set_id') or '') != task_set_id
+            or binding.get('task_set_revision') != expected_revision
+        ):
+            raise ValueError('plan task-set unbind authority does not match current binding')
+        record.pop('task_set', None)
+        record['updated_at'] = _utc_now()
+        _replace_record(task['tasks_root'], task['index'], record)
+        _write_task_readme(context, record)
+        return _payload(context, action='task-unbind-task-set', record=record)
+
+
 def _task_show(context, command) -> dict[str, object]:
     task = _require_task(context, command.task_id)
     return _payload(context, action='task-show', record=task['record'])
@@ -598,7 +696,7 @@ def _has_round_evidence(record: dict[str, object], *, result: str) -> bool:
 def _owner_for_status(status: str) -> str:
     if status == 'needs_clarification':
         return 'task_detailer'
-    if status in {'draft', 'replan_required'}:
+    if status in {'draft', 'decomposed', 'replan_required'}:
         return 'planner'
     if status == 'detail_ready':
         return 'plan_reviewer'
@@ -610,7 +708,7 @@ def _owner_for_status(status: str) -> str:
 
 
 def _default_next_owner_for_status(status: str) -> str:
-    if status in {'draft', 'partial', 'replan_required', 'detail_ready'}:
+    if status in {'draft', 'decomposed', 'partial', 'replan_required', 'detail_ready'}:
         return 'planner'
     if status in {'ready_for_orchestration', 'ready', 'running'}:
         return 'orchestrator'

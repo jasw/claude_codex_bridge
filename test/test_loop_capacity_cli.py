@@ -10487,11 +10487,18 @@ Constraints: Frontdesk must not mutate CCB authority; planner will create task a
     assert imports[-1]['action'] == 'frontdesk_handoff_already_started'
 
 
+@pytest.mark.parametrize('config_version', (2, 3))
 def test_loop_runner_imports_planner_task_set_as_script_owned_tasks(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    config_version: int,
 ) -> None:
     project_root = _project_with_loop_capacity(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        role_output_import_module,
+        'compile_project_effective_capacity_snapshot',
+        lambda _root: {'config_version': config_version},
+    )
     command = ParsedLoopRunnerCommand(
         project=None,
         once=True,
@@ -10535,8 +10542,14 @@ def test_loop_runner_imports_planner_task_set_as_script_owned_tasks(
             'action': 'activate_planner_from_frontdesk',
             'plan_slug': 'demo-plan',
             'planner_contract': 'task_set',
+            'source_task_id': 'route-mix-intake',
             'source_job': {'job_id': 'job_frontdesk_route_mix', 'agent_name': 'frontdesk'},
             'source_intake': {'preview': _route_mix_frontdesk_intake()[:400]},
+            'source_request': {
+                'source_job_id': 'job_frontdesk_route_mix',
+                'sha256': hashlib.sha256(_route_mix_frontdesk_intake().encode('utf-8')).hexdigest(),
+                'bytes': len(_route_mix_frontdesk_intake().encode('utf-8')),
+            },
             'ask': {
                 'target': 'planner',
                 'job_id': 'job_route_mix_planner',
@@ -10614,8 +10627,24 @@ def test_loop_runner_imports_planner_task_set_as_script_owned_tasks(
     assert payload['planner_contract'] == 'task_set'
     assert payload['task_count'] == 5
     assert payload['task_ids'] == expected_task_ids
-    assert payload['source_task_settlement']['status'] == 'done'
+    assert payload['source_task_settlement']['status'] == (
+        'decomposed' if config_version == 3 else 'done'
+    )
     assert payload['source_task_settlement']['task_id'] == 'route-mix-intake'
+    task_set = (
+        payload['task_set_authority']['task_set']
+        if config_version == 3
+        else None
+    )
+    if task_set is not None:
+        assert task_set['schema'] == 'ccb.plan.task_set.v1'
+        assert task_set['state'] == 'running'
+        assert task_set['task_set_revision'] == 1
+        assert task_set['ordered_required_children'] == expected_task_ids
+        assert task_set['planner_job']['job_id'] == 'job_route_mix_planner'
+        assert task_set['source_request']['source_job_id'] == 'job_frontdesk_route_mix'
+    else:
+        assert 'task_set_authority' not in payload
     for task_id in expected_task_ids:
         shown = plan_task(context, SimpleNamespace(action='task-show', task_id=task_id))
         assert shown['task']['status'] == 'ready_for_orchestration'
@@ -10626,6 +10655,12 @@ def test_loop_runner_imports_planner_task_set_as_script_owned_tasks(
         assert set(artifacts) == {'execution_contract', 'task_packet'}
         assert artifacts['task_packet']['actor']['job_id'] == 'job_route_mix_planner'
         assert artifacts['execution_contract']['actor']['source'] == 'loop_runner_role_output_import'
+        if task_set is not None:
+            assert shown['task']['task_set']['task_set_id'] == task_set['task_set_id']
+            assert shown['task']['task_set']['task_set_revision'] == 1
+            assert shown['task']['task_set']['required'] is True
+        else:
+            assert 'task_set' not in shown['task']
     l1_contract_path = project_root / plan_task(
         context,
         SimpleNamespace(action='task-show', task_id='phase6b-l1-doc-direct-execution'),
@@ -10637,14 +10672,18 @@ def test_loop_runner_imports_planner_task_set_as_script_owned_tasks(
     assert 'imported_planner_task_set_authority' in trace
     assert 'phase6b-l2-code-direct-execution' in trace
     source = plan_task(context, SimpleNamespace(action='task-show', task_id='route-mix-intake'))
-    assert source['task']['status'] == 'done'
-    assert source['task']['next_owner'] == 'terminal'
-    assert source['task']['activation_reason'] == 'planner_task_set_decomposed_source_task'
-    completion = source['task']['artifacts']['completion']
-    assert completion['actor']['source'] == 'loop_runner_role_output_import'
-    completion_text = (project_root / completion['path']).read_text(encoding='utf-8')
-    assert 'child_task_count: 5' in completion_text
-    assert '- phase6b-l1-doc-direct-execution' in completion_text
+    if task_set is not None:
+        assert source['task']['status'] == 'decomposed'
+        assert source['task']['next_owner'] == 'planner'
+        assert source['task']['activation_reason'].startswith('task_set_decomposed:')
+        assert 'completion' not in source['task']['artifacts']
+        assert source['task']['task_set_parent']['task_set_id'] == task_set['task_set_id']
+    else:
+        assert source['task']['status'] == 'done'
+        assert source['task']['next_owner'] == 'terminal'
+        assert source['task']['activation_reason'] == 'planner_task_set_decomposed_source_task'
+        completion = source['task']['artifacts']['completion']
+        assert completion['actor']['source'] == 'loop_runner_role_output_import'
 
 
 def test_loop_runner_imports_single_planner_task_settles_frontdesk_source_task(
@@ -10932,6 +10971,34 @@ def test_loop_runner_single_task_set_exposes_task_id_for_supervisor_resume(
     assert replay['task_status'] == 'ready_for_orchestration'
     assert replay['next_owner'] == 'orchestrator'
     assert replay['next_activation'] == 'orchestrator'
+
+
+def test_planner_task_set_membership_defaults_required_and_validates_optional_boolean() -> None:
+    base = {
+        'task_id': 'child-a',
+        'title': 'Child A',
+        'route': 'direct_execution',
+        'readiness': 'ready',
+        'task_packet': '# Task: Child A\n',
+        'allowed_paths': ['child-a.txt'],
+        'verification': ['test -f child-a.txt'],
+        'blockers': [],
+    }
+
+    required = role_output_import_module._parse_planner_task_set_item(base, index=0)
+    optional = role_output_import_module._parse_planner_task_set_item(
+        {**base, 'task_id': 'child-b', 'required': False},
+        index=1,
+    )
+    invalid = role_output_import_module._parse_planner_task_set_item(
+        {**base, 'task_id': 'child-c', 'required': 'optional'},
+        index=2,
+    )
+
+    assert required['required'] is True
+    assert optional['required'] is False
+    assert invalid['status'] == 'blocked'
+    assert invalid['reason'] == 'planner_task_set_invalid_membership'
 
 
 def test_loop_runner_task_set_contract_appends_direct_verification_commands(

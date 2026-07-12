@@ -25,6 +25,7 @@ from .loop_effective_capacity import (
     compile_project_effective_capacity_snapshot,
 )
 from .plan_tasks import plan_task
+from .task_set_closure import create_task_set_authority
 
 
 _VALID_ROUTES = frozenset({'direct_execution', 'needs_detail', 'macro_adjustment_request', 'blocked', 'partial_completion'})
@@ -578,9 +579,39 @@ def _consume_planner_task_set(
     parsed: dict[str, object],
 ) -> dict[str, object]:
     job_id = str(snapshot.get('job_id') or '')
+    task_set_authority_enabled = _task_set_authority_enabled(context)
+    source_task_id = _source_task_id_for_task_set(context, activation=activation)
+    if task_set_authority_enabled:
+        identity_error = _task_set_source_identity_error(
+            activation,
+            source_task_id=source_task_id,
+        )
+        if identity_error is not None:
+            return _blocked_payload(
+                context,
+                job_id=job_id,
+                agent_name=str(snapshot.get('agent_name') or ''),
+                reason=str(identity_error['reason']),
+                evidence=identity_error,
+            )
     plan_slug, plan_result = _resolve_or_bootstrap_plan(context, command, activation=activation)
     if plan_slug is None:
         return plan_result
+    if task_set_authority_enabled:
+        source_task_error = _task_set_source_task_error(
+            context,
+            deps,
+            source_task_id=source_task_id,
+            plan_slug=plan_slug,
+        )
+        if source_task_error is not None:
+            return _blocked_payload(
+                context,
+                job_id=job_id,
+                agent_name=str(snapshot.get('agent_name') or ''),
+                reason=str(source_task_error['reason']),
+                evidence=source_task_error,
+            )
     import_root = _role_import_dir(context, job_id)
     imported_tasks: list[dict[str, object]] = []
     for task in tuple(parsed.get('tasks') or ()):
@@ -651,6 +682,7 @@ def _consume_planner_task_set(
                 'title': title,
                 'route': task.get('route'),
                 'readiness': task.get('readiness'),
+                'required': bool(task.get('required', True)),
                 'created_task': bool(task_payload.get('created')),
                 'artifacts': {
                     'task_packet': task_packet_import.get('artifact'),
@@ -660,17 +692,44 @@ def _consume_planner_task_set(
             }
         )
     task_ids = [task['task_id'] for task in imported_tasks]
-    source_task_settlement = _settle_frontdesk_task_set_source_task(
-        context,
-        deps,
-        plan_slug=plan_slug,
-        job_id=job_id,
-        snapshot=snapshot,
-        reply=reply,
-        activation=activation,
-        import_root=import_root,
-        imported_tasks=imported_tasks,
-    )
+    task_set_authority = None
+    if task_set_authority_enabled:
+        task_set_authority = create_task_set_authority(
+            context,
+            plan_slug=plan_slug,
+            source_task_id=source_task_id,
+            source_request=dict(activation['source_request']),
+            planner_job={
+                'job_id': job_id,
+                'reply_sha256': hashlib.sha256(reply.encode('utf-8')).hexdigest(),
+            },
+            children=[
+                {'task_id': task['task_id'], 'required': task['required']}
+                for task in imported_tasks
+            ],
+            plan_task_fn=deps.plan_task,
+        )
+        parent = task_set_authority['parent_transition']
+        source_task_settlement = {
+            'status': 'decomposed',
+            'task_id': source_task_id,
+            'status_transition': _compact_plan_payload(parent),
+            'child_task_ids': task_ids,
+            'task_set_id': task_set_authority['task_set']['task_set_id'],
+            'task_set_revision': task_set_authority['task_set']['task_set_revision'],
+        }
+    else:
+        source_task_settlement = _settle_frontdesk_task_set_source_task(
+            context,
+            deps,
+            plan_slug=plan_slug,
+            job_id=job_id,
+            snapshot=snapshot,
+            reply=reply,
+            activation=activation,
+            import_root=import_root,
+            imported_tasks=imported_tasks,
+        )
     single_task_fields = _single_task_set_fields(imported_tasks)
     record_payload = {
         'action': 'imported_planner_task_set_authority',
@@ -685,6 +744,11 @@ def _consume_planner_task_set(
     }
     if source_task_settlement is not None:
         record_payload['source_task_settlement'] = source_task_settlement
+    if task_set_authority is not None:
+        record_payload['task_set_authority'] = {
+            'task_set': task_set_authority['task_set'],
+            'task_set_path': task_set_authority['task_set_path'],
+        }
     record_payload.update(single_task_fields)
     record = _log_import(context, record_payload)
     payload_extra = {
@@ -698,6 +762,8 @@ def _consume_planner_task_set(
     }
     if source_task_settlement is not None:
         payload_extra['source_task_settlement'] = source_task_settlement
+    if task_set_authority is not None:
+        payload_extra['task_set_authority'] = record_payload['task_set_authority']
     payload_extra.update(single_task_fields)
     return _base_payload(
         context,
@@ -740,6 +806,78 @@ def _settle_frontdesk_task_set_source_task(
         completion_title='Task Set Decomposition Complete',
         activation_reason='planner_task_set_decomposed_source_task',
     )
+
+
+def _task_set_authority_enabled(context) -> bool:
+    snapshot = compile_project_effective_capacity_snapshot(Path(context.project.project_root))
+    return int(snapshot.get('config_version') or 0) == 3
+
+
+def _task_set_source_identity_error(
+    activation: dict[str, object] | None,
+    *,
+    source_task_id: str,
+) -> dict[str, object] | None:
+    if activation is None or not source_task_id:
+        return {
+            'status': 'blocked',
+            'reason': 'planner_task_set_source_task_identity_missing',
+        }
+    source_request = activation.get('source_request')
+    if not isinstance(source_request, dict):
+        return {
+            'status': 'blocked',
+            'reason': 'planner_task_set_source_request_authority_missing',
+        }
+    source_job_id = str(source_request.get('source_job_id') or '').strip()
+    source_job = activation.get('source_job') if isinstance(activation.get('source_job'), dict) else {}
+    if not source_job_id or source_job_id != str(source_job.get('job_id') or '').strip():
+        return {
+            'status': 'blocked',
+            'reason': 'planner_task_set_source_request_identity_mismatch',
+        }
+    digest = str(source_request.get('sha256') or '').strip()
+    size = source_request.get('bytes')
+    if not re.fullmatch(r'[0-9a-f]{64}', digest) or isinstance(size, bool) or not isinstance(size, int) or size < 0:
+        return {
+            'status': 'blocked',
+            'reason': 'planner_task_set_source_request_authority_invalid',
+        }
+    return None
+
+
+def _task_set_source_task_error(
+    context,
+    deps,
+    *,
+    source_task_id: str,
+    plan_slug: str,
+) -> dict[str, object] | None:
+    try:
+        payload = deps.plan_task(
+            context,
+            SimpleNamespace(action='task-show', task_id=source_task_id),
+        )
+    except ValueError as exc:
+        return {
+            'status': 'blocked',
+            'reason': 'planner_task_set_source_task_authority_missing',
+            'error': str(exc),
+        }
+    task = payload.get('task') if isinstance(payload.get('task'), dict) else {}
+    if str(task.get('plan_slug') or '') != plan_slug:
+        return {
+            'status': 'blocked',
+            'reason': 'planner_task_set_source_task_plan_mismatch',
+        }
+    status = str(task.get('status') or '')
+    if status not in {'draft', 'decomposed', 'ready_for_orchestration'}:
+        return {
+            'status': 'blocked',
+            'reason': 'planner_task_set_source_task_not_decomposable',
+            'source_status': status,
+        }
+    return None
 
 
 def _settle_frontdesk_single_task_source_task(
@@ -1966,6 +2104,14 @@ def _parse_planner_task_set_item(raw_task: object, *, index: int) -> dict[str, o
             'error': str(exc),
         }
     blockers = _string_list(raw_task.get('blockers'))
+    required = raw_task.get('required', True)
+    if not isinstance(required, bool):
+        return {
+            'status': 'blocked',
+            'reason': 'planner_task_set_invalid_membership',
+            'task_index': index,
+            'task_id': task_id,
+        }
     missing_fields: list[str] = []
     if not task_packet:
         missing_fields.append(f'{prefix}.task_packet')
@@ -2051,6 +2197,7 @@ def _parse_planner_task_set_item(raw_task: object, *, index: int) -> dict[str, o
         'allowed_paths': allowed_paths,
         'verification': verification,
         'blockers': blockers,
+        'required': required,
     }
 
 
@@ -3212,6 +3359,7 @@ def _already_consumed_payload(context, *, job_id: str, record: dict[str, object]
         'task_id',
         'task_count',
         'task_ids',
+        'task_set_authority',
         'task_status',
         'tasks',
     ):
