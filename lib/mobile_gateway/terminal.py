@@ -13,6 +13,9 @@ import time
 from typing import Mapping
 
 
+MOBILE_TERMINAL_INITIAL_HISTORY_LINES = 1000
+
+
 @dataclass(frozen=True)
 class TerminalGeometry:
     columns: int = 80
@@ -149,7 +152,24 @@ class TmuxTerminalSession:
             return None
         if self._last_snapshot is not None:
             time.sleep(max(0.0, min(float(timeout_seconds), 0.25)))
-        snapshot = _capture_tmux_terminal_pane(self.target, self._geometry)
+        if self._last_snapshot is None:
+            history = _capture_tmux_terminal_pane(
+                self.target,
+                self._geometry,
+                include_history=True,
+            )
+            snapshot = _capture_tmux_terminal_pane(
+                self.target,
+                self._geometry,
+                include_history=False,
+            )
+            self._last_snapshot = snapshot
+            return _render_terminal_snapshot(history, clear_scrollback=True)
+        snapshot = _capture_tmux_terminal_pane(
+            self.target,
+            self._geometry,
+            include_history=False,
+        )
         if snapshot == self._last_snapshot:
             return b''
         self._last_snapshot = snapshot
@@ -200,12 +220,17 @@ def _terminal_client_env() -> dict[str, str]:
 def _tmux_capture_command(
     target: TerminalAttachTarget,
     geometry: TerminalGeometry,
+    *,
+    include_history: bool = True,
 ) -> list[str]:
     pane_id = str(target.pane_id or '').strip()
     if not pane_id:
         raise RuntimeError('terminal target pane evidence is required')
-    rows = max(1, int(geometry.rows))
-    return [
+    history_lines = max(
+        MOBILE_TERMINAL_INITIAL_HISTORY_LINES,
+        max(1, int(geometry.rows)),
+    )
+    command = [
         'tmux',
         '-S',
         target.socket_path,
@@ -214,17 +239,24 @@ def _tmux_capture_command(
         '-e',
         '-t',
         pane_id,
-        '-S',
-        f'-{rows}',
     ]
+    if include_history:
+        command.extend(('-S', f'-{history_lines}'))
+    return command
 
 
 def _capture_tmux_terminal_pane(
     target: TerminalAttachTarget,
     geometry: TerminalGeometry,
+    *,
+    include_history: bool,
 ) -> bytes:
     cp = subprocess.run(
-        _tmux_capture_command(target, geometry),
+        _tmux_capture_command(
+            target,
+            geometry,
+            include_history=include_history,
+        ),
         text=False,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -237,10 +269,15 @@ def _capture_tmux_terminal_pane(
     return bytes(cp.stdout or b'')
 
 
-def _render_terminal_snapshot(snapshot: bytes) -> bytes:
+def _render_terminal_snapshot(
+    snapshot: bytes,
+    *,
+    clear_scrollback: bool = False,
+) -> bytes:
     text = snapshot.decode('utf-8', errors='replace').rstrip('\n')
     rendered = text.replace('\r\n', '\n').replace('\r', '\n').replace('\n', '\r\n')
-    return b'\x1b[?25l\x1b[H\x1b[2J' + rendered.encode('utf-8') + b'\r\n'
+    clear = b'\x1b[3J' if clear_scrollback else b''
+    return b'\x1b[?25l' + clear + b'\x1b[H\x1b[2J' + rendered.encode('utf-8')
 
 
 def _select_tmux_terminal_pane(target: TerminalAttachTarget) -> None:

@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:xterm/xterm.dart';
 
 import 'package:ccb_mobile/ccb_mobile.dart';
 
@@ -9,6 +10,25 @@ import 'support/project_home_test_fakes.dart';
 
 void main() {
   final binding = TestWidgetsFlutterBinding.ensureInitialized();
+
+  test(
+    'gateway pane snapshot replacement does not accumulate screen copies',
+    () {
+      final terminal = Terminal(maxLines: 100);
+      terminal.resize(24, 3);
+
+      terminal.write(
+        '\x1b[?25l\x1b[3J\x1b[H\x1b[2J'
+        'real history\r\nolder output\r\npane only\r\nprompt\$ ',
+      );
+      terminal.write('\x1b[?25l\x1b[H\x1b[2Jpane changed\r\nprompt\$ ');
+
+      final text = terminal.buffer.getText();
+      expect('real history'.allMatches(text), hasLength(1));
+      expect('pane changed'.allMatches(text), hasLength(1));
+      expect('pane only'.allMatches(text), isEmpty);
+    },
+  );
 
   testWidgets('terminal shortcuts stay collapsed under a floating plus', (
     tester,

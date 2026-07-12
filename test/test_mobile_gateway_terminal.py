@@ -37,7 +37,7 @@ def test_terminal_output_command_captures_selected_pane_not_session() -> None:
         '-t',
         '%42',
         '-S',
-        '-24',
+        '-1000',
     ]
     assert 'attach-session' not in _target().command
 
@@ -48,14 +48,22 @@ def test_terminal_session_reads_selected_pane_snapshot(monkeypatch) -> None:
     def fake_run(command, **kwargs):
         calls.append(list(command))
         assert 'attach-session' not in command
-        return SimpleNamespace(returncode=0, stdout=b'pane only\nprompt$ ', stderr=b'')
+        output = (
+            b'pane history\npane only\nprompt$ '
+            if command.count('-S') > 1
+            else b'pane only\nprompt$ '
+        )
+        return SimpleNamespace(returncode=0, stdout=output, stderr=b'')
 
     monkeypatch.setattr('mobile_gateway.terminal.subprocess.run', fake_run)
 
     session = TmuxTerminalSession(_target())
     output = session.read(0)
 
-    assert output == b'\x1b[?25l\x1b[H\x1b[2Jpane only\r\nprompt$ \r\n'
+    assert output == (
+        b'\x1b[?25l\x1b[3J\x1b[H\x1b[2J'
+        b'pane history\r\npane only\r\nprompt$ '
+    )
     assert calls == [
         [
             'tmux',
@@ -67,9 +75,49 @@ def test_terminal_session_reads_selected_pane_snapshot(monkeypatch) -> None:
             '-t',
             '%42',
             '-S',
-            '-24',
-        ]
+            '-1000',
+        ],
+        [
+            'tmux',
+            '-S',
+            '/tmp/ccb-test/tmux.sock',
+            'capture-pane',
+            '-p',
+            '-e',
+            '-t',
+            '%42',
+        ],
     ]
+
+
+def test_terminal_session_repaints_visible_pane_without_reappending_history(
+    monkeypatch,
+) -> None:
+    calls: list[list[str]] = []
+    visible_outputs = iter((b'pane only\nprompt$ ', b'pane changed\nprompt$ '))
+
+    def fake_run(command, **kwargs):
+        calls.append(list(command))
+        if command.count('-S') > 1:
+            output = b'real history\npane only\nprompt$ '
+        else:
+            output = next(visible_outputs)
+        return SimpleNamespace(returncode=0, stdout=output, stderr=b'')
+
+    monkeypatch.setattr('mobile_gateway.terminal.subprocess.run', fake_run)
+
+    session = TmuxTerminalSession(_target())
+
+    first = session.read(0)
+    second = session.read(0)
+
+    assert first == (
+        b'\x1b[?25l\x1b[3J\x1b[H\x1b[2J'
+        b'real history\r\npane only\r\nprompt$ '
+    )
+    assert second == b'\x1b[?25l\x1b[H\x1b[2Jpane changed\r\nprompt$ '
+    assert sum(command.count('-S') > 1 for command in calls) == 1
+    assert len(calls) == 3
 
 
 def test_terminal_open_selects_target_pane_before_attach(monkeypatch) -> None:
