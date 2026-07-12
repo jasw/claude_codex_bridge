@@ -18,6 +18,7 @@ PLAN_SLUG = "phase6b-real-provider-l1-l4"
 LABEL_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,79}$")
 PROJECT_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,79}$")
 STALE_SEQUENCE_RE = re.compile(r"sequence(?:14|17)(?:[^0-9]|$)")
+CANONICAL_FRONTDESK_ACTIVATION_RE = re.compile(r"^act-frontdesk-[A-Za-z0-9_-]+\.json$")
 ROLE_IDS = (
     "agentroles.ccb_frontdesk",
     "agentroles.ccb_planner",
@@ -1050,7 +1051,13 @@ def frontdesk_planner_handoff_evidence(
 ) -> dict[str, Any]:
     project = Path(str(manifest["project"]))
     activation_path, activation = _latest_json_payload(
-        sorted((project / ".ccb" / "runtime" / "loops" / "activations").glob("act-frontdesk-*.json"))
+        sorted(
+            path
+            for path in (project / ".ccb" / "runtime" / "loops" / "activations").glob(
+                "act-frontdesk-*.json"
+            )
+            if CANONICAL_FRONTDESK_ACTIVATION_RE.fullmatch(path.name)
+        )
     )
     activation = activation or {}
     source_job = activation.get("source_job") if isinstance(activation.get("source_job"), dict) else {}
@@ -1098,7 +1105,13 @@ def planner_task_set_evidence(manifest: dict[str, Any]) -> dict[str, Any]:
     planner_snapshot_path = None
     activation_path = None
     frontdesk_job_id = None
-    for path in sorted((project / ".ccb" / "runtime" / "loops" / "activations").glob("act-frontdesk-*.json")):
+    for path in sorted(
+        path
+        for path in (project / ".ccb" / "runtime" / "loops" / "activations").glob(
+            "act-frontdesk-*.json"
+        )
+        if CANONICAL_FRONTDESK_ACTIVATION_RE.fullmatch(path.name)
+    ):
         payload = _read_json(path)
         if not isinstance(payload, dict):
             continue

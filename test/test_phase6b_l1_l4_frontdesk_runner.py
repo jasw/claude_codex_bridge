@@ -887,6 +887,54 @@ def test_planner_task_set_handoff_preserves_existing_terminal_conditions(
     assert runner.wait_for_planner_task_set_handoff(manifest, before='start_task') == state
 
 
+def test_planner_task_set_handoff_ignores_activation_sidecars(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner = _load_runner()
+    _root, manifest = _materialize(tmp_path)
+    project = Path(str(manifest['project']))
+    activation_dir = project / '.ccb/runtime/loops/activations'
+    canonical_activation = activation_dir / 'act-frontdesk-job_31092c1cac55.json'
+    planner_job_id = 'job_planner'
+    runner._write_json(
+        canonical_activation,
+        {
+            'record_type': 'ccb_loop_frontdesk_planner_activation',
+            'request_id': 'job_31092c1cac55',
+            'source_job': {'job_id': 'job_31092c1cac55'},
+            'ask': {'target': 'planner', 'job_id': planner_job_id},
+        },
+    )
+    runner._write_json(
+        activation_dir / 'act-frontdesk-job_31092c1cac55.direct-handoff.transaction.json',
+        {'record_type': 'ccb_loop_frontdesk_direct_handoff_transaction'},
+    )
+    runner._write_json(
+        activation_dir / 'act-frontdesk-job_31092c1cac55.recovery-error.json',
+        {'record_type': 'ccb_loop_frontdesk_recovery_error'},
+    )
+    planner_reply = (
+        project
+        / '.ccb/ccbd/artifacts/text/completion-reply'
+        / f'{planner_job_id}-art_test.txt'
+    )
+    planner_reply.parent.mkdir(parents=True, exist_ok=True)
+    planner_reply.write_text('**task-set.json**\n', encoding='utf-8')
+    monkeypatch.setattr(
+        runner.time,
+        'sleep',
+        lambda _seconds: (_ for _ in ()).throw(AssertionError('unexpected wait')),
+    )
+
+    state = runner.wait_for_planner_task_set_handoff(manifest, before='start_task')
+
+    assert state['activation_path'] == str(canonical_activation)
+    assert state['planner_job_id'] == planner_job_id
+    assert state['planner_reply_path'] == str(planner_reply)
+    assert state['fenced_task_set_present'] is True
+
+
 def test_init_writes_config_before_startup_and_validates_mount_after_startup() -> None:
     source = RUNNER_PATH.read_text(encoding='utf-8')
     init_start = source.index('def init_lab(')
