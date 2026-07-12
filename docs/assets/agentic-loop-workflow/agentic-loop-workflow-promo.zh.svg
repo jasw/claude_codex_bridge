@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="2400" height="1350" viewBox="0 0 2400 1350" role="img" aria-labelledby="title desc">
   <title id="title">CCB Agentic Loop Workflow</title>
-  <desc id="desc">深色 16:9 CCB 工作流架构图。主线从 Frontdesk 到 Planner，再到 Orchestrator triage；Orchestrator 的 needs detail 以短虚线激活 Task Detailer，Detailer 的 local ready 回 Orchestrator、macro 回 Planner。最右侧是一条贯穿各层的程序控制脊柱。底部标注可见、可审查、可恢复和当前验收中。</desc>
+  <desc id="desc">深色 16:9 CCB 工作流架构图。图面前台只保留 Frontdesk 和按需 Task Detailer；后台依次展示 Planner、Orchestrator，以及可并行打开的一到四个 Worker 加 Reviewer 工作组、Git 根验证和 Round Reviewer。Orchestrator 的 needs detail 以短虚线激活 Detailer，Detailer 的 local ready 回 Orchestrator、macro 回 Planner。最右侧是一条贯穿各层的程序控制脊柱。</desc>
   <defs>
     <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
       <stop offset="0" stop-color="#0A1116"/>
@@ -48,6 +48,7 @@
       .card-en { font-size: 19px; font-weight: 700; letter-spacing: 1.5px; fill: #86B6FF; }
       .card-body { font-size: 21px; font-weight: 450; fill: #B5C4D0; }
       .flow-label { font-size: 18px; font-weight: 800; fill: #B9D4FF; }
+      .workgroup-mini { font-size: 17px; font-weight: 800; fill: #D8F6EC; }
       .spine-title { font-size: 17px; font-weight: 800; letter-spacing: 1.2px; fill: #FFF3D7; }
       .spine-body { font-size: 16px; font-weight: 650; fill: #FFF1D3; }
       .foot-strong { font-size: 29px; font-weight: 800; fill: #EAF5F0; }
@@ -77,8 +78,8 @@
   <text x="166" y="435" class="micro">ONE VISIBLE, AUDITABLE LOOP</text>
   <text x="166" y="510" class="left-lead">语义归角色</text>
   <text x="166" y="570" class="left-lead">权威归程序</text>
-  <text x="166" y="637" class="left-body">Frontdesk 守住用户边界，Planner 守住全局计划，</text>
-  <text x="166" y="677" class="left-body">Orchestrator 只产出语义 bundle。</text>
+  <text x="166" y="637" class="left-body">图面前台只保留 Frontdesk 与 Detailer，</text>
+  <text x="166" y="677" class="left-body">后台承担计划、编排与多工作组验证。</text>
   <text x="166" y="733" class="left-body">控制器校验并持久化：状态、拓扑、集成、</text>
   <text x="166" y="773" class="left-body">恢复与交付都可回看、可复核。</text>
 
@@ -103,12 +104,12 @@
     <rect x="802" y="604" width="1152" height="174" rx="22" fill="#122936" stroke="#3A6574"/>
     <rect x="802" y="806" width="1152" height="226" rx="22" fill="#102B29" stroke="#347369"/>
   </g>
-  <text x="835" y="438" class="layer-kicker">01 / 交互与细化层</text>
-  <text x="835" y="472" class="layer-title">INTERACTION</text>
-  <text x="835" y="640" class="layer-kicker">02 / 规划与编排层</text>
-  <text x="835" y="674" class="layer-title">PLAN &amp; ORCH.</text>
-  <text x="835" y="842" class="layer-kicker">03 / 工作与验证层</text>
-  <text x="835" y="876" class="layer-title">WORK &amp; VERIFY</text>
+  <text x="835" y="438" class="layer-kicker">01 / 前台交互层</text>
+  <text x="835" y="472" class="layer-title">FRONT STAGE</text>
+  <text x="835" y="640" class="layer-kicker">02 / 后台计划与编排</text>
+  <text x="835" y="674" class="layer-title">BACKEND PLAN</text>
+  <text x="835" y="842" class="layer-kicker">03 / 后台多工作组</text>
+  <text x="835" y="876" class="layer-title">PARALLEL WORK</text>
 
   <!-- Mainline and conditional triage loops: Frontdesk -> Planner -> Orchestrator -->
   <path d="M1170 544 C1170 578 1180 606 1180 634" fill="none" stroke="#79ACFF" stroke-width="4" marker-end="url(#arrowBlue)"/>
@@ -154,9 +155,16 @@
     <rect x="1470" y="882" width="230" height="144" rx="18" fill="#123A37" stroke="#4B9C8B" stroke-width="2"/>
     <rect x="1730" y="882" width="205" height="144" rx="18" fill="#123A37" stroke="#4B9C8B" stroke-width="2"/>
   </g>
-  <text x="1034" y="920" class="card-en">1–4 WORKER + REVIEWER</text>
-  <text x="1034" y="963" class="card-title">受限 chain · 有界返工</text>
-  <text x="1034" y="994" class="card-body">指定 Reviewer；独立节点可并行</text>
+  <text x="1034" y="918" class="card-en">PARALLEL WORKGROUPS ×1–4</text>
+  <text x="1034" y="944" class="card-body">每组 Worker + 指定 Reviewer</text>
+  <rect x="1028" y="958" width="88" height="48" rx="10" fill="#185047" stroke="#5DB59E"/>
+  <rect x="1126" y="958" width="88" height="48" rx="10" fill="#185047" stroke="#5DB59E"/>
+  <rect x="1224" y="958" width="88" height="48" rx="10" fill="#185047" stroke="#5DB59E"/>
+  <rect x="1322" y="958" width="88" height="48" rx="10" fill="#185047" stroke="#5DB59E"/>
+  <text x="1042" y="989" class="workgroup-mini">W1 + R1</text>
+  <text x="1140" y="989" class="workgroup-mini">W2 + R2</text>
+  <text x="1238" y="989" class="workgroup-mini">W3 + R3</text>
+  <text x="1336" y="989" class="workgroup-mini">W4 + R4</text>
   <text x="1492" y="920" class="card-en">GIT + ROOT</text>
   <text x="1492" y="958" class="card-title">集成 / 根验证</text>
   <text x="1492" y="990" class="card-body">隔离 worktree</text>

@@ -53,7 +53,7 @@ sequenceDiagram
     C->>T: 校验 schema / capacity / revision / digest，提交 mount intent
     T-->>C: 具体绑定、已观察的就绪状态
 
-    loop 每个 DAG-ready workgroup（1–4 个，可并行）
+    loop 每个 DAG-ready workgroup（1–4 个槽位，可同时打开）
         C->>W: 仅一次 root Worker ask；绑定 worktree digest
         W->>R: restricted ask --chain 到指定 Reviewer
         alt pass
