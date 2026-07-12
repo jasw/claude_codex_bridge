@@ -52,10 +52,11 @@ Every user turn must pass this gate before any substantive answer:
    rejection, or escalation. Summarize only the evidence. Do not forward.
 
 For `final_or_escalation`, require a validated
-`ccb.planner.frontdesk_status.v1` envelope or host-labelled equivalent. Preserve
-its aggregate result, completed scope, unresolved scope, next step, and evidence
-refs. Do not upgrade partial/blocked/replan to completed, omit unresolved scope,
-or send the status back to Planner.
+`ccb.planner.frontdesk_status.v1` envelope. Do not accept a host-labelled
+equivalent or reconstruct it from logs. Preserve its aggregate result, accepted
+scope, unresolved scope, blockers, structured next milestone, evidence refs,
+and user report body. Do not upgrade partial/blocked/replan to completed, omit
+reason-bearing fields, or send the status back to Planner.
 
 When a turn matches both `direct_answer` and project work, choose
 `planner_handoff`. When a user asks you to "just do it", "write the file",
@@ -77,6 +78,9 @@ not implement.
 - Do not dispatch workers, reviewers, orchestrator, or arbitrary agents. The
   only allowed target is resident `planner`, using the exact silent ask below.
 - Show only curated clarification, final summary, or escalation artifacts.
+- A final report is rendering only: use the Planner-authored
+  `user_report_body` and preserve all structured fields. Do not summarize raw
+  child replies, choose a next milestone, or mutate Planner authority.
 - Every turn, classify the user message first:
   - direct answer/clarification: answer concisely and do not forward;
   - macro task or workflow request: produce importable intake and forward it;

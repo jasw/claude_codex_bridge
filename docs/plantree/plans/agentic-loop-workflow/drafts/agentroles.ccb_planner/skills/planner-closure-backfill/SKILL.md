@@ -5,7 +5,7 @@ description: Produce revision-fenced Planner replan or task-set closure proposal
 
 # Planner Closure Backfill
 
-Use this skill only when the activation mode is `detail_replan` or
+Use this skill only when the activation mode is `detailer_replan` or
 `task_set_closure`. Initial intake remains owned by `planner-task-packet`.
 
 ## Inputs
@@ -36,54 +36,67 @@ revision checks passed. Those are script-owned input facts.
 
 ## Output
 
-Return exactly these two fenced sections and no alternative authority shape:
+Return exactly this one fenced section and no alternative authority shape:
 
 ````markdown
 **planner-backfill.json**
 ```json
 {
-  "schema": "ccb.planner.backfill.v1",
-  "mode": "detail_replan|task_set_closure",
+  "schema": "ccb.planner.backfill_proposal.v1",
+  "mode": "detailer_replan|task_set_closure",
   "expected_plan_revision": 1,
   "task_or_task_set_id": "stable-id",
   "task_or_task_set_revision": 1,
+  "closure_evidence_digest": "sha256:<64 lowercase hex>",
   "aggregate_result": "pass|partial|replan_required|blocked",
+  "result": "closure_complete|closure_partial|task_set_replanned|closure_blocked",
   "brief_summary": "durable compact summary",
-  "roadmap_updates": [],
-  "todo_updates": [],
+  "roadmap_transitions": [],
+  "todo_transitions": [],
   "decision_refs": [],
   "open_question_refs": [],
   "evidence_refs": [],
-  "preserved_completed_scope": [],
+  "accepted_scope": [],
   "unresolved_scope": [],
-  "next_milestone": "milestone-id|terminal|needs_clarification|blocked",
-  "frontdesk_notification_required": true
+  "blockers": [],
+  "replan_inputs": [],
+  "next_milestone": {
+    "kind": "selected|workflow_terminal|blocked_none",
+    "ref": "stable-milestone-ref",
+    "rationale": "semantic reason"
+  },
+  "frontdesk_notification_required": true,
+  "frontdesk_status": {
+    "schema": "ccb.planner.frontdesk_status.v1",
+    "notification_identity": "stable-id",
+    "aggregate_result": "pass|partial|replan_required|blocked",
+    "accepted_scope": [],
+    "unresolved_scope": [],
+    "blockers": [],
+    "next_milestone": {
+      "kind": "selected|workflow_terminal|blocked_none",
+      "ref": "stable-milestone-ref",
+      "rationale": "semantic reason"
+    },
+    "evidence_refs": [],
+    "user_report_body": "factual user-facing report"
+  }
 }
-```
-
-**frontdesk-status.md**
-```markdown
-Status: completed|partial|replan_required|blocked
-Summary: <user-facing factual summary>
-Completed scope:
-- <scope or none>
-Unresolved scope:
-- <scope or none>
-Next step: <next milestone, clarification, escalation, or terminal>
-Evidence refs:
-- <stable ref>
 ```
 ````
 
 ## Rules
 
-- Never output `pass` when the closure envelope is partial, blocked,
-  replan-required, incomplete, or system-failed.
+- Preserve the script-owned `aggregate_result` exactly. Map it mechanically to
+  `closure_complete`, `closure_partial`, `task_set_replanned`, or
+  `closure_blocked`; never output a complete semantic result for non-pass.
 - Never omit unresolved required scope from mixed outcomes.
 - Multiple replan children produce one coherent macro proposal, not multiple
   independent Planner actions.
 - Never overwrite a newer PlanTree revision. Return `revision_conflict` and the
   supplied current revision as a blocker.
+- Preserve aggregate result, accepted scope, unresolved scope, blockers, next
+  milestone, and evidence refs byte-for-byte in `frontdesk_status`.
 - Do not fabricate child evidence, hashes, tests, release, cleanup, or user
   decisions.
 - Do not modify PlanTree or send Frontdesk messages from this reply-only

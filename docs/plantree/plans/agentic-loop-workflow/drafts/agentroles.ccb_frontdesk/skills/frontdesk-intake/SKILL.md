@@ -29,12 +29,13 @@ Every turn, classify the user message before acting:
   to Planner with the same allowed silent ask, and stop.
 - Final report or escalation: summarize evidence and do not forward.
 
-For a final report, consume only validated Planner status evidence with schema
-`ccb.planner.frontdesk_status.v1` (or the equivalent host-labelled compact
-artifact). Preserve `completed|partial|replan_required|blocked` exactly. Report
-completed and unresolved scope separately, include the next step and stable
-evidence refs, and never claim global completion from decomposition or one
-successful child task. Do not forward this status back to Planner.
+For a final report, consume only a validated Planner status envelope with
+schema `ccb.planner.frontdesk_status.v1`. Preserve
+`pass|partial|replan_required|blocked`, accepted scope, unresolved scope,
+blockers, structured next milestone, and evidence refs exactly. Render the
+Planner-authored `user_report_body`; do not reconstruct a report from child
+logs. Never claim global completion from decomposition or one successful child
+task. Do not forward this status back to Planner.
 
 Classification is strict. If the request asks you to create, modify, inspect,
 test, debug, design, document, package, deploy, or validate project work, it is

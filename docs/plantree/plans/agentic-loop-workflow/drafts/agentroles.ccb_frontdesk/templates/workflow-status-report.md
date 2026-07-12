@@ -1,9 +1,16 @@
-Status: completed|partial|replan_required|blocked
-Summary: <validated Planner summary>
-Completed scope:
-- <scope or none>
+Schema: ccb.planner.frontdesk_status.v1
+Notification identity: <stable-id>
+Aggregate result: pass|partial|replan_required|blocked
+Accepted scope:
+- <accepted scope or none>
 Unresolved scope:
-- <scope or none>
-Next step: <next milestone, clarification, escalation, or terminal>
+- <unresolved scope or none>
+Blockers:
+- <blocker or none>
+Next milestone:
+- kind: selected|workflow_terminal|blocked_none
+- ref: <stable milestone ref>
+- rationale: <Planner-authored rationale>
 Evidence refs:
 - <stable ref>
+User report body: <Planner-authored factual report rendered without reinterpretation>

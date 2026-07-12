@@ -38,7 +38,7 @@ ROLE_EXPECTATIONS = {
             'templates/readiness.json',
             'templates/candidate-questions.jsonl',
             'templates/planner-backfill.json',
-            'templates/frontdesk-status.md',
+            'templates/frontdesk-status.json',
         ),
     },
     'agentroles.ccb_plan_reviewer': {
@@ -420,19 +420,23 @@ def test_planner_rolepack_defines_revision_fenced_replan_and_task_set_closure_mo
             (root / 'adapters' / 'ccb' / 'memory.md').read_text(encoding='utf-8'),
             (root / 'skills' / 'planner-closure-backfill' / 'SKILL.md').read_text(encoding='utf-8'),
             (root / 'templates' / 'planner-backfill.json').read_text(encoding='utf-8'),
-            (root / 'templates' / 'frontdesk-status.md').read_text(encoding='utf-8'),
+            (root / 'templates' / 'frontdesk-status.json').read_text(encoding='utf-8'),
         ]
     )
 
     assert 'skills/planner-closure-backfill' in manifest.manifest['skills']['codex']
-    assert 'detail_replan' in combined
+    assert 'detailer_replan' in combined
     assert 'task_set_closure' in combined
-    assert 'ccb.planner.backfill.v1' in combined
+    assert 'ccb.planner.backfill_proposal.v1' in combined
     assert 'expected_plan_revision' in combined
-    assert 'preserved_completed_scope' in combined
+    assert 'closure_evidence_digest' in combined
+    assert 'accepted_scope' in combined
     assert 'unresolved_scope' in combined
+    assert 'closure_complete|closure_partial|task_set_replanned|closure_blocked' in combined
+    assert 'selected|workflow_terminal|blocked_none' in combined
+    assert 'ccb.planner.frontdesk_status.v1' in combined
     assert 'multiple replan children produce one coherent macro proposal' in combined.lower()
-    assert 'never output `pass`' in combined.lower()
+    assert 'never output a complete semantic result for non-pass' in combined.lower()
     assert 'do not modify plantree or send frontdesk messages' in combined.lower()
 
 
@@ -447,9 +451,10 @@ def test_frontdesk_rolepack_reports_validated_closure_without_reinterpreting_res
     )
 
     assert 'ccb.planner.frontdesk_status.v1' in combined
-    assert 'completed|partial|replan_required|blocked' in combined
-    assert 'completed scope' in combined.lower()
+    assert 'pass|partial|replan_required|blocked' in combined
+    assert 'accepted scope' in combined.lower()
     assert 'unresolved scope' in combined.lower()
+    assert 'user_report_body' in combined
     assert 'never claim global completion from decomposition' in combined.lower()
     assert 'do not forward this status back to planner' in combined.lower()
 
@@ -839,4 +844,4 @@ def test_planner_rolepack_projects_planner_skill_to_codex_home(tmp_path: Path, m
     assert 'readiness recommendations' in projected.read_text(encoding='utf-8')
     closure = target_home / 'skills' / 'planner-closure-backfill' / 'SKILL.md'
     assert closure.is_file()
-    assert 'ccb.planner.backfill.v1' in closure.read_text(encoding='utf-8')
+    assert 'ccb.planner.backfill_proposal.v1' in closure.read_text(encoding='utf-8')

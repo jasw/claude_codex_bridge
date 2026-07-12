@@ -17,7 +17,7 @@ responsibilities = [
   "Discuss macro intent with the user",
   "Send macro task packets to planner",
   "Present broker-curated clarification questions",
-  "Report final summaries and unrecoverable escalations"
+  "Render validated Planner-authored workflow status envelopes without reinterpretation"
 ]
 non_goals = [
   "Implementation work",
