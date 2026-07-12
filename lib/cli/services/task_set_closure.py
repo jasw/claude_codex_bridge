@@ -62,7 +62,7 @@ def create_task_set_authority(
     plan_task_fn = _plan_task_fn(plan_task_fn)
     plan_slug = _segment(plan_slug, field='plan_slug')
     source_task_id = _segment(source_task_id, field='source_task_id')
-    normalized_source = _source_request(source_request)
+    normalized_source = _source_request(context, source_request)
     normalized_planner = _planner_job(planner_job)
     task_set_id = _segment(
         task_set_id or _new_task_set_id(plan_slug, source_task_id, normalized_planner['job_id']),
@@ -554,14 +554,22 @@ def _validate_feedback_transport(context, value, *, task_set, closure, intent) -
         'runtime_state_path', 'planner_job_id', 'frontdesk_job_id',
         'planner_backfill_path', 'planner_feedback_digest', 'notification_status',
         'backfill_digest',
+        'planner_source_job_id', 'planner_effective_job_id', 'planner_retry_lineage',
+        'frontdesk_source_job_id', 'frontdesk_effective_job_id', 'frontdesk_retry_lineage',
     }
     if not isinstance(value, dict) or set(value) - allowed:
         raise ValueError('task-set closure transport fields invalid')
     required = {
         'runtime_state_path', 'planner_job_id', 'planner_backfill_path',
         'planner_feedback_digest', 'notification_status', 'backfill_digest',
+        'planner_source_job_id', 'planner_effective_job_id', 'planner_retry_lineage',
     }
-    if any(not value.get(key) for key in required):
+    lineage_fields = {'planner_retry_lineage'}
+    if (
+        any(key not in value for key in required)
+        or any(not value.get(key) for key in required - lineage_fields)
+        or not isinstance(value.get('planner_retry_lineage'), list)
+    ):
         raise ValueError('task-set closure transport authority incomplete')
     root = Path(context.project.project_root).resolve()
     runtime_path = _exact_authority_path(
@@ -587,11 +595,15 @@ def _validate_feedback_transport(context, value, *, task_set, closure, intent) -
     proposal = backfill['proposal']
     if (
         authority.get('planner_job_id') != value['planner_job_id']
+        or authority.get('planner_source_job_id') != value['planner_source_job_id']
+        or authority.get('planner_effective_job_id') != value['planner_effective_job_id']
+        or authority.get('planner_retry_lineage') != value['planner_retry_lineage']
         or authority.get('planner_feedback_digest') != value['planner_feedback_digest']
         or backfill.get('backfill_digest') != value['backfill_digest']
     ):
         raise ValueError('task-set closure imported backfill authority mismatch')
     planner = runtime['planner']
+    _validate_retry_lineage(context, planner)
     if planner['message'] != _expected_planner_message(closure, intent, task_set):
         raise ValueError('task-set closure Planner message authority mismatch')
     _validate_completed_job(context, planner, expected_target='planner')
@@ -609,10 +621,17 @@ def _validate_feedback_transport(context, value, *, task_set, closure, intent) -
         job_id = str(value.get('frontdesk_job_id') or '')
         if proposal.get('frontdesk_notification_required') is not True:
             raise ValueError('task-set closure unexpected Frontdesk delivery')
-        if not job_id or runtime['frontdesk'].get('job_id') != job_id:
+        if not job_id or runtime['frontdesk'].get('effective_job_id') != job_id:
             raise ValueError('task-set closure Frontdesk delivery is incomplete')
         if runtime['frontdesk']['message'] != _expected_frontdesk_message(proposal, authority['planner_feedback_digest']):
             raise ValueError('task-set closure Frontdesk message authority mismatch')
+        if (
+            runtime['frontdesk'].get('source_job_id') != value.get('frontdesk_source_job_id')
+            or runtime['frontdesk'].get('effective_job_id') != value.get('frontdesk_effective_job_id')
+            or runtime['frontdesk'].get('retry_lineage') != value.get('frontdesk_retry_lineage')
+        ):
+            raise ValueError('task-set closure Frontdesk retry authority mismatch')
+        _validate_retry_lineage(context, runtime['frontdesk'])
         _validate_completed_job(context, runtime['frontdesk'], expected_target='frontdesk')
     elif (
         notification != 'notification_not_required'
@@ -620,7 +639,7 @@ def _validate_feedback_transport(context, value, *, task_set, closure, intent) -
         or proposal.get('frontdesk_notification_required') is not False
     ):
         raise ValueError('task-set closure notification authority invalid')
-    return {key: value.get(key) for key in sorted(allowed) if value.get(key) is not None}
+    return {key: value.get(key) for key in sorted(allowed) if key in value and value.get(key) is not None}
 
 
 def _validate_closed_runtime(runtime, *, task_set, closure, intent) -> None:
@@ -672,6 +691,7 @@ def _validate_closed_runtime(runtime, *, task_set, closure, intent) -> None:
     backfill_fields = {
         'task_set_id', 'task_set_revision', 'closure_intent_id', 'closure_digest',
         'ordered_terminal_evidence_digest', 'expected_plan_revision', 'planner_job_id',
+        'planner_source_job_id', 'planner_effective_job_id', 'planner_retry_lineage',
         'planner_feedback_digest', 'plan_slug', 'status', 'idempotent',
         'planner_backfill_path', 'transaction_path', 'target_plan_revision',
         'backfill_digest',
@@ -687,7 +707,8 @@ def _validate_closed_runtime(runtime, *, task_set, closure, intent) -> None:
 def _validate_transport_shape(value, *, purpose) -> None:
     fields = {
         'target', 'purpose', 'task_id', 'message', 'message_sha256',
-        'silent', 'job_id', 'status', 'reply',
+        'silent', 'job_id', 'source_job_id', 'effective_job_id', 'retry_lineage',
+        'status', 'reply',
     }
     if not isinstance(value, dict) or set(value) != fields or value.get('purpose') != purpose:
         raise ValueError('task-set closure transport schema or fields invalid')
@@ -704,7 +725,7 @@ def _validate_completed_job(context, transport, *, expected_target) -> None:
     layout = getattr(context, 'paths', None)
     if not isinstance(layout, PathLayout):
         layout = PathLayout(context.project.project_root)
-    job = JobStore(layout).get_latest(expected_target, str(transport['job_id']))
+    job = JobStore(layout).get_latest(expected_target, str(transport['effective_job_id']))
     if (
         job is None
         or job.status.value != 'completed'
@@ -745,6 +766,53 @@ def _persisted_terminal_reply(layout: PathLayout, job) -> str:
     if isinstance(artifact, dict):
         reply = read_text_artifact(layout, artifact)
     return reply
+
+
+def _validate_retry_lineage(context, transport) -> None:
+    source = str(transport.get('source_job_id') or '')
+    effective = str(transport.get('effective_job_id') or '')
+    lineage = transport.get('retry_lineage')
+    if not source or not effective or not isinstance(lineage, list) or transport.get('job_id') != source:
+        raise ValueError('task-set closure retry lineage fields invalid')
+    current = source
+    seen = {source}
+    layout = PathLayout(context.project.project_root)
+    store = JobStore(layout)
+    for edge in lineage:
+        if not isinstance(edge, dict) or set(edge) != {'retry_source_job_id', 'retry_successor_job_id'}:
+            raise ValueError('task-set closure retry lineage edge invalid')
+        successor = str(edge['retry_successor_job_id'])
+        if edge['retry_source_job_id'] != current or successor in seen:
+            raise ValueError('task-set closure retry lineage chain invalid')
+        source_job = store.get_latest(str(transport['target']), current)
+        if (
+            source_job is None
+            or source_job.status.value not in {'failed', 'incomplete', 'cancelled'}
+            or source_job.terminal_decision is None
+        ):
+            raise ValueError('task-set closure retry source is not terminal non-success')
+        candidates = {
+            job.job_id: job
+            for job in store.list_agent(str(transport['target']))
+            if str(job.provider_options.get('retry_source_job_id') or '') == current
+        }
+        if set(candidates) != {successor}:
+            raise ValueError('task-set closure retry successor authority ambiguous')
+        job = candidates[successor]
+        body = str(job.request.body or '')
+        if job.request.body_artifact:
+            body = read_text_artifact(layout, job.request.body_artifact)
+        if (
+            job.request.to_agent != transport['target']
+            or job.request.task_id != transport['task_id']
+            or body != transport['message']
+            or hashlib.sha256(body.encode('utf-8')).hexdigest() != transport['message_sha256']
+        ):
+            raise ValueError('task-set closure retry successor request mismatch')
+        current = successor
+        seen.add(successor)
+    if current != effective or (not lineage and source != effective):
+        raise ValueError('task-set closure retry effective job mismatch')
 
 
 def _exact_authority_path(root: Path, value, expected: Path, *, label: str) -> Path:
@@ -1075,7 +1143,7 @@ def _pending(record: dict[str, object], *, reason: str, child_task_ids: list[str
     }
 
 
-def _source_request(value: dict[str, object]) -> dict[str, object]:
+def _source_request(context, value: dict[str, object]) -> dict[str, object]:
     source_job_id = _segment(value.get('source_job_id'), field='source_request.source_job_id')
     digest = str(value.get('sha256') or '').strip()
     size = value.get('bytes')
@@ -1086,10 +1154,54 @@ def _source_request(value: dict[str, object]) -> dict[str, object]:
     result = {'source_job_id': source_job_id, 'sha256': digest, 'bytes': size}
     artifact = value.get('body_artifact') if isinstance(value.get('body_artifact'), dict) else None
     if artifact:
-        result['body_artifact'] = {
-            key: artifact.get(key) for key in ('kind', 'path', 'bytes', 'sha256') if artifact.get(key) is not None
-        }
+        result['body_artifact'] = _normalize_source_artifact(
+            context, artifact, expected_bytes=size, expected_sha256=digest
+        )
     return result
+
+
+def _normalize_source_artifact(context, artifact, *, expected_bytes, expected_sha256):
+    required = {'kind', 'path', 'bytes', 'sha256'}
+    if not required <= set(artifact) or artifact.get('kind') != 'ask-request':
+        raise ValueError('task-set source request artifact metadata invalid')
+    size = artifact.get('bytes')
+    digest = str(artifact.get('sha256') or '')
+    if (
+        isinstance(size, bool)
+        or not isinstance(size, int)
+        or size < 0
+        or not re.fullmatch(r'[0-9a-f]{64}', digest)
+        or size != expected_bytes
+        or digest != expected_sha256
+    ):
+        raise ValueError('task-set source request artifact size or digest mismatch')
+    root = Path(context.project.project_root)
+    raw = Path(str(artifact.get('path') or ''))
+    candidate = raw if raw.is_absolute() else root / raw
+    try:
+        relative = candidate.relative_to(root)
+    except ValueError as exc:
+        raise ValueError('task-set source request artifact outside project') from exc
+    current = root
+    for part in relative.parts:
+        current = current / part
+        if current.is_symlink():
+            raise ValueError('task-set source request artifact symlink forbidden')
+    expected_parent = root / '.ccb/ccbd/artifacts/text/ask-request'
+    if candidate.parent != expected_parent or '..' in raw.parts:
+        raise ValueError('task-set source request artifact path invalid')
+    try:
+        data = candidate.read_bytes()
+    except FileNotFoundError as exc:
+        raise ValueError('task-set source request artifact missing') from exc
+    if len(data) != size or hashlib.sha256(data).hexdigest() != digest:
+        raise ValueError('task-set source request artifact content mismatch')
+    return {
+        'kind': 'ask-request',
+        'path': relative.as_posix(),
+        'bytes': size,
+        'sha256': digest,
+    }
 
 
 def _planner_job(value: dict[str, object]) -> dict[str, object]:

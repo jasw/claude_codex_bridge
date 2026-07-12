@@ -22,17 +22,19 @@ def _context(tmp_path: Path):
     return SimpleNamespace(project=SimpleNamespace(project_root=root, project_id='p'))
 
 
-def _proposal(plan_revision: str, *, identity_revision: int = 1):
-    evidence = ['docs/plantree/plans/demo/task-sets/set-a/closure.json']
+def _proposal(
+    plan_revision: str, *, identity: str = 'set-a', identity_revision: int = 1
+):
+    evidence = [f'docs/plantree/plans/demo/task-sets/{identity}/closure.json']
     status = {
-        'schema': 'ccb.planner.frontdesk_status.v1', 'notification_identity': 'set-a-r1',
+        'schema': 'ccb.planner.frontdesk_status.v1', 'notification_identity': f'{identity}-r1',
         'aggregate_result': 'pass', 'accepted_scope': ['landed'], 'unresolved_scope': [],
         'blockers': [], 'next_milestone': {'kind': 'workflow_terminal', 'ref': 'done', 'rationale': 'Done.'},
         'evidence_refs': evidence, 'user_report_body': 'Done.',
     }
     payload = {
         'schema': 'ccb.planner.backfill_proposal.v1', 'mode': 'task_set_closure',
-        'expected_plan_revision': plan_revision, 'task_or_task_set_id': 'set-a',
+        'expected_plan_revision': plan_revision, 'task_or_task_set_id': identity,
         'task_or_task_set_revision': identity_revision, 'closure_evidence_digest': _digest('a'),
         'aggregate_result': 'pass', 'result': 'closure_complete', 'brief_summary': 'Closed.',
         'roadmap_transitions': [{'id': 'm1', 'status': 'done', 'summary': 'Landed.', 'evidence_refs': evidence}],
@@ -46,15 +48,16 @@ def _proposal(plan_revision: str, *, identity_revision: int = 1):
 
 
 def _authority_files(context, authority: dict[str, object]) -> None:
-    root = Path(context.project.project_root) / 'docs/plantree/plans/demo/task-sets/set-a'
+    identity = str(authority['task_set_id'])
+    root = Path(context.project.project_root) / f'docs/plantree/plans/demo/task-sets/{identity}'
     root.mkdir(parents=True)
     (root / 'task-set.json').write_text(json.dumps({
-        'task_set_id': 'set-a', 'task_set_revision': authority['task_set_revision'], 'state': 'closure_pending',
+        'task_set_id': identity, 'task_set_revision': authority['task_set_revision'], 'state': 'closure_pending',
         'plan_slug': 'demo',
         'plan_revision': {'digest': authority['expected_plan_revision']},
     }), encoding='utf-8')
     (root / 'closure.json').write_text(json.dumps({
-        'task_set_id': 'set-a', 'task_set_revision': authority['task_set_revision'],
+        'task_set_id': identity, 'task_set_revision': authority['task_set_revision'],
         'closure_digest': authority['closure_digest'],
         'ordered_terminal_evidence_digest': authority['ordered_terminal_evidence_digest'],
         'aggregate_result': 'pass',
@@ -417,7 +420,7 @@ def test_plan_root_symlink_is_rejected_before_authority_write(tmp_path: Path) ->
     ('marker_text', 'reason'),
     (
         ('<!-- ccb-planner-backfill:foreign:r1:brief:start -->\nx\n'
-         '<!-- ccb-planner-backfill:foreign:r1:brief:end -->\n', 'foreign or future'),
+         '<!-- ccb-planner-backfill:foreign:r1:brief:end -->\n', 'authority unreadable'),
         ('<!-- ccb-planner-backfill:set-a:r2:brief:start -->\nx\n'
          '<!-- ccb-planner-backfill:set-a:r2:brief:end -->\n', 'foreign or future'),
         ('<!-- ccb-planner-backfill:set-a:r1:brief:start -->\nx\n', 'unmatched'),
@@ -467,3 +470,40 @@ def test_all_target_preimages_are_validated_before_first_write(tmp_path: Path) -
 
     assert not (plan_root / 'brief.md').exists()
     assert not (plan_root / 'roadmap.md').exists()
+
+
+def test_two_authoritative_task_sets_coexist_on_same_plan_surfaces(tmp_path: Path) -> None:
+    context = _context(tmp_path)
+    from cli.services import planner_feedback_apply as service
+    _run_apply(context)
+    revision = service.current_plan_revision(context, 'demo')
+    proposal = _proposal(revision, identity='set-b')
+    authority = {
+        'task_set_id': 'set-b', 'task_set_revision': 1,
+        'closure_intent_id': 'tsi-b1', 'closure_digest': _digest('c'),
+        'ordered_terminal_evidence_digest': _digest('a'),
+        'expected_plan_revision': revision, 'planner_job_id': 'job-planner-b1',
+        'planner_feedback_digest': planner_feedback_digest(proposal), 'plan_slug': 'demo',
+    }
+    _authority_files(context, authority)
+
+    imported = service.apply_planner_feedback(context, proposal, authority)
+
+    assert Path(imported['planner_backfill_path']).is_file()
+    brief = (Path(context.project.project_root) / 'docs/plantree/plans/demo/brief.md').read_text()
+    assert '<!-- ccb-planner-backfill:set-a:r1:brief:start -->' in brief
+    assert '<!-- ccb-planner-backfill:set-b:r1:brief:start -->' in brief
+
+
+def test_forged_foreign_marker_without_own_authority_is_rejected(tmp_path: Path) -> None:
+    context = _context(tmp_path)
+    brief = Path(context.project.project_root) / 'docs/plantree/plans/demo/brief.md'
+    forged = (
+        '<!-- ccb-planner-backfill:set-forged:r1:brief:start -->\nFORGED\n'
+        '<!-- ccb-planner-backfill:set-forged:r1:brief:end -->\n'
+    )
+    brief.write_text(forged, encoding='utf-8')
+
+    with pytest.raises(ValueError, match='authority unreadable|prior marker authority'):
+        _run_apply(context)
+    assert brief.read_text(encoding='utf-8') == forged

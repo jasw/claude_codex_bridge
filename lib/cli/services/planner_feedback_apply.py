@@ -370,7 +370,9 @@ def _validate_managed_markers(
     for match in matches:
         marker_identity, marker_revision_text, marker_semantic, boundary = match.groups()
         marker_revision = int(marker_revision_text)
-        if marker_identity != identity or marker_semantic != semantic or marker_revision > revision:
+        if marker_semantic != semantic or (
+            marker_identity == identity and marker_revision > revision
+        ):
             raise ValueError('planner backfill foreign or future managed marker')
         if boundary == 'start':
             if stack is not None:
@@ -385,9 +387,10 @@ def _validate_managed_markers(
             context,
             block,
             path=path,
-            identity=identity,
+            identity=marker_identity,
             marker_revision=marker_revision,
             current_revision=revision,
+            current_identity=identity,
             semantic=semantic,
             persisted=persisted,
         )
@@ -404,11 +407,12 @@ def _authenticate_marker_block(
     identity,
     marker_revision,
     current_revision,
+    current_identity,
     semantic,
     persisted,
 ) -> None:
     relative = str(path.relative_to(context.project.project_root))
-    if marker_revision == current_revision:
+    if identity == current_identity and marker_revision == current_revision:
         transaction = persisted
         if transaction is None:
             raise ValueError('planner backfill current marker lacks transaction authority')
@@ -451,16 +455,33 @@ def _authority(proposal, value) -> dict[str, object]:
     required = {
         'task_set_id', 'task_set_revision', 'closure_intent_id', 'closure_digest',
         'ordered_terminal_evidence_digest', 'expected_plan_revision', 'planner_job_id',
+        'planner_source_job_id', 'planner_effective_job_id', 'planner_retry_lineage',
         'planner_feedback_digest', 'plan_slug',
     }
-    if not isinstance(value, dict) or set(value) != required:
+    legacy_required = required - {
+        'planner_source_job_id', 'planner_effective_job_id', 'planner_retry_lineage',
+    }
+    if not isinstance(value, dict) or frozenset(value) not in {
+        frozenset(required), frozenset(legacy_required),
+    }:
         raise ValueError('planner backfill authority fields invalid')
     result = dict(value)
+    if set(value) == legacy_required:
+        result['planner_source_job_id'] = result['planner_job_id']
+        result['planner_effective_job_id'] = result['planner_job_id']
+        result['planner_retry_lineage'] = []
     for field in ('closure_digest', 'ordered_terminal_evidence_digest', 'expected_plan_revision', 'planner_feedback_digest'):
         if not _DIGEST_RE.fullmatch(str(result[field])):
             raise ValueError(f'planner backfill {field} invalid')
     if result['planner_feedback_digest'] != planner_feedback_digest(proposal):
         raise ValueError('planner backfill proposal digest mismatch')
+    if (
+        result['planner_job_id'] != result['planner_effective_job_id']
+        or not str(result['planner_source_job_id'] or '')
+        or not str(result['planner_effective_job_id'] or '')
+        or not isinstance(result['planner_retry_lineage'], list)
+    ):
+        raise ValueError('planner backfill Planner retry authority invalid')
     return result
 
 

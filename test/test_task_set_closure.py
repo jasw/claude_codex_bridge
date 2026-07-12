@@ -23,6 +23,7 @@ from cli.services.task_set_feedback_runtime import (
     _prepared_transport,
     _runtime_digest,
 )
+from cli.services.ask_runtime.submission import _artifact_request_body
 from cli.services.task_set_closure import (
     create_task_set_authority,
     evaluate_task_set_closure,
@@ -217,7 +218,8 @@ def _planner_proposal(
 
 
 def _completed_job(
-    context, *, target: str, job_id: str, task_id: str, message: str, reply: str
+    context, *, target: str, job_id: str, task_id: str, message: str, reply: str,
+    provider_options: dict[str, object] | None = None,
 ) -> None:
     request = MessageEnvelope(
         project_id=context.project.project_id,
@@ -241,6 +243,22 @@ def _completed_job(
         cancel_requested_at=None,
         created_at='2026-07-12T00:00:00Z',
         updated_at='2026-07-12T00:00:01Z',
+        provider_options=provider_options or {},
+    ))
+
+
+def _failed_job(context, *, target: str, job_id: str, task_id: str, message: str) -> None:
+    request = MessageEnvelope(
+        project_id=context.project.project_id, to_agent=target, from_actor='system',
+        body=message, task_id=task_id, reply_to=None, message_type='task',
+        delivery_scope=DeliveryScope.SINGLE, silence_on_success=target == 'planner',
+    )
+    JobStore(PathLayout(context.project.project_root)).append(JobRecord(
+        job_id=job_id, submission_id=None, agent_name=target, provider='codex',
+        request=request, status=JobStatus.FAILED,
+        terminal_decision={'terminal': True, 'status': 'failed', 'reply': 'failed'},
+        cancel_requested_at=None, created_at='2026-07-12T00:00:00Z',
+        updated_at='2026-07-12T00:00:01Z',
     ))
 
 
@@ -252,7 +270,13 @@ def _closure_ref(task_set_id: str, closure: dict[str, object]) -> dict[str, obje
     }
 
 
-def _settlement_fixture(context, *, notification_required: bool = False):
+def _settlement_fixture(
+    context,
+    *,
+    notification_required: bool = False,
+    planner_retry: bool = False,
+    frontdesk_retry: bool = False,
+):
     created = _create_set(context, [('child-a', True)])
     task_set_id = created['task_set']['task_set_id']
     _complete(context, 'child-a', 'pass')
@@ -268,7 +292,12 @@ def _settlement_fixture(context, *, notification_required: bool = False):
         notification_required=notification_required,
     )
     feedback_digest = planner_feedback_digest(proposal)
-    planner_job_id = 'job_planner'
+    planner_source_job_id = 'job_planner_source' if planner_retry else 'job_planner'
+    planner_job_id = 'job_planner_retry' if planner_retry else planner_source_job_id
+    planner_lineage = ([{
+        'retry_source_job_id': planner_source_job_id,
+        'retry_successor_job_id': planner_job_id,
+    }] if planner_retry else [])
     imported = apply_planner_feedback(context, proposal, {
         'task_set_id': task_set_id,
         'task_set_revision': 1,
@@ -277,6 +306,9 @@ def _settlement_fixture(context, *, notification_required: bool = False):
         'ordered_terminal_evidence_digest': intent['ordered_terminal_evidence_digest'],
         'expected_plan_revision': task_set['plan_revision']['digest'],
         'planner_job_id': planner_job_id,
+        'planner_source_job_id': planner_source_job_id,
+        'planner_effective_job_id': planner_job_id,
+        'planner_retry_lineage': planner_lineage,
         'planner_feedback_digest': feedback_digest,
         'plan_slug': 'demo',
     })
@@ -289,26 +321,56 @@ def _settlement_fixture(context, *, notification_required: bool = False):
         message=planner_message, silent=True,
     )
     proposal_reply = '**planner-backfill.json**\n```json\n' + json.dumps(proposal.to_record()) + '\n```\n'
-    planner.update({'job_id': planner_job_id, 'status': 'completed', 'reply': proposal_reply})
+    planner.update({
+        'job_id': planner_source_job_id, 'source_job_id': planner_source_job_id,
+        'effective_job_id': planner_job_id, 'retry_lineage': [],
+        'status': 'completed', 'reply': proposal_reply,
+    })
+    planner['retry_lineage'] = planner_lineage
+    if planner_retry:
+        _failed_job(
+            context, target='planner', job_id=planner_source_job_id,
+            task_id=str(planner['task_id']), message=planner_message,
+        )
     _completed_job(
         context, target='planner', job_id=planner_job_id,
         task_id=str(planner['task_id']), message=planner_message, reply=proposal_reply,
+        provider_options=(
+            {'retry_source_job_id': planner_source_job_id} if planner_retry else None
+        ),
     )
     frontdesk = None
     notification = {'status': 'notification_not_required'}
     frontdesk_job_id = None
     if notification_required:
-        frontdesk_job_id = 'job_frontdesk'
+        frontdesk_source_job_id = 'job_frontdesk_source' if frontdesk_retry else 'job_frontdesk'
+        frontdesk_job_id = 'job_frontdesk_retry' if frontdesk_retry else frontdesk_source_job_id
+        frontdesk_lineage = ([{
+            'retry_source_job_id': frontdesk_source_job_id,
+            'retry_successor_job_id': frontdesk_job_id,
+        }] if frontdesk_retry else [])
         frontdesk_message = _frontdesk_message(frontdesk_status_envelope(proposal))
         frontdesk = _prepared_transport(
             target='frontdesk', purpose='frontdesk_status',
             task_id=f'task-set-status-{intent["intent_id"]}',
             message=frontdesk_message, silent=False,
         )
-        frontdesk.update({'job_id': frontdesk_job_id, 'status': 'completed', 'reply': 'delivered'})
+        frontdesk.update({
+            'job_id': frontdesk_source_job_id, 'source_job_id': frontdesk_source_job_id,
+            'effective_job_id': frontdesk_job_id, 'retry_lineage': frontdesk_lineage,
+            'status': 'completed', 'reply': 'delivered',
+        })
+        if frontdesk_retry:
+            _failed_job(
+                context, target='frontdesk', job_id=frontdesk_source_job_id,
+                task_id=str(frontdesk['task_id']), message=frontdesk_message,
+            )
         _completed_job(
             context, target='frontdesk', job_id=frontdesk_job_id,
             task_id=str(frontdesk['task_id']), message=frontdesk_message, reply='delivered',
+            provider_options=(
+                {'retry_source_job_id': frontdesk_source_job_id} if frontdesk_retry else None
+            ),
         )
         notification = {'status': 'delivered', 'job_id': frontdesk_job_id}
     runtime_path = root / '.ccb/runtime/task-sets' / task_set_id / 'feedback-r1.json'
@@ -332,6 +394,9 @@ def _settlement_fixture(context, *, notification_required: bool = False):
             'ordered_terminal_evidence_digest': intent['ordered_terminal_evidence_digest'],
             'expected_plan_revision': task_set['plan_revision']['digest'],
             'planner_job_id': planner_job_id,
+            'planner_source_job_id': planner_source_job_id,
+            'planner_effective_job_id': planner_job_id,
+            'planner_retry_lineage': planner_lineage,
             'planner_feedback_digest': feedback_digest,
             'plan_slug': 'demo',
             **imported,
@@ -348,11 +413,21 @@ def _settlement_fixture(context, *, notification_required: bool = False):
         'transport_ref': {
             'runtime_state_path': str(runtime_path),
             'planner_job_id': planner_job_id,
+            'planner_source_job_id': planner_source_job_id,
+            'planner_effective_job_id': planner_job_id,
+            'planner_retry_lineage': planner_lineage,
             'frontdesk_job_id': frontdesk_job_id,
             'planner_backfill_path': imported['planner_backfill_path'],
             'planner_feedback_digest': feedback_digest,
             'notification_status': notification['status'],
             'backfill_digest': imported['backfill_digest'],
+            'frontdesk_source_job_id': (
+                frontdesk.get('source_job_id') if frontdesk else None
+            ),
+            'frontdesk_effective_job_id': frontdesk_job_id,
+            'frontdesk_retry_lineage': (
+                frontdesk.get('retry_lineage') if frontdesk else None
+            ),
         },
     }
     if frontdesk_job_id is None:
@@ -384,6 +459,101 @@ def test_task_set_parent_is_decomposed_and_children_are_revision_bound(tmp_path:
     assert optional['task_set']['required'] is False
     assert created['task_set']['state'] == 'running'
     assert find_first_actionable_task(context, task_id='source-intake') is None
+
+
+def test_large_spilled_source_request_is_normalized_project_relative(tmp_path: Path) -> None:
+    context = _context(tmp_path)
+    _create_task(context, 'source-intake', ready=False)
+    _create_task(context, 'child-a')
+    body = 'x' * (1024 * 1024 + 1)
+    _stub, artifact = _artifact_request_body(
+        PathLayout(context.project.project_root),
+        body,
+        owner_id='job-frontdesk',
+        force=True,
+    )
+    created = create_task_set_authority(
+        context,
+        plan_slug='demo',
+        source_task_id='source-intake',
+        source_request={
+            'source_job_id': 'job-frontdesk',
+            'sha256': hashlib.sha256(body.encode()).hexdigest(),
+            'bytes': len(body.encode()),
+            'body_artifact': artifact,
+        },
+        planner_job={'job_id': 'job-planner', 'reply_sha256': 'a' * 64},
+        children=[{'task_id': 'child-a', 'required': True}],
+        plan_task_fn=plan_task,
+    )
+
+    normalized = created['task_set']['source_request']['body_artifact']
+    assert normalized == {
+        'kind': 'ask-request',
+        'path': str(Path(artifact['path']).relative_to(context.project.project_root)),
+        'bytes': len(body.encode()),
+        'sha256': hashlib.sha256(body.encode()).hexdigest(),
+    }
+    assert not Path(normalized['path']).is_absolute()
+    _complete(context, 'child-a', 'pass')
+    closed = evaluate_task_set_closure(
+        context, task_set_id=created['task_set']['task_set_id'], plan_task_fn=plan_task
+    )
+    envelope = json.loads(
+        _planner_message(
+            closed['closure'],
+            closed['closure_intent'],
+            _closure_ref(created['task_set']['task_set_id'], closed['closure']),
+        ).split('```json\n', 1)[1].rsplit('\n```', 1)[0]
+    )
+    assert envelope['closure']['source_request']['body_artifact'] == normalized
+
+
+@pytest.mark.parametrize(
+    'case',
+    ('outside', 'traversal', 'symlink', 'wrong_kind', 'bytes', 'digest', 'missing', 'malformed'),
+)
+def test_source_request_artifact_invalid_authority_fails_closed(
+    tmp_path: Path, case: str
+) -> None:
+    context = _context(tmp_path)
+    from cli.services import task_set_closure as service
+    body = 'source artifact body'
+    _stub, artifact = _artifact_request_body(
+        PathLayout(context.project.project_root), body,
+        owner_id='job-frontdesk', force=True,
+    )
+    artifact = dict(artifact)
+    source = {
+        'source_job_id': 'job-frontdesk',
+        'sha256': hashlib.sha256(body.encode()).hexdigest(),
+        'bytes': len(body.encode()),
+        'body_artifact': artifact,
+    }
+    if case == 'outside':
+        outside = tmp_path / 'outside.txt'
+        outside.write_text(body, encoding='utf-8')
+        artifact['path'] = str(outside)
+    elif case == 'traversal':
+        artifact['path'] = '.ccb/ccbd/artifacts/text/ask-request/../ask-request/' + Path(artifact['path']).name
+    elif case == 'symlink':
+        path = Path(artifact['path'])
+        target = tmp_path / 'artifact-target.txt'
+        path.replace(target)
+        path.symlink_to(target)
+    elif case == 'wrong_kind':
+        artifact['kind'] = 'completion-reply'
+    elif case == 'bytes':
+        artifact['bytes'] += 1
+    elif case == 'digest':
+        artifact['sha256'] = 'f' * 64
+    elif case == 'missing':
+        Path(artifact['path']).unlink()
+    else:
+        artifact.pop('kind')
+
+    with pytest.raises(ValueError, match='task-set source request artifact'):
+        service._source_request(context, source)
 
 
 @pytest.mark.parametrize(
@@ -564,7 +734,11 @@ def test_feedback_settlement_removes_intent_from_pending_discovery(tmp_path: Pat
         silent=True,
     )
     proposal_reply = '**planner-backfill.json**\n```json\n' + json.dumps(proposal.to_record()) + '\n```\n'
-    planner.update({'job_id': planner_job_id, 'status': 'completed', 'reply': proposal_reply})
+    planner.update({
+        'job_id': planner_job_id, 'source_job_id': planner_job_id,
+        'effective_job_id': planner_job_id, 'retry_lineage': [],
+        'status': 'completed', 'reply': proposal_reply,
+    })
     _completed_job(
         context,
         target='planner',
@@ -594,6 +768,9 @@ def test_feedback_settlement_removes_intent_from_pending_discovery(tmp_path: Pat
             'ordered_terminal_evidence_digest': intent['ordered_terminal_evidence_digest'],
             'expected_plan_revision': task_set['plan_revision']['digest'],
             'planner_job_id': planner_job_id,
+            'planner_source_job_id': planner_job_id,
+            'planner_effective_job_id': planner_job_id,
+            'planner_retry_lineage': [],
             'planner_feedback_digest': feedback_digest,
             'plan_slug': 'demo',
             **imported,
@@ -610,6 +787,9 @@ def test_feedback_settlement_removes_intent_from_pending_discovery(tmp_path: Pat
         transport_ref={
             'runtime_state_path': str(runtime_path),
             'planner_job_id': planner_job_id,
+            'planner_source_job_id': planner_job_id,
+            'planner_effective_job_id': planner_job_id,
+            'planner_retry_lineage': [],
             'planner_backfill_path': str(backfill_path),
             'planner_feedback_digest': feedback_digest,
             'notification_status': 'notification_not_required',
@@ -686,6 +866,27 @@ def test_settlement_accepts_completed_required_frontdesk_delivery(tmp_path: Path
     )['task']['status'] == 'done'
 
 
+def test_settlement_accepts_completed_planner_and_frontdesk_retry_successors(
+    tmp_path: Path,
+) -> None:
+    context = _context(tmp_path)
+    authority, _runtime_path, _backfill_path = _settlement_fixture(
+        context,
+        notification_required=True,
+        planner_retry=True,
+        frontdesk_retry=True,
+    )
+
+    settled = settle_task_set_closure_feedback(context, **authority)
+
+    assert settled['status'] == 'feedback_closed'
+    transport = settled['intent']['transport_ref']
+    assert transport['planner_source_job_id'] == 'job_planner_source'
+    assert transport['planner_effective_job_id'] == 'job_planner_retry'
+    assert transport['frontdesk_source_job_id'] == 'job_frontdesk_source'
+    assert transport['frontdesk_effective_job_id'] == 'job_frontdesk_retry'
+
+
 @pytest.mark.parametrize('target', ('planner', 'frontdesk'))
 def test_settlement_rejects_forged_or_missing_completed_job(
     tmp_path: Path, target: str
@@ -702,7 +903,10 @@ def test_settlement_rejects_forged_or_missing_completed_job(
 
     with pytest.raises(
         ValueError,
-        match='persisted job is not terminal completed|imported backfill authority mismatch',
+        match=(
+            'persisted job is not terminal completed|imported backfill authority mismatch|'
+            'Frontdesk delivery is incomplete'
+        ),
     ):
         settle_task_set_closure_feedback(context, **authority)
 

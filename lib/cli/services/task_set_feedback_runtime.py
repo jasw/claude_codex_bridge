@@ -131,6 +131,7 @@ def _advance_intent(context, intent: dict[str, object], deps) -> dict[str, objec
                 aggregate_result=str(closure['aggregate_result']),
                 evidence_refs=evidence_refs,
             )
+            planner_transport = state['planner']
             authority = {
                 'task_set_id': task_set_id,
                 'task_set_revision': revision,
@@ -138,7 +139,10 @@ def _advance_intent(context, intent: dict[str, object], deps) -> dict[str, objec
                 'closure_digest': closure['closure_digest'],
                 'ordered_terminal_evidence_digest': closure['ordered_terminal_evidence_digest'],
                 'expected_plan_revision': expected_plan_revision,
-                'planner_job_id': state['planner']['job_id'],
+                'planner_job_id': planner_transport['effective_job_id'],
+                'planner_source_job_id': planner_transport['source_job_id'],
+                'planner_effective_job_id': planner_transport['effective_job_id'],
+                'planner_retry_lineage': planner_transport['retry_lineage'],
                 'planner_feedback_digest': deps.planner_feedback_digest(proposal),
                 'plan_slug': task_set['plan_slug'],
             }
@@ -196,12 +200,18 @@ def _advance_intent(context, intent: dict[str, object], deps) -> dict[str, objec
             ordered_terminal_evidence_digest=str(closure['ordered_terminal_evidence_digest']),
             transport_ref={
                 'runtime_state_path': str(state_path),
-                'planner_job_id': state['planner'].get('job_id'),
-                'frontdesk_job_id': (state.get('frontdesk') or {}).get('job_id'),
+                'planner_job_id': state['planner'].get('effective_job_id'),
+                'frontdesk_job_id': (state.get('frontdesk') or {}).get('effective_job_id'),
                 'planner_backfill_path': (state.get('backfill_import') or {}).get('planner_backfill_path'),
                 'planner_feedback_digest': (state.get('backfill_import') or {}).get('planner_feedback_digest'),
                 'notification_status': (state.get('notification') or {}).get('status'),
                 'backfill_digest': (state.get('backfill_import') or {}).get('backfill_digest'),
+                'planner_source_job_id': state['planner'].get('source_job_id'),
+                'planner_effective_job_id': state['planner'].get('effective_job_id'),
+                'planner_retry_lineage': state['planner'].get('retry_lineage'),
+                'frontdesk_source_job_id': (state.get('frontdesk') or {}).get('source_job_id'),
+                'frontdesk_effective_job_id': (state.get('frontdesk') or {}).get('effective_job_id'),
+                'frontdesk_retry_lineage': (state.get('frontdesk') or {}).get('retry_lineage'),
             },
         )
         return _payload(
@@ -210,8 +220,8 @@ def _advance_intent(context, intent: dict[str, object], deps) -> dict[str, objec
             'task_set_feedback_closed',
             task_set_id=task_set_id,
             task_set_revision=revision,
-            planner_job_id=state['planner'].get('job_id'),
-            frontdesk_job_id=(state.get('frontdesk') or {}).get('job_id'),
+            planner_job_id=state['planner'].get('effective_job_id'),
+            frontdesk_job_id=(state.get('frontdesk') or {}).get('effective_job_id'),
             runtime_state_path=str(state_path),
         )
 
@@ -259,16 +269,59 @@ def _advance_transport(context, transport: dict[str, object], deps) -> dict[str,
             if len(jobs) != 1 or not str(jobs[0].get('job_id') or ''):
                 raise RuntimeError('task_set_feedback_submission_not_single_job')
             job_id = str(jobs[0]['job_id'])
-        transport = {**transport, 'job_id': job_id}
-    terminal = deps.terminal_watch(context, job_id)
-    if terminal is None:
-        return {**transport, 'status': 'pending'}
-    status = str(terminal.get('status') or '').lower()
-    if status == 'completed':
-        return {**transport, 'status': 'completed', 'reply': str(terminal.get('reply') or '')}
-    if status in _TERMINAL_FAILURES:
-        return {**transport, 'status': status, 'reply': str(terminal.get('reply') or '')}
-    raise RuntimeError(f'task_set_feedback_unknown_terminal_status:{status or "missing"}')
+        transport = {
+            **transport,
+            'job_id': job_id,
+            'source_job_id': job_id,
+            'effective_job_id': job_id,
+            'retry_lineage': [],
+        }
+    source_job_id = str(transport.get('source_job_id') or job_id)
+    current_job_id = str(transport.get('effective_job_id') or job_id)
+    lineage = list(transport.get('retry_lineage') or [])
+    seen = {source_job_id}
+    for _depth in range(8):
+        if current_job_id in seen and current_job_id != source_job_id:
+            raise RuntimeError('task_set_feedback_retry_lineage_cycle')
+        seen.add(current_job_id)
+        terminal = deps.terminal_watch(context, current_job_id)
+        if terminal is None:
+            return {
+                **transport, 'source_job_id': source_job_id,
+                'effective_job_id': current_job_id, 'retry_lineage': lineage,
+                'status': 'pending',
+            }
+        status = str(terminal.get('status') or '').lower()
+        if status == 'completed':
+            return {
+                **transport, 'source_job_id': source_job_id,
+                'effective_job_id': current_job_id, 'retry_lineage': lineage,
+                'status': 'completed', 'reply': str(terminal.get('reply') or ''),
+            }
+        if status not in _TERMINAL_FAILURES:
+            raise RuntimeError(f'task_set_feedback_unknown_terminal_status:{status or "missing"}')
+        successor = deps.retry_successor(
+            context,
+            source_job_id=current_job_id,
+            target=str(transport['target']),
+            task_id=str(transport['task_id']),
+            message=str(transport['message']),
+            message_sha256=str(transport['message_sha256']),
+        )
+        if successor is None:
+            return {
+                **transport, 'source_job_id': source_job_id,
+                'effective_job_id': current_job_id, 'retry_lineage': lineage,
+                'status': status, 'reply': str(terminal.get('reply') or ''),
+            }
+        if successor in seen:
+            raise RuntimeError('task_set_feedback_retry_lineage_cycle')
+        lineage.append({
+            'retry_source_job_id': current_job_id,
+            'retry_successor_job_id': successor,
+        })
+        current_job_id = successor
+    raise RuntimeError('task_set_feedback_retry_lineage_depth_exceeded')
 
 
 def _find_transport_job(context, *, target: str, task_id: str, message_sha256: str, message: str) -> str | None:
@@ -277,6 +330,8 @@ def _find_transport_job(context, *, target: str, task_id: str, message_sha256: s
         context.project.project_root
     )
     for job in JobStore(layout).list_agent(target):
+        if str(job.provider_options.get('retry_source_job_id') or ''):
+            continue
         if str(job.request.task_id or '') == task_id:
             latest[job.job_id] = job
     matches = []
@@ -308,8 +363,45 @@ def _prepared_transport(*, target: str, purpose: str, task_id: str, message: str
         'message_sha256': hashlib.sha256(message.encode('utf-8')).hexdigest(),
         'silent': silent,
         'job_id': None,
+        'source_job_id': None,
+        'effective_job_id': None,
+        'retry_lineage': [],
         'status': 'prepared',
     }
+
+
+def _retry_successor_job(
+    context,
+    *,
+    source_job_id: str,
+    target: str,
+    task_id: str,
+    message: str,
+    message_sha256: str,
+) -> str | None:
+    layout = context.paths if isinstance(getattr(context, 'paths', None), PathLayout) else PathLayout(
+        context.project.project_root
+    )
+    latest = {}
+    for job in JobStore(layout).list_agent(target):
+        if str(job.provider_options.get('retry_source_job_id') or '') == source_job_id:
+            latest[job.job_id] = job
+    if len(latest) > 1:
+        raise RuntimeError('task_set_feedback_retry_successor_ambiguous')
+    if not latest:
+        return None
+    job = next(iter(latest.values()))
+    body = str(job.request.body or '')
+    if job.request.body_artifact:
+        body = read_text_artifact(layout, job.request.body_artifact)
+    if (
+        job.request.to_agent != target
+        or job.request.task_id != task_id
+        or body != message
+        or hashlib.sha256(body.encode('utf-8')).hexdigest() != message_sha256
+    ):
+        raise RuntimeError('task_set_feedback_retry_successor_authority_mismatch')
+    return job.job_id
 
 
 def _planner_message(
@@ -400,14 +492,15 @@ def _validate_state(state: dict[str, object], *, intent: dict[str, object]) -> N
 
 def _pending_payload(context, state: dict[str, object], *, action: str) -> dict[str, object]:
     transport = state['planner'] if state['stage'] == 'planner_pending' else state['frontdesk']
+    effective_job_id = transport.get('effective_job_id') or transport['job_id']
     return _payload(
         context,
         'pending',
         action,
         task_set_id=state['task_set_id'],
         task_set_revision=state['task_set_revision'],
-        pending_job_ids=[transport['job_id']],
-        ask={'target': transport['target'], 'job_id': transport['job_id'], 'status': 'running'},
+        pending_job_ids=[effective_job_id],
+        ask={'target': transport['target'], 'job_id': effective_job_id, 'status': 'running'},
     )
 
 
@@ -447,6 +540,7 @@ def _deps(services):
         submit_ask=getattr(services, 'submit_ask', submit_ask),
         terminal_watch=getattr(services, 'persisted_terminal_watch', load_persisted_terminal_watch_payload),
         find_transport_job=getattr(services, 'find_task_set_transport_job', _find_transport_job),
+        retry_successor=getattr(services, 'find_task_set_retry_successor', _retry_successor_job),
         parse_planner_feedback=getattr(services, 'parse_planner_feedback', parse_planner_feedback_reply),
         validate_planner_feedback=getattr(services, 'validate_planner_feedback', validate_planner_feedback_authority),
         planner_feedback_digest=getattr(services, 'planner_feedback_digest', planner_feedback_digest),

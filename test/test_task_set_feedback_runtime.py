@@ -1,15 +1,19 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
+from ccbd.api_models import DeliveryScope, JobRecord, JobStatus, MessageEnvelope
+from jobs.store import JobStore
+from storage.paths import PathLayout
 from cli.services.ask_runtime import AskSummary
 from cli.models_start import ParsedLoopRunnerCommand
 from cli.services.loop_runner import loop_runner_auto, loop_runner_once
-from cli.services.task_set_feedback_runtime import advance_task_set_feedback_runtime
+from cli.services.task_set_feedback_runtime import advance_task_set_feedback_runtime, _retry_successor_job
 from cli.services.task_set_feedback_runtime import _deps
 
 
@@ -115,6 +119,7 @@ class Harness:
         self.submissions: list[object] = []
         self.imports: list[dict[str, object]] = []
         self.settlements: list[dict[str, object]] = []
+        self.successors: dict[str, str] = {}
         self.next_job = 1
 
     def services(self):
@@ -124,6 +129,9 @@ class Harness:
             submit_ask=self.submit,
             persisted_terminal_watch=lambda _context, job_id: self.terminals.get(job_id),
             find_task_set_transport_job=self.find,
+            find_task_set_retry_successor=(
+                lambda _context, source_job_id, **_kwargs: self.successors.get(source_job_id)
+            ),
             apply_planner_feedback=self.apply,
             settle_task_set_feedback=self.settle,
             resolve_plan_revision=lambda *_args, **_kwargs: 'sha256:' + 'c' * 64,
@@ -203,6 +211,88 @@ def test_planner_proposal_must_echo_exact_transport_closure_ref(tmp_path: Path) 
 
     with pytest.raises(ValueError, match='omits required evidence refs'):
         advance_task_set_feedback_runtime(context, harness.services())
+
+
+def test_planner_and_frontdesk_retry_successors_resume_exactly_once(tmp_path: Path) -> None:
+    intent, _ = _authority(tmp_path)
+    harness = Harness(intent)
+    context = _context(tmp_path)
+    advance_task_set_feedback_runtime(context, harness.services())
+    harness.terminals['job_1'] = {'status': 'failed', 'reply': 'source failed'}
+    harness.successors['job_1'] = 'job_1_retry'
+    harness.terminals['job_1_retry'] = {'status': 'completed', 'reply': _planner_reply()}
+
+    planner_done = advance_task_set_feedback_runtime(context, harness.services())
+
+    assert planner_done['action'] == 'task_set_frontdesk_status_pending'
+    assert harness.imports[0]['planner_source_job_id'] == 'job_1'
+    assert harness.imports[0]['planner_effective_job_id'] == 'job_1_retry'
+    assert harness.imports[0]['planner_retry_lineage'] == [{
+        'retry_source_job_id': 'job_1',
+        'retry_successor_job_id': 'job_1_retry',
+    }]
+    harness.terminals['job_2'] = {'status': 'incomplete', 'reply': 'delivery failed'}
+    harness.successors['job_2'] = 'job_2_retry'
+    harness.terminals['job_2_retry'] = {'status': 'completed', 'reply': 'delivered'}
+
+    closed = advance_task_set_feedback_runtime(context, harness.services())
+
+    assert closed['action'] == 'task_set_feedback_closed'
+    settlement = harness.settlements[0]['transport_ref']
+    assert settlement['frontdesk_source_job_id'] == 'job_2'
+    assert settlement['frontdesk_effective_job_id'] == 'job_2_retry'
+    assert settlement['frontdesk_retry_lineage'] == [{
+        'retry_source_job_id': 'job_2',
+        'retry_successor_job_id': 'job_2_retry',
+    }]
+    assert len(harness.imports) == 1
+
+
+def test_retry_successor_cycle_fails_closed(tmp_path: Path) -> None:
+    intent, _ = _authority(tmp_path)
+    harness = Harness(intent)
+    context = _context(tmp_path)
+    advance_task_set_feedback_runtime(context, harness.services())
+    harness.terminals['job_1'] = {'status': 'failed'}
+    harness.successors['job_1'] = 'job_retry'
+    harness.terminals['job_retry'] = {'status': 'failed'}
+    harness.successors['job_retry'] = 'job_1'
+
+    with pytest.raises(RuntimeError, match='retry_lineage_cycle'):
+        advance_task_set_feedback_runtime(context, harness.services())
+
+
+@pytest.mark.parametrize('case', ('ambiguous', 'mismatched_task'))
+def test_retry_successor_authority_rejects_ambiguous_or_mismatched_jobs(
+    tmp_path: Path, case: str
+) -> None:
+    context = _context(tmp_path)
+    store = JobStore(PathLayout(tmp_path))
+    message = 'exact retry message'
+    count = 2 if case == 'ambiguous' else 1
+    for index in range(count):
+        request = MessageEnvelope(
+            project_id='project-test', to_agent='planner', from_actor='system',
+            body=message,
+            task_id='wrong-task' if case == 'mismatched_task' else 'task-a',
+            reply_to=None, message_type='ask', delivery_scope=DeliveryScope.SINGLE,
+        )
+        store.append(JobRecord(
+            job_id=f'job_retry_{index}', submission_id=None, agent_name='planner',
+            provider='codex', request=request, status=JobStatus.QUEUED,
+            terminal_decision=None, cancel_requested_at=None,
+            created_at=f'2026-07-12T00:00:0{index}Z',
+            updated_at=f'2026-07-12T00:00:0{index}Z',
+            provider_options={'retry_source_job_id': 'job_source'},
+        ))
+
+    with pytest.raises(RuntimeError, match='ambiguous|authority_mismatch'):
+        _retry_successor_job(
+            context,
+            source_job_id='job_source', target='planner', task_id='task-a',
+            message=message,
+            message_sha256=hashlib.sha256(message.encode()).hexdigest(),
+        )
 
 
 @pytest.mark.parametrize('accepted_before_raise', [False, True])
