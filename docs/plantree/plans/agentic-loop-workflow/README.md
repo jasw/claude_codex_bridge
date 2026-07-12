@@ -34,6 +34,11 @@ recoverable workflow loops.
 - [implementation-status.md](implementation-status.md): current operational
   handoff, latest landed workflow slice, active TODO, blockers, and last
   verification.
+- [public three-layer architecture guide](../../../agentic-loop-workflow-architecture.zh.md):
+  Chinese overview of the Frontdesk/Detailer, Planner/Orchestrator, and
+  parallel workgroup layers, with Mermaid sources and an editable SVG/PNG
+  promotional graphic; capability claims remain bounded by this plan's
+  implementation status and acceptance evidence.
 - [history/phase1-6-evidence-index.md](history/phase1-6-evidence-index.md):
   compact index of accepted Phase 1-6 evidence, checklist-only artifacts,
   planning inputs, real-provider B7 evidence, and final acceptance reports.
