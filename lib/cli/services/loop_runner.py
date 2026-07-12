@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from dataclasses import replace
+import hashlib
 import json
 from pathlib import Path
 import re
@@ -13,6 +14,7 @@ from agents.config_loader import load_project_config
 from cli.models import ParsedAskCommand, ParsedClearCommand
 from cli.models_mailbox import ParsedTraceCommand
 from storage.atomic import atomic_write_json, atomic_write_text
+from storage.locks import file_lock
 
 from .auto_runner_lock import AutoRunnerLock
 from .ask import submit_ask
@@ -201,7 +203,18 @@ def loop_runner_once(context, command, services=None) -> dict[str, object]:
 
     runner_action = str(task.get('runner_action') or '')
     if runner_action == 'activate_orchestrator':
-        return _activate_orchestrator(context, command, deps, task)
+        task_identity = str(task['record'].get('task_id') or 'unknown')
+        lock_name = hashlib.sha256(task_identity.encode('utf-8')).hexdigest()
+        lock_path = (
+            Path(context.project.project_root)
+            / '.ccb'
+            / 'runtime'
+            / 'loops'
+            / 'activations'
+            / f'orchestrator-{lock_name}.lock'
+        )
+        with file_lock(lock_path):
+            return _activate_orchestrator(context, command, deps, task)
     if runner_action == 'ask_first_execute':
         return _run_ask_first_execution_round(context, command, deps, task)
     if runner_action == 'ask_first_execution_not_ready':
@@ -704,29 +717,36 @@ def _activate_orchestrator(context, command, deps, task: dict[str, object]) -> d
             activation,
             activation_path=activation_path,
         )
-    capacity_snapshot = activation.get('effective_capacity_snapshot')
-    inline_request = not (
-        isinstance(capacity_snapshot, dict)
-        and int(capacity_snapshot.get('config_version') or 0) == 3
-    )
-    summary = deps.submit_ask(
-        context,
-        ParsedAskCommand(
-            project=None,
-            target=target,
-            sender='system',
-            message=_orchestrator_message(activation),
-            task_id=activation_id,
-            compact=True,
-            inline_request=inline_request,
-        ),
-    )
+    activation['submission'] = {'status': 'prepared', 'target': target}
+    atomic_write_json(activation_path, activation)
+    try:
+        summary = deps.submit_ask(
+            context,
+            ParsedAskCommand(
+                project=None,
+                target=target,
+                sender='system',
+                message=_orchestrator_message(activation),
+                task_id=activation_id,
+                compact=True,
+                inline_request=False,
+            ),
+        )
+    except BaseException as exc:
+        activation['submission'] = {
+            'status': 'unknown',
+            'target': target,
+            'error': f'{type(exc).__name__}: {exc}',
+        }
+        atomic_write_json(activation_path, activation)
+        raise
     job = _single_job(summary.jobs, target=target)
     activation['ask'] = {
         'target': target,
         'job_id': str(job['job_id']),
         'status': job.get('status'),
     }
+    activation['submission'] = {'status': 'accepted', 'target': target, 'job_id': str(job['job_id'])}
     atomic_write_json(activation_path, activation)
     return {
         'schema_version': 1,
@@ -1940,6 +1960,29 @@ def _consume_existing_activation_for_task(
         if str(activation.get('task_id') or '').strip() != task_id:
             continue
         ask = activation.get('ask') if isinstance(activation.get('ask'), dict) else {}
+        submission = activation.get('submission') if isinstance(activation.get('submission'), dict) else {}
+        topology = activation.get('topology') if isinstance(activation.get('topology'), dict) else {}
+        submission_target = str(submission.get('target') or topology.get('target') or '').strip()
+        if (
+            not ask
+            and submission_target == target
+            and str(submission.get('status') or '') in {'prepared', 'unknown'}
+        ):
+            return {
+                'schema_version': 1,
+                'record_type': 'ccb_loop_runner_once',
+                'loop_runner_status': 'paused',
+                'project_id': context.project.project_id,
+                'project_root': str(context.project.project_root),
+                'action': 'activation_submission_unknown',
+                'reason': 'activation ask submission may have crossed the daemon boundary without a receipt',
+                'task_id': task_id,
+                'task_status': record.get('status'),
+                'activation_id': activation.get('activation_id'),
+                'activation_path': str(activation_path),
+                'submission': submission,
+                'next_activation': 'inspect_activation_submission_authority',
+            }
         if str(ask.get('target') or '').strip() != target:
             continue
         job_id = str(ask.get('job_id') or '').strip()

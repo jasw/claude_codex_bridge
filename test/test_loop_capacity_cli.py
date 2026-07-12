@@ -1576,7 +1576,7 @@ def test_loop_runner_once_ready_for_orchestration_activates_orchestrator_only(
     assert seen['target'] == 'orchestrator'
     assert seen['sender'] == 'system'
     assert seen['artifact_request'] is False
-    assert seen['inline_request'] is True
+    assert seen['inline_request'] is False
     assert seen['calls'] == 1
     message = str(seen['message'])
     assert 'Allowed routes: direct_execution, needs_detail, macro_adjustment_request, blocked, partial_completion' in message
@@ -2788,13 +2788,20 @@ def test_loop_runner_once_explicit_project_from_outer_cwd_submits_orchestrator_a
     project_root = _project_with_loop_capacity(tmp_path, monkeypatch)
     outer_project = tmp_path / 'outer-ccb-project'
     _write(outer_project / '.ccb' / 'ccb.config', 'cmd; outer:codex\n')
-    _add_ready_plan_task(project_root, task_id='task-runner')
+    _add_ready_plan_task(
+        project_root,
+        task_id='task-runner',
+        task_packet_text='Task Packet:\n' + ('完整语义' * 1200),
+        execution_contract_text='Execution Contract:\n' + ('验收约束' * 1200),
+    )
     command = ParsedLoopRunnerCommand(project=str(project_root), once=True, timeout_s=11.0, json_output=True)
     context = CliContextBuilder().build(command, cwd=outer_project, bootstrap_if_missing=False)
     captured: dict[str, object] = {}
 
     class _FakeClient:
         def submit(self, envelope) -> dict:
+            if len(envelope.body.encode('utf-8')) > 4096 and envelope.body_artifact is None:
+                raise ValueError('ask body exceeds 4 KiB and must be submitted with a CCB body artifact')
             captured['project_id'] = envelope.project_id
             captured['to_agent'] = envelope.to_agent
             captured['from_actor'] = envelope.from_actor
@@ -2828,12 +2835,72 @@ def test_loop_runner_once_explicit_project_from_outer_cwd_submits_orchestrator_a
     assert captured['from_actor'] == 'system'
     assert captured['route_options'] == {}
     assert str(captured['task_id']).startswith('act-')
-    assert captured['body_artifact'] is None
-    message = str(captured['body'])
-    assert 'CCB ask request was stored as an artifact' not in message
+    artifact = captured['body_artifact']
+    assert isinstance(artifact, dict)
+    artifact_path = Path(str(artifact['path']))
+    assert artifact['kind'] == 'ask-request'
+    assert artifact_path.name.startswith('system-to-orchestrator-')
+    assert artifact_path.is_relative_to(project_root / '.ccb' / 'ccbd' / 'artifacts' / 'text' / 'ask-request')
+    assert artifact_path.stat().st_mode & 0o777 == 0o600
+    message = artifact_path.read_text(encoding='utf-8')
+    assert len(message.encode('utf-8')) == artifact['bytes']
+    assert hashlib.sha256(message.encode('utf-8')).hexdigest() == artifact['sha256']
     assert 'Required reply-only output:' in message
     assert 'ccb plan task-artifact' not in message
     assert 'plan task-artifact' not in message
+
+
+def test_loop_runner_orchestrator_submit_failure_reuses_activation_identity_without_duplicate(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = _project_with_loop_capacity(tmp_path, monkeypatch)
+    _add_ready_plan_task(
+        project_root,
+        task_id='task-runner',
+        task_packet_text='Task Packet:\n' + ('完整语义' * 1200),
+        execution_contract_text='Execution Contract:\n' + ('验收约束' * 1200),
+    )
+    command = ParsedLoopRunnerCommand(project=None, once=True, timeout_s=11.0, json_output=True)
+    context = CliContextBuilder().build(command, cwd=project_root, bootstrap_if_missing=False)
+    submitted: list[object] = []
+
+    class _FailingClient:
+        def submit(self, envelope) -> dict:
+            submitted.append(envelope)
+            assert isinstance(envelope.body_artifact, dict)
+            raise RuntimeError('connection lost after submit boundary')
+
+    monkeypatch.setattr(
+        ask_service,
+        'invoke_mounted_daemon',
+        lambda context, allow_restart_stale, request_fn: request_fn(_FailingClient()),
+    )
+
+    with pytest.raises(RuntimeError, match='connection lost after submit boundary'):
+        loop_runner_once(context, command, services=SimpleNamespace(submit_ask=ask_service.submit_ask))
+
+    activation_paths = sorted((project_root / '.ccb' / 'runtime' / 'loops' / 'activations').glob('act-*.json'))
+    assert len(activation_paths) == 1
+    activation = json.loads(activation_paths[0].read_text(encoding='utf-8'))
+    assert activation['submission']['status'] == 'unknown'
+    assert len(submitted) == 1
+
+    payload = loop_runner_once(
+        context,
+        command,
+        services=SimpleNamespace(
+            submit_ask=lambda *_args, **_kwargs: (_ for _ in ()).throw(
+                AssertionError('unknown submission must not be duplicated')
+            )
+        ),
+    )
+
+    assert payload['loop_runner_status'] == 'paused'
+    assert payload['action'] == 'activation_submission_unknown'
+    assert payload['activation_id'] == activation['activation_id']
+    assert len(list((project_root / '.ccb' / 'runtime' / 'loops' / 'activations').glob('act-*.json'))) == 1
+    assert len(submitted) == 1
 
 
 def test_loop_runner_once_selects_ready_task_despite_committed_legacy_topology(
@@ -7165,7 +7232,7 @@ def test_loop_runner_needs_detail_route_activates_detailer_only_after_route_impo
 
     def fake_submit_before_route(_context, ask_command):
         seen.append(ask_command.target)
-        assert ask_command.inline_request is True
+        assert ask_command.inline_request is False
         assert ask_command.artifact_request is False
         return AskSummary(
             project_id=context.project.project_id,
@@ -7236,7 +7303,7 @@ def test_loop_runner_needs_detail_route_activates_detailer_only_after_route_impo
     def fake_submit_orchestrator_after_detail(_context, ask_command):
         seen.append(ask_command.target)
         assert ask_command.target == 'orchestrator'
-        assert ask_command.inline_request is True
+        assert ask_command.inline_request is False
         assert ask_command.artifact_request is False
         return AskSummary(
             project_id=context.project.project_id,
