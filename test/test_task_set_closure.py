@@ -7,7 +7,22 @@ from types import SimpleNamespace
 
 import pytest
 
+from ccbd.api_models import DeliveryScope, JobRecord, JobStatus, MessageEnvelope
+from jobs.store import JobStore
+from storage.paths import PathLayout
 from cli.services.plan_tasks import find_first_actionable_task, plan_task, settle_task_set_parent
+from cli.services.planner_feedback import (
+    frontdesk_status_envelope,
+    parse_planner_feedback_reply,
+    planner_feedback_digest,
+)
+from cli.services.planner_feedback_apply import apply_planner_feedback
+from cli.services.task_set_feedback_runtime import (
+    _frontdesk_message,
+    _planner_message,
+    _prepared_transport,
+    _runtime_digest,
+)
 from cli.services.task_set_closure import (
     create_task_set_authority,
     evaluate_task_set_closure,
@@ -153,6 +168,184 @@ def _complete(
     path = Path(context.project.project_root) / '.ccb/runtime/loops' / loop_id / 'round.json'
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(round_record, sort_keys=True) + '\n', encoding='utf-8')
+
+
+def _planner_proposal(
+    task_set_id: str,
+    closure: dict[str, object],
+    plan_revision: str,
+    *,
+    notification_required: bool = False,
+):
+    evidence = [f'docs/plantree/plans/demo/task-sets/{task_set_id}/closure.json']
+    next_milestone = {'kind': 'workflow_terminal', 'ref': 'done', 'rationale': 'Done.'}
+    payload = {
+        'schema': 'ccb.planner.backfill_proposal.v1',
+        'mode': 'task_set_closure',
+        'expected_plan_revision': plan_revision,
+        'task_or_task_set_id': task_set_id,
+        'task_or_task_set_revision': 1,
+        'closure_evidence_digest': closure['ordered_terminal_evidence_digest'],
+        'aggregate_result': 'pass',
+        'result': 'closure_complete',
+        'brief_summary': 'Closed.',
+        'roadmap_transitions': [],
+        'todo_transitions': [],
+        'decision_refs': [],
+        'open_question_refs': [],
+        'evidence_refs': evidence,
+        'accepted_scope': ['landed'],
+        'unresolved_scope': [],
+        'blockers': [],
+        'replan_inputs': [],
+        'next_milestone': next_milestone,
+        'frontdesk_notification_required': notification_required,
+        'frontdesk_status': {
+            'schema': 'ccb.planner.frontdesk_status.v1',
+            'notification_identity': f'{task_set_id}-r1',
+            'aggregate_result': 'pass',
+            'accepted_scope': ['landed'],
+            'unresolved_scope': [],
+            'blockers': [],
+            'next_milestone': next_milestone,
+            'evidence_refs': evidence,
+            'user_report_body': 'Done.',
+        },
+    }
+    reply = '**planner-backfill.json**\n```json\n' + json.dumps(payload) + '\n```\n'
+    return parse_planner_feedback_reply(reply)
+
+
+def _completed_job(context, *, target: str, job_id: str, task_id: str, message: str) -> None:
+    request = MessageEnvelope(
+        project_id=context.project.project_id,
+        to_agent=target,
+        from_actor='system',
+        body=message,
+        task_id=task_id,
+        reply_to=None,
+        message_type='task',
+        delivery_scope=DeliveryScope.SINGLE,
+        silence_on_success=target == 'planner',
+    )
+    JobStore(PathLayout(context.project.project_root)).append(JobRecord(
+        job_id=job_id,
+        submission_id=None,
+        agent_name=target,
+        provider='codex',
+        request=request,
+        status=JobStatus.COMPLETED,
+        terminal_decision={'terminal': True, 'status': 'completed'},
+        cancel_requested_at=None,
+        created_at='2026-07-12T00:00:00Z',
+        updated_at='2026-07-12T00:00:01Z',
+    ))
+
+
+def _settlement_fixture(context, *, notification_required: bool = False):
+    created = _create_set(context, [('child-a', True)])
+    task_set_id = created['task_set']['task_set_id']
+    _complete(context, 'child-a', 'pass')
+    closed = evaluate_task_set_closure(context, task_set_id=task_set_id, plan_task_fn=plan_task)
+    intent = closed['closure_intent']
+    root = Path(context.project.project_root)
+    task_set_root = root / 'docs/plantree/plans/demo/task-sets' / task_set_id
+    task_set = json.loads((task_set_root / 'task-set.json').read_text(encoding='utf-8'))
+    proposal = _planner_proposal(
+        task_set_id,
+        closed['closure'],
+        task_set['plan_revision']['digest'],
+        notification_required=notification_required,
+    )
+    feedback_digest = planner_feedback_digest(proposal)
+    planner_job_id = 'job_planner'
+    imported = apply_planner_feedback(context, proposal, {
+        'task_set_id': task_set_id,
+        'task_set_revision': 1,
+        'closure_intent_id': intent['intent_id'],
+        'closure_digest': closed['closure']['closure_digest'],
+        'ordered_terminal_evidence_digest': intent['ordered_terminal_evidence_digest'],
+        'expected_plan_revision': task_set['plan_revision']['digest'],
+        'planner_job_id': planner_job_id,
+        'planner_feedback_digest': feedback_digest,
+        'plan_slug': 'demo',
+    })
+    planner_message = _planner_message(closed['closure'], intent)
+    planner = _prepared_transport(
+        target='planner', purpose='planner_backfill',
+        task_id=f'task-set-feedback-{intent["intent_id"]}',
+        message=planner_message, silent=True,
+    )
+    proposal_reply = '**planner-backfill.json**\n```json\n' + json.dumps(proposal.to_record()) + '\n```\n'
+    planner.update({'job_id': planner_job_id, 'status': 'completed', 'reply': proposal_reply})
+    _completed_job(
+        context, target='planner', job_id=planner_job_id,
+        task_id=str(planner['task_id']), message=planner_message,
+    )
+    frontdesk = None
+    notification = {'status': 'notification_not_required'}
+    frontdesk_job_id = None
+    if notification_required:
+        frontdesk_job_id = 'job_frontdesk'
+        frontdesk_message = _frontdesk_message(frontdesk_status_envelope(proposal))
+        frontdesk = _prepared_transport(
+            target='frontdesk', purpose='frontdesk_status',
+            task_id=f'task-set-status-{intent["intent_id"]}',
+            message=frontdesk_message, silent=False,
+        )
+        frontdesk.update({'job_id': frontdesk_job_id, 'status': 'completed', 'reply': 'delivered'})
+        _completed_job(
+            context, target='frontdesk', job_id=frontdesk_job_id,
+            task_id=str(frontdesk['task_id']), message=frontdesk_message,
+        )
+        notification = {'status': 'delivered', 'job_id': frontdesk_job_id}
+    runtime_path = root / '.ccb/runtime/task-sets' / task_set_id / 'feedback-r1.json'
+    runtime_path.parent.mkdir(parents=True, exist_ok=True)
+    runtime = {
+        'schema': 'ccb.plan.task_set_feedback_runtime.v1',
+        'schema_version': 1,
+        'task_set_id': task_set_id,
+        'task_set_revision': 1,
+        'closure_intent_id': intent['intent_id'],
+        'closure_digest': closed['closure']['closure_digest'],
+        'terminal_evidence_digest': intent['ordered_terminal_evidence_digest'],
+        'stage': 'closed',
+        'planner': planner,
+        'frontdesk': frontdesk,
+        'backfill_import': {
+            'task_set_id': task_set_id,
+            'task_set_revision': 1,
+            'closure_intent_id': intent['intent_id'],
+            'closure_digest': closed['closure']['closure_digest'],
+            'ordered_terminal_evidence_digest': intent['ordered_terminal_evidence_digest'],
+            'expected_plan_revision': task_set['plan_revision']['digest'],
+            'planner_job_id': planner_job_id,
+            'planner_feedback_digest': feedback_digest,
+            'plan_slug': 'demo',
+            **imported,
+        },
+        'notification': notification,
+    }
+    runtime['runtime_digest'] = _runtime_digest(runtime)
+    runtime_path.write_text(json.dumps(runtime), encoding='utf-8')
+    authority = {
+        'task_set_id': task_set_id,
+        'task_set_revision': 1,
+        'intent_id': intent['intent_id'],
+        'ordered_terminal_evidence_digest': intent['ordered_terminal_evidence_digest'],
+        'transport_ref': {
+            'runtime_state_path': str(runtime_path),
+            'planner_job_id': planner_job_id,
+            'frontdesk_job_id': frontdesk_job_id,
+            'planner_backfill_path': imported['planner_backfill_path'],
+            'planner_feedback_digest': feedback_digest,
+            'notification_status': notification['status'],
+            'backfill_digest': imported['backfill_digest'],
+        },
+    }
+    if frontdesk_job_id is None:
+        authority['transport_ref'].pop('frontdesk_job_id')
+    return authority, runtime_path, Path(imported['planner_backfill_path'])
 
 
 def test_task_set_parent_is_decomposed_and_children_are_revision_bound(tmp_path: Path) -> None:
@@ -332,26 +525,68 @@ def test_feedback_settlement_removes_intent_from_pending_discovery(tmp_path: Pat
     intent = closed['closure_intent']
     root = Path(context.project.project_root)
     task_set_root = root / 'docs/plantree/plans/demo/task-sets' / task_set_id
-    feedback_digest = 'sha256:' + 'f' * 64
     planner_job_id = 'job_planner'
-    backfill_path = task_set_root / 'planner-backfill.json'
-    backfill_path.write_text(json.dumps({
+    task_set = json.loads((task_set_root / 'task-set.json').read_text(encoding='utf-8'))
+    proposal = _planner_proposal(task_set_id, closed['closure'], task_set['plan_revision']['digest'])
+    feedback_digest = planner_feedback_digest(proposal)
+    imported = apply_planner_feedback(context, proposal, {
         'task_set_id': task_set_id,
         'task_set_revision': 1,
+        'closure_intent_id': intent['intent_id'],
         'closure_digest': closed['closure']['closure_digest'],
         'ordered_terminal_evidence_digest': intent['ordered_terminal_evidence_digest'],
+        'expected_plan_revision': task_set['plan_revision']['digest'],
         'planner_job_id': planner_job_id,
         'planner_feedback_digest': feedback_digest,
-        'aggregate_result': 'pass',
-    }), encoding='utf-8')
+        'plan_slug': 'demo',
+    })
+    backfill_path = Path(imported['planner_backfill_path'])
+    planner_message = _planner_message(closed['closure'], intent)
+    planner = _prepared_transport(
+        target='planner',
+        purpose='planner_backfill',
+        task_id=f'task-set-feedback-{intent["intent_id"]}',
+        message=planner_message,
+        silent=True,
+    )
+    proposal_reply = '**planner-backfill.json**\n```json\n' + json.dumps(proposal.to_record()) + '\n```\n'
+    planner.update({'job_id': planner_job_id, 'status': 'completed', 'reply': proposal_reply})
+    _completed_job(
+        context,
+        target='planner',
+        job_id=planner_job_id,
+        task_id=str(planner['task_id']),
+        message=planner_message,
+    )
     runtime_path = root / '.ccb/runtime/task-sets' / task_set_id / 'feedback-r1.json'
     runtime_path.parent.mkdir(parents=True, exist_ok=True)
-    runtime_path.write_text(json.dumps({
+    runtime = {
+        'schema': 'ccb.plan.task_set_feedback_runtime.v1',
+        'schema_version': 1,
+        'task_set_id': task_set_id,
+        'task_set_revision': 1,
+        'closure_intent_id': intent['intent_id'],
+        'closure_digest': closed['closure']['closure_digest'],
+        'terminal_evidence_digest': intent['ordered_terminal_evidence_digest'],
         'stage': 'closed',
-        'planner': {'job_id': planner_job_id},
+        'planner': planner,
         'frontdesk': None,
+        'backfill_import': {
+            'task_set_id': task_set_id,
+            'task_set_revision': 1,
+            'closure_intent_id': intent['intent_id'],
+            'closure_digest': closed['closure']['closure_digest'],
+            'ordered_terminal_evidence_digest': intent['ordered_terminal_evidence_digest'],
+            'expected_plan_revision': task_set['plan_revision']['digest'],
+            'planner_job_id': planner_job_id,
+            'planner_feedback_digest': feedback_digest,
+            'plan_slug': 'demo',
+            **imported,
+        },
         'notification': {'status': 'notification_not_required'},
-    }), encoding='utf-8')
+    }
+    runtime['runtime_digest'] = _runtime_digest(runtime)
+    runtime_path.write_text(json.dumps(runtime), encoding='utf-8')
     authority = dict(
         task_set_id=task_set_id,
         task_set_revision=1,
@@ -363,6 +598,7 @@ def test_feedback_settlement_removes_intent_from_pending_discovery(tmp_path: Pat
             'planner_backfill_path': str(backfill_path),
             'planner_feedback_digest': feedback_digest,
             'notification_status': 'notification_not_required',
+            'backfill_digest': imported['backfill_digest'],
         },
     )
 
@@ -381,6 +617,119 @@ def test_feedback_settlement_removes_intent_from_pending_discovery(tmp_path: Pat
     assert discovered['pending_count'] == 0
     assert first['intent']['status'] == 'feedback_closed'
     assert plan_task(context, SimpleNamespace(action='task-show', task_id='source-intake'))['task']['status'] == 'done'
+
+
+@pytest.mark.parametrize('authority_path', ('runtime_state_path', 'planner_backfill_path'))
+def test_settlement_rejects_external_runtime_or_backfill_authority(
+    tmp_path: Path, authority_path: str
+) -> None:
+    context = _context(tmp_path)
+    authority, runtime_path, backfill_path = _settlement_fixture(context)
+    source = runtime_path if authority_path == 'runtime_state_path' else backfill_path
+    external = tmp_path / f'external-{source.name}'
+    external.write_bytes(source.read_bytes())
+    authority['transport_ref'][authority_path] = str(external)
+
+    with pytest.raises(ValueError, match='path authority mismatch'):
+        settle_task_set_closure_feedback(context, **authority)
+    assert plan_task(
+        context, SimpleNamespace(action='task-show', task_id='source-intake')
+    )['task']['status'] == 'decomposed'
+
+
+def test_settlement_rejects_notification_required_bypass(tmp_path: Path) -> None:
+    context = _context(tmp_path)
+    authority, runtime_path, _backfill_path = _settlement_fixture(
+        context, notification_required=True
+    )
+    runtime = json.loads(runtime_path.read_text(encoding='utf-8'))
+    runtime['frontdesk'] = None
+    runtime['notification'] = {'status': 'notification_not_required'}
+    runtime['runtime_digest'] = _runtime_digest(runtime)
+    runtime_path.write_text(json.dumps(runtime), encoding='utf-8')
+    authority['transport_ref']['notification_status'] = 'notification_not_required'
+    authority['transport_ref'].pop('frontdesk_job_id')
+
+    with pytest.raises(ValueError, match='notification authority invalid'):
+        settle_task_set_closure_feedback(context, **authority)
+    assert plan_task(
+        context, SimpleNamespace(action='task-show', task_id='source-intake')
+    )['task']['status'] == 'decomposed'
+
+
+def test_settlement_accepts_completed_required_frontdesk_delivery(tmp_path: Path) -> None:
+    context = _context(tmp_path)
+    authority, _runtime_path, _backfill_path = _settlement_fixture(
+        context, notification_required=True
+    )
+
+    settled = settle_task_set_closure_feedback(context, **authority)
+
+    assert settled['status'] == 'feedback_closed'
+    assert plan_task(
+        context, SimpleNamespace(action='task-show', task_id='source-intake')
+    )['task']['status'] == 'done'
+
+
+@pytest.mark.parametrize('target', ('planner', 'frontdesk'))
+def test_settlement_rejects_forged_or_missing_completed_job(
+    tmp_path: Path, target: str
+) -> None:
+    context = _context(tmp_path)
+    authority, runtime_path, _backfill_path = _settlement_fixture(
+        context, notification_required=target == 'frontdesk'
+    )
+    runtime = json.loads(runtime_path.read_text(encoding='utf-8'))
+    runtime[target]['job_id'] = f'job_forged_{target}'
+    runtime['runtime_digest'] = _runtime_digest(runtime)
+    runtime_path.write_text(json.dumps(runtime), encoding='utf-8')
+    authority['transport_ref'][f'{target}_job_id'] = f'job_forged_{target}'
+
+    with pytest.raises(
+        ValueError,
+        match='persisted job is not terminal completed|imported backfill authority mismatch',
+    ):
+        settle_task_set_closure_feedback(context, **authority)
+
+
+def test_settlement_rejects_mismatched_planner_message_identity(tmp_path: Path) -> None:
+    context = _context(tmp_path)
+    authority, runtime_path, _backfill_path = _settlement_fixture(context)
+    runtime = json.loads(runtime_path.read_text(encoding='utf-8'))
+    runtime['planner']['message'] = 'forged message'
+    runtime['planner']['message_sha256'] = hashlib.sha256(b'forged message').hexdigest()
+    runtime['runtime_digest'] = _runtime_digest(runtime)
+    runtime_path.write_text(json.dumps(runtime), encoding='utf-8')
+
+    with pytest.raises(ValueError, match='Planner message authority mismatch'):
+        settle_task_set_closure_feedback(context, **authority)
+
+
+def test_settlement_rejects_nonterminal_planner_job(tmp_path: Path) -> None:
+    context = _context(tmp_path)
+    authority, runtime_path, _backfill_path = _settlement_fixture(context)
+    runtime = json.loads(runtime_path.read_text(encoding='utf-8'))
+    planner = runtime['planner']
+    request = MessageEnvelope(
+        project_id=context.project.project_id,
+        to_agent='planner',
+        from_actor='system',
+        body=planner['message'],
+        task_id=planner['task_id'],
+        reply_to=None,
+        message_type='task',
+        delivery_scope=DeliveryScope.SINGLE,
+        silence_on_success=True,
+    )
+    JobStore(PathLayout(context.project.project_root)).append(JobRecord(
+        job_id=planner['job_id'], submission_id=None, agent_name='planner',
+        provider='codex', request=request, status=JobStatus.RUNNING,
+        terminal_decision=None, cancel_requested_at=None,
+        created_at='2026-07-12T00:00:00Z', updated_at='2026-07-12T00:00:02Z',
+    ))
+
+    with pytest.raises(ValueError, match='persisted job is not terminal completed'):
+        settle_task_set_closure_feedback(context, **authority)
 
 
 def test_same_revision_conflicting_terminal_digest_fails_closed(tmp_path: Path) -> None:

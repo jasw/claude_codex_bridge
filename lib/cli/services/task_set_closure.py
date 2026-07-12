@@ -10,6 +10,12 @@ from typing import Callable
 
 from storage.atomic import atomic_write_json
 from storage.locks import file_lock
+from storage.paths import PathLayout
+from storage.text_artifacts import read_text_artifact
+from jobs.store import JobStore
+
+from .planner_feedback_apply import validate_planner_backfill_record
+from .planner_feedback import parse_planner_feedback_reply, planner_feedback_digest
 
 
 TASK_SET_SCHEMA = 'ccb.plan.task_set.v1'
@@ -451,11 +457,16 @@ def settle_task_set_closure_feedback(
     ):
         raise ValueError('task-set closure feedback settlement authority mismatch')
     normalized_ref = _validate_feedback_transport(
-        context, transport_ref, task_set=task_set, closure=closure
+        context,
+        transport_ref,
+        task_set=task_set,
+        closure=closure,
+        intent=intent_matches[0],
     )
-    settlement_path = task_set_path.parent / 'closure-settlement.json'
+    settlement_path = task_set_path.parent / f'closure-settlement-r{task_set_revision}.json'
     settlement = {
-        'schema': 'ccb.plan.task_set_closure_settlement.v1',
+        'schema': 'ccb.plan.task_set_closure_settlement.v2',
+        'schema_version': 2,
         'task_set_id': task_set_id,
         'task_set_revision': task_set_revision,
         'intent_id': intent_id,
@@ -464,7 +475,8 @@ def settle_task_set_closure_feedback(
         'ordered_terminal_evidence_digest': ordered_terminal_evidence_digest,
         'transport_ref': normalized_ref,
     }
-    with file_lock(task_set_path.parent / 'closure-settlement.lock'):
+    settlement['settlement_digest'] = _digest(settlement)
+    with file_lock(task_set_path.parent / f'closure-settlement-r{task_set_revision}.lock'):
         existing_settlement = _read_json(settlement_path)
         if existing_settlement and existing_settlement != settlement:
             raise ValueError('task-set closure settlement transaction conflict')
@@ -523,46 +535,208 @@ def settle_task_set_closure_feedback(
         return {'status': 'feedback_closed', 'intent': intent, 'idempotent': False}
 
 
-def _validate_feedback_transport(context, value, *, task_set, closure) -> dict[str, object]:
+def _validate_feedback_transport(context, value, *, task_set, closure, intent) -> dict[str, object]:
     allowed = {
         'runtime_state_path', 'planner_job_id', 'frontdesk_job_id',
         'planner_backfill_path', 'planner_feedback_digest', 'notification_status',
+        'backfill_digest',
     }
     if not isinstance(value, dict) or set(value) - allowed:
         raise ValueError('task-set closure transport fields invalid')
-    required = {'runtime_state_path', 'planner_job_id', 'planner_backfill_path', 'planner_feedback_digest', 'notification_status'}
+    required = {
+        'runtime_state_path', 'planner_job_id', 'planner_backfill_path',
+        'planner_feedback_digest', 'notification_status', 'backfill_digest',
+    }
     if any(not value.get(key) for key in required):
         raise ValueError('task-set closure transport authority incomplete')
-    root = Path(context.project.project_root)
-    runtime_path = Path(str(value['runtime_state_path']))
-    if not runtime_path.is_absolute():
-        runtime_path = root / runtime_path
+    root = Path(context.project.project_root).resolve()
+    runtime_path = _exact_authority_path(
+        root,
+        value['runtime_state_path'],
+        root / '.ccb/runtime/task-sets' / str(task_set['task_set_id'])
+        / f'feedback-r{task_set["task_set_revision"]}.json',
+        label='task-set feedback runtime',
+    )
     runtime = _read_json(runtime_path)
-    if runtime.get('stage') != 'closed' or (runtime.get('planner') or {}).get('job_id') != value['planner_job_id']:
-        raise ValueError('task-set closure runtime transport is not completed')
-    backfill_path = Path(str(value['planner_backfill_path']))
-    if not backfill_path.is_absolute():
-        backfill_path = root / backfill_path
-    backfill = _read_json(backfill_path)
-    expected = {
-        'task_set_id': task_set['task_set_id'],
-        'task_set_revision': task_set['task_set_revision'],
-        'closure_digest': closure['closure_digest'],
-        'ordered_terminal_evidence_digest': closure['ordered_terminal_evidence_digest'],
-        'planner_job_id': value['planner_job_id'],
-        'planner_feedback_digest': value['planner_feedback_digest'],
-        'aggregate_result': closure['aggregate_result'],
-    }
-    if any(backfill.get(key) != expected_value for key, expected_value in expected.items()):
+    _validate_closed_runtime(runtime, task_set=task_set, closure=closure, intent=intent)
+    backfill_path = _exact_authority_path(
+        root,
+        value['planner_backfill_path'],
+        root / 'docs/plantree/plans' / str(task_set['plan_slug']) / 'task-sets'
+        / str(task_set['task_set_id']) / f'planner-backfill-r{task_set["task_set_revision"]}.json',
+        label='planner backfill',
+    )
+    backfill = validate_planner_backfill_record(
+        context, backfill_path, task_set=task_set, closure=closure
+    )
+    authority = backfill['authority']
+    proposal = backfill['proposal']
+    if (
+        authority.get('planner_job_id') != value['planner_job_id']
+        or authority.get('planner_feedback_digest') != value['planner_feedback_digest']
+        or backfill.get('backfill_digest') != value['backfill_digest']
+    ):
         raise ValueError('task-set closure imported backfill authority mismatch')
+    planner = runtime['planner']
+    if planner['message'] != _expected_planner_message(closure, intent):
+        raise ValueError('task-set closure Planner message authority mismatch')
+    _validate_completed_job(context, planner, expected_target='planner')
+    try:
+        persisted_proposal = parse_planner_feedback_reply(str(planner['reply']))
+    except ValueError as exc:
+        raise ValueError('task-set closure Planner reply authority invalid') from exc
+    if (
+        json.loads(json.dumps(persisted_proposal.to_record(), sort_keys=True)) != proposal
+        or planner_feedback_digest(persisted_proposal) != authority['planner_feedback_digest']
+    ):
+        raise ValueError('task-set closure Planner feedback identity mismatch')
     notification = str(value['notification_status'])
     if notification == 'delivered':
         job_id = str(value.get('frontdesk_job_id') or '')
-        if not job_id or (runtime.get('frontdesk') or {}).get('job_id') != job_id or (runtime.get('frontdesk') or {}).get('status') != 'completed':
+        if proposal.get('frontdesk_notification_required') is not True:
+            raise ValueError('task-set closure unexpected Frontdesk delivery')
+        if not job_id or runtime['frontdesk'].get('job_id') != job_id:
             raise ValueError('task-set closure Frontdesk delivery is incomplete')
-    elif notification != 'notification_not_required' or value.get('frontdesk_job_id'):
+        if runtime['frontdesk']['message'] != _expected_frontdesk_message(proposal, authority['planner_feedback_digest']):
+            raise ValueError('task-set closure Frontdesk message authority mismatch')
+        _validate_completed_job(context, runtime['frontdesk'], expected_target='frontdesk')
+    elif (
+        notification != 'notification_not_required'
+        or value.get('frontdesk_job_id')
+        or proposal.get('frontdesk_notification_required') is not False
+    ):
         raise ValueError('task-set closure notification authority invalid')
     return {key: value.get(key) for key in sorted(allowed) if value.get(key) is not None}
+
+
+def _validate_closed_runtime(runtime, *, task_set, closure, intent) -> None:
+    expected_fields = {
+        'schema', 'schema_version', 'task_set_id', 'task_set_revision',
+        'closure_intent_id', 'closure_digest', 'terminal_evidence_digest',
+        'stage', 'planner', 'frontdesk', 'backfill_import', 'notification',
+        'runtime_digest',
+    }
+    if (
+        set(runtime) != expected_fields
+        or runtime.get('schema') != 'ccb.plan.task_set_feedback_runtime.v1'
+        or runtime.get('schema_version') != 1
+        or runtime.get('stage') != 'closed'
+    ):
+        raise ValueError('task-set closure runtime schema or fields invalid')
+    runtime_digest = 'sha256:' + hashlib.sha256(json.dumps(
+        {key: value for key, value in runtime.items() if key != 'runtime_digest'},
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(',', ':'),
+    ).encode('utf-8')).hexdigest()
+    if runtime.get('runtime_digest') != runtime_digest:
+        raise ValueError('task-set closure runtime digest invalid')
+    expected = {
+        'task_set_id': task_set['task_set_id'],
+        'task_set_revision': task_set['task_set_revision'],
+        'closure_intent_id': intent['intent_id'],
+        'closure_digest': closure['closure_digest'],
+        'terminal_evidence_digest': closure['ordered_terminal_evidence_digest'],
+    }
+    if any(runtime.get(key) != expected_value for key, expected_value in expected.items()):
+        raise ValueError('task-set closure runtime identity mismatch')
+    _validate_transport_shape(runtime.get('planner'), purpose='planner_backfill')
+    if (
+        runtime['planner'].get('target') != 'planner'
+        or runtime['planner'].get('task_id') != f'task-set-feedback-{intent["intent_id"]}'
+        or runtime['planner'].get('silent') is not True
+    ):
+        raise ValueError('task-set closure Planner transport identity mismatch')
+    if runtime.get('frontdesk') is not None:
+        _validate_transport_shape(runtime.get('frontdesk'), purpose='frontdesk_status')
+        if (
+            runtime['frontdesk'].get('target') != 'frontdesk'
+            or runtime['frontdesk'].get('task_id') != f'task-set-status-{intent["intent_id"]}'
+            or runtime['frontdesk'].get('silent') is not False
+        ):
+            raise ValueError('task-set closure Frontdesk transport identity mismatch')
+    backfill_fields = {
+        'task_set_id', 'task_set_revision', 'closure_intent_id', 'closure_digest',
+        'ordered_terminal_evidence_digest', 'expected_plan_revision', 'planner_job_id',
+        'planner_feedback_digest', 'plan_slug', 'status', 'idempotent',
+        'planner_backfill_path', 'transaction_path', 'target_plan_revision',
+        'backfill_digest',
+    }
+    if (
+        not isinstance(runtime.get('backfill_import'), dict)
+        or set(runtime['backfill_import']) != backfill_fields
+        or not isinstance(runtime.get('notification'), dict)
+    ):
+        raise ValueError('task-set closure runtime import authority invalid')
+
+
+def _validate_transport_shape(value, *, purpose) -> None:
+    fields = {
+        'target', 'purpose', 'task_id', 'message', 'message_sha256',
+        'silent', 'job_id', 'status', 'reply',
+    }
+    if not isinstance(value, dict) or set(value) != fields or value.get('purpose') != purpose:
+        raise ValueError('task-set closure transport schema or fields invalid')
+    message = str(value.get('message') or '')
+    if not message or value.get('message_sha256') != hashlib.sha256(message.encode('utf-8')).hexdigest():
+        raise ValueError('task-set closure transport message digest invalid')
+    if value.get('status') != 'completed' or not str(value.get('job_id') or ''):
+        raise ValueError('task-set closure transport is not completed')
+
+
+def _validate_completed_job(context, transport, *, expected_target) -> None:
+    if transport.get('target') != expected_target:
+        raise ValueError('task-set closure transport target mismatch')
+    layout = getattr(context, 'paths', None)
+    if not isinstance(layout, PathLayout):
+        layout = PathLayout(context.project.project_root)
+    job = JobStore(layout).get_latest(expected_target, str(transport['job_id']))
+    if (
+        job is None
+        or job.status.value != 'completed'
+        or not isinstance(job.terminal_decision, dict)
+        or str(job.terminal_decision.get('status') or '') != 'completed'
+        or job.terminal_decision.get('terminal') is not True
+    ):
+        raise ValueError('task-set closure persisted job is not terminal completed')
+    if job.request.to_agent != expected_target or job.request.task_id != transport['task_id']:
+        raise ValueError('task-set closure persisted job identity mismatch')
+    body = str(job.request.body or '')
+    if job.request.body_artifact:
+        body = read_text_artifact(layout, job.request.body_artifact)
+    if body != transport['message'] or hashlib.sha256(body.encode('utf-8')).hexdigest() != transport['message_sha256']:
+        raise ValueError('task-set closure persisted job message mismatch')
+
+
+def _exact_authority_path(root: Path, value, expected: Path, *, label: str) -> Path:
+    raw = Path(str(value or ''))
+    candidate = raw.resolve() if raw.is_absolute() else (root / raw).resolve()
+    if candidate != expected.resolve() or (candidate != root and root not in candidate.parents):
+        raise ValueError(f'{label} path authority mismatch')
+    return candidate
+
+
+def _expected_planner_message(closure, intent) -> str:
+    envelope = {
+        'schema': 'ccb.plan.task_set_closure_transport.v1',
+        'closure': closure,
+        'closure_intent': {
+            key: intent[key]
+            for key in (
+                'intent_id', 'task_set_id', 'task_set_revision',
+                'ordered_terminal_evidence_digest', 'closure_digest',
+            )
+        },
+    }
+    body = json.dumps(envelope, ensure_ascii=False, sort_keys=True, separators=(',', ':'))
+    return '**task-set-closure.json**\n```json\n' + body + '\n```'
+
+
+def _expected_frontdesk_message(proposal, feedback_digest) -> str:
+    envelope = dict(proposal['frontdesk_status'])
+    envelope['planner_feedback_digest'] = feedback_digest
+    body = json.dumps(envelope, ensure_ascii=False, sort_keys=True, separators=(',', ':'))
+    return '**frontdesk-status.json**\n```json\n' + body + '\n```'
 
 
 def _resolve_children(

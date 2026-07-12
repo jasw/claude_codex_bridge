@@ -151,6 +151,7 @@ def _advance_intent(context, intent: dict[str, object], deps) -> dict[str, objec
             else:
                 state['stage'] = 'closed'
                 state['notification'] = {'status': 'notification_not_required'}
+                state['runtime_digest'] = _runtime_digest(state)
             atomic_write_json(state_path, state)
 
         if state['stage'] in {'frontdesk_prepared', 'frontdesk_pending'}:
@@ -167,6 +168,7 @@ def _advance_intent(context, intent: dict[str, object], deps) -> dict[str, objec
                 'status': 'delivered',
                 'job_id': result['job_id'],
             }
+            state['runtime_digest'] = _runtime_digest(state)
             atomic_write_json(state_path, state)
 
         if state['stage'] == 'failed':
@@ -191,6 +193,7 @@ def _advance_intent(context, intent: dict[str, object], deps) -> dict[str, objec
                 'planner_backfill_path': (state.get('backfill_import') or {}).get('planner_backfill_path'),
                 'planner_feedback_digest': (state.get('backfill_import') or {}).get('planner_feedback_digest'),
                 'notification_status': (state.get('notification') or {}).get('status'),
+                'backfill_digest': (state.get('backfill_import') or {}).get('backfill_digest'),
             },
         )
         return _payload(
@@ -425,6 +428,11 @@ def _read_json(path: Path) -> dict[str, object]:
 
 def _canonical_json(value: object) -> str:
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(',', ':'))
+
+
+def _runtime_digest(state: dict[str, object]) -> str:
+    payload = {key: value for key, value in state.items() if key != 'runtime_digest'}
+    return 'sha256:' + hashlib.sha256(_canonical_json(payload).encode('utf-8')).hexdigest()
 
 
 def _text(value: object, field: str) -> str:

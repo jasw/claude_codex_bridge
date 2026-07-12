@@ -8,21 +8,35 @@ import re
 from storage.atomic import atomic_write_json, atomic_write_text
 from storage.locks import file_lock
 
-from .planner_feedback import PlannerBackfillProposal, planner_feedback_digest
+from .planner_feedback import (
+    PlannerBackfillProposal,
+    parse_planner_feedback_reply,
+    planner_feedback_digest,
+)
 
 
+TRANSACTION_SCHEMA = 'ccb.plan.planner_backfill_transaction.v2'
+BACKFILL_SCHEMA = 'ccb.plan.planner_backfill.v2'
 _DIGEST_RE = re.compile(r'^sha256:[0-9a-f]{64}$')
 _FILES = ('README.md', 'Roadmap.md', 'TODO.md')
+_TRANSACTION_FIELDS = {
+    'schema', 'schema_version', 'task_set_id', 'task_set_revision',
+    'closure_intent_id', 'planner_feedback_digest', 'preimage_plan_revision',
+    'target_plan_revision', 'targets', 'transaction_digest',
+}
+_TARGET_FIELDS = {
+    'path', 'preimage_digest', 'preimage_exists', 'preimage_text',
+    'target_digest', 'target_text',
+}
+_BACKFILL_FIELDS = {
+    'schema', 'schema_version', 'authority', 'proposal', 'transaction_digest',
+    'target_plan_revision', 'transaction_path', 'backfill_digest',
+}
 
 
 def current_plan_revision(context, plan_slug: str) -> str:
     root = _plan_root(context, plan_slug)
-    files = []
-    for name in ('README.md', 'brief.md', 'Roadmap.md', 'roadmap.md', 'TODO.md', 'todo.md'):
-        path = root / name
-        if path.is_file():
-            files.append({'path': str(path.relative_to(context.project.project_root)), 'sha256': _file_sha(path)})
-    return _digest({'schema': 'ccb.plan.revision.v1', 'files': files})
+    return _plan_revision_from_texts(context, root, {})
 
 
 def apply_planner_feedback(
@@ -30,127 +44,285 @@ def apply_planner_feedback(
     proposal: PlannerBackfillProposal,
     authority: dict[str, object],
 ) -> dict[str, object]:
-    """Apply a Planner-authored projection using a replayable preimage/target transaction."""
+    """Apply an authenticated, revision-fenced Planner projection transaction."""
     normalized = _authority(proposal, authority)
-    plan_root = _plan_root(context, normalized['plan_slug'])
-    task_set_root = plan_root / 'task-sets' / normalized['task_set_id']
-    task_set_path = task_set_root / 'task-set.json'
-    closure_path = task_set_root / 'closure.json'
-    task_set = _read_json(task_set_path)
-    closure = _read_json(closure_path)
+    plan_root = _plan_root(context, str(normalized['plan_slug']))
+    task_set_root = plan_root / 'task-sets' / str(normalized['task_set_id'])
+    task_set = _read_json(task_set_root / 'task-set.json')
+    closure = _read_json(task_set_root / 'closure.json')
     _validate_source_authority(task_set, closure, proposal, normalized)
-    task_set_root.mkdir(parents=True, exist_ok=True)
-    tx_path = task_set_root / 'planner-backfill.transaction.json'
-    backfill_path = task_set_root / 'planner-backfill.json'
-    with file_lock(task_set_root / 'planner-backfill.lock'):
+    revision = int(normalized['task_set_revision'])
+    tx_path = task_set_root / f'planner-backfill-r{revision}.transaction.json'
+    backfill_path = task_set_root / f'planner-backfill-r{revision}.json'
+    lock_path = task_set_root / f'planner-backfill-r{revision}.lock'
+
+    with file_lock(lock_path):
+        persisted_tx = _read_json(tx_path) if tx_path.is_file() else None
+        expected_tx = _derive_transaction(
+            context,
+            plan_root,
+            proposal,
+            normalized,
+            persisted=persisted_tx,
+        )
+        if persisted_tx is None:
+            if current_plan_revision(context, str(normalized['plan_slug'])) != normalized['expected_plan_revision']:
+                raise ValueError('planner backfill plan revision conflict')
+            atomic_write_json(tx_path, expected_tx)
+        elif persisted_tx != expected_tx:
+            raise ValueError('planner backfill transaction authority conflict')
+
         if backfill_path.is_file():
             existing = _read_json(backfill_path)
-            expected = _backfill_record(proposal, normalized)
-            if any(existing.get(key) != value for key, value in expected.items()):
+            expected = _backfill_record(proposal, normalized, expected_tx, tx_path, context)
+            if existing != expected:
                 raise ValueError('planner backfill conflicts with persisted authority')
+            _validate_projected_targets(context, expected_tx)
+            if current_plan_revision(context, str(normalized['plan_slug'])) != expected_tx['target_plan_revision']:
+                raise ValueError('planner backfill replay target revision conflict')
             return _result(backfill_path, tx_path, existing, idempotent=True)
 
-        transaction = _read_json(tx_path) if tx_path.is_file() else None
-        if transaction is None:
-            observed_revision = current_plan_revision(context, normalized['plan_slug'])
-            if observed_revision != normalized['expected_plan_revision']:
-                raise ValueError('planner backfill plan revision conflict')
-            transaction = _prepare_transaction(context, plan_root, proposal, normalized)
-            atomic_write_json(tx_path, transaction)
-        else:
-            _validate_transaction(transaction, normalized)
-
-        _apply_targets(context, transaction)
-        observed_target = current_plan_revision(context, normalized['plan_slug'])
-        if observed_target != transaction['target_plan_revision']:
+        _apply_targets(context, expected_tx)
+        _validate_projected_targets(context, expected_tx)
+        observed_target = current_plan_revision(context, str(normalized['plan_slug']))
+        if observed_target != expected_tx['target_plan_revision']:
             raise ValueError('planner backfill target revision conflict')
-        record = _backfill_record(proposal, normalized)
-        record['target_plan_revision'] = observed_target
-        record['transaction_path'] = str(tx_path.relative_to(context.project.project_root))
+        record = _backfill_record(proposal, normalized, expected_tx, tx_path, context)
         atomic_write_json(backfill_path, record)
         return _result(backfill_path, tx_path, record, idempotent=False)
 
 
-def _prepare_transaction(context, plan_root: Path, proposal, authority) -> dict[str, object]:
-    targets = []
+def validate_planner_backfill_record(
+    context,
+    path: Path,
+    *,
+    task_set: dict[str, object],
+    closure: dict[str, object],
+) -> dict[str, object]:
+    record = _read_json(path)
+    if set(record) != _BACKFILL_FIELDS or record.get('schema') != BACKFILL_SCHEMA or record.get('schema_version') != 2:
+        raise ValueError('planner backfill record schema or fields invalid')
+    digest = record.get('backfill_digest')
+    if digest != _semantic_digest(record, omit='backfill_digest'):
+        raise ValueError('planner backfill record digest invalid')
+    authority = record.get('authority')
+    proposal_record = record.get('proposal')
+    if not isinstance(authority, dict) or not isinstance(proposal_record, dict):
+        raise ValueError('planner backfill record authority invalid')
+    proposal_reply = '**planner-backfill.json**\n```json\n' + json.dumps(proposal_record) + '\n```\n'
+    proposal = parse_planner_feedback_reply(proposal_reply)
+    normalized = _authority(proposal, authority)
+    expected_authority = {
+        'task_set_id': task_set['task_set_id'],
+        'task_set_revision': task_set['task_set_revision'],
+        'closure_digest': closure['closure_digest'],
+        'ordered_terminal_evidence_digest': closure['ordered_terminal_evidence_digest'],
+        'expected_plan_revision': (task_set.get('plan_revision') or {}).get('digest'),
+        'plan_slug': task_set['plan_slug'],
+    }
+    if any(authority.get(key) != value for key, value in expected_authority.items()):
+        raise ValueError('planner backfill record task-set authority mismatch')
+    if proposal.frontdesk_notification_required not in {True, False}:
+        raise ValueError('planner backfill notification authority invalid')
+    tx_path = _canonical_relative_path(
+        context,
+        record.get('transaction_path'),
+        expected=_transaction_path(context, task_set),
+        label='planner backfill transaction',
+    )
+    tx = _read_json(tx_path)
+    _validate_transaction_shape(context, tx, task_set=task_set)
+    expected_tx = _derive_transaction(
+        context,
+        _plan_root(context, str(task_set['plan_slug'])),
+        proposal,
+        normalized,
+        persisted=tx,
+    )
+    if tx != expected_tx:
+        raise ValueError('planner backfill transaction is not derivable from proposal authority')
+    if record.get('transaction_digest') != tx['transaction_digest'] or record.get('target_plan_revision') != tx['target_plan_revision']:
+        raise ValueError('planner backfill transaction binding mismatch')
+    _validate_projected_targets(context, tx)
+    if current_plan_revision(context, str(task_set['plan_slug'])) != tx['target_plan_revision']:
+        raise ValueError('planner backfill projected plan revision conflict')
+    return record
+
+
+def _derive_transaction(context, plan_root, proposal, authority, *, persisted):
     sections = _sections(proposal)
-    for name in _FILES:
-        path = plan_root / name
-        before = path.read_text(encoding='utf-8') if path.is_file() else ''
-        after = _replace_marker(before, authority['task_set_id'], name, sections[name])
-        targets.append({
-            'path': str(path.relative_to(context.project.project_root)),
+    expected_paths = _canonical_target_paths(context, plan_root)
+    if persisted is not None:
+        _validate_transaction_shape(
+            context,
+            persisted,
+            task_set={'task_set_id': authority['task_set_id'],
+                      'task_set_revision': authority['task_set_revision'],
+                      'plan_slug': authority['plan_slug']},
+        )
+    targets = []
+    projected = {}
+    preimages = {}
+    preimage_paths = set()
+    for name, path in zip(_FILES, expected_paths):
+        current = path.read_text(encoding='utf-8') if path.is_file() else ''
+        persisted_target = _persisted_target(persisted, str(path.relative_to(context.project.project_root)))
+        if persisted_target is None:
+            before = current
+            preimage_exists = path.is_file()
+            _reject_marker_collision(before, str(authority['task_set_id']), int(authority['task_set_revision']), name)
+        else:
+            current_digest = _text_digest(current)
+            if current_digest not in {persisted_target['target_digest'], persisted_target['preimage_digest']}:
+                raise ValueError(f'planner backfill file revision conflict: {persisted_target["path"]}')
+            before = str(persisted_target['preimage_text'])
+            preimage_exists = persisted_target['preimage_exists']
+            _reject_marker_collision(before, str(authority['task_set_id']), int(authority['task_set_revision']), name)
+        after = _append_owned_block(
+            before,
+            str(authority['task_set_id']),
+            int(authority['task_set_revision']),
+            name,
+            sections[name],
+        )
+        relative = str(path.relative_to(context.project.project_root))
+        target = {
+            'path': relative,
             'preimage_digest': _text_digest(before),
+            'preimage_exists': preimage_exists,
+            'preimage_text': before,
             'target_digest': _text_digest(after),
             'target_text': after,
-        })
-    projected = {item['path']: item['target_text'] for item in targets}
-    revision_files = []
-    for name in ('README.md', 'brief.md', 'Roadmap.md', 'roadmap.md', 'TODO.md', 'todo.md'):
-        path = plan_root / name
-        relative = str(path.relative_to(context.project.project_root))
-        if relative in projected or path.is_file():
-            text = projected[relative] if relative in projected else path.read_text(encoding='utf-8')
-            revision_files.append({'path': relative, 'sha256': hashlib.sha256(text.encode()).hexdigest()})
-    target_revision = _digest({'schema': 'ccb.plan.revision.v1', 'files': revision_files})
-    return {
-        'schema': 'ccb.plan.planner_backfill_transaction.v1',
+        }
+        targets.append(target)
+        preimages[relative] = before
+        if preimage_exists:
+            preimage_paths.add(relative)
+        projected[relative] = after
+    preimage_revision = _plan_revision_from_texts(
+        context, plan_root, preimages, include_paths=preimage_paths
+    )
+    if preimage_revision != authority['expected_plan_revision']:
+        raise ValueError('planner backfill transaction preimage revision conflict')
+    tx = {
+        'schema': TRANSACTION_SCHEMA,
+        'schema_version': 2,
         'task_set_id': authority['task_set_id'],
         'task_set_revision': authority['task_set_revision'],
+        'closure_intent_id': authority['closure_intent_id'],
         'planner_feedback_digest': authority['planner_feedback_digest'],
-        'preimage_plan_revision': authority['expected_plan_revision'],
-        'target_plan_revision': target_revision,
+        'preimage_plan_revision': preimage_revision,
+        'target_plan_revision': _plan_revision_from_texts(context, plan_root, projected),
         'targets': targets,
     }
+    tx['transaction_digest'] = _semantic_digest(tx)
+    return tx
 
 
-def _apply_targets(context, transaction: dict[str, object]) -> None:
-    root = Path(context.project.project_root).resolve()
+def _validate_transaction_shape(context, tx, *, task_set) -> None:
+    if set(tx) != _TRANSACTION_FIELDS or tx.get('schema') != TRANSACTION_SCHEMA or tx.get('schema_version') != 2:
+        raise ValueError('planner backfill transaction schema or fields invalid')
+    if tx.get('task_set_id') != task_set['task_set_id'] or tx.get('task_set_revision') != task_set['task_set_revision']:
+        raise ValueError('planner backfill transaction identity mismatch')
+    if tx.get('transaction_digest') != _semantic_digest(tx, omit='transaction_digest'):
+        raise ValueError('planner backfill transaction digest invalid')
+    targets = tx.get('targets')
+    if not isinstance(targets, list) or len(targets) != 3:
+        raise ValueError('planner backfill transaction targets invalid')
+    plan_root = _plan_root(context, str(task_set['plan_slug']))
+    expected_paths = [str(path.relative_to(context.project.project_root)) for path in _canonical_target_paths(context, plan_root)]
+    observed_paths = []
+    for target in targets:
+        if not isinstance(target, dict) or set(target) != _TARGET_FIELDS:
+            raise ValueError('planner backfill transaction target fields invalid')
+        path = str(target.get('path') or '')
+        _canonical_relative_path(context, path, expected=None, label='planner backfill target')
+        observed_paths.append(path)
+        if not isinstance(target.get('preimage_exists'), bool):
+            raise ValueError('planner backfill transaction target existence invalid')
+        if target.get('preimage_digest') != _text_digest(str(target.get('preimage_text') or '')) or target.get('target_digest') != _text_digest(str(target.get('target_text') or '')):
+            raise ValueError('planner backfill transaction target digest invalid')
+    if observed_paths != expected_paths or len(set(observed_paths)) != 3:
+        raise ValueError('planner backfill transaction target path authority invalid')
+    if (
+        not _DIGEST_RE.fullmatch(str(tx.get('preimage_plan_revision') or ''))
+        or not _DIGEST_RE.fullmatch(str(tx.get('target_plan_revision') or ''))
+    ):
+        raise ValueError('planner backfill transaction plan revision invalid')
+
+
+def _apply_targets(context, transaction) -> None:
+    root = Path(context.project.project_root)
     for item in transaction['targets']:
-        path = (root / item['path']).resolve()
-        if path != root and root not in path.parents:
-            raise ValueError('planner backfill target escapes project root')
+        path = root / item['path']
         current = path.read_text(encoding='utf-8') if path.is_file() else ''
         digest = _text_digest(current)
         if digest == item['target_digest']:
             continue
-        if digest != item['preimage_digest']:
+        if digest != item['preimage_digest'] or path.is_file() is not item['preimage_exists']:
             raise ValueError(f'planner backfill file revision conflict: {item["path"]}')
         atomic_write_text(path, item['target_text'])
 
 
+def _validate_projected_targets(context, transaction) -> None:
+    root = Path(context.project.project_root)
+    for item in transaction['targets']:
+        path = root / item['path']
+        if not path.is_file() or _text_digest(path.read_text(encoding='utf-8')) != item['target_digest']:
+            raise ValueError(f'planner backfill projected target drift: {item["path"]}')
+
+
 def _sections(proposal: PlannerBackfillProposal) -> dict[str, str]:
     refs = [*proposal.decision_refs, *proposal.open_question_refs, *proposal.evidence_refs]
-    brief = '\n'.join([f'### Planner closure: {proposal.task_or_task_set_id}', proposal.brief_summary,
-                       f'- Result: `{proposal.result}`', f'- Next milestone: `{proposal.next_milestone["ref"]}`',
-                       *[f'- Reference: `{value}`' for value in refs]])
+    brief = '\n'.join([
+        f'### Planner closure: {proposal.task_or_task_set_id}',
+        proposal.brief_summary,
+        f'- Result: `{proposal.result}`',
+        f'- Next milestone: `{proposal.next_milestone["ref"]}`',
+        *[f'- Reference: `{value}`' for value in refs],
+    ])
+
     def transitions(title: str, values) -> str:
         lines = [title]
         for item in values:
             lines.extend((f'### {item["id"]}', f'- Status: `{item["status"]}`', str(item['summary'])))
             lines.extend(f'- Evidence: `{ref}`' for ref in item['evidence_refs'])
         return '\n'.join(lines)
-    return {'README.md': brief, 'Roadmap.md': transitions('## Planner closure transitions', proposal.roadmap_transitions),
-            'TODO.md': transitions('## Planner closure TODO transitions', proposal.todo_transitions)}
+
+    return {
+        'README.md': brief,
+        'Roadmap.md': transitions('## Planner closure transitions', proposal.roadmap_transitions),
+        'TODO.md': transitions('## Planner closure TODO transitions', proposal.todo_transitions),
+    }
 
 
-def _replace_marker(text: str, identity: str, name: str, body: str) -> str:
+def _marker(identity: str, revision: int, name: str) -> tuple[str, str]:
     kind = {'README.md': 'brief', 'Roadmap.md': 'roadmap', 'TODO.md': 'todo'}[name]
-    start = f'<!-- ccb-planner-backfill:{identity}:{kind}:start -->'
-    end = f'<!-- ccb-planner-backfill:{identity}:{kind}:end -->'
+    stem = f'ccb-planner-backfill:{identity}:r{revision}:{kind}'
+    return f'<!-- {stem}:start -->', f'<!-- {stem}:end -->'
+
+
+def _reject_marker_collision(text: str, identity: str, revision: int, name: str) -> None:
+    start, end = _marker(identity, revision, name)
+    if start in text or end in text:
+        raise ValueError('planner backfill marker collision')
+
+
+def _append_owned_block(text: str, identity: str, revision: int, name: str, body: str) -> str:
+    _reject_marker_collision(text, identity, revision, name)
+    start, end = _marker(identity, revision, name)
     block = f'{start}\n{body.rstrip()}\n{end}'
-    pattern = re.compile(re.escape(start) + r'.*?' + re.escape(end), re.DOTALL)
-    if pattern.search(text):
-        return pattern.sub(block, text)
     prefix = text.rstrip()
     return (prefix + '\n\n' if prefix else '') + block + '\n'
 
 
-def _authority(proposal, value: dict[str, object]) -> dict[str, object]:
-    required = ('task_set_id', 'task_set_revision', 'closure_intent_id', 'closure_digest',
-                'ordered_terminal_evidence_digest', 'expected_plan_revision', 'planner_job_id',
-                'planner_feedback_digest', 'plan_slug')
-    if set(value) != set(required):
+def _authority(proposal, value) -> dict[str, object]:
+    required = {
+        'task_set_id', 'task_set_revision', 'closure_intent_id', 'closure_digest',
+        'ordered_terminal_evidence_digest', 'expected_plan_revision', 'planner_job_id',
+        'planner_feedback_digest', 'plan_slug',
+    }
+    if not isinstance(value, dict) or set(value) != required:
         raise ValueError('planner backfill authority fields invalid')
     result = dict(value)
     for field in ('closure_digest', 'ordered_terminal_evidence_digest', 'expected_plan_revision', 'planner_feedback_digest'):
@@ -163,15 +335,18 @@ def _authority(proposal, value: dict[str, object]) -> dict[str, object]:
 
 def _validate_source_authority(task_set, closure, proposal, authority) -> None:
     expected = {
-        'task_set_id': authority['task_set_id'], 'task_set_revision': authority['task_set_revision'],
+        'task_set_id': authority['task_set_id'],
+        'task_set_revision': authority['task_set_revision'],
         'ordered_terminal_evidence_digest': authority['ordered_terminal_evidence_digest'],
-        'closure_digest': authority['closure_digest'], 'aggregate_result': proposal.aggregate_result,
+        'closure_digest': authority['closure_digest'],
+        'aggregate_result': proposal.aggregate_result,
     }
-    actual = {key: closure.get(key) for key in expected}
-    if actual != expected or task_set.get('task_set_id') != authority['task_set_id'] or task_set.get('task_set_revision') != authority['task_set_revision']:
+    if {key: closure.get(key) for key in expected} != expected:
         raise ValueError('planner backfill task-set closure authority mismatch')
-    if task_set.get('state') != 'closure_pending':
-        raise ValueError('planner backfill task set is not closure_pending')
+    if task_set.get('task_set_id') != authority['task_set_id'] or task_set.get('task_set_revision') != authority['task_set_revision']:
+        raise ValueError('planner backfill task-set identity mismatch')
+    if task_set.get('state') != 'closure_pending' or task_set.get('plan_slug') != authority['plan_slug']:
+        raise ValueError('planner backfill task set authority mismatch')
     if (task_set.get('plan_revision') or {}).get('digest') != authority['expected_plan_revision']:
         raise ValueError('planner backfill expected plan revision mismatch')
     proposal_expected = {
@@ -188,22 +363,89 @@ def _validate_source_authority(task_set, closure, proposal, authority) -> None:
         raise ValueError('planner backfill required closure evidence ref missing')
 
 
-def _backfill_record(proposal, authority) -> dict[str, object]:
-    record = {'schema': 'ccb.plan.planner_backfill.v1', **authority, 'aggregate_result': proposal.aggregate_result,
-              'result': proposal.result, 'proposal': proposal.to_record()}
-    return json.loads(json.dumps(record, sort_keys=True))
+def _backfill_record(proposal, authority, transaction, tx_path, context) -> dict[str, object]:
+    record = {
+        'schema': BACKFILL_SCHEMA,
+        'schema_version': 2,
+        'authority': json.loads(json.dumps(authority, sort_keys=True)),
+        'proposal': proposal.to_record(),
+        'transaction_digest': transaction['transaction_digest'],
+        'target_plan_revision': transaction['target_plan_revision'],
+        'transaction_path': str(tx_path.relative_to(context.project.project_root)),
+    }
+    record = json.loads(json.dumps(record, sort_keys=True))
+    record['backfill_digest'] = _semantic_digest(record)
+    return record
 
 
-def _validate_transaction(tx, authority) -> None:
-    expected = {key: authority[key] for key in ('task_set_id', 'task_set_revision', 'planner_feedback_digest')}
-    if tx.get('schema') != 'ccb.plan.planner_backfill_transaction.v1' or any(tx.get(k) != v for k, v in expected.items()):
-        raise ValueError('planner backfill transaction authority conflict')
+def _canonical_target_paths(context, plan_root) -> list[Path]:
+    root = Path(context.project.project_root).resolve()
+    paths = [(plan_root / name).resolve() for name in _FILES]
+    if any(path != root and root not in path.parents for path in paths):
+        raise ValueError('planner backfill canonical target escapes project root')
+    return paths
+
+
+def _canonical_relative_path(context, value, *, expected, label) -> Path:
+    raw = str(value or '')
+    relative = Path(raw)
+    if relative.is_absolute() or not raw or raw != relative.as_posix():
+        raise ValueError(f'{label} path invalid')
+    root = Path(context.project.project_root).resolve()
+    resolved = (root / relative).resolve()
+    if resolved != root and root not in resolved.parents:
+        raise ValueError(f'{label} path escapes project root')
+    if expected is not None:
+        expected_resolved = expected.resolve()
+        expected_relative = expected_resolved.relative_to(root).as_posix()
+        if resolved != expected_resolved or raw != expected_relative:
+            raise ValueError(f'{label} path authority mismatch')
+    return resolved
+
+
+def _transaction_path(context, task_set) -> Path:
+    return (
+        Path(context.project.project_root)
+        / 'docs/plantree/plans'
+        / str(task_set['plan_slug'])
+        / 'task-sets'
+        / str(task_set['task_set_id'])
+        / f'planner-backfill-r{task_set["task_set_revision"]}.transaction.json'
+    )
+
+
+def _persisted_target(transaction, path):
+    if transaction is None:
+        return None
+    matches = [item for item in transaction.get('targets', ()) if item.get('path') == path]
+    if len(matches) != 1:
+        raise ValueError('planner backfill persisted target authority invalid')
+    return matches[0]
+
+
+def _plan_revision_from_texts(context, plan_root, projected, *, include_paths=None) -> str:
+    files = []
+    for name in ('README.md', 'brief.md', 'Roadmap.md', 'roadmap.md', 'TODO.md', 'todo.md'):
+        path = plan_root / name
+        relative = str(path.relative_to(context.project.project_root))
+        projected_included = relative in projected and (
+            include_paths is None or relative in include_paths
+        )
+        if projected_included or (relative not in projected and path.is_file()):
+            text = projected[relative] if relative in projected else path.read_text(encoding='utf-8')
+            files.append({'path': relative, 'sha256': hashlib.sha256(text.encode('utf-8')).hexdigest()})
+    return _digest({'schema': 'ccb.plan.revision.v1', 'files': files})
 
 
 def _result(backfill_path, tx_path, record, *, idempotent):
-    return {'status': 'imported', 'idempotent': idempotent,
-            'planner_backfill_path': str(backfill_path), 'transaction_path': str(tx_path),
-            'target_plan_revision': record.get('target_plan_revision')}
+    return {
+        'status': 'imported',
+        'idempotent': idempotent,
+        'planner_backfill_path': str(backfill_path),
+        'transaction_path': str(tx_path),
+        'target_plan_revision': record['target_plan_revision'],
+        'backfill_digest': record['backfill_digest'],
+    }
 
 
 def _plan_root(context, slug) -> Path:
@@ -225,9 +467,24 @@ def _read_json(path):
     return value
 
 
-def _file_sha(path): return hashlib.sha256(path.read_bytes()).hexdigest()
-def _text_digest(text): return 'sha256:' + hashlib.sha256(text.encode('utf-8')).hexdigest()
-def _digest(value): return 'sha256:' + hashlib.sha256(json.dumps(value, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
+def _text_digest(text):
+    return 'sha256:' + hashlib.sha256(text.encode('utf-8')).hexdigest()
 
 
-__all__ = ['apply_planner_feedback', 'current_plan_revision']
+def _semantic_digest(value, *, omit=None):
+    payload = {key: item for key, item in value.items() if key != omit}
+    return _digest(payload)
+
+
+def _digest(value):
+    encoded = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(',', ':')).encode('utf-8')
+    return 'sha256:' + hashlib.sha256(encoded).hexdigest()
+
+
+__all__ = [
+    'BACKFILL_SCHEMA',
+    'TRANSACTION_SCHEMA',
+    'apply_planner_feedback',
+    'current_plan_revision',
+    'validate_planner_backfill_record',
+]
