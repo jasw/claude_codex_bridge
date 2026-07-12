@@ -6,6 +6,8 @@ from pathlib import Path
 
 import pytest
 
+import ccbd.services.dispatcher_runtime.frontdesk_direct_handoff as direct_handoff
+
 from agents.models import (
     AgentRuntime,
     AgentSpec,
@@ -953,6 +955,9 @@ def test_dispatcher_startup_recovery_rebuilds_missing_frontdesk_activation(
     transaction['status'] = 'prepared'
     transaction.pop('committed_at', None)
     transaction_path.write_text(json.dumps(transaction), encoding='utf-8')
+    from cli.services.plan_tasks import find_first_actionable_task
+
+    assert find_first_actionable_task(direct_handoff._context(dispatcher), task_id='frontdesk-auto-1') is None
     calls.clear()
 
     recovered = recover_frontdesk_direct_handoffs(dispatcher)
@@ -963,6 +968,64 @@ def test_dispatcher_startup_recovery_rebuilds_missing_frontdesk_activation(
     assert activation['source'] == 'frontdesk_direct_silence_ask'
     assert calls == [receipt.jobs[0].job_id]
     assert json.loads(transaction_path.read_text(encoding='utf-8'))['status'] == 'committed'
+
+
+def test_dispatcher_frontdesk_prepared_interrupt_recovers_without_source_or_activation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = tmp_path / 'repo-frontdesk-prepared-interrupt'
+    ctx = _bootstrap_test_project(project_root)
+    _create_plan_root(project_root)
+    layout = PathLayout(project_root)
+    config = _frontdesk_planner_config()
+    registry = AgentRegistry(layout, config)
+    registry.upsert(_runtime('frontdesk', project_id=ctx.project_id, layout=layout, pid=101))
+    registry.upsert(_runtime('planner', project_id=ctx.project_id, layout=layout, pid=102))
+    dispatcher = JobDispatcher(layout, config, registry, clock=lambda: '2026-03-18T00:00:00Z')
+    monkeypatch.setattr(
+        'cli.services.frontdesk_intake._start_auto_runner',
+        lambda context, *, activation_id, wait_job_id: {'status': 'started'},
+    )
+    request = MessageEnvelope(
+        project_id=ctx.project_id,
+        to_agent='planner',
+        from_actor='frontdesk',
+        body=_frontdesk_intake_reply() + '\nScope includes a bounded route-mix task set.\n',
+        task_id='act-frontdesk-frontdesk-auto-1',
+        reply_to=None,
+        message_type='ask',
+        delivery_scope=DeliveryScope.SINGLE,
+        silence_on_success=True,
+    )
+    real_atomic_write_json = direct_handoff.atomic_write_json
+
+    def interrupt_after_prepared(path, payload):
+        real_atomic_write_json(path, payload)
+        if payload.get('schema') == direct_handoff._TRANSACTION_SCHEMA and payload.get('status') == 'prepared':
+            raise KeyboardInterrupt('simulated process interruption')
+
+    monkeypatch.setattr(direct_handoff, 'atomic_write_json', interrupt_after_prepared)
+    with pytest.raises(KeyboardInterrupt, match='simulated process interruption'):
+        dispatcher.submit(request)
+    activation_path = project_root / '.ccb/runtime/loops/activations/act-frontdesk-frontdesk-auto-1.json'
+    transaction_path = activation_path.with_name(
+        'act-frontdesk-frontdesk-auto-1.direct-handoff.transaction.json'
+    )
+    assert json.loads(transaction_path.read_text(encoding='utf-8'))['status'] == 'prepared'
+    assert not activation_path.exists()
+    assert not any(
+        task.get('task_id') == 'frontdesk-auto-1'
+        for index_path in project_root.glob('docs/plantree/plans/*/tasks/index.json')
+        for task in json.loads(index_path.read_text(encoding='utf-8')).get('tasks', [])
+    )
+
+    monkeypatch.setattr(direct_handoff, 'atomic_write_json', real_atomic_write_json)
+    recovered = recover_frontdesk_direct_handoffs(dispatcher)
+
+    assert len(recovered) == 1
+    assert activation_path.exists()
+    assert len({job.job_id for job in dispatcher._job_store.list_agent('planner')}) == 1
 
 
 def test_dispatcher_startup_recovery_submits_committed_frontdesk_journal_without_job(
@@ -1011,9 +1074,11 @@ def test_dispatcher_startup_recovery_submits_committed_frontdesk_journal_without
     assert jobs[recovered[0]].request.to_record() == request.to_record()
 
 
-def test_dispatcher_frontdesk_activation_conflict_fails_journal_without_duplicate_job(
+@pytest.mark.parametrize('tamper_kind', ('activation', 'source_task'))
+def test_dispatcher_frontdesk_authority_conflict_fails_journal_without_duplicate_job(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    tamper_kind: str,
 ) -> None:
     project_root = tmp_path / 'repo-frontdesk-activation-conflict'
     ctx = _bootstrap_test_project(project_root)
@@ -1032,7 +1097,7 @@ def test_dispatcher_frontdesk_activation_conflict_fails_journal_without_duplicat
         project_id=ctx.project_id,
         to_agent='planner',
         from_actor='frontdesk',
-        body=_frontdesk_intake_reply(),
+        body=_frontdesk_intake_reply() + '\nScope includes a bounded route-mix task set.\n',
         task_id='act-frontdesk-frontdesk-auto-1',
         reply_to=None,
         message_type='ask',
@@ -1041,11 +1106,22 @@ def test_dispatcher_frontdesk_activation_conflict_fails_journal_without_duplicat
     )
     receipt = dispatcher.submit(request)
     activation_path = project_root / '.ccb/runtime/loops/activations/act-frontdesk-frontdesk-auto-1.json'
-    activation = json.loads(activation_path.read_text(encoding='utf-8'))
-    activation['plan_slug'] = 'conflicting-plan'
-    activation_path.write_text(json.dumps(activation), encoding='utf-8')
+    if tamper_kind == 'activation':
+        activation = json.loads(activation_path.read_text(encoding='utf-8'))
+        activation['plan_slug'] = 'conflicting-plan'
+        activation_path.write_text(json.dumps(activation), encoding='utf-8')
+        error = 'activation identity conflict'
+    else:
+        index_path = project_root / 'docs/plantree/plans/demo-plan/tasks/index.json'
+        index = json.loads(index_path.read_text(encoding='utf-8'))
+        source_task = next(task for task in index['tasks'] if task['task_id'] == 'frontdesk-auto-1')
+        source_task['status'] = 'ready_for_orchestration'
+        source_task['owner'] = 'loop_runner'
+        source_task['next_owner'] = 'orchestrator'
+        index_path.write_text(json.dumps(index), encoding='utf-8')
+        error = 'source task must remain draft'
 
-    with pytest.raises(RuntimeError, match='activation identity conflict'):
+    with pytest.raises((RuntimeError, ValueError), match=error):
         dispatcher.submit(request)
 
     transaction_path = activation_path.with_name(
@@ -1056,6 +1132,141 @@ def test_dispatcher_frontdesk_activation_conflict_fails_journal_without_duplicat
     assert transaction['plan_slug'] == 'demo-plan'
     assert len({job.job_id for job in dispatcher._job_store.list_agent('planner')}) == 1
     assert receipt.jobs[0].job_id in {job.job_id for job in dispatcher._job_store.list_agent('planner')}
+
+
+def test_frontdesk_activation_digest_excludes_time_status_and_submit_results() -> None:
+    first = {
+        'activation_id': 'act-frontdesk-request-1',
+        'project_id': 'project-1',
+        'status': 'direct_ask_pending',
+        'created_at': '2026-03-18T00:00:00Z',
+        'source_job': {
+            'job_id': 'request-1',
+            'agent_name': 'frontdesk',
+            'terminal_status': 'forwarded',
+            'finished_at': None,
+            'reply_sha256': 'abc',
+        },
+        'source_request': {'status': 'ok', 'text': 'exact intake'},
+    }
+    second = {
+        **first,
+        'status': 'planner_submitted',
+        'created_at': '2030-01-01T00:00:00Z',
+        'source_job': {**first['source_job'], 'terminal_status': 'completed', 'finished_at': '2030-01-01T00:00:00Z'},
+        'source_request': {'status': 'settled', 'text': 'exact intake'},
+        'ask': {'job_id': 'job-1', 'status': 'running'},
+        'auto_runner': {'status': 'started', 'pid': 42},
+    }
+
+    assert direct_handoff._activation_digest(first) == direct_handoff._activation_digest(second)
+
+
+@pytest.mark.parametrize('tamper_kind', ('body', 'plan', 'contract', 'source_task', 'activation_record'))
+def test_dispatcher_frontdesk_tampered_journal_cannot_self_certify_transaction(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    tamper_kind: str,
+) -> None:
+    project_root = tmp_path / 'repo-frontdesk-contract-conflict'
+    ctx = _bootstrap_test_project(project_root)
+    _create_plan_root(project_root)
+    layout = PathLayout(project_root)
+    config = _frontdesk_planner_config()
+    registry = AgentRegistry(layout, config)
+    registry.upsert(_runtime('frontdesk', project_id=ctx.project_id, layout=layout, pid=101))
+    registry.upsert(_runtime('planner', project_id=ctx.project_id, layout=layout, pid=102))
+    dispatcher = JobDispatcher(layout, config, registry, clock=lambda: '2026-03-18T00:00:00Z')
+    monkeypatch.setattr(
+        'cli.services.frontdesk_intake._start_auto_runner',
+        lambda context, *, activation_id, wait_job_id: {'status': 'started'},
+    )
+    request = MessageEnvelope(
+        project_id=ctx.project_id,
+        to_agent='planner',
+        from_actor='frontdesk',
+        body=_frontdesk_intake_reply() + '\nScope includes a bounded route-mix task set.\n',
+        task_id='act-frontdesk-frontdesk-auto-1',
+        reply_to=None,
+        message_type='ask',
+        delivery_scope=DeliveryScope.SINGLE,
+        silence_on_success=True,
+    )
+    dispatcher.submit(request)
+    transaction_path = project_root / (
+        '.ccb/runtime/loops/activations/'
+        'act-frontdesk-frontdesk-auto-1.direct-handoff.transaction.json'
+    )
+    transaction = json.loads(transaction_path.read_text(encoding='utf-8'))
+    if tamper_kind == 'body':
+        transaction['request']['body'] += '\ntampered journal body\n'
+    elif tamper_kind == 'plan':
+        transaction['plan_slug'] = 'tampered-plan'
+    elif tamper_kind == 'contract':
+        transaction['planner_contract'] = 'single_task'
+        transaction['source_task_id'] = None
+    elif tamper_kind == 'source_task':
+        transaction['source_task_id'] = 'different-source-task'
+    else:
+        transaction['activation_record']['direct_ask']['body_sha256'] = 'tampered'
+        transaction['activation_digest'] = direct_handoff._activation_digest(transaction['activation_record'])
+    authority_keys = (
+        'project_id', 'activation_id', 'request_id', 'plan_slug', 'request', 'body_bytes',
+        'body_sha256', 'planner_contract', 'source_task_id', 'activation_digest',
+    )
+    transaction['transaction_digest'] = direct_handoff._canonical_digest(
+        {key: transaction[key] for key in authority_keys}
+    )
+    transaction_path.write_text(json.dumps(transaction), encoding='utf-8')
+
+    with pytest.raises(RuntimeError, match='conflict'):
+        dispatcher.submit(request)
+    assert json.loads(transaction_path.read_text(encoding='utf-8'))['status'] == 'failed'
+
+
+@pytest.mark.parametrize('escape_kind', ('parent', 'journal', 'activation', 'lock'))
+def test_dispatcher_frontdesk_rejects_symlink_authority_paths(
+    tmp_path: Path,
+    escape_kind: str,
+) -> None:
+    project_root = tmp_path / f'repo-frontdesk-symlink-{escape_kind}'
+    outside = tmp_path / f'outside-{escape_kind}'
+    outside.mkdir()
+    ctx = _bootstrap_test_project(project_root)
+    _create_plan_root(project_root)
+    layout = PathLayout(project_root)
+    config = _frontdesk_planner_config()
+    registry = AgentRegistry(layout, config)
+    registry.upsert(_runtime('frontdesk', project_id=ctx.project_id, layout=layout, pid=101))
+    registry.upsert(_runtime('planner', project_id=ctx.project_id, layout=layout, pid=102))
+    dispatcher = JobDispatcher(layout, config, registry, clock=lambda: '2026-03-18T00:00:00Z')
+    activations = project_root / '.ccb/runtime/loops/activations'
+    if escape_kind == 'parent':
+        (project_root / '.ccb/runtime').mkdir()
+        (project_root / '.ccb/runtime/loops').symlink_to(outside, target_is_directory=True)
+    else:
+        activations.mkdir(parents=True)
+        target = {
+            'journal': activations / 'act-frontdesk-frontdesk-auto-1.direct-handoff.transaction.json',
+            'activation': activations / 'act-frontdesk-frontdesk-auto-1.json',
+            'lock': activations / 'act-frontdesk-frontdesk-auto-1.lock',
+        }[escape_kind]
+        target.symlink_to(outside / 'authority')
+    request = MessageEnvelope(
+        project_id=ctx.project_id,
+        to_agent='planner',
+        from_actor='frontdesk',
+        body=_frontdesk_intake_reply(),
+        task_id='act-frontdesk-frontdesk-auto-1',
+        reply_to=None,
+        message_type='ask',
+        delivery_scope=DeliveryScope.SINGLE,
+        silence_on_success=True,
+    )
+
+    with pytest.raises((RuntimeError, ValueError), match='symlink'):
+        dispatcher.submit(request)
+    assert list(outside.iterdir()) == []
 
 
 def test_dispatcher_frontdesk_implementation_reply_fails_boundary_guard(

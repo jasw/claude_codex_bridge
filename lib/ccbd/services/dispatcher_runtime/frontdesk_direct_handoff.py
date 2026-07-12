@@ -48,7 +48,7 @@ def submit_frontdesk_direct_handoff(
 
     _validate_shape(dispatcher, request)
     lock_path = _direct_activation_path(dispatcher, str(request.task_id)).with_suffix('.lock')
-    _reject_symlink(lock_path, label='activation lock')
+    _validate_authority_path(dispatcher, lock_path, label='activation lock')
     with file_lock(lock_path):
         handoff = _prepare(dispatcher, request)
         if str(handoff.transaction.get('status') or '') != 'committed':
@@ -71,6 +71,7 @@ def submit_frontdesk_direct_handoff(
 def recover_frontdesk_direct_handoffs(dispatcher) -> tuple[str, ...]:
     recovered: list[str] = []
     root = _direct_activation_path(dispatcher, 'placeholder').parent
+    _validate_authority_path(dispatcher, root, label='activation directory')
     if not root.is_dir():
         return ()
     for path in sorted(root.glob('*.direct-handoff.transaction.json')):
@@ -85,7 +86,7 @@ def recover_frontdesk_direct_handoffs(dispatcher) -> tuple[str, ...]:
             if path != expected_path:
                 raise ValueError('frontdesk direct handoff journal path is not canonical')
             lock_path = _direct_activation_path(dispatcher, str(request.task_id)).with_suffix('.lock')
-            _reject_symlink(lock_path, label='activation lock')
+            _validate_authority_path(dispatcher, lock_path, label='activation lock')
             with file_lock(lock_path):
                 handoff = _prepare(dispatcher, request)
             receipt = dispatcher.submit(request)
@@ -107,7 +108,6 @@ def recover_frontdesk_direct_handoffs(dispatcher) -> tuple[str, ...]:
 
 def _prepare(dispatcher, request: MessageEnvelope) -> _DirectHandoff:
     from cli.services.frontdesk_intake import (
-        _activation_path,
         _load_existing_activation,
         _new_activation,
         _resolve_plan_slug,
@@ -115,54 +115,55 @@ def _prepare(dispatcher, request: MessageEnvelope) -> _DirectHandoff:
 
     _validate_shape(dispatcher, request)
     context = _context(dispatcher)
+    activation_id = str(request.task_id)
+    activation_path = _direct_activation_path(dispatcher, activation_id)
+    transaction_path = _transaction_path(dispatcher, activation_id)
+    _validate_authority_path(dispatcher, activation_path, label='activation')
+    _validate_authority_path(dispatcher, transaction_path, label='transaction journal')
     plan = _resolve_plan_slug(context, SimpleNamespace(plan_slug=None))
     if str(plan.get('status') or '') != 'ok':
         raise dispatcher._dispatch_error(str(plan.get('reason') or 'frontdesk handoff plan resolution failed'))
     plan_slug = str(plan['plan_slug'])
-    activation_id = str(request.task_id)
     request_id = activation_id.removeprefix('act-frontdesk-')
     intake_sha256 = hashlib.sha256(request.body.encode('utf-8')).hexdigest()
     intake_bytes = len(request.body.encode('utf-8'))
-    activation_path = _activation_path(context, activation_id)
-    transaction_path = _transaction_path(dispatcher, activation_id)
-    _reject_symlink(activation_path, label='activation')
-    _reject_symlink(transaction_path, label='transaction journal')
+    expected_activation = _new_activation(
+        context,
+        activation_id=activation_id,
+        plan_slug=plan_slug,
+        request_id=request_id,
+        intake_text=request.body,
+        intake_sha256=intake_sha256,
+        source_request={
+            'status': 'ok',
+            'source_job_id': request_id,
+            'agent_name': 'frontdesk',
+            'project_id': request.project_id,
+            'to_agent': 'planner',
+            'from_actor': 'frontdesk',
+            'message_type': 'ask',
+            'text': request.body,
+            'bytes': intake_bytes,
+            'sha256': intake_sha256,
+        },
+    )
+    expected_activation['source'] = 'frontdesk_direct_silence_ask'
+    expected_activation['status'] = 'direct_ask_pending'
+    expected_activation['direct_ask'] = {
+        'from_actor': 'frontdesk',
+        'target': 'planner',
+        'silence': True,
+        'task_id': activation_id,
+        'body_sha256': intake_sha256,
+        'controller_rewrote_body': False,
+    }
+    expected_source_task_id = request_id if expected_activation.get('planner_contract') == 'task_set' else None
+    if expected_source_task_id is not None:
+        expected_activation['source_task_id'] = expected_source_task_id
     transaction = _read_json_optional(transaction_path)
     if transaction is None:
-        activation = _new_activation(
-            context,
-            activation_id=activation_id,
-            plan_slug=plan_slug,
-            request_id=request_id,
-            intake_text=request.body,
-            intake_sha256=intake_sha256,
-            source_request={
-                'status': 'ok',
-                'source_job_id': request_id,
-                'agent_name': 'frontdesk',
-                'project_id': request.project_id,
-                'to_agent': 'planner',
-                'from_actor': 'frontdesk',
-                'message_type': 'ask',
-                'text': request.body,
-                'bytes': intake_bytes,
-                'sha256': intake_sha256,
-            },
-        )
-        activation['source'] = 'frontdesk_direct_silence_ask'
-        activation['status'] = 'direct_ask_pending'
-        activation['direct_ask'] = {
-            'from_actor': 'frontdesk',
-            'target': 'planner',
-            'silence': True,
-            'task_id': activation_id,
-            'body_sha256': intake_sha256,
-            'controller_rewrote_body': False,
-        }
-        source_task_id = request_id if activation.get('planner_contract') == 'task_set' else None
-        if source_task_id is not None:
-            activation['source_task_id'] = source_task_id
-        activation_digest = _activation_digest(activation)
+        activation = expected_activation
+        activation_digest = _activation_digest(expected_activation)
         authority = {
             'project_id': request.project_id,
             'activation_id': activation_id,
@@ -171,8 +172,8 @@ def _prepare(dispatcher, request: MessageEnvelope) -> _DirectHandoff:
             'request': request.to_record(),
             'body_bytes': intake_bytes,
             'body_sha256': intake_sha256,
-            'planner_contract': activation.get('planner_contract'),
-            'source_task_id': source_task_id,
+            'planner_contract': expected_activation.get('planner_contract'),
+            'source_task_id': expected_source_task_id,
             'activation_digest': activation_digest,
         }
         transaction = {
@@ -187,6 +188,8 @@ def _prepare(dispatcher, request: MessageEnvelope) -> _DirectHandoff:
         transaction_path.parent.mkdir(parents=True, exist_ok=True)
         atomic_write_json(transaction_path, transaction)
     else:
+        if str(transaction.get('status') or '') == 'failed':
+            raise dispatcher._dispatch_error('frontdesk direct handoff journal is failed')
         try:
             _validate_transaction(
                 transaction,
@@ -195,6 +198,7 @@ def _prepare(dispatcher, request: MessageEnvelope) -> _DirectHandoff:
                 request_id=request_id,
                 intake_sha256=intake_sha256,
                 intake_bytes=intake_bytes,
+                expected_activation=expected_activation,
             )
         except Exception as exc:
             _mark_failed(transaction_path, transaction, exc, dispatcher=dispatcher)
@@ -249,7 +253,9 @@ def _ensure_source_task(context, *, plan_slug: str, request_id: str) -> str:
 
     try:
         shown = plan_task(context, SimpleNamespace(action='task-show', task_id=request_id))
-    except ValueError:
+    except ValueError as exc:
+        if str(exc) != f'plan task not found: {request_id}':
+            raise
         plan_task(
             context,
             SimpleNamespace(
@@ -437,6 +443,10 @@ def _transaction_path(dispatcher, activation_id: str) -> Path:
 
 
 def _activation_digest(activation: Mapping[str, object]) -> str:
+    source_job = activation.get('source_job') if isinstance(activation.get('source_job'), Mapping) else {}
+    source_request = (
+        activation.get('source_request') if isinstance(activation.get('source_request'), Mapping) else {}
+    )
     mechanical = {
         key: activation.get(key)
         for key in (
@@ -450,18 +460,35 @@ def _activation_digest(activation: Mapping[str, object]) -> str:
             'plan_slug',
             'request_id',
             'intake_sha256',
-            'source_job',
             'source_intake',
-            'source_request',
             'planner_contract',
             'required_next_output',
             'script_write_rules',
             'expected_task_ids',
             'source_task_id',
             'direct_ask',
-            'created_at',
         )
         if key in activation
+    }
+    mechanical['source_job'] = {
+        key: source_job.get(key)
+        for key in ('job_id', 'agent_name', 'reply_sha256')
+        if key in source_job
+    }
+    mechanical['source_request'] = {
+        key: source_request.get(key)
+        for key in (
+            'source_job_id',
+            'agent_name',
+            'project_id',
+            'to_agent',
+            'from_actor',
+            'message_type',
+            'text',
+            'bytes',
+            'sha256',
+        )
+        if key in source_request
     }
     return _canonical_digest(mechanical)
 
@@ -479,11 +506,14 @@ def _validate_transaction(
     request_id: str,
     intake_sha256: str,
     intake_bytes: int,
+    expected_activation: Mapping[str, object],
 ) -> None:
     if transaction.get('schema') != _TRANSACTION_SCHEMA:
         raise ValueError('frontdesk direct handoff journal schema conflict')
-    if str(transaction.get('status') or '') == 'failed':
-        raise ValueError('frontdesk direct handoff journal is failed')
+    expected_activation_digest = _activation_digest(expected_activation)
+    expected_source_task_id = (
+        request_id if expected_activation.get('planner_contract') == 'task_set' else None
+    )
     expected = {
         'project_id': request.project_id,
         'activation_id': str(request.task_id),
@@ -492,18 +522,25 @@ def _validate_transaction(
         'request': request.to_record(),
         'body_bytes': intake_bytes,
         'body_sha256': intake_sha256,
-        'planner_contract': transaction.get('planner_contract'),
-        'source_task_id': transaction.get('source_task_id'),
-        'activation_digest': transaction.get('activation_digest'),
+        'planner_contract': expected_activation.get('planner_contract'),
+        'source_task_id': expected_source_task_id,
+        'activation_digest': expected_activation_digest,
     }
     for key, value in expected.items():
         if transaction.get(key) != value:
             raise ValueError(f'frontdesk direct handoff journal {key} conflict')
     if transaction.get('transaction_digest') != _canonical_digest(expected):
         raise ValueError('frontdesk direct handoff journal digest conflict')
+    activation_record = transaction.get('activation_record')
+    if not isinstance(activation_record, Mapping):
+        raise ValueError('frontdesk direct handoff journal is missing activation authority')
+    if _activation_digest(activation_record) != expected_activation_digest:
+        raise ValueError('frontdesk direct handoff journal activation_record conflict')
 
 
 def _mark_failed(path: Path, transaction: Mapping[str, object], exc: Exception, *, dispatcher) -> None:
+    if str(transaction.get('status') or '') == 'failed':
+        return
     failed = dict(transaction)
     failed['status'] = 'failed'
     failed['failed_at'] = dispatcher._clock()
@@ -533,7 +570,6 @@ def _message_envelope(record: Mapping[str, object]) -> MessageEnvelope:
 
 
 def _read_json(path: Path) -> dict[str, object]:
-    _reject_symlink(path, label='authority record')
     payload = json.loads(path.read_text(encoding='utf-8'))
     if not isinstance(payload, dict):
         raise ValueError(f'expected JSON object: {path}')
@@ -547,8 +583,19 @@ def _read_json_optional(path: Path) -> dict[str, object] | None:
         return None
 
 
-def _reject_symlink(path: Path, *, label: str) -> None:
-    if path.is_symlink():
+def _validate_authority_path(dispatcher, path: Path, *, label: str) -> None:
+    project_root = Path(dispatcher._layout.project_root).absolute()
+    candidate = Path(path).absolute()
+    try:
+        relative = candidate.relative_to(project_root)
+    except ValueError as exc:
+        raise ValueError(f'frontdesk direct handoff {label} escapes project root') from exc
+    current = project_root
+    for part in relative.parts:
+        if current.is_symlink():
+            raise ValueError(f'frontdesk direct handoff {label} cannot use symlink path components')
+        current = current / part
+    if current.is_symlink():
         raise ValueError(f'frontdesk direct handoff {label} cannot be a symlink')
 
 
