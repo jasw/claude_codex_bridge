@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
 import hashlib
 import json
 from pathlib import Path
@@ -999,6 +1000,19 @@ def test_dispatcher_frontdesk_prepared_interrupt_recovers_without_source_or_acti
         silence_on_success=True,
     )
     real_atomic_write_json = direct_handoff.atomic_write_json
+    real_ensure = direct_handoff.ensure_durable_directory
+    real_lock = direct_handoff.file_lock
+    durability_events: list[str] = []
+
+    def tracking_ensure(path):
+        durability_events.append('durable-directory')
+        return real_ensure(path)
+
+    @contextmanager
+    def tracking_lock(path):
+        durability_events.append('lock')
+        with real_lock(path):
+            yield
 
     def interrupt_after_prepared(path, payload):
         real_atomic_write_json(path, payload)
@@ -1006,8 +1020,11 @@ def test_dispatcher_frontdesk_prepared_interrupt_recovers_without_source_or_acti
             raise KeyboardInterrupt('simulated process interruption')
 
     monkeypatch.setattr(direct_handoff, 'atomic_write_json', interrupt_after_prepared)
+    monkeypatch.setattr(direct_handoff, 'ensure_durable_directory', tracking_ensure)
+    monkeypatch.setattr(direct_handoff, 'file_lock', tracking_lock)
     with pytest.raises(KeyboardInterrupt, match='simulated process interruption'):
         dispatcher.submit(request)
+    assert durability_events[:2] == ['durable-directory', 'lock']
     activation_path = project_root / '.ccb/runtime/loops/activations/act-frontdesk-frontdesk-auto-1.json'
     transaction_path = activation_path.with_name(
         'act-frontdesk-frontdesk-auto-1.direct-handoff.transaction.json'

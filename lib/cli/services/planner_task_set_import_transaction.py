@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 import re
 
-from storage.atomic import atomic_write_json
+from storage.atomic import atomic_write_json, ensure_durable_directory
 from storage.locks import file_lock
 
 
@@ -256,6 +256,8 @@ def _assert_safe_transaction_layout(root: Path, journal: Path, *, create: bool) 
     expected = root / canonical_journal_ref(journal.parent.name)
     if journal != expected or root not in journal.parents:
         raise ValueError('planner task-set import journal layout mismatch')
+    if create:
+        ensure_durable_directory(journal.parent)
     relative_parent = journal.parent.relative_to(root)
     current = root
     for part in relative_parent.parts:
@@ -263,8 +265,6 @@ def _assert_safe_transaction_layout(root: Path, journal: Path, *, create: bool) 
         if current.exists() or current.is_symlink():
             if current.is_symlink() or not current.is_dir():
                 raise ValueError('planner task-set import parent layout is unsafe')
-        elif create:
-            current.mkdir()
         else:
             raise ValueError('planner task-set import parent layout missing')
     for leaf in (journal, journal.with_name(LOCK_NAME), journal.with_name(CONFLICTS_NAME)):

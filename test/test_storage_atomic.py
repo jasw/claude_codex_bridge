@@ -116,6 +116,56 @@ def test_nested_parent_entries_are_synced(monkeypatch, tmp_path: Path) -> None:
     assert synced_directories == [tmp_path, tmp_path / 'one', tmp_path / 'one' / 'two']
 
 
+def test_ensure_durable_directory_orders_parent_syncs(monkeypatch, tmp_path: Path) -> None:
+    target = tmp_path / 'one' / 'two'
+    events: list[Path] = []
+    real_fsync = os.fsync
+
+    def tracking_fsync(fd):
+        events.append(Path(f'/proc/self/fd/{fd}').resolve())
+        return real_fsync(fd)
+
+    monkeypatch.setattr(os, 'fsync', tracking_fsync)
+
+    atomic.ensure_durable_directory(target)
+
+    assert target.is_dir()
+    assert events == [tmp_path, tmp_path / 'one']
+
+
+def test_ensure_durable_directory_existing_is_noop(monkeypatch, tmp_path: Path) -> None:
+    target = tmp_path / 'existing'
+    target.mkdir()
+    monkeypatch.setattr(os, 'fsync', lambda fd: pytest.fail(f'unexpected fsync: {fd}'))
+
+    atomic.ensure_durable_directory(target)
+
+
+def test_ensure_durable_directory_rejects_file_and_symlink_parent(tmp_path: Path) -> None:
+    file_parent = tmp_path / 'file'
+    file_parent.write_text('not a directory')
+    with pytest.raises(NotADirectoryError):
+        atomic.ensure_durable_directory(file_parent / 'child')
+
+    outside = tmp_path / 'outside'
+    outside.mkdir()
+    link = tmp_path / 'link'
+    link.symlink_to(outside, target_is_directory=True)
+    with pytest.raises(ValueError, match='cannot contain symlinks'):
+        atomic.ensure_durable_directory(link / 'child')
+    assert not (outside / 'child').exists()
+
+
+def test_ensure_durable_directory_surfaces_parent_fsync_failure(monkeypatch, tmp_path: Path) -> None:
+    def fail_fsync(_fd):
+        raise OSError('parent fsync failed')
+
+    monkeypatch.setattr(os, 'fsync', fail_fsync)
+
+    with pytest.raises(OSError, match='parent fsync failed'):
+        atomic.ensure_durable_directory(tmp_path / 'new')
+
+
 def test_temp_cleanup_does_not_replace_original_failure(monkeypatch, tmp_path: Path) -> None:
     target = tmp_path / 'state.txt'
     target.write_text('old')

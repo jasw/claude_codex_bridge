@@ -9,7 +9,7 @@ from types import SimpleNamespace
 from typing import Callable, Mapping
 
 from ccbd.api_models import AcceptedJobReceipt, DeliveryScope, JobStatus, MessageEnvelope, SubmitReceipt
-from storage.atomic import atomic_write_json
+from storage.atomic import atomic_write_json, ensure_durable_directory
 from storage.locks import file_lock
 
 
@@ -49,6 +49,7 @@ def submit_frontdesk_direct_handoff(
     _validate_shape(dispatcher, request)
     lock_path = _direct_activation_path(dispatcher, str(request.task_id)).with_suffix('.lock')
     _validate_authority_path(dispatcher, lock_path, label='activation lock')
+    ensure_durable_directory(_transaction_path(dispatcher, str(request.task_id)).parent)
     with file_lock(lock_path):
         handoff = _prepare(dispatcher, request)
         if str(handoff.transaction.get('status') or '') != 'committed':
@@ -87,6 +88,7 @@ def recover_frontdesk_direct_handoffs(dispatcher) -> tuple[str, ...]:
                 raise ValueError('frontdesk direct handoff journal path is not canonical')
             lock_path = _direct_activation_path(dispatcher, str(request.task_id)).with_suffix('.lock')
             _validate_authority_path(dispatcher, lock_path, label='activation lock')
+            ensure_durable_directory(expected_path.parent)
             with file_lock(lock_path):
                 handoff = _prepare(dispatcher, request)
             receipt = dispatcher.submit(request)
@@ -185,7 +187,7 @@ def _prepare(dispatcher, request: MessageEnvelope) -> _DirectHandoff:
             'activation_record': activation,
             'created_at': dispatcher._clock(),
         }
-        transaction_path.parent.mkdir(parents=True, exist_ok=True)
+        ensure_durable_directory(transaction_path.parent)
         atomic_write_json(transaction_path, transaction)
     else:
         if str(transaction.get('status') or '') == 'failed':

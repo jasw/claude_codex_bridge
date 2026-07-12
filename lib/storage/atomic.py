@@ -39,27 +39,39 @@ def _verify_directory_path(fd: int, path: Path) -> None:
         raise RuntimeError(f'atomic write parent directory was replaced: {path}')
 
 
-def _ensure_parent_directory(path: Path) -> None:
+def ensure_durable_directory(path: Path) -> None:
+    path = Path(path).absolute()
     missing: list[Path] = []
     candidate = path
-    while not candidate.exists():
-        missing.append(candidate)
-        if candidate.parent == candidate:
+    while candidate != candidate.parent:
+        if candidate.is_symlink():
+            raise ValueError(f'durable directory path cannot contain symlinks: {candidate}')
+        if candidate.exists():
+            if not candidate.is_dir():
+                raise NotADirectoryError(candidate)
             break
+        missing.append(candidate)
         candidate = candidate.parent
 
     for directory in reversed(missing):
         try:
             directory.mkdir()
         except FileExistsError:
-            if not directory.is_dir():
+            if directory.is_symlink() or not directory.is_dir():
                 raise
-        _fsync_directory(directory.parent)
+        else:
+            _fsync_directory(directory.parent)
+
+    candidate = path
+    while candidate != candidate.parent:
+        if candidate.is_symlink() or not candidate.is_dir():
+            raise RuntimeError(f'durable directory path was replaced: {candidate}')
+        candidate = candidate.parent
 
 
 def atomic_write_text(path: Path, text: str, *, encoding: str = 'utf-8') -> None:
     target = Path(path)
-    _ensure_parent_directory(target.parent)
+    ensure_durable_directory(target.parent)
     directory_fd = _open_directory(target.parent)
     _verify_directory_path(directory_fd, target.parent)
     tmp_name = f'.{target.name}.{secrets.token_hex(8)}.tmp'

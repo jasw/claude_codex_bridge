@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
 from io import StringIO
 import json
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+
+import cli.services.planner_task_set_import_transaction as import_transaction
 
 from cli.context import CliContextBuilder
 from cli.models import ParsedPlanTaskCommand
@@ -193,6 +196,42 @@ def test_planner_task_set_import_transaction_fences_runner_until_commit(tmp_path
         'children': [{'task_id': 'tx-child', 'task_revision': 1, 'task_set': bound['task']['task_set']}],
     })
     assert find_first_actionable_task(context, task_id='tx-child')['record']['task_id'] == 'tx-child'
+
+
+def test_planner_import_journal_directory_is_durable_before_lock(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = _project_with_plan(tmp_path)
+    context = CliContextBuilder().build(
+        ParsedPlanTaskCommand(project=None, action='task-show', task_id='unused', json_output=True),
+        cwd=project_root,
+        bootstrap_if_missing=False,
+    )
+    events: list[str] = []
+    real_ensure = import_transaction.ensure_durable_directory
+    real_lock = import_transaction.file_lock
+
+    def tracking_ensure(path):
+        events.append('durable-directory')
+        return real_ensure(path)
+
+    @contextmanager
+    def tracking_lock(path):
+        events.append('lock')
+        with real_lock(path):
+            yield
+
+    monkeypatch.setattr(import_transaction, 'ensure_durable_directory', tracking_ensure)
+    monkeypatch.setattr(import_transaction, 'file_lock', tracking_lock)
+
+    prepare(context, identity={
+        'planner_job_id': 'job-durable-order',
+        'task_set_id': 'ts-durable-order',
+        'ordered_children': [],
+    })
+
+    assert events[:2] == ['durable-directory', 'lock']
 
 
 def test_planner_task_set_import_transaction_ref_cannot_redirect_runner(tmp_path: Path) -> None:
