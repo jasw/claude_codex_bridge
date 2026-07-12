@@ -1,7 +1,7 @@
 # 029 Planner Feedback And Task-Set Closure
 
 Date: 2026-07-12
-Status: Accepted for planning
+Status: Accepted; implementation integrated, P5 acceptance active
 
 ## Context
 

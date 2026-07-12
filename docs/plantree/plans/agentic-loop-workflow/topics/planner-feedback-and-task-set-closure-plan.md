@@ -1,7 +1,7 @@
 # Planner Feedback And Task-Set Closure Plan
 
 Date: 2026-07-12
-Status: P2 implemented; P3-P5 not started
+Status: P0-P4 integrated; P5 direct acceptance active
 Authority: [Decision 029](../decisions/029-planner-feedback-and-task-set-closure.md)
 
 ## Objective

@@ -71,6 +71,10 @@ recoverable workflow loops.
   Frontdesk-owned silent Planner handoff, two parallel Worker-owned Reviewer
   chains, genuine bounded rework in both nodes, deterministic integration,
   root and round pass, complete dynamic release, and project shutdown.
+- [history/g6c-decision029-integration-and-root8-diagnostic-20260712.md](history/g6c-decision029-integration-and-root8-diagnostic-20260712.md):
+  current G6C implementation checkpoint, rejected root8 real-provider
+  diagnosis, detail-ready reconciliation repair, and the remaining P5/G6/G7
+  acceptance gates.
 - [history/phase1-6-deployment-readiness-p2-frontdesk-pressure-20260708.md](history/phase1-6-deployment-readiness-p2-frontdesk-pressure-20260708.md):
   P2 post-acceptance deployment-readiness evidence for real-project
   frontdesk macro-intake pressure across direct, detail, macro-adjustment, and

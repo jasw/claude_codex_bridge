@@ -32,16 +32,17 @@ Date: 2026-06-24
   project-root authority refs for isolated Workers, compact inline round
   evidence, and zero final dynamic residue. Evidence is in
   [history/decision028-frontdesk-direct-handoff-real-provider-20260712.md](history/decision028-frontdesk-direct-handoff-real-provider-20260712.md).
-- Decision 029 defines the next closure package: Detailer returns macro drift
-  directly to Planner through one restricted silent ask; script-owned task-set
-  authority aggregates final child outcomes; Planner updates Roadmap/Brief/TODO
-  under revision fencing and sends one completion status to Frontdesk. See
+- Decision 029 implementation is integrated through `d941fa2e`: Detailer
+  returns macro drift directly to Planner through one restricted silent ask;
+  script-owned task-set authority aggregates final child outcomes; Planner
+  updates Roadmap/Brief/TODO under revision fencing and sends one completion
+  status to Frontdesk. P5 direct acceptance remains active. See
   [decisions/029-planner-feedback-and-task-set-closure.md](decisions/029-planner-feedback-and-task-set-closure.md)
   and
   [topics/planner-feedback-and-task-set-closure-plan.md](topics/planner-feedback-and-task-set-closure-plan.md).
-- Current work first closes Decision 029 P0-P5, then completes the remaining
-  G6 three/four-group, restart, busy-retain, and provider-profile matrix from
-  fresh opened projects under `/home/bfly/yunwei/test_ccb2`.
+- Current work closes Decision 029 P5 from a fresh root9, then completes the
+  remaining G6 three/four-group, restart, busy-retain, and provider-profile
+  matrix from fresh opened projects under `/home/bfly/yunwei/test_ccb2`.
 
 ## Done
 
@@ -1313,6 +1314,15 @@ root verification, Round Reviewer, release, cleanup, and zero dynamic residue.
 G6 remains active for three/four groups, restart, rework, busy-retain, and
 provider qualification. See
 [history/g6-worker-owned-review-chain-real-provider-20260712.md](history/g6-worker-owned-review-chain-real-provider-20260712.md).
+
+2026-07-12 G6C checkpoint: Decision 029 P0-P4 implementation is integrated
+through `d941fa2e`. Root8 passed L1/L2 and both L4 route outcomes but was
+rejected when L3 repeated after an affirmative Detailer stop contract was not
+recognized. The shared fail-closed matcher and task-lock reconciliation repair
+passes the `280`-test focused gate. Independent review, current-HEAD full source
+tests, and a fresh root9 opened-project run are required before P5 acceptance.
+See
+[history/g6c-decision029-integration-and-root8-diagnostic-20260712.md](history/g6c-decision029-integration-and-root8-diagnostic-20260712.md).
 
 1. Freeze the current one-workgroup and Config V2 source/test baselines and
    land the orchestration-bundle/node-state/evidence contracts from
