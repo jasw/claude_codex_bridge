@@ -9,7 +9,6 @@ from pathlib import Path
 import re
 
 from ccbd.api_models import JobRecord
-from ccbd.socket_server_runtime.protocol import _MAX_REQUEST_BYTES as CCB_REQUEST_MAX_BYTES
 from ccbd.system import parse_utc_timestamp
 from completion.models import (
     CompletionConfidence,
@@ -634,7 +633,7 @@ def _decision029_source_request(value: object) -> None:
         if (
             isinstance(artifact_bytes, bool)
             or not isinstance(artifact_bytes, int)
-            or not 0 <= artifact_bytes <= CCB_REQUEST_MAX_BYTES
+            or artifact_bytes < 0
         ):
             raise ValueError('Decision 029 source_request.body_artifact.bytes is invalid')
         _decision029_hex_digest(artifact.get('sha256'), 'source_request.body_artifact.sha256')

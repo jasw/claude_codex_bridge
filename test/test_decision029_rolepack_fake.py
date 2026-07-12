@@ -9,12 +9,13 @@ from types import SimpleNamespace
 import pytest
 
 from ccbd.api_models import DeliveryScope, JobRecord, JobStatus, MessageEnvelope
-from ccbd.socket_server_runtime.protocol import _MAX_REQUEST_BYTES as CCB_REQUEST_MAX_BYTES
+from cli.services.ask_runtime.submission import _artifact_request_body
 from cli.services.role_command_policy import claude_permission_allowlist, load_role_command_policy
 from cli.services.plan_tasks import plan_task
 from cli.services.task_set_closure import evaluate_task_set_closure
 from provider_execution.fake import FakeProviderAdapter
 from rolepacks.manifest import load_role_manifest
+from storage.paths import PathLayout
 from test_task_set_closure import _complete, _context, _create_set
 
 
@@ -246,11 +247,8 @@ def test_fake_planner_rejects_malformed_source_body_artifact(
         _planner_reply(closure)
 
 
-@pytest.mark.parametrize(
-    'artifact_bytes',
-    (CCB_REQUEST_MAX_BYTES - 1, CCB_REQUEST_MAX_BYTES),
-)
-def test_fake_planner_accepts_source_body_artifact_byte_boundary(
+@pytest.mark.parametrize('artifact_bytes', (0, 2**100))
+def test_fake_planner_matches_nonnegative_integer_artifact_byte_contract(
     tmp_path: Path, artifact_bytes: int,
 ) -> None:
     closure = _generated_closure(tmp_path, ['pass'])
@@ -264,23 +262,26 @@ def test_fake_planner_accepts_source_body_artifact_byte_boundary(
     assert _planner_reply(closure)['aggregate_result'] == 'pass'
 
 
-@pytest.mark.parametrize(
-    'artifact_bytes',
-    (CCB_REQUEST_MAX_BYTES + 1, 2**100),
-)
-def test_fake_planner_rejects_source_body_artifact_above_byte_ceiling(
-    tmp_path: Path, artifact_bytes: int,
+def test_fake_planner_accepts_real_spilled_request_above_rpc_frame_limit(
+    tmp_path: Path,
 ) -> None:
+    body = 'x' * (1024 * 1024 + 1)
+    _stub, produced = _artifact_request_body(
+        PathLayout(tmp_path / 'artifact-project'), body,
+        owner_id='job-frontdesk', force=True,
+    )
+    assert produced is not None
+    assert produced['kind'] == 'ask-request'
+    assert produced['bytes'] == len(body.encode('utf-8')) > 1024 * 1024
     closure = _generated_closure(tmp_path, ['pass'])
     closure['source_request']['body_artifact'] = {
-        'kind': 'ask-request', 'path': '.ccb/artifacts/request.txt',
-        'bytes': artifact_bytes, 'sha256': 'a' * 64,
+        'kind': produced['kind'], 'path': '.ccb/artifacts/request.txt',
+        'bytes': produced['bytes'], 'sha256': produced['sha256'],
     }
     closure['closure_digest'] = _canonical_digest({
         key: item for key, item in closure.items() if key != 'closure_digest'
     })
-    with pytest.raises(ValueError, match='body_artifact.bytes'):
-        _planner_reply(closure)
+    assert _planner_reply(closure)['aggregate_result'] == 'pass'
 
 
 @pytest.mark.parametrize(
