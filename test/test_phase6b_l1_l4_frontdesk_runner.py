@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import importlib.util
 import hashlib
 import json
@@ -8,6 +9,10 @@ import sys
 from pathlib import Path
 
 import pytest
+
+from cli.services.planner_task_set_import_transaction import (
+    transaction_digest as planner_import_transaction_digest,
+)
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -1577,6 +1582,7 @@ def _write_frontdesk_task_set_parent_authority(
     manifest: dict[str, object],
     *,
     mutation: str | None = None,
+    non_ascii: bool = False,
 ) -> str:
     project = Path(str(manifest['project']))
     source_task_id = 'job_da3510bbfe19'
@@ -1584,7 +1590,10 @@ def _write_frontdesk_task_set_parent_authority(
     planner_job_id = 'job_31e0de7cb0fd'
     task_set_id = 'ts-017b23211d6230850c98'
     project_id = 'project-root7'
-    body = f'CCB_REQ_ID: {source_task_id}\nRoute mix intake\n'
+    body = f'CCB_REQ_ID: {source_task_id}\nRoute mix intake'
+    if non_ascii:
+        body += '\n中文请求：保持任务身份。'
+    body += '\n'
     body_bytes = len(body.encode('utf-8'))
     body_sha256 = hashlib.sha256(body.encode('utf-8')).hexdigest()
     planner_reply = '**task-set.json**\n```json\n{"tasks": []}\n```\n'
@@ -1630,7 +1639,13 @@ def _write_frontdesk_task_set_parent_authority(
         import_children.append(
             {'task_id': task_id, 'task_revision': 3, 'task_set': dict(binding)}
         )
-        identity_children.append({'task_id': task_id, 'required': True})
+        identity_children.append(
+            {
+                'task_id': task_id,
+                'required': True,
+                'title': f'任务 {order}' if non_ascii else f'Task {order}',
+            }
+        )
     source_request = {
         'source_job_id': source_task_id,
         'agent_name': 'frontdesk',
@@ -1640,7 +1655,7 @@ def _write_frontdesk_task_set_parent_authority(
         'message_type': 'ask',
         'bytes': body_bytes,
         'sha256': body_sha256,
-        'preview': None,
+        'preview': '中文预览' if non_ascii else None,
         'body_artifact': None,
     }
     activation = {
@@ -1762,7 +1777,7 @@ def _write_frontdesk_task_set_parent_authority(
             f'.ccb/runtime/role-output-imports/{planner_job_id}/'
             'planner-task-set-import.transaction.json'
         ),
-        'transaction_digest': _canonical_digest(import_identity),
+        'transaction_digest': planner_import_transaction_digest(import_identity),
         'identity': import_identity,
         'authority': import_authority,
         'conflicts': [],
@@ -1914,6 +1929,115 @@ def _write_frontdesk_task_set_parent_authority(
     return source_task_id
 
 
+def _write_unrelated_history_authority(runner, manifest: dict[str, object]) -> None:
+    project = Path(str(manifest['project']))
+    current_source = 'job_da3510bbfe19'
+    current_activation_id = f'act-frontdesk-{current_source}'
+    history_source = 'job_history_frontdesk'
+    history_activation_id = f'act-frontdesk-{history_source}'
+    history_planner = 'job_history_planner'
+    history_task_set_id = 'ts-history-complete'
+    activation_dir = project / '.ccb' / 'runtime' / 'loops' / 'activations'
+    current_activation = json.loads(
+        (activation_dir / f'{current_activation_id}.json').read_text(encoding='utf-8')
+    )
+    activation = copy.deepcopy(current_activation)
+    activation.update(
+        activation_id=history_activation_id,
+        request_id=history_source,
+        source_task_id=history_source,
+    )
+    activation['source_job']['job_id'] = history_source
+    activation['source_request']['source_job_id'] = history_source
+    activation['direct_ask']['task_id'] = history_activation_id
+    activation['ask']['job_id'] = history_planner
+    runner._write_json(activation_dir / f'{history_activation_id}.json', activation)
+
+    current_admission = json.loads(
+        (
+            activation_dir / f'{current_activation_id}.direct-handoff.transaction.json'
+        ).read_text(encoding='utf-8')
+    )
+    admission = copy.deepcopy(current_admission)
+    admission.update(
+        activation_id=history_activation_id,
+        request_id=history_source,
+        source_task_id=history_source,
+        activation_digest=_frontdesk_activation_digest(activation),
+        activation_record=activation,
+    )
+    admission['request']['task_id'] = history_activation_id
+    admission_authority = {
+        key: admission[key]
+        for key in (
+            'project_id', 'activation_id', 'request_id', 'plan_slug', 'request',
+            'body_bytes', 'body_sha256', 'planner_contract', 'source_task_id',
+            'activation_digest',
+        )
+    }
+    admission['transaction_digest'] = _canonical_digest(admission_authority, prefixed=True)
+    runner._write_json(
+        activation_dir / f'{history_activation_id}.direct-handoff.transaction.json',
+        admission,
+    )
+
+    current_task_set = json.loads(
+        (
+            project / 'docs' / 'plantree' / 'plans' / runner.PLAN_SLUG
+            / 'task-sets' / 'ts-017b23211d6230850c98' / 'task-set.json'
+        ).read_text(encoding='utf-8')
+    )
+    task_set = copy.deepcopy(current_task_set)
+    task_set.update(task_set_id=history_task_set_id, source_task_id=history_source)
+    task_set['source_request']['source_job_id'] = history_source
+    task_set['planner_job']['job_id'] = history_planner
+    runner._write_json(
+        project / 'docs' / 'plantree' / 'plans' / runner.PLAN_SLUG
+        / 'task-sets' / history_task_set_id / 'task-set.json',
+        task_set,
+    )
+
+    current_import = json.loads(
+        (
+            project / '.ccb' / 'runtime' / 'role-output-imports' / 'job_31e0de7cb0fd'
+            / 'planner-task-set-import.transaction.json'
+        ).read_text(encoding='utf-8')
+    )
+    planner_import = copy.deepcopy(current_import)
+    identity = planner_import['identity']
+    identity.update(
+        activation_id=history_activation_id,
+        source_task_id=history_source,
+        planner_job_id=history_planner,
+        task_set_id=history_task_set_id,
+    )
+    identity['source_request']['source_job_id'] = history_source
+    identity['source_job']['job_id'] = history_source
+    authority = planner_import['authority']
+    authority.update(
+        task_set_id=history_task_set_id,
+        task_set=task_set,
+        source_task_id=history_source,
+    )
+    for child in authority['children']:
+        child['task_set']['task_set_id'] = history_task_set_id
+    planner_import['journal_ref'] = (
+        f'.ccb/runtime/role-output-imports/{history_planner}/'
+        'planner-task-set-import.transaction.json'
+    )
+    planner_import['transaction_digest'] = planner_import_transaction_digest(identity)
+    runner._write_json(
+        project / planner_import['journal_ref'],
+        planner_import,
+    )
+    current_reply = (
+        project / '.ccb' / 'ccbd' / 'artifacts' / 'text' / 'completion-reply'
+        / 'job_31e0de7cb0fd-art_root7.txt'
+    )
+    history_reply = current_reply.with_name(f'{history_planner}-art_history.txt')
+    history_reply.write_bytes(current_reply.read_bytes())
+
+
 def test_authoritative_frontdesk_task_set_source_parent_is_not_unexpected(tmp_path: Path) -> None:
     runner = _load_runner()
     _root, manifest = _materialize(tmp_path)
@@ -1932,6 +2056,43 @@ def test_root7_schema_frontdesk_task_set_source_parent_is_controlled(tmp_path: P
     assert runner.controlled_task_set_source_parent_ids(manifest) == {source_task_id}
     assert runner.unexpected_plan_task_ids(manifest) == []
     runner.validate_sequence_task_set_only(manifest)
+
+
+def test_non_ascii_planner_import_digest_uses_production_rule(tmp_path: Path) -> None:
+    runner = _load_runner()
+    _root, manifest = _materialize(tmp_path)
+    source_task_id = _write_frontdesk_task_set_parent_authority(
+        runner,
+        manifest,
+        non_ascii=True,
+    )
+
+    assert runner.controlled_task_set_source_parent_ids(manifest) == {source_task_id}
+
+
+def test_unrelated_complete_authority_history_does_not_shadow_current_parent(
+    tmp_path: Path,
+) -> None:
+    runner = _load_runner()
+    _root, manifest = _materialize(tmp_path)
+    source_task_id = _write_frontdesk_task_set_parent_authority(runner, manifest)
+    _write_unrelated_history_authority(runner, manifest)
+
+    assert runner.controlled_task_set_source_parent_ids(manifest) == {source_task_id}
+    assert runner.unexpected_plan_task_ids(manifest) == []
+
+
+def test_second_import_matching_current_identity_is_rejected(tmp_path: Path) -> None:
+    runner = _load_runner()
+    _root, manifest = _materialize(tmp_path)
+    source_task_id = _write_frontdesk_task_set_parent_authority(
+        runner,
+        manifest,
+        mutation='duplicate_import',
+    )
+
+    assert runner.controlled_task_set_source_parent_ids(manifest) == set()
+    assert runner.unexpected_plan_task_ids(manifest) == [source_task_id]
 
 
 @pytest.mark.parametrize(
