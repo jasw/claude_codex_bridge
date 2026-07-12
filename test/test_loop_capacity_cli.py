@@ -2850,9 +2850,14 @@ def test_loop_runner_once_explicit_project_from_outer_cwd_submits_orchestrator_a
     assert 'plan task-artifact' not in message
 
 
+@pytest.mark.parametrize(
+    'failure',
+    [RuntimeError('connection lost after submit boundary'), ValueError('request validation failed')],
+)
 def test_loop_runner_orchestrator_submit_failure_reuses_activation_identity_without_duplicate(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    failure: Exception,
 ) -> None:
     project_root = _project_with_loop_capacity(tmp_path, monkeypatch)
     _add_ready_plan_task(
@@ -2869,7 +2874,7 @@ def test_loop_runner_orchestrator_submit_failure_reuses_activation_identity_with
         def submit(self, envelope) -> dict:
             submitted.append(envelope)
             assert isinstance(envelope.body_artifact, dict)
-            raise RuntimeError('connection lost after submit boundary')
+            raise failure
 
     monkeypatch.setattr(
         ask_service,
@@ -2877,13 +2882,14 @@ def test_loop_runner_orchestrator_submit_failure_reuses_activation_identity_with
         lambda context, allow_restart_stale, request_fn: request_fn(_FailingClient()),
     )
 
-    with pytest.raises(RuntimeError, match='connection lost after submit boundary'):
+    with pytest.raises(type(failure), match=str(failure)):
         loop_runner_once(context, command, services=SimpleNamespace(submit_ask=ask_service.submit_ask))
 
     activation_paths = sorted((project_root / '.ccb' / 'runtime' / 'loops' / 'activations').glob('act-*.json'))
     assert len(activation_paths) == 1
     activation = json.loads(activation_paths[0].read_text(encoding='utf-8'))
     assert activation['submission']['status'] == 'unknown'
+    assert activation['submission']['error'] == f'{type(failure).__name__}: {failure}'
     assert len(submitted) == 1
 
     payload = loop_runner_once(
@@ -2898,8 +2904,50 @@ def test_loop_runner_orchestrator_submit_failure_reuses_activation_identity_with
 
     assert payload['loop_runner_status'] == 'paused'
     assert payload['action'] == 'activation_submission_unknown'
+    assert payload['reason'] == 'activation ask has no receipt authority; submission outcome requires manual audit'
     assert payload['activation_id'] == activation['activation_id']
     assert len(list((project_root / '.ccb' / 'runtime' / 'loops' / 'activations').glob('act-*.json'))) == 1
+    assert len(submitted) == 1
+
+
+@pytest.mark.parametrize('interrupt', [KeyboardInterrupt('stop'), SystemExit('stop')])
+def test_loop_runner_orchestrator_interrupt_preserves_prepared_authority_without_duplicate(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    interrupt: BaseException,
+) -> None:
+    project_root = _project_with_loop_capacity(tmp_path, monkeypatch)
+    _add_ready_plan_task(project_root, task_id='task-runner')
+    command = ParsedLoopRunnerCommand(project=None, once=True, timeout_s=11.0, json_output=True)
+    context = CliContextBuilder().build(command, cwd=project_root, bootstrap_if_missing=False)
+    submitted: list[object] = []
+
+    def interrupted_submit(_context, ask_command):
+        submitted.append(ask_command)
+        raise interrupt
+
+    with pytest.raises(type(interrupt), match='stop'):
+        loop_runner_once(context, command, services=SimpleNamespace(submit_ask=interrupted_submit))
+
+    activation_paths = sorted((project_root / '.ccb' / 'runtime' / 'loops' / 'activations').glob('act-*.json'))
+    assert len(activation_paths) == 1
+    activation = json.loads(activation_paths[0].read_text(encoding='utf-8'))
+    assert activation['submission'] == {'status': 'prepared', 'target': 'orchestrator'}
+
+    payload = loop_runner_once(
+        context,
+        command,
+        services=SimpleNamespace(
+            submit_ask=lambda *_args, **_kwargs: (_ for _ in ()).throw(
+                AssertionError('prepared submission must not be duplicated')
+            )
+        ),
+    )
+
+    assert payload['loop_runner_status'] == 'paused'
+    assert payload['action'] == 'activation_submission_unknown'
+    assert payload['reason'] == 'activation ask has no receipt authority; submission outcome requires manual audit'
+    assert payload['submission'] == {'status': 'prepared', 'target': 'orchestrator'}
     assert len(submitted) == 1
 
 

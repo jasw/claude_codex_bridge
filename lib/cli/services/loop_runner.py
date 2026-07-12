@@ -732,7 +732,7 @@ def _activate_orchestrator(context, command, deps, task: dict[str, object]) -> d
                 inline_request=False,
             ),
         )
-    except BaseException as exc:
+    except Exception as exc:
         activation['submission'] = {
             'status': 'unknown',
             'target': target,
@@ -1975,7 +1975,7 @@ def _consume_existing_activation_for_task(
                 'project_id': context.project.project_id,
                 'project_root': str(context.project.project_root),
                 'action': 'activation_submission_unknown',
-                'reason': 'activation ask submission may have crossed the daemon boundary without a receipt',
+                'reason': 'activation ask has no receipt authority; submission outcome requires manual audit',
                 'task_id': task_id,
                 'task_status': record.get('status'),
                 'activation_id': activation.get('activation_id'),
