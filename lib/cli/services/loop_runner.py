@@ -2146,7 +2146,9 @@ def _task_detailer_message(activation: dict[str, object]) -> str:
     return (
         'Role: task_detailer\n'
         f"Activation id: {activation.get('activation_id')}\n"
+        f"Activation evidence: .ccb/runtime/loops/activations/{activation.get('activation_id')}.json\n"
         f"Task: {activation.get('task_id')}\n"
+        f"Task revision: {activation.get('task_revision')}\n"
         f"Status: {activation.get('task_status')}\n"
         f"Reason: {activation.get('reason_for_activation')}\n"
         f"Plan brief ref: {activation.get('plan_brief_ref')}\n"
@@ -2157,12 +2159,15 @@ def _task_detailer_message(activation: dict[str, object]) -> str:
         f"Detail-ready stop contract: {activation.get('detail_ready_stop_contract')}\n\n"
         'Required next output:\n'
         '- task-scoped detail design, stable brief-update summary, and detail packet manifest\n'
-        '- detail readiness recommendation: detail_ready|needs_clarification|blocked|not_ready\n'
-        '- macro-adjustment request only as an artifact/ref when macro assumptions need planner review\n'
+        '- detail result: local_detail_ready|planner_replan_required|needs_clarification|blocked\n'
+        '- detail readiness recommendation: detail_ready|planner_replan_required|needs_clarification|blocked\n'
+        '- planner_replan_required must use the sole managed direct silent Planner handoff with ccb.detailer.replan_request.v1\n'
+        '- the activation record contains the current source Detailer job id required by that request\n'
         f'{detail_ready_stop_guidance}\n'
         'Authority boundary:\n'
         '- reply only with task-scoped detail artifact content and recommendations\n'
-        '- do not run ccb, ccb_test, ccb plan, ccb loop, ccb ask, wrapper commands, or provider/runtime mutation commands\n'
+        '- do not run ccb, ccb_test, ccb plan, ccb loop, generic ccb ask, wrapper commands, or provider/runtime mutation commands\n'
+        '- the only command capability is the versioned direct silent Planner replan handoff; do not chain, wait, watch, or poll\n'
         '- supervisor/runner scripts own detail artifact import and task status transitions\n'
         '- do not edit roadmap, task index, status, current_loop, runtime capacity, or tmux state directly\n'
         '- do not write supervisor import files into the project tree for later self-import\n'

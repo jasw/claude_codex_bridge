@@ -31,6 +31,7 @@ FRONTDESK_ROLE_ROOT = (
     / 'drafts'
     / 'agentroles.ccb_frontdesk'
 )
+TASK_DETAILER_ROLE_ROOT = FRONTDESK_ROLE_ROOT.parent / 'agentroles.ccb_task_detailer'
 
 
 def _spec(
@@ -67,6 +68,14 @@ def _install_frontdesk_role(tmp_path: Path, monkeypatch) -> None:
     installed = role_store / 'installed' / 'agentroles.ccb_frontdesk' / 'current'
     installed.parent.mkdir(parents=True, exist_ok=True)
     shutil.copytree(FRONTDESK_ROLE_ROOT, installed)
+
+
+def _install_task_detailer_role(tmp_path: Path, monkeypatch) -> None:
+    role_store = tmp_path / '.roles'
+    monkeypatch.setenv('AGENT_ROLES_STORE', str(role_store))
+    installed = role_store / 'installed' / 'agentroles.ccb_task_detailer' / 'current'
+    installed.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copytree(TASK_DETAILER_ROLE_ROOT, installed)
 
 
 def test_build_hook_command_includes_completion_dir_and_workspace(tmp_path: Path) -> None:
@@ -519,6 +528,47 @@ def test_prepare_provider_workspace_rejects_codex_frontdesk_without_managed_capa
             agent_name='frontdesk',
             refresh_profile=True,
         )
+
+
+def test_prepare_provider_workspace_materializes_task_detailer_codex_replan_capability(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    _install_task_detailer_role(tmp_path, monkeypatch)
+    project_root = tmp_path / 'repo-detailer'
+    workspace = project_root / 'workspace'
+    (project_root / '.ccb').mkdir(parents=True)
+    (project_root / '.ccb' / 'ccb.config').write_text(
+        'task_detailer:codex; planner:codex\n',
+        encoding='utf-8',
+    )
+
+    prepare_provider_workspace(
+        layout=PathLayout(project_root),
+        spec=_spec('task_detailer', provider='codex', role='agentroles.ccb_task_detailer'),
+        workspace_path=workspace,
+        completion_dir=(
+            project_root
+            / '.ccb'
+            / 'agents'
+            / 'task_detailer'
+            / 'provider-runtime'
+            / 'codex'
+            / 'completion'
+        ),
+        agent_name='task_detailer',
+        refresh_profile=True,
+    )
+
+    home = project_root / '.ccb' / 'agents' / 'task_detailer' / 'provider-state' / 'codex' / 'home'
+    config = tomllib.loads((home / 'config.toml').read_text(encoding='utf-8'))
+    assert config['approval_policy'] == 'never'
+    assert config['sandbox_mode'] == 'read-only'
+    role_server = config['mcp_servers']['ccb_role_command']
+    assert role_server['enabled_tools'] == ['ccb_task_detailer_replan_planner']
+    assert role_server['tools']['ccb_task_detailer_replan_planner']['approval_mode'] == 'approve'
+    assert role_server['env']['CCB_CALLER_ACTOR'] == 'task_detailer'
+    assert not (home / 'skills' / 'ask' / 'SKILL.md').exists()
 
 
 def test_prepare_provider_workspace_allows_codex_role_with_empty_command_allowlist(

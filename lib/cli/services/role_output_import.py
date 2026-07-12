@@ -158,7 +158,13 @@ def _consume_job(context, command, deps, *, job_id: str, activation: dict[str, o
         return _blocked_payload(context, job_id=job_id, agent_name=agent_name, reason='missing_reply')
     normalized_agent = _base_agent_name(agent_name)
     stale_activation = _stale_activation_revision(context, deps, activation=activation)
-    if stale_activation is not None:
+    accepted_detailer_replan = (
+        _accepted_detailer_replan_intent(context, source_job_id=job_id)
+        if normalized_agent == 'task_detailer'
+        and _task_detailer_readiness(reply) == 'planner_replan_required'
+        else None
+    )
+    if stale_activation is not None and accepted_detailer_replan is None:
         return _blocked_payload(
             context,
             job_id=job_id,
@@ -1352,6 +1358,16 @@ def _consume_task_detailer(
         reply,
         detail_ready_stop_contract=activation.get('detail_ready_stop_contract') if isinstance(activation, dict) else None,
     )
+    if str(parsed.get('result') or '') == 'planner_replan_required':
+        return _consume_task_detailer_replan_feedback(
+            context,
+            deps,
+            snapshot=snapshot,
+            parsed=parsed,
+            reply=reply,
+            job_id=job_id,
+            task_id=task_id,
+        )
     if (
         parsed.get('status') == 'blocked'
         and parsed.get('reason') == 'task_detailer_reply_not_detail_ready'
@@ -1484,6 +1500,87 @@ def _consume_task_detailer(
             },
             'role_output_import': record,
             'next_activation': 'orchestrator',
+        },
+    )
+
+
+def _consume_task_detailer_replan_feedback(
+    context,
+    deps,
+    *,
+    snapshot: dict[str, object],
+    parsed: dict[str, object],
+    reply: str,
+    job_id: str,
+    task_id: str,
+) -> dict[str, object]:
+    intent = _accepted_detailer_replan_intent(context, source_job_id=job_id)
+    if intent is None:
+        return _blocked_payload(
+            context,
+            job_id=job_id,
+            agent_name=str(snapshot.get('agent_name') or ''),
+            reason='task_detailer_planner_replan_direct_handoff_missing',
+            evidence={'task_id': task_id, 'result': 'planner_replan_required'},
+        )
+    shown = deps.plan_task(context, SimpleNamespace(action='task-show', task_id=task_id))
+    task = shown.get('task') if isinstance(shown.get('task'), dict) else {}
+    feedback = task.get('replan_feedback') if isinstance(task.get('replan_feedback'), dict) else {}
+    if (
+        feedback.get('request_identity') != intent.get('request_identity')
+        or feedback.get('source_detailer_job_id') != job_id
+        or int(task.get('task_revision') or 0) < int(feedback.get('accepted_task_revision') or 0)
+    ):
+        return _blocked_payload(
+            context,
+            job_id=job_id,
+            agent_name=str(snapshot.get('agent_name') or ''),
+            reason='task_detailer_planner_replan_authority_mismatch',
+            evidence={
+                'task_id': task_id,
+                'task_status': task.get('status'),
+                'next_owner': task.get('next_owner'),
+                'request_identity': intent.get('request_identity'),
+            },
+        )
+    record = _log_import(
+        context,
+        {
+            'action': 'imported_task_detailer_replan_feedback',
+            'status': 'ok',
+            'source_job': _job_trace(snapshot, reply),
+            'task_id': task_id,
+            'result': 'planner_replan_required',
+            'request_identity': intent.get('request_identity'),
+            'detail_digest': intent.get('detail_digest'),
+            'macro_impact_digest': intent.get('macro_impact_digest'),
+            'planner_job_id': intent.get('planner_job_id'),
+            'intent_path': intent.get('_path'),
+            'detail_sections': {
+                'detail_design_present': bool(parsed.get('detail_design')),
+                'detail_summary_present': bool(parsed.get('detail_summary')),
+                'detail_packet_present': bool(parsed.get('detail_packet')),
+            },
+        },
+    )
+    return _base_payload(
+        context,
+        loop_runner_status='pending',
+        action='imported_task_detailer_replan_feedback',
+        job_id=job_id,
+        agent_name=str(snapshot.get('agent_name') or ''),
+        extra={
+            'task_id': task_id,
+            'task_status': task.get('status'),
+            'next_owner': task.get('next_owner'),
+            'request_identity': intent.get('request_identity'),
+            'planner_job_id': intent.get('planner_job_id'),
+            'role_output_import': record,
+            'next_activation': (
+                'planner'
+                if str(task.get('status') or '') == 'replan_required'
+                else str(task.get('next_owner') or 'inspect')
+            ),
         },
     )
 
@@ -2242,7 +2339,8 @@ def _parse_task_detailer_reply(
         missing.append('detail-packet.manifest.json section')
     if missing:
         return {'status': 'blocked', 'reason': 'task_detailer_reply_missing_required_sections', 'missing_fields': missing}
-    effective_readiness = readiness
+    result = 'local_detail_ready' if readiness in {'detail_ready', 'local_detail_ready'} else readiness
+    effective_readiness = 'detail_ready' if readiness == 'local_detail_ready' else readiness
     contract_status = ''
     if isinstance(detail_ready_stop_contract, dict):
         contract_status = str(detail_ready_stop_contract.get('status') or '').strip().lower()
@@ -2252,6 +2350,16 @@ def _parse_task_detailer_reply(
         and contract_status == 'detail_ready'
     ):
         effective_readiness = 'detail_ready'
+    if effective_readiness == 'planner_replan_required':
+        return {
+            'status': 'ok',
+            'result': 'planner_replan_required',
+            'readiness': readiness,
+            'detail_design': detail_design,
+            'detail_summary': detail_summary,
+            'detail_packet': detail_packet,
+            'controller_expected_stop': controller_expected_stop or None,
+        }
     if effective_readiness != 'detail_ready':
         return {
             'status': 'blocked',
@@ -2264,6 +2372,7 @@ def _parse_task_detailer_reply(
         }
     return {
         'status': 'ok',
+        'result': result or 'local_detail_ready',
         'detail_design': detail_design,
         'detail_summary': detail_summary,
         'detail_packet': detail_packet,
@@ -3190,6 +3299,33 @@ def _activation_for_job(context, job_id: str) -> dict[str, object] | None:
         if str(ask.get('job_id') or '').strip() == job_id:
             return activation
     return None
+
+
+def _accepted_detailer_replan_intent(context, *, source_job_id: str) -> dict[str, object] | None:
+    root = Path(context.project.project_root) / '.ccb' / 'runtime' / 'detailer-replan'
+    if not root.is_dir():
+        return None
+    matches: list[dict[str, object]] = []
+    for path in sorted(root.glob('*.json')):
+        try:
+            payload = json.loads(path.read_text(encoding='utf-8'))
+        except (FileNotFoundError, json.JSONDecodeError):
+            continue
+        if not isinstance(payload, dict):
+            continue
+        if str(payload.get('source_detailer_job_id') or '') != source_job_id:
+            continue
+        if str(payload.get('status') or '') not in {
+            'authority_accepted',
+            'planner_submitted',
+            'planner_submitted_runner_start_failed',
+        }:
+            continue
+        payload['_path'] = str(path)
+        matches.append(payload)
+    if len(matches) > 1:
+        raise ValueError(f'multiple accepted Detailer replan intents reference source job {source_job_id}')
+    return matches[0] if matches else None
 
 
 def _activation_already_satisfied(context, deps, *, activation: dict[str, object], target: str) -> bool:

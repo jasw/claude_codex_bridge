@@ -1510,6 +1510,29 @@ def test_frontdesk_rolepack_forbids_direct_project_artifact_implementation() -> 
     assert "<<'EOF'" not in frontdesk_text
 
 
+def test_task_detailer_rolepack_forbids_generic_commands_and_allows_only_planner_replan() -> None:
+    root = (
+        REPO_ROOT
+        / 'docs'
+        / 'plantree'
+        / 'plans'
+        / 'agentic-loop-workflow'
+        / 'drafts'
+        / 'agentroles.ccb_task_detailer'
+    )
+    role = load_role_manifest(root)
+    policy = load_role_command_policy(role)
+
+    assert role.table('permissions')['write_files'] is False
+    assert policy is not None
+    assert policy.generic_shell is False
+    assert policy.generic_ccb is False
+    assert policy.supported_providers == ('codex', 'claude')
+    assert policy.provider_tools == (('codex', 'ccb_task_detailer_replan_planner'),)
+    assert policy.allowed_effects == ('detailer_planner_replan_handoff',)
+    assert len(policy.allowed) == 1
+
+
 def test_legacy_ccb_store_migrates_to_spec_owned_store(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv('XDG_DATA_HOME', str(tmp_path / 'xdg-data'))
     monkeypatch.setenv('AGENT_ROLES_STORE', str(tmp_path / '.roles'))

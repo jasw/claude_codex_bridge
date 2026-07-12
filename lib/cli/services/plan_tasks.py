@@ -129,7 +129,7 @@ _STATUS_EDGES = {
     },
     'running': {'running', 'partial', 'replan_required', 'done', 'blocked'},
     'partial': {'partial', 'replan_required', 'done'},
-    'replan_required': {'replan_required', 'draft'},
+    'replan_required': {'replan_required', 'draft', 'ready_for_orchestration'},
     'blocked': {'blocked', 'draft'},
     'done': {'done'},
 }
@@ -143,6 +143,8 @@ def plan_task(context, command) -> dict[str, object]:
         return _task_artifact(context, command)
     if action == 'task-status':
         return _task_status(context, command)
+    if action == 'task-accept-detailer-replan':
+        return _task_accept_detailer_replan(context, command)
     if action == 'task-bind-loop':
         return _task_bind_loop(context, command)
     if action == 'task-import-round':
@@ -405,6 +407,107 @@ def _task_status(context, command) -> dict[str, object]:
         _replace_record(task['tasks_root'], task['index'], record)
         _write_task_readme(context, record)
         return _payload(context, action='task-status', record=record)
+
+
+def _task_accept_detailer_replan(context, command) -> dict[str, object]:
+    task = _require_task(context, command.task_id)
+    with file_lock(_task_lock_path(context, task['record'])):
+        task = _require_task(context, command.task_id)
+        record = _materialize_task_revision(task['record'])
+        identity = _required_sha256(getattr(command, 'request_identity', None), field='request_identity')
+        detail_digest = _required_sha256(getattr(command, 'detail_digest', None), field='detail_digest')
+        macro_digest = _required_sha256(
+            getattr(command, 'macro_impact_digest', None),
+            field='macro_impact_digest',
+        )
+        source_revision = getattr(command, 'source_task_revision', None)
+        if isinstance(source_revision, bool) or not isinstance(source_revision, int) or source_revision <= 0:
+            raise ValueError('source_task_revision must be a positive integer')
+        source_job_id = _normalize_job_id(getattr(command, 'source_detailer_job_id', None))
+        planner_job_id = _optional_normalized_job_id(getattr(command, 'planner_job_id', None))
+        existing = record.get('replan_feedback') if isinstance(record.get('replan_feedback'), dict) else None
+        if existing is not None:
+            expected = {
+                'request_identity': identity,
+                'detail_digest': detail_digest,
+                'macro_impact_digest': macro_digest,
+                'source_task_revision': source_revision,
+                'source_detailer_job_id': source_job_id,
+            }
+            conflicts = [key for key, value in expected.items() if existing.get(key) != value]
+            if conflicts:
+                raise ValueError('detailer replan request identity conflict: ' + ', '.join(conflicts))
+            current_planner_job = str(existing.get('planner_job_id') or '').strip()
+            if current_planner_job and planner_job_id and current_planner_job != planner_job_id:
+                raise ValueError('detailer replan request already references another Planner job')
+            if planner_job_id and not current_planner_job:
+                updated_feedback = dict(existing)
+                updated_feedback['planner_job_id'] = planner_job_id
+                updated_feedback['updated_at'] = _utc_now()
+                record['replan_feedback'] = updated_feedback
+                record['updated_at'] = updated_feedback['updated_at']
+                _replace_record(task['tasks_root'], task['index'], record)
+                _write_task_readme(context, record)
+            payload = _payload(context, action='task-accept-detailer-replan', record=record)
+            payload['idempotent'] = True
+            return payload
+
+        current_revision = task_revision(record)
+        if source_revision != current_revision:
+            raise ValueError(
+                'stale detailer replan task revision: '
+                f'expected {source_revision}, current {current_revision}'
+            )
+        current_status = str(record.get('status') or 'draft')
+        if current_status not in {
+            'draft',
+            'needs_clarification',
+            'detail_ready',
+            'ready_for_orchestration',
+        }:
+            raise ValueError(f'detailer replan cannot fence task status: {current_status}')
+        if str(record.get('current_loop') or '').strip():
+            raise ValueError('detailer replan cannot fence a task bound to a running loop')
+        next_revision = source_revision + 1
+        artifacts = dict(record.get('artifacts') or {})
+        superseded: list[str] = []
+        for kind in ('orchestration_notes', 'orchestration_bundle'):
+            artifact = artifacts.get(kind)
+            if not isinstance(artifact, dict):
+                continue
+            marked = dict(artifact)
+            marked['authority_status'] = 'superseded'
+            marked['superseded_by'] = identity
+            marked['superseded_at_task_revision'] = next_revision
+            artifacts[kind] = marked
+            superseded.append(kind)
+        now = _utc_now()
+        record['artifacts'] = artifacts
+        record['task_revision'] = next_revision
+        record['status'] = 'replan_required'
+        record['owner'] = 'planner'
+        record['next_owner'] = 'planner'
+        record['activation_reason'] = 'planner_replan_required_from_task_detailer'
+        record['current_loop'] = None
+        record['replan_feedback'] = {
+            'schema': 'ccb.detailer.replan_acceptance.v1',
+            'request_identity': identity,
+            'detail_digest': detail_digest,
+            'macro_impact_digest': macro_digest,
+            'source_task_revision': source_revision,
+            'accepted_task_revision': next_revision,
+            'source_detailer_job_id': source_job_id,
+            'planner_job_id': planner_job_id,
+            'superseded_artifacts': superseded,
+            'accepted_at': now,
+            'updated_at': now,
+        }
+        record['updated_at'] = now
+        _replace_record(task['tasks_root'], task['index'], record)
+        _write_task_readme(context, record)
+        payload = _payload(context, action='task-accept-detailer-replan', record=record)
+        payload['idempotent'] = False
+        return payload
 
 
 def _task_bind_loop(context, command) -> dict[str, object]:
@@ -1447,6 +1550,22 @@ def _assert_expected_task_revision(command, record: dict[str, object]) -> None:
             'stale managed activation task_revision: '
             f'expected {expected}, current {current}'
         )
+
+
+def _required_sha256(value: object, *, field: str) -> str:
+    text = str(value or '').strip().lower()
+    if not re.fullmatch(r'sha256:[0-9a-f]{64}', text):
+        raise ValueError(f'{field} must use sha256:<64 lowercase hex>')
+    return text
+
+
+def _normalize_job_id(value: object) -> str:
+    return _normalize_segment(value, label='job_id')
+
+
+def _optional_normalized_job_id(value: object) -> str | None:
+    text = str(value or '').strip()
+    return _normalize_job_id(text) if text else None
 
 
 def _artifact_record(record: dict[str, object], artifact_kind: str) -> dict[str, object] | None:

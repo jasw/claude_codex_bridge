@@ -570,7 +570,12 @@ def _install_role_command_mcp_server(
     provider_tools = dict(getattr(command_policy, 'provider_tools', ()) or ())
     tool_name = str(provider_tools.get('codex') or '').strip()
     actor = str(agent_name or '').strip().lower()
-    if tool_name != 'ccb_frontdesk_ask_planner' or actor != 'frontdesk':
+    allowed_tools = {
+        'frontdesk': 'ccb_frontdesk_ask_planner',
+        'task_detailer': 'ccb_task_detailer_replan_planner',
+        'ccb_task_detailer': 'ccb_task_detailer_replan_planner',
+    }
+    if allowed_tools.get(actor) != tool_name:
         return
     if project_root is None or runtime_dir is None:
         raise RuntimeError('Codex role command capability requires project and runtime identity')

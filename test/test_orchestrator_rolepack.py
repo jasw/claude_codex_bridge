@@ -6,7 +6,7 @@ import re
 import shutil
 
 from provider_profiles.codex_home_config import materialize_codex_home_config
-from cli.services.role_command_policy import load_role_command_policy
+from cli.services.role_command_policy import claude_permission_allowlist, load_role_command_policy
 from rolepacks.manifest import load_role_manifest
 
 
@@ -65,7 +65,8 @@ ROLE_EXPECTATIONS = {
     'agentroles.ccb_task_detailer': {
         'default': 'ccb_task_detailer',
         'skill': 'skills/task-detail-packet',
-        'templates': ('templates/detail-packet.md',),
+        'templates': ('templates/detail-packet.md', 'templates/replan-request.json'),
+        'providers': ('codex', 'claude'),
     },
     'agentroles.coder': {
         'default': 'coder',
@@ -683,13 +684,48 @@ def test_p1_task_detailer_returns_global_impact_and_planner_backfill_evidence() 
         assert heading in template
 
 
+def test_p2_task_detailer_has_only_restricted_direct_planner_replan_capability() -> None:
+    root = role_root('agentroles.ccb_task_detailer')
+    manifest = load_role_manifest(root)
+    policy = load_role_command_policy(manifest)
+    combined = _combined_role_contract('agentroles.ccb_task_detailer').lower()
+
+    assert manifest.manifest['permissions']['write_files'] is False
+    assert policy is not None
+    assert policy.mode == 'deny_all_except'
+    assert policy.enforcement == 'required'
+    assert policy.generic_shell is False
+    assert policy.generic_ccb is False
+    assert policy.allowed_effects == ('detailer_planner_replan_handoff',)
+    assert policy.provider_tools == (('codex', 'ccb_task_detailer_replan_planner'),)
+    assert len(policy.allowed) == 1
+    command = policy.allowed[0]
+    assert command.argv_prefix == ('ask', '--silence', '--compact', '--inline-request', '--task-id')
+    assert command.required_args == ('detailer-replan-<request-identity-prefix>', 'planner')
+    assert command.stdin_schema == 'ccb.detailer.replan_request.v1'
+    assert claude_permission_allowlist(policy) == (
+        'Bash(ask --silence --compact --inline-request --task-id *)',
+    )
+    assert {'arbitrary_target', 'chain', 'wait', 'authority_mutation'} <= set(policy.forbidden_effects)
+    for required in (
+        'local_detail_ready',
+        'planner_replan_required',
+        'needs_clarification',
+        'blocked',
+        'ccb.detailer.replan_request.v1',
+        'exactly one direct',
+        'resident `planner`',
+        'do not add `--chain`',
+    ):
+        assert required in combined
+
+
 def test_p1_rolepacks_are_provider_neutral_and_keep_project_config_authority() -> None:
     role_ids = (
         'agentroles.ccb_orchestrator',
         'agentroles.coder',
         'agentroles.code_reviewer',
         'agentroles.ccb_round_reviewer',
-        'agentroles.ccb_task_detailer',
     )
     for role_id in role_ids:
         manifest = load_role_manifest(role_root(role_id))

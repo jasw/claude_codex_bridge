@@ -7394,7 +7394,7 @@ def test_loop_runner_task_detailer_inline_prompt_stays_under_mailbox_limit(
     assert "'truncated': True" in message
 
 
-def test_loop_runner_imports_task_detailer_reply_once_and_settles_detail_ready(
+def test_loop_runner_imports_local_detail_ready_without_planner_ask(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -7441,7 +7441,7 @@ External approval import detail is now scoped to a small lab-local Python valida
 
 Task: `clarify-external-approval-import-feature-20260707041234`
 
-Readiness recommendation: `detail_ready`
+Readiness recommendation: `local_detail_ready`
 
 Recommended route: `direct_execution`
 """,
@@ -7470,6 +7470,7 @@ Recommended route: `direct_execution`
     assert second['action'] == 'imported_task_detailer_detail_authority'
     assert second['task_status'] == 'detail_ready'
     assert second['next_owner'] == 'planner'
+    assert second['next_activation'] == 'orchestrator'
     shown = plan_task(context, SimpleNamespace(action='task-show', task_id='task-detail'))
     assert shown['task']['status'] == 'detail_ready'
     assert shown['task']['next_owner'] == 'planner'

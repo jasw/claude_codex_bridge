@@ -20,16 +20,19 @@ def _load_module():
     return module
 
 
-def test_role_command_server_exposes_only_frontdesk_planner_handoff() -> None:
+def test_role_command_server_exposes_only_managed_planner_handoffs() -> None:
     module = _load_module()
 
-    assert [tool['name'] for tool in module._TOOL_DEFS] == ['ccb_frontdesk_ask_planner']
+    assert [tool['name'] for tool in module._TOOL_DEFS] == [
+        'ccb_frontdesk_ask_planner',
+        'ccb_task_detailer_replan_planner',
+    ]
     schema = module._TOOL_DEFS[0]['inputSchema']
     assert schema['required'] == ['request_id', 'evidence']
     assert schema['additionalProperties'] is False
 
 
-def test_role_command_server_stdio_handshake_exposes_only_one_tool() -> None:
+def test_role_command_server_stdio_handshake_exposes_only_managed_tools() -> None:
     requests = '\n'.join(
         json.dumps(item, ensure_ascii=True)
         for item in (
@@ -56,7 +59,8 @@ def test_role_command_server_stdio_handshake_exposes_only_one_tool() -> None:
 
     assert [reply['id'] for reply in replies] == [1, 2, 3]
     assert [tool['name'] for tool in replies[1]['result']['tools']] == [
-        'ccb_frontdesk_ask_planner'
+        'ccb_frontdesk_ask_planner',
+        'ccb_task_detailer_replan_planner',
     ]
 
 
@@ -130,3 +134,67 @@ def test_frontdesk_tool_rejects_wrong_actor_and_mismatched_request(monkeypatch) 
     )
     assert mismatch['isError'] is True
     assert 'must match request_id' in mismatch['content'][0]['text']
+
+
+def test_task_detailer_tool_submits_exact_silent_planner_request(monkeypatch, tmp_path: Path) -> None:
+    module = _load_module()
+    project_root = tmp_path / 'repo'
+    (project_root / '.ccb').mkdir(parents=True)
+    (project_root / '.ccb' / 'ccb.config').write_text('task_detailer:codex; planner:codex\n', encoding='utf-8')
+    monkeypatch.setenv('CCB_CALLER_ACTOR', 'task_detailer')
+    monkeypatch.setenv('CCB_CALLER_PROJECT_ROOT', str(project_root))
+    request = {
+        'schema': 'ccb.detailer.replan_request.v1',
+        'request_identity': 'sha256:' + 'a' * 64,
+        'task_id': 'task-a',
+        'task_revision': 3,
+    }
+    request_text = json.dumps(request, sort_keys=True, separators=(',', ':'))
+    seen: dict[str, object] = {}
+    context = object()
+
+    class Builder:
+        def build(self, command, *, cwd, bootstrap_if_missing):
+            seen['command'] = command
+            seen['cwd'] = cwd
+            return context
+
+    monkeypatch.setattr(module, 'CliContextBuilder', Builder)
+    monkeypatch.setattr(
+        module,
+        'submit_ask',
+        lambda current, command: SimpleNamespace(
+            project_id='project-1',
+            jobs=[{'job_id': 'job-planner', 'target_name': 'planner', 'status': 'accepted'}],
+        ),
+    )
+
+    payload = module.submit_task_detailer_replan(
+        {'activation_id': 'act-detailer-task-a', 'request': request_text}
+    )
+    command = seen['command']
+    assert payload.get('isError') is None
+    assert command.target == 'planner'
+    assert command.message == request_text
+    assert command.task_id == 'detailer-replan-' + 'a' * 32
+    assert command.silence is True
+    assert command.compact is True
+    assert command.inline_request is True
+    assert seen['cwd'] == project_root.resolve()
+
+
+def test_task_detailer_tool_rejects_wrong_actor_target_or_schema(monkeypatch) -> None:
+    module = _load_module()
+    monkeypatch.setenv('CCB_CALLER_ACTOR', 'planner')
+    payload = module.submit_task_detailer_replan(
+        {'activation_id': 'act-detailer-task-a', 'request': '{}'}
+    )
+    assert payload['isError'] is True
+    assert 'restricted to task_detailer' in payload['content'][0]['text']
+
+    monkeypatch.setenv('CCB_CALLER_ACTOR', 'task_detailer')
+    invalid_schema = module.submit_task_detailer_replan(
+        {'activation_id': 'act-detailer-task-a', 'request': '{}'}
+    )
+    assert invalid_schema['isError'] is True
+    assert 'ccb.detailer.replan_request.v1' in invalid_schema['content'][0]['text']

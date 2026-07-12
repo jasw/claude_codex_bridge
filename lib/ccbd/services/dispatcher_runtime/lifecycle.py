@@ -5,6 +5,7 @@ from message_bureau import AttemptState, MessageStore
 
 from .lifecycle_start import tick_jobs
 from .frontdesk_direct_handoff import is_frontdesk_submission, submit_frontdesk_direct_handoff
+from .detailer_replan_handoff import is_task_detailer_submission, submit_detailer_replan_handoff
 from .submission import (
     _append_submission_job,
     _build_job_record,
@@ -45,6 +46,13 @@ def submit_jobs(dispatcher, request: MessageEnvelope) -> SubmitReceipt:
 
     if is_frontdesk_submission(request):
         return submit_frontdesk_direct_handoff(
+            dispatcher,
+            request,
+            accepted_at=accepted_at,
+            submit=submit,
+        )
+    if is_task_detailer_submission(request):
+        return submit_detailer_replan_handoff(
             dispatcher,
             request,
             accepted_at=accepted_at,

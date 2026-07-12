@@ -4,7 +4,8 @@
 
 task id: <task-id>
 detailer: <agent-name>
-detail readiness: detail_ready|needs_clarification|macro_adjustment_request|blocked
+detail result: local_detail_ready|planner_replan_required|needs_clarification|blocked
+detail readiness recommendation: detail_ready|planner_replan_required|needs_clarification|blocked
 
 ### Source Evidence
 
@@ -41,4 +42,5 @@ verification refs: <refs>
 bounded worker handoff: <implementation packet for later controller dispatch>
 
 This reply is evidence only. The task detailer never dispatches workers,
-submits downstream asks, writes import files, or mutates task authority.
+writes import files, or mutates task authority. Its sole downstream action is
+the versioned direct silent Planner ask for `planner_replan_required`.

@@ -24,11 +24,12 @@ from cli.services.ask import submit_ask
 
 PROTOCOL_VERSION = '2024-11-05'
 SERVER_INFO = {'name': 'ccb-role-command', 'version': '0.1.0'}
-TOOL_NAME = 'ccb_frontdesk_ask_planner'
+FRONTDESK_TOOL_NAME = 'ccb_frontdesk_ask_planner'
+DETAILER_TOOL_NAME = 'ccb_task_detailer_replan_planner'
 _REQUEST_ID_RE = re.compile(r'^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$')
 _TOOL_DEFS = [
     {
-        'name': TOOL_NAME,
+        'name': FRONTDESK_TOOL_NAME,
         'description': 'Submit one silent Frontdesk intake handoff to the resident Planner.',
         'inputSchema': {
             'type': 'object',
@@ -45,7 +46,26 @@ _TOOL_DEFS = [
             'required': ['request_id', 'evidence'],
             'additionalProperties': False,
         },
-    }
+    },
+    {
+        'name': DETAILER_TOOL_NAME,
+        'description': 'Submit one versioned silent Task Detailer replan request to the resident Planner.',
+        'inputSchema': {
+            'type': 'object',
+            'properties': {
+                'activation_id': {
+                    'type': 'string',
+                    'description': 'Current managed Task Detailer activation id.',
+                },
+                'request': {
+                    'type': 'string',
+                    'description': 'Exact ccb.detailer.replan_request.v1 JSON authored by Task Detailer.',
+                },
+            },
+            'required': ['activation_id', 'request'],
+            'additionalProperties': False,
+        },
+    },
 ]
 
 
@@ -132,6 +152,66 @@ def submit_frontdesk_planner(args: dict[str, Any]) -> dict[str, Any]:
         return _tool_error(str(exc))
 
 
+def submit_task_detailer_replan(args: dict[str, Any]) -> dict[str, Any]:
+    activation_id = str(args.get('activation_id') or '').strip()
+    request_text = str(args.get('request') or '')
+    try:
+        actor = str(os.environ.get('CCB_CALLER_ACTOR') or '').strip().lower()
+        if actor not in {'task_detailer', 'ccb_task_detailer'}:
+            raise RuntimeError('managed role command is restricted to task_detailer')
+        if not re.fullmatch(r'act-[A-Za-z0-9][A-Za-z0-9_-]{0,79}', activation_id):
+            raise RuntimeError('activation_id must identify the current managed Detailer activation')
+        try:
+            request = json.loads(request_text)
+        except json.JSONDecodeError as exc:
+            raise RuntimeError(f'request must be valid JSON: {exc}') from exc
+        if not isinstance(request, dict) or request.get('schema') != 'ccb.detailer.replan_request.v1':
+            raise RuntimeError('request must use ccb.detailer.replan_request.v1')
+        identity = str(request.get('request_identity') or '').strip().lower()
+        if not re.fullmatch(r'sha256:[0-9a-f]{64}', identity):
+            raise RuntimeError('request_identity must use sha256:<64 lowercase hex>')
+        revision = request.get('task_revision')
+        if isinstance(revision, bool) or not isinstance(revision, int) or revision <= 0:
+            raise RuntimeError('task_revision must be a positive integer')
+        task_id = str(request.get('task_id') or '').strip()
+        if not _REQUEST_ID_RE.fullmatch(task_id):
+            raise RuntimeError('task_id is invalid')
+        project_root = _project_root()
+        command = ParsedAskCommand(
+            project=None,
+            target='planner',
+            sender=None,
+            message=request_text,
+            task_id=f'detailer-replan-{identity.removeprefix("sha256:")[:32]}',
+            compact=True,
+            silence=True,
+            inline_request=True,
+        )
+        context = CliContextBuilder().build(
+            command,
+            cwd=project_root,
+            bootstrap_if_missing=False,
+        )
+        summary = submit_ask(context, command)
+        if len(summary.jobs) != 1:
+            raise RuntimeError('Task Detailer Planner replan handoff did not create exactly one job')
+        job = summary.jobs[0]
+        return _tool_ok(
+            {
+                'status': 'submitted',
+                'project_id': summary.project_id,
+                'job_id': job['job_id'],
+                'target_name': job.get('target_name') or job.get('agent_name'),
+                'silence_on_success': True,
+                'task_id': command.task_id,
+                'activation_id': activation_id,
+                'request_identity': identity,
+            }
+        )
+    except Exception as exc:
+        return _tool_error(str(exc))
+
+
 def _handle_request(message: dict[str, Any]) -> bool:
     method = message.get('method')
     request_id = message.get('id')
@@ -153,11 +233,15 @@ def _handle_request(message: dict[str, Any]) -> bool:
         return True
     if method == 'tools/call':
         params = message.get('params') if isinstance(message.get('params'), dict) else {}
-        if params.get('name') != TOOL_NAME:
+        tool_name = params.get('name')
+        if tool_name not in {FRONTDESK_TOOL_NAME, DETAILER_TOOL_NAME}:
             _result(request_id, _tool_error('unknown tool'))
             return True
         args = params.get('arguments') if isinstance(params.get('arguments'), dict) else {}
-        _result(request_id, submit_frontdesk_planner(args))
+        if tool_name == FRONTDESK_TOOL_NAME:
+            _result(request_id, submit_frontdesk_planner(args))
+        else:
+            _result(request_id, submit_task_detailer_replan(args))
         return True
     if method in {'shutdown', 'exit'}:
         _result(request_id, {})

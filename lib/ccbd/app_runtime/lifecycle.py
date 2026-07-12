@@ -7,6 +7,7 @@ from agents.models import AgentState, RuntimeBindingSource, normalize_runtime_bi
 from ccbd.models import CcbdShutdownReport, CcbdStartupReport, cleanup_summaries_from_objects
 from ccbd.reload_drain_auto_retry import tick_reload_drain_auto_retry
 from ccbd.services.dispatcher_runtime.frontdesk_direct_handoff import recover_frontdesk_direct_handoffs
+from ccbd.services.dispatcher_runtime.detailer_replan_handoff import recover_detailer_replan_handoffs
 from ccbd.services.lifecycle import build_lifecycle, current_socket_inode
 from ccbd.stop_flow import build_shutdown_runtime_snapshots
 from runtime_accelerator.lifecycle import maybe_start_runtime_accelerator, stop_runtime_accelerator
@@ -52,6 +53,7 @@ def start(app):
         _update_startup_progress(app, 'restoring_state')
         app.dispatcher.restore_running_jobs()
         recovered_frontdesk_jobs = recover_frontdesk_direct_handoffs(app.dispatcher)
+        recovered_detailer_replan_jobs = recover_detailer_replan_handoffs(app.dispatcher)
         adopted_agents = _adopt_existing_runtime_authority(app)
         restore_report = app.dispatcher.last_restore_report(project_id=app.project_id)
         if restore_report is not None:
@@ -62,6 +64,10 @@ def start(app):
         startup_actions = ['mount_backend', 'listen_socket', 'restore_running_jobs']
         if recovered_frontdesk_jobs:
             startup_actions.append(f'recover_frontdesk_direct_handoff:{",".join(recovered_frontdesk_jobs)}')
+        if recovered_detailer_replan_jobs:
+            startup_actions.append(
+                f'recover_detailer_replan_handoff:{",".join(recovered_detailer_replan_jobs)}'
+            )
         startup_actions.extend(_runtime_accelerator_startup_actions(app))
         if adopted_agents:
             startup_actions.append(f'adopt_runtime_authority:{",".join(adopted_agents)}')

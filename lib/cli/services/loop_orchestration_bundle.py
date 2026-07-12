@@ -314,6 +314,8 @@ def load_task_orchestration_bundle(
     artifact = artifacts.get('orchestration_bundle')
     if not isinstance(artifact, dict):
         raise ValueError('direct execution requires orchestration_bundle artifact')
+    if str(artifact.get('authority_status') or '') == 'superseded':
+        raise ValueError('orchestration_bundle authority is superseded and cannot dispatch workers')
     path_text = str(artifact.get('path') or '').strip()
     if not path_text:
         raise ValueError('orchestration_bundle artifact missing path')

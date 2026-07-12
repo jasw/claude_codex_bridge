@@ -1,7 +1,7 @@
 # Planner Feedback And Task-Set Closure Plan
 
 Date: 2026-07-12
-Status: Shaped; implementation not started
+Status: P2 implemented; P3-P5 not started
 Authority: [Decision 029](../decisions/029-planner-feedback-and-task-set-closure.md)
 
 ## Objective
@@ -177,6 +177,11 @@ Gate: no runtime behavior changes until schema and negative tests agree.
 Gate: existing single-task behavior remains unchanged; V2 remains unchanged.
 
 ### P2: Detailer-to-Planner replan path
+
+Implementation status: landed as the `workflow/g6c-detailer-planner` package
+with RolePack command-surface, managed Codex/Claude transports, dispatcher
+intent recovery, task revision fencing, stale bundle rejection, and focused
+source tests. Commit SHA is recorded in the package handoff.
 
 - Add explicit Detailer result classification and macro-impact validation.
 - Add the sole restricted silent Planner capability to Task Detailer.
