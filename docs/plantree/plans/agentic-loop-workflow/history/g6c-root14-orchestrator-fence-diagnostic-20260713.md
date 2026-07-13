@@ -1,7 +1,7 @@
 # G6C Root14 Orchestrator Fence Diagnostic
 
 Date: 2026-07-13
-Status: rejected real-provider acceptance; RolePack and harness recovery repairs active
+Status: rejected real-provider acceptance; bounded repairs landed; source smoke blocker active
 Phase: G6C / Decision 029 P5
 Read when: reviewing the Orchestrator output contract or preparing root15
 
@@ -88,3 +88,16 @@ with `kill_status: ok`, all five resident agents reported `stopped`, and no
 project process remained. Evidence was preserved; no false B7 pass was
 generated.
 
+## Post-Repair Source Gate
+
+The literal-`json` RolePack repair, bounded read-only harness recovery, and
+exact schema-as-fence controller regression landed through `3a4b41da`.
+Focused RolePack, harness, document, and loop-controller gates passed.
+
+Root15 is still forbidden. Two complete
+`test/test_single_lane_multi_workgroup_smoke.py` runs passed only `37/39` and
+`38/39`. The unstable rows are the reviewer-rework scenarios; observed failed
+checks include `rework_exactly_once` and, in one run, release, dynamic-agent,
+and child-worktree residue. A targeted two-case rerun passed, which is evidence
+of non-determinism rather than acceptance. The race or cross-scenario state
+leak must be reproduced, repaired, and retested before the full source gate.

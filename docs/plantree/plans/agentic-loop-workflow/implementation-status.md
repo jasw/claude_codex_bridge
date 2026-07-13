@@ -1,10 +1,10 @@
 # Agentic Loop Workflow Implementation Status
 
 Date: 2026-07-13
-Status: In progress — G6C root14 rejected, RolePack and harness recovery repairs active
+Status: In progress — G6C root14 repairs landed, rework smoke stability blocker active
 Branch: `workflow/g6c-integration`
 Worktree: `/home/bfly/yunwei/ccb_worktrees/g6c-integration`
-Current HEAD before this status update: `fcae9f3a`
+Current HEAD before this status update: `3a4b41da`
 
 ## Current Phase
 
@@ -21,8 +21,11 @@ RolePack fence-language drift: the provider used the bundle schema as the code
 fence language, and the importer correctly failed closed because literal
 fenced JSON was absent. Root14 was rejected and safely unmounted. A separate
 harness replay defect was also confirmed after a failed precondition consumed
-a fixed read-only observation label. Root15 is forbidden until both repairs
-and their source gates pass.
+a fixed read-only observation label. The RolePack, recovery, and exact
+controller-boundary regressions have now landed and their focused gates pass.
+Root15 remains forbidden because the complete single-lane fake-runtime smoke
+twice exposed non-deterministic rework exact-once and cleanup failures that do
+not reproduce in a single targeted rerun.
 
 ## Authority
 
@@ -58,18 +61,22 @@ closure, integration, topology, round, release, and delivery authority.
 - `82a3a622`: Gemini session observation now resumes safely after ccbd restart
   through an adapter-specific opt-in; the prior four full-suite failures are
   covered by durable terminal, session-cursor, rotation, and mutation evidence.
+- `2e54d2df`: Orchestrator RolePack requires a literal `json` fence and keeps
+  the bundle schema only in the JSON object's top-level `schema` field.
+- `f7390fd0` and `3a4b41da`: read-only harness observation gains bounded
+  recovery labels while mutating labels stay fail-closed, and the exact
+  root14 schema-as-fence controller boundary is regression-covered.
 
 Earlier accepted R1 authority/runtime evidence remains indexed at
 [history/single-lane-r1-authority-runtime-closure-20260711.md](history/single-lane-r1-authority-runtime-closure-20260711.md).
 
 ## Active TODO
 
-1. Land the Orchestrator literal-`json` fence RolePack repair and projection
-   regression without relaxing the importer.
-2. Land recovery-safe read-only harness observation while preserving duplicate
-   fail-closed behavior for authority mutation, provider submission, B7, and
-   cleanup.
-3. Pass focused and full source gates, then run fresh visible root15 through
+1. Reproduce and close the single-lane fake-runtime rework exact-once and
+   release/zero-residue instability without sleeps or weaker checks.
+2. Pass the complete single-lane smoke repeatedly and the current full source
+   suite.
+3. Run fresh visible root15 through
    all five routes, closure, B7, release, shutdown, and zero residue.
 4. Complete remaining G6 three/four-workgroup, restart, busy-retain, and
    provider-profile rows from fresh opened projects.
@@ -78,10 +85,11 @@ Earlier accepted R1 authority/runtime evidence remains indexed at
 
 ## Blocked By
 
-Blocked from root15 by the root14 Orchestrator RolePack fence-language drift
-and harness recovery-label defect. Production readiness also remains gated by
-fresh real root15 acceptance, the remaining G6 matrix, and G7 package/install/
-update/rollback acceptance.
+Blocked from root15 by a source/fake rework exact-once and cleanup stability
+failure: complete smoke runs passed only `37/39` and `38/39`, while a targeted
+two-case rerun passed. Production readiness also remains gated by fresh real
+root15 acceptance, the remaining G6 matrix, and G7 package/install/update/
+rollback acceptance.
 
 ## Acceptance Ownership
 
@@ -130,6 +138,16 @@ independent work whose successful result is not needed upstream.
   `orchestrator_reply_bundle_requires_fenced_json`; no L2 Worker was submitted.
   Pending guard passed, cleanup returned `state: unmounted`, all resident
   agents stopped, and no project process remained.
+- Post-root14 focused gates at `3a4b41da`: Orchestrator RolePack `26 passed`,
+  RolePack projection `68 passed`, Phase 6B harness `96 passed`, launch docs
+  `30 passed`, loop controller `256 passed`, and Orchestrator/bundle selector
+  `19 passed`.
+- Complete single-lane smoke is not accepted: first run `37 passed, 2 failed`,
+  second run `38 passed, 1 failed`. Failures involve
+  `reviewer_rework_pass` and/or `reviewer_rework_exhausted_blocked`, including
+  `rework_exactly_once` and on the second run release/dynamic/worktree residue.
+  A targeted two-case rerun passed, so the instability remains unclosed rather
+  than waived as flaky.
 
 ## Non-Claims
 
