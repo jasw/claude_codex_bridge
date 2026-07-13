@@ -14351,6 +14351,148 @@ def test_loop_runner_v3_orchestrator_missing_bundle_blocks_without_semantic_impo
     assert set(shown['task']['artifacts']) == {'task_packet', 'execution_contract'}
 
 
+def test_loop_runner_root14_schema_as_fence_blocks_without_authority_mutation_then_json_imports(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = _project_with_loop_capacity(tmp_path, monkeypatch)
+    task_id = 'task-root14-schema-fence'
+    _add_ready_plan_task(project_root, task_id=task_id)
+    command = ParsedLoopRunnerCommand(
+        project=None,
+        once=True,
+        task_id=task_id,
+        role_job_id='job_root14_schema_fence',
+        consume_role_output=True,
+        json_output=True,
+    )
+    context = CliContextBuilder().build(command, cwd=project_root, bootstrap_if_missing=False)
+    before = plan_task(context, SimpleNamespace(action='task-show', task_id=task_id))['task']
+    index_path = project_root / 'docs' / 'plantree' / 'plans' / 'demo-plan' / 'tasks' / 'index.json'
+    before_index = index_path.read_bytes()
+    candidate = build_single_node_candidate(before, project_root=project_root)
+    schema_fence = 'ccb.loop.orchestration_bundle_candidate.v1'
+    schema_fence_reply = (
+        'route: direct_execution\n\n'
+        'orchestration_notes: the bounded root14 task is ready for direct execution.\n\n'
+        'orchestration_bundle:\n'
+        f'```{schema_fence}\n'
+        f'{json.dumps(candidate, ensure_ascii=False, indent=2)}\n'
+        '```\n'
+    )
+    literal_json_reply = schema_fence_reply.replace(f'```{schema_fence}', '```json', 1)
+    assert literal_json_reply.replace('```json', f'```{schema_fence}', 1) == schema_fence_reply
+    _write_completion_snapshot(
+        project_root,
+        job_id='job_root14_schema_fence',
+        agent_name='orchestrator',
+        reply=schema_fence_reply,
+    )
+
+    def forbidden_submit_ask(*_args, **_kwargs):
+        raise AssertionError('blocked orchestrator import must not submit a Worker or other provider job')
+
+    def forbidden_plan_task(*_args, **_kwargs):
+        raise AssertionError('schema-as-fence reply must be rejected before task authority mutation')
+
+    blocked_services = SimpleNamespace(
+        submit_ask=forbidden_submit_ask,
+        plan_task=forbidden_plan_task,
+        effective_capacity_snapshot=lambda _context: _multi_workgroup_capacity_snapshot(),
+    )
+    first = loop_runner_once(context, command, services=blocked_services)
+
+    assert first['loop_runner_status'] == 'blocked'
+    assert first['action'] == 'role_output_import_blocked'
+    assert first['reason'] == 'orchestrator_reply_bundle_requires_fenced_json'
+    after_first = plan_task(context, SimpleNamespace(action='task-show', task_id=task_id))['task']
+    assert {
+        key: after_first[key]
+        for key in ('status', 'task_revision', 'state_version', 'artifacts')
+    } == {
+        key: before[key]
+        for key in ('status', 'task_revision', 'state_version', 'artifacts')
+    }
+    assert index_path.read_bytes() == before_index
+    assert not (project_root / '.ccb' / 'runtime' / 'loops').exists()
+    assert not (project_root / '.ccb' / 'runtime' / 'role-output-imports' / 'job_root14_schema_fence').exists()
+
+    restarted_context = CliContextBuilder().build(command, cwd=project_root, bootstrap_if_missing=False)
+    replay = loop_runner_once(restarted_context, command, services=blocked_services)
+
+    assert replay['loop_runner_status'] == 'blocked'
+    assert replay['action'] == 'role_output_import_blocked'
+    assert replay['reason'] == 'orchestrator_reply_bundle_requires_fenced_json'
+    after_replay = plan_task(restarted_context, SimpleNamespace(action='task-show', task_id=task_id))['task']
+    assert {
+        key: after_replay[key]
+        for key in ('status', 'task_revision', 'state_version', 'artifacts')
+    } == {
+        key: before[key]
+        for key in ('status', 'task_revision', 'state_version', 'artifacts')
+    }
+    assert index_path.read_bytes() == before_index
+    import_records = [
+        json.loads(line)
+        for line in (project_root / '.ccb' / 'runtime' / 'role-output-imports.jsonl').read_text(encoding='utf-8').splitlines()
+    ]
+    assert [
+        (record['action'], record['status'], record['reason'], record['job_id'])
+        for record in import_records
+    ] == [
+        (
+            'role_output_import_blocked',
+            'blocked',
+            'orchestrator_reply_bundle_requires_fenced_json',
+            'job_root14_schema_fence',
+        ),
+        (
+            'role_output_import_blocked',
+            'blocked',
+            'orchestrator_reply_bundle_requires_fenced_json',
+            'job_root14_schema_fence',
+        ),
+    ]
+
+    _write_completion_snapshot(
+        project_root,
+        job_id='job_root14_literal_json',
+        agent_name='orchestrator',
+        reply=literal_json_reply,
+    )
+    literal_command = ParsedLoopRunnerCommand(
+        project=None,
+        once=True,
+        task_id=task_id,
+        role_job_id='job_root14_literal_json',
+        consume_role_output=True,
+        json_output=True,
+    )
+    imported = loop_runner_once(
+        restarted_context,
+        literal_command,
+        services=SimpleNamespace(
+            plan_task=plan_task,
+            effective_capacity_snapshot=lambda _context: _multi_workgroup_capacity_snapshot(),
+        ),
+    )
+
+    assert imported['loop_runner_status'] == 'ok'
+    assert imported['action'] == 'imported_orchestration_notes'
+    assert imported['route'] == 'direct_execution'
+    assert imported['next_activation'] == 'ask_first_execution'
+    assert imported['orchestration_bundle']['bundle_source'] == 'loop_runner_role_output_import'
+    assert imported['orchestration_bundle']['node_count'] == 1
+    shown = plan_task(restarted_context, SimpleNamespace(action='task-show', task_id=task_id))['task']
+    assert shown['status'] == 'ready_for_orchestration'
+    assert set(shown['artifacts']) == {
+        'task_packet',
+        'execution_contract',
+        'orchestration_notes',
+        'orchestration_bundle',
+    }
+
+
 def test_loop_runner_rejects_stale_managed_orchestrator_activation_before_import(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
