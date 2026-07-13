@@ -112,10 +112,56 @@ Readiness values are exactly:
 - `blocked`
 - `not_ready`
 
+## Bounded Post-Detail Stop
+
+An activation may optionally contain a controller-verified
+`terminal_status_constraint`. Treat it as an authority constraint, not a
+free-form suggestion, only when all of these fields are present and consistent
+with the activation and compact artifact evidence:
+
+- `schema_version=1`
+- `status=detail_ready`
+- `basis=verified_detail_ready_stop_contract`
+- the current `task_id`, positive `task_revision`, and positive `state_version`
+- lowercase SHA-256 `authority_digest` and `basis_digest`
+- non-empty `required_reason` equal to the controller activation reason
+- current post-detail task status `detail_ready` and route context
+  `needs_detail`
+
+For this one bounded case, `readiness=ready` means the planning artifacts are
+complete; it does not authorize execution. Return a `needs_detail` task packet
+and this matching readiness shape:
+
+```json
+{"readiness":"ready","route":"needs_detail","status_recommendation":"detail_ready","reason":"<required_reason>","allowed_paths":[],"verification":["<repo-independent verification>"],"blockers":[]}
+```
+
+Preserve `required_reason` exactly. Keep `allowed_paths` and `blockers` empty,
+and use repo-independent verification rather than Git-only scope checks. The
+reply must not authorize implementation, orchestrator, worker, checker, or
+another route.
+
+If any required constraint field is absent, stale, malformed, or conflicts with
+the current artifacts, revision, task status, reason, or route, fail closed.
+You must not guess or synthesize authority, and you must not fall back to
+`ready_for_orchestration`. Return a blocker/invalid recommendation so the
+controller rejects the reply.
+
+Without `terminal_status_constraint`, this exception does not apply. Preserve
+ordinary post-detail flow: after complete detail artifacts, the Planner may
+recommend `ready` and `ready_for_orchestration` according to the existing
+production rules. It does not make every `needs_detail` plus `ready` reply
+terminal.
+
+The provider reply is semantic evidence, not task-status authority. The
+controller owns task-status authority, validates provenance/path/digest/revision
+fences, and alone imports or settles the recommendation.
+
 For `route: needs_detail`, use `readiness: needs_clarification`, include
 specific `blockers`, include `verification` for the detail packet, and set
 `allowed_paths` to an empty list. Do not authorize implementation paths until
-detail is resolved.
+detail is resolved. This ordinary rule remains in force unless the valid
+bounded post-detail constraint above is present.
 
 For `route: blocked`, use `readiness: blocked`, include specific `blockers`,
 include verification evidence for the blocker, and set `allowed_paths` to an

@@ -44,6 +44,36 @@ hand-edit state files or retry by mutating authority yourself.
   orchestration: set `readiness` to `needs_clarification`, set `route` to
   `needs_detail`, include concrete `blockers` and `verification`, and leave
   `allowed_paths` empty because direct implementation is not authorized yet.
+- The only exception to that ordinary `needs_detail` readiness rule is a valid
+  controller-verified `terminal_status_constraint` on a post-detail activation.
+  Treat this envelope as an authority constraint, not a free-form suggestion.
+  It is valid only when `schema_version=1`, `status=detail_ready`,
+  `basis=verified_detail_ready_stop_contract`, and its `task_id`, positive
+  `task_revision`, positive `state_version`, lowercase SHA-256
+  `authority_digest`, lowercase SHA-256 `basis_digest`, and non-empty
+  `required_reason` all match the current activation and controller-provided
+  artifact/revision evidence. The activation task status and route context must
+  also be post-detail `detail_ready` and `needs_detail`.
+- For that bounded detail stop, return planning-complete `readiness=ready` but
+  preserve the distinct task-state recommendation. The readiness object must
+  contain
+  `{"readiness":"ready","route":"needs_detail","status_recommendation":"detail_ready","reason":"<required_reason>","allowed_paths":[],"verification":["<repo-independent verification>"],"blockers":[]}`.
+  Copy `required_reason` exactly; it preserves the controller activation reason.
+  This reply must not authorize implementation, orchestrator, worker, checker,
+  or another route, and its verification must remain repo-independent even when
+  Git happens to be available.
+- If the constraint is missing a required field, disagrees with the current
+  artifacts, task/revision, status, reason, or route, or has an invalid digest,
+  fail closed. You must not guess, silently repair it, or fall back to
+  `ready_for_orchestration`; return a blocker/invalid recommendation for the
+  controller to reject.
+- Without `terminal_status_constraint`, preserve ordinary post-detail flow:
+  once detail artifacts are complete, the Planner may recommend `ready` and
+  `ready_for_orchestration` under the existing route rules. The bounded
+  exception does not make every `needs_detail` plus `ready` reply terminal.
+- A provider reply is semantic evidence, not task-status authority. The
+  controller owns task-status authority and alone validates provenance, paths,
+  digests, revisions, imports, and settlement.
 - For ordinary single-slice work, return exact fenced `**task-packet.md**` and
   `**readiness.json**` sections. Do not replace them with summaries, tables,
   alternate headings, or unfenced JSON.

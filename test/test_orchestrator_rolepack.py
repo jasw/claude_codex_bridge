@@ -433,6 +433,58 @@ def test_planner_rolepack_gates_git_verification_on_explicit_project_capability(
     assert 'not a global Git ban' in combined
 
 
+def test_planner_rolepack_defines_bounded_detail_ready_terminal_constraint() -> None:
+    root = role_root('agentroles.ccb_planner')
+    combined = '\n'.join(
+        [
+            (root / 'memory.md').read_text(encoding='utf-8'),
+            (root / 'skills' / 'planner-task-packet' / 'SKILL.md').read_text(encoding='utf-8'),
+        ]
+    )
+    normalized = ' '.join(combined.split())
+
+    for field in (
+        'terminal_status_constraint',
+        'verified_detail_ready_stop_contract',
+        'task_revision',
+        'state_version',
+        'authority_digest',
+        'basis_digest',
+        'required_reason',
+    ):
+        assert field in combined
+    assert 'authority constraint, not a free-form suggestion' in combined
+    assert '"readiness":"ready"' in combined
+    assert '"route":"needs_detail"' in combined
+    assert '"status_recommendation":"detail_ready"' in combined
+    assert '"allowed_paths":[]' in combined
+    assert '"blockers":[]' in combined
+    assert 'repo-independent verification' in combined
+    assert 'must not authorize implementation, orchestrator, worker, checker, or another route' in normalized
+    assert 'semantic evidence, not task-status authority' in combined
+    assert 'controller owns task-status authority' in combined
+
+
+def test_planner_rolepack_terminal_constraint_fails_closed_without_changing_ordinary_flow() -> None:
+    root = role_root('agentroles.ccb_planner')
+    combined = '\n'.join(
+        [
+            (root / 'memory.md').read_text(encoding='utf-8'),
+            (root / 'skills' / 'planner-task-packet' / 'SKILL.md').read_text(encoding='utf-8'),
+        ]
+    )
+    normalized = ' '.join(combined.split())
+
+    assert 'fail closed' in combined
+    assert 'must not guess' in combined
+    assert 'invalid recommendation' in combined
+    assert 'must not fall back to `ready_for_orchestration`' in normalized
+    assert 'Without `terminal_status_constraint`' in combined
+    assert 'ordinary post-detail flow' in combined
+    assert 'may recommend `ready` and `ready_for_orchestration`' in normalized
+    assert 'does not make every `needs_detail` plus `ready` reply terminal' in normalized
+
+
 def test_frontdesk_rolepack_preserves_explicit_project_capability_for_planner() -> None:
     root = role_root('agentroles.ccb_frontdesk')
     combined = '\n'.join(
