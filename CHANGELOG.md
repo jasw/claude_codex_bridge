@@ -1,5 +1,37 @@
 # Changelog
 
+## v8.1.3 (2026-07-13)
+
+### Mobile Interaction Reliability
+
+- **Live Replies Stay In One Bubble**: streamed and refreshed conversation
+  state now merge into the existing working bubble while preserving element
+  identity, eliminating refresh flicker, duplicate replies, and false working
+  indicators.
+- **Selection And Notifications Stay Stable**: agent/window selection survives
+  project refreshes, retained invalidations no longer trigger refresh storms,
+  and completion notifications settle against authoritative conversation state.
+- **Terminal History Remains Pane-Authentic**: the first terminal snapshot
+  includes bounded tmux scrollback without duplicating screen content, later
+  repaints retain the user's history position, and keyboard input requires an
+  explicit activation gesture.
+- **Embedded Pairing Scanner Ships In Release**: Android pairing uses the
+  embedded ML Kit scanner and release minification preserves the scanner's
+  required classes.
+
+### Provider Reliability
+
+- **Codex Control Entries Filtered**: provider-local control transcript rows no
+  longer appear as user conversation content in Mobile.
+- **Grok Completion Requires Turn Evidence**: managed Grok requests wait for
+  native turn-completion evidence instead of finalizing on intermediate output.
+
+### Release Surface
+
+- **Release Metadata Synchronized**: VERSION, source CLI metadata,
+  `package.json`, Mobile app metadata and download links, workflow dispatch
+  defaults, README variants, and release notes are aligned for 8.1.3.
+
 ## v8.1.2 (2026-07-11)
 
 ### Mobile Conversation And Terminal Reliability

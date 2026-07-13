@@ -6,7 +6,7 @@
 **Coordinate Codex, Claude, Gemini, and other CLI agents in visible, controllable workflows you can take over**
 
 <p>
-  <img src="https://img.shields.io/badge/version-8.1.2-orange.svg" alt="version">
+  <img src="https://img.shields.io/badge/version-8.1.3-orange.svg" alt="version">
   <img src="https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20WSL-lightgrey.svg" alt="platform">
   <img src="https://img.shields.io/badge/providers-17%20CLI%20families-0B7285.svg" alt="providers">
 </p>
@@ -180,9 +180,9 @@ This command guides installation and configuration.
 <details>
 <summary><b>Mobile App details, safety boundary, and source</b></summary>
 
-CCB 8.1.2 includes the Flutter CCB Mobile source in [`mobile/`](mobile/) and publishes the Android APK through GitHub Releases:
+CCB 8.1.3 includes the Flutter CCB Mobile source in [`mobile/`](mobile/) and publishes the Android APK through GitHub Releases:
 
-- [Download CCB Mobile v8.1.2 APK](https://github.com/SeemSeam/claude_codex_bridge/releases/download/v8.1.2/ccb-mobile-v8.1.2.apk)
+- [Download CCB Mobile v8.1.3 APK](https://github.com/SeemSeam/claude_codex_bridge/releases/download/v8.1.3/ccb-mobile-v8.1.3.apk)
 - App source: [`mobile/app`](mobile/app)
 - Server gateway source: [`lib/mobile_gateway`](lib/mobile_gateway)
 
@@ -266,6 +266,16 @@ Thanks to [tmux-agent-sidebar](https://github.com/hiroppy/tmux-agent-sidebar) fo
 ## Release Notes
 
 <details open>
+<summary><b>v8.1.3</b> - Mobile interaction reliability and Grok completion</summary>
+
+- Stabilized Mobile live conversations by merging streamed replies into one working bubble, preserving bubble identity, and avoiding refresh flicker or false working states.
+- Kept agent and window selection stable across refreshes, retained pane-authentic terminal scrollback, and required explicit keyboard activation before terminal input.
+- Replaced the Android pairing bridge with the embedded ML Kit scanner and preserved its release-build classes through minification.
+- Filtered Codex local control transcript entries and required Grok's native turn-completion evidence before a managed request is finalized.
+
+</details>
+
+<details>
 <summary><b>v8.1.2</b> - Mobile conversation reliability and installer certificate recovery</summary>
 
 - Hardened Mobile invalidation recovery, snapshots, live conversation updates, attachment echo reconciliation, and task-completion notifications.

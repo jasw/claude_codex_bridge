@@ -56,7 +56,7 @@ void main() {
         find.byKey(const ValueKey('project-home-update-panel')),
         findsOneWidget,
       );
-      expect(find.text('Current version: 8.1.2+8010002'), findsOneWidget);
+      expect(find.text('Current version: 8.1.3+8010003'), findsOneWidget);
       expect(find.byKey(const ValueKey('gateway-pairing-panel')), findsNothing);
       expect(find.byKey(const ValueKey('gateway-url-field')), findsNothing);
       expect(find.byKey(const ValueKey('runtime-mode-panel')), findsOneWidget);
