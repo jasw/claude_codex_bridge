@@ -31,12 +31,14 @@ completion payload contract, and blocked-device evidence audit.
   `PYTHONPATH=lib python -m pytest test -q --tb=short -m "not provider_blackbox"`
   -> `3644 passed, 2 skipped, 21 deselected in 436.08s`.
 - Flutter focused:
-  `flutter test test/push_notifications_test.dart` -> `4 passed`.
+  `flutter test test/push_notifications_test.dart` -> `7 passed` after
+  reviewer fix `rep_f6ee21cbee77`.
 - Flutter focused analyze:
   `flutter analyze lib/notifications/push_notifications.dart test/push_notifications_test.dart`
   -> no issues.
 - Flutter full:
-  `flutter analyze && flutter test` -> analyze clean, `629` tests passed.
+  `flutter analyze && flutter test` -> analyze clean, `632` tests passed
+  after reviewer fix `rep_f6ee21cbee77`.
 - Diff check: `git diff --check` -> clean.
 - Android debug build:
   `flutter build apk --debug` -> built
@@ -55,17 +57,17 @@ completion payload contract, and blocked-device evidence audit.
 - Manifest permissions include `android.permission.POST_NOTIFICATIONS`,
   `INTERNET`, `WAKE_LOCK`, and `ACCESS_NETWORK_STATE`.
 - Debug APK: SHA-256
-  `f5513f21b7af0326b1574195d5e00431470f82a213fec0caa876b2746c590357`,
+  `69aa1059ab8ff41fd126a3d655a24a00357c206afd09ce462333c31909a7bb9c`,
   size `207M`, signer SHA-256
   `65fd14a21ac4fb058f411f6082b11bf83702c9aca58e428c4ab80379b477b901`
   (`C=US, O=Android, CN=Android Debug`).
 - Profile APK: SHA-256
-  `04f91d9e86886720f9c26c467c4f6e1978e3f50d6be0b87144d553a21bc7b1ea`,
-  size `107M`, signer SHA-256
+  `0e3d0f3394da3c1721c273a8d00d39d02f478b3c3c07a1f84794eae1d44a4c40`,
+  size `118M`, signer SHA-256
   `65fd14a21ac4fb058f411f6082b11bf83702c9aca58e428c4ab80379b477b901`
   (`C=US, O=Android, CN=Android Debug`).
 - Release APK: SHA-256
-  `3911eed0d4527239a4d76715639487c87eea7ded6a528d8eb19ba906f84a732c`,
+  `0c6a70616e339f53c248facd1dd2c07589667ec069d0b7e708ef46b58bba3cfb`,
   size `72M`, signer SHA-256
   `5a30b9b9fcb0882232b1e1f3896c2420b1f67b1e39ba325ca3a8dafe2d2d1697`
   (`CN=CCB Mobile, OU=Release, O=CCB, L=San Francisco, ST=California, C=US`).
@@ -97,7 +99,10 @@ completion payload contract, and blocked-device evidence audit.
   revoke cleanup, timeout bounding, and device isolation.
 - App unit tests cover complete route parsing, permission denial fail-closed,
   absent native Firebase config fail-closed, token refresh binding, canonical
-  `PUT /v1/devices/me/push-token`, and cross-device route rejection.
+  `PUT /v1/devices/me/push-token`, cross-device route rejection, push-open
+  `dedupe_key` marking before cursor catch-up, ambiguous identity-free route
+  rejection, and `DELETE /v1/devices/me/push-token` when switching away from a
+  registered profile.
 - Production Android background evidence requires the deployment sender to send
   a real FCM notification+data message with only the canonical route fields in
   the data payload. Data-only background delivery is not accepted as production

@@ -16,12 +16,14 @@ class PushNotificationRoute {
   const PushNotificationRoute({
     required this.projectId,
     required this.agent,
+    required this.dedupeKey,
     this.hostId,
     this.deviceId,
   });
 
   final String projectId;
   final String agent;
+  final String dedupeKey;
   final String? hostId;
   final String? deviceId;
 
@@ -37,10 +39,13 @@ class PushNotificationRoute {
     return PushNotificationRoute(
       projectId: requiredValue('project_id'),
       agent: requiredValue('agent'),
+      dedupeKey: requiredValue('dedupe_key'),
       hostId: _optionalValue(data['host_id']),
       deviceId: _optionalValue(data['device_id']),
     );
   }
+
+  bool get hasProfileIdentity => hostId != null && deviceId != null;
 
   bool matches(GatewayPairedHost host) =>
       (hostId == null || hostId == host.profile.hostId) &&
@@ -173,10 +178,27 @@ class GatewayPushRegistrationClient {
       request.headers
         ..set(HttpHeaders.authorizationHeader, 'Bearer ${host.deviceToken}')
         ..contentType = ContentType.json;
-      request.add(
-        utf8.encode(
-          jsonEncode({'token': normalizedToken}),
-        ),
+      request.add(utf8.encode(jsonEncode({'token': normalizedToken})));
+      final response = await request.close().timeout(timeout);
+      await response.drain<void>();
+      return response.statusCode == HttpStatus.ok;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<bool> delete({required GatewayPairedHost host}) async {
+    try {
+      final request = await _httpClient
+          .deleteUrl(
+            host.profile.routeProvider.gatewayUrl.resolve(
+              '/v1/devices/me/push-token',
+            ),
+          )
+          .timeout(timeout);
+      request.headers.set(
+        HttpHeaders.authorizationHeader,
+        'Bearer ${host.deviceToken}',
       );
       final response = await request.close().timeout(timeout);
       await response.drain<void>();
@@ -194,19 +216,26 @@ class PushNotificationRuntime {
     required PushMessagingClient messaging,
     required GatewayPushRegistrationClient registration,
     required Future<void> Function(PushNotificationRoute route) onRouteOpened,
+    Future<bool> Function(String dedupeKey)? markSeenIfNew,
+    bool Function(PushNotificationRoute route)? isRouteProfileAmbiguous,
     bool Function()? isEnabled,
   }) : _messaging = messaging,
        _registration = registration,
        _onRouteOpened = onRouteOpened,
+       _markSeenIfNew = markSeenIfNew,
+       _isRouteProfileAmbiguous = isRouteProfileAmbiguous ?? ((_) => false),
        _isEnabled = isEnabled ?? (() => pushNotificationsFeatureEnabled);
 
   final PushMessagingClient _messaging;
   final GatewayPushRegistrationClient _registration;
   final Future<void> Function(PushNotificationRoute route) _onRouteOpened;
+  final Future<bool> Function(String dedupeKey)? _markSeenIfNew;
+  final bool Function(PushNotificationRoute route) _isRouteProfileAmbiguous;
   final bool Function() _isEnabled;
   StreamSubscription<String>? _tokenRefreshSubscription;
   StreamSubscription<PushNotificationRoute>? _routeSubscription;
   GatewayPairedHost? _host;
+  GatewayPairedHost? _registeredHost;
   bool _started = false;
 
   Future<bool> start(GatewayPairedHost host) async {
@@ -224,8 +253,9 @@ class PushNotificationRuntime {
     );
     _routeSubscription = _messaging.onRouteOpened.listen(_openRoute);
     final token = await _messaging.getToken();
-    if (token != null) {
-      await _registerToken(token);
+    if (token == null || !await _registerToken(token)) {
+      await stop();
+      return false;
     }
     final initialRoute = await _messaging.getInitialRoute();
     if (initialRoute != null) {
@@ -235,12 +265,17 @@ class PushNotificationRuntime {
   }
 
   Future<void> stop() async {
+    final registeredHost = _registeredHost;
+    _registeredHost = null;
     _started = false;
     _host = null;
     await _tokenRefreshSubscription?.cancel();
     await _routeSubscription?.cancel();
     _tokenRefreshSubscription = null;
     _routeSubscription = null;
+    if (registeredHost != null) {
+      await _registration.delete(host: registeredHost);
+    }
   }
 
   Future<void> dispose() async {
@@ -248,15 +283,39 @@ class PushNotificationRuntime {
     _registration.close(force: true);
   }
 
-  Future<void> _registerToken(String token) async {
+  Future<bool> _registerToken(String token) async {
     final host = _host;
-    if (!_started || host == null) return;
-    await _registration.register(host: host, token: token);
+    if (!_started || host == null) return false;
+    final registered = await _registration.register(host: host, token: token);
+    if (registered && _isCurrentHost(host)) {
+      _registeredHost = host;
+    }
+    return registered;
   }
 
   Future<void> _openRoute(PushNotificationRoute route) async {
     final host = _host;
-    if (!_started || host == null || !route.matches(host)) return;
+    if (!_started ||
+        host == null ||
+        !_isCurrentHost(host) ||
+        !_isRegisteredHost(host) ||
+        !route.matches(host) ||
+        (!route.hasProfileIdentity && _isRouteProfileAmbiguous(route))) {
+      return;
+    }
+    try {
+      await _markSeenIfNew?.call(route.dedupeKey);
+    } catch (_) {}
     await _onRouteOpened(route);
   }
+
+  bool _isCurrentHost(GatewayPairedHost host) =>
+      _host != null && _sameGatewayHost(_host!, host);
+
+  bool _isRegisteredHost(GatewayPairedHost host) =>
+      _registeredHost != null && _sameGatewayHost(_registeredHost!, host);
+
+  bool _sameGatewayHost(GatewayPairedHost left, GatewayPairedHost right) =>
+      left.profile.hostId == right.profile.hostId &&
+      left.profile.deviceId == right.profile.deviceId;
 }

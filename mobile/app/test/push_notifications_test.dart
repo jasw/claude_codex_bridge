@@ -6,19 +6,28 @@ import 'package:ccb_mobile/ccb_mobile.dart';
 import 'package:test/test.dart';
 
 void main() {
-  test('push route requires a complete paired target', () {
+  test('push route requires a complete completion target', () {
     expect(
       () => PushNotificationRoute.fromData(const {'project_id': 'demo'}),
+      throwsFormatException,
+    );
+    expect(
+      () => PushNotificationRoute.fromData(const {
+        'project_id': 'proj-demo',
+        'agent': 'mobile',
+      }),
       throwsFormatException,
     );
 
     final route = PushNotificationRoute.fromData(const {
       'project_id': 'proj-demo',
       'agent': 'mobile',
+      'dedupe_key': 'proj-demo:mobile:42',
       'host_id': 'host-demo',
       'device_id': 'device-demo',
     });
 
+    expect(route.dedupeKey, 'proj-demo:mobile:42');
     expect(route.matches(_host()), isTrue);
     expect(route.matches(_host(deviceId: 'other-device')), isFalse);
   });
@@ -57,7 +66,10 @@ void main() {
           'authorization': request.headers.value(
             HttpHeaders.authorizationHeader,
           ),
-          'body': jsonDecode(await utf8.decodeStream(request)),
+          'body':
+              request.method == 'DELETE'
+                  ? null
+                  : jsonDecode(await utf8.decodeStream(request)),
         });
         request.response.statusCode = HttpStatus.ok;
         await request.response.close();
@@ -78,6 +90,7 @@ void main() {
         const PushNotificationRoute(
           projectId: 'proj-demo',
           agent: 'mobile',
+          dedupeKey: 'first-dedupe',
           hostId: 'host-demo',
           deviceId: 'device-demo',
         ),
@@ -86,6 +99,7 @@ void main() {
         const PushNotificationRoute(
           projectId: 'proj-demo',
           agent: 'other',
+          dedupeKey: 'wrong-device-dedupe',
           deviceId: 'wrong-device',
         ),
       );
@@ -102,9 +116,144 @@ void main() {
       await server.close(force: true);
     },
   );
+
+  test('push open marks dedupe before opening route', () async {
+    final messaging = _FakePushMessagingClient(token: 'token');
+    final order = <String>[];
+    final runtime = PushNotificationRuntime(
+      messaging: messaging,
+      registration: _AlwaysRegisteredPushRegistrationClient(),
+      markSeenIfNew: (dedupeKey) async {
+        order.add('seen:$dedupeKey');
+        return true;
+      },
+      onRouteOpened: (route) async {
+        order.add('open:${route.dedupeKey}');
+      },
+      isEnabled: () => true,
+    );
+
+    expect(await runtime.start(_host()), isTrue);
+    messaging.open(
+      const PushNotificationRoute(
+        projectId: 'proj-demo',
+        agent: 'mobile',
+        dedupeKey: 'same-as-sse',
+      ),
+    );
+    await _drain();
+
+    expect(order, ['seen:same-as-sse', 'open:same-as-sse']);
+
+    await runtime.dispose();
+  });
+
+  test(
+    'identity-free route is rejected when stored profiles are ambiguous',
+    () async {
+      final messaging = _FakePushMessagingClient(token: 'token');
+      final routes = <PushNotificationRoute>[];
+      final seen = <String>[];
+      final runtime = PushNotificationRuntime(
+        messaging: messaging,
+        registration: _AlwaysRegisteredPushRegistrationClient(),
+        markSeenIfNew: (dedupeKey) async {
+          seen.add(dedupeKey);
+          return true;
+        },
+        onRouteOpened: (route) async => routes.add(route),
+        isRouteProfileAmbiguous: (_) => true,
+        isEnabled: () => true,
+      );
+
+      expect(await runtime.start(_host()), isTrue);
+      messaging.open(
+        const PushNotificationRoute(
+          projectId: 'proj-demo',
+          agent: 'mobile',
+          dedupeKey: 'ambiguous',
+        ),
+      );
+      await _drain();
+
+      expect(seen, isEmpty);
+      expect(routes, isEmpty);
+
+      await runtime.dispose();
+    },
+  );
+
+  test('profile switch deletes the prior registered push token', () async {
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    final requests = <Map<String, Object?>>[];
+    final subscription = server.listen((request) async {
+      requests.add({
+        'method': request.method,
+        'path': request.uri.path,
+        'authorization': request.headers.value(HttpHeaders.authorizationHeader),
+        'body':
+            request.method == 'DELETE'
+                ? null
+                : jsonDecode(await utf8.decodeStream(request)),
+      });
+      request.response.statusCode = HttpStatus.ok;
+      await request.response.close();
+    });
+    final messaging = _FakePushMessagingClient(token: 'same-fcm-token');
+    final runtime = PushNotificationRuntime(
+      messaging: messaging,
+      registration: GatewayPushRegistrationClient(isEnabled: () => true),
+      onRouteOpened: (_) async {},
+      isEnabled: () => true,
+    );
+
+    expect(await runtime.start(_host(port: server.port)), isTrue);
+    expect(
+      await runtime.start(
+        _host(
+          deviceId: 'second-device',
+          deviceToken: 'second-device-token',
+          port: server.port,
+        ),
+      ),
+      isTrue,
+    );
+    await _drain();
+
+    expect(
+      requests.map(
+        (request) => [
+          request['method'],
+          request['authorization'],
+          request['body'],
+        ],
+      ),
+      [
+        [
+          'PUT',
+          'Bearer paired-device-token',
+          {'token': 'same-fcm-token'},
+        ],
+        ['DELETE', 'Bearer paired-device-token', null],
+        [
+          'PUT',
+          'Bearer second-device-token',
+          {'token': 'same-fcm-token'},
+        ],
+      ],
+    );
+
+    await runtime.dispose();
+    await subscription.cancel();
+    await server.close(force: true);
+  });
 }
 
-GatewayPairedHost _host({String deviceId = 'device-demo', int? port}) {
+GatewayPairedHost _host({
+  String deviceId = 'device-demo',
+  String deviceToken = 'paired-device-token',
+  int? port,
+}) {
   return GatewayPairedHost(
     profile: GatewayHostProfile(
       hostId: 'host-demo',
@@ -115,7 +264,7 @@ GatewayPairedHost _host({String deviceId = 'device-demo', int? port}) {
       ),
       scopes: const {'notify'},
     ),
-    deviceToken: 'paired-device-token',
+    deviceToken: deviceToken,
   );
 }
 
@@ -155,4 +304,22 @@ class _FakePushMessagingClient implements PushMessagingClient {
   void refresh(String token) => _refreshes.add(token);
 
   void open(PushNotificationRoute route) => _routes.add(route);
+}
+
+class _AlwaysRegisteredPushRegistrationClient
+    implements GatewayPushRegistrationClient {
+  @override
+  Duration get timeout => const Duration(seconds: 10);
+
+  @override
+  Future<bool> delete({required GatewayPairedHost host}) async => true;
+
+  @override
+  Future<bool> register({
+    required GatewayPairedHost host,
+    required String token,
+  }) async => true;
+
+  @override
+  void close({bool force = false}) {}
 }

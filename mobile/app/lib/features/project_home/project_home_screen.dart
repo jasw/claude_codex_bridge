@@ -229,6 +229,7 @@ class _ProjectHomeViewState extends State<_ProjectHomeView>
   final _viewRefreshCoordinator = const ProjectHomeViewRefreshCoordinator();
   final _taskCompletionUnreadClearInFlight = <String>{};
   late final TaskCompletionUnreadStore _taskCompletionUnreadStore;
+  late final TaskCompletionSeenDedupeStore _taskCompletionSeenStore;
   late final TaskCompletionNotificationController _taskNotifications;
   late final PushNotificationRuntime _pushNotifications;
   late final MobileConnectionSupervisor _connectionSupervisor;
@@ -253,6 +254,8 @@ class _ProjectHomeViewState extends State<_ProjectHomeView>
     );
     _taskCompletionUnreadStore =
         widget.taskCompletionUnreadStore ?? TaskCompletionUnreadStore();
+    _taskCompletionSeenStore =
+        widget.taskCompletionSeenStore ?? TaskCompletionSeenDedupeStore();
     _invalidationCursorStore =
         widget.invalidationCursorStore ?? GatewayInvalidationCursorStore();
     _taskNotifications = TaskCompletionNotificationController(
@@ -262,8 +265,7 @@ class _ProjectHomeViewState extends State<_ProjectHomeView>
       localNotifications:
           widget.taskCompletionLocalNotifications ??
           MethodChannelTaskCompletionLocalNotifications(),
-      seenStore:
-          widget.taskCompletionSeenStore ?? TaskCompletionSeenDedupeStore(),
+      seenStore: _taskCompletionSeenStore,
       cursorStore: _invalidationCursorStore,
       onTap: _handleTaskCompletionNotificationTap,
       onLiveEvent: _handleLiveTaskCompletionEvent,
@@ -276,6 +278,8 @@ class _ProjectHomeViewState extends State<_ProjectHomeView>
       messaging: widget.pushMessaging ?? FirebasePushMessagingClient(),
       registration:
           widget.pushRegistrationClient ?? GatewayPushRegistrationClient(),
+      markSeenIfNew: _taskCompletionSeenStore.markSeenIfNew,
+      isRouteProfileAmbiguous: (_) => _profiles.length > 1,
       onRouteOpened: _handlePushNotificationRoute,
     );
     _activeRepository = widget.repository;

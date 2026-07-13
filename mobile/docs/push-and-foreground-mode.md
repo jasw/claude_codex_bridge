@@ -42,11 +42,16 @@ FCM is not an authorization channel: opening a route always uses the stored
 paired profile and normal gateway authorization.
 
 On a foreground/background notification click, the app first restores its
-stored paired profile and resumes the existing cursor-based notification
-catch-up, then loads the requested project and selects its agent. Invalid,
-unpaired, stale, or cross-profile routes stop at the project list. Handling a
-push never submits a prompt, replays terminal input, retries a mutation, or
-writes project files. The notification route is a view-selection request only.
+stored paired profile, records the push `dedupe_key` in the same seen store
+used by the foreground SSE notification stream, and resumes the existing
+cursor-based notification catch-up, then loads the requested project and
+selects its agent. Invalid, unpaired, stale, or cross-profile routes stop at
+the project list. Because the production payload whitelist intentionally omits
+host and device identity, identity-free push routes are treated as ambiguous
+when the app has more than one stored profile; in that case the app does not
+deep-link to a project/agent. Handling a push never submits a prompt, replays
+terminal input, retries a mutation, or writes project files. The notification
+route is a view-selection request only.
 
 Only the device whose visible target exactly matches the event's project and
 agent may be suppressed. Visibility is sent to the gateway as paired-device
