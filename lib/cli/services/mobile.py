@@ -46,7 +46,10 @@ def prepare_mobile_gateway(context, command) -> MobileGatewayServeHandle:
     local_gateway_url = f'http://{host}:{port}'
     gateway_url = _public_gateway_url(command.public_url, fallback=local_gateway_url)
     route_provider = str(command.route_provider or 'lan')
-    pairing = service.create_pairing_payload(gateway_url=gateway_url, route_provider=route_provider)
+    pairing = service.ensure_reusable_pairing_payload(
+        gateway_url=gateway_url,
+        route_provider=route_provider,
+    )
     relay_outbound = _relay_outbound_summary(context.project.project_id) if route_provider == 'relay' else None
     summary = {
         'mobile_status': 'serving',
@@ -65,6 +68,7 @@ def prepare_mobile_gateway(context, command) -> MobileGatewayServeHandle:
             '/v1/projects/{project_id}/view',
             '/v1/pairing/claim',
             '/v1/devices/me',
+            '/v1/devices/me/presence',
             '/v1/devices/{device_id}/revoke',
             '/v1/projects/{project_id}/lifecycle',
             '/v1/projects/{project_id}/focus-agent',
@@ -86,6 +90,7 @@ def prepare_server_mobile_gateway(
     *,
     project_registry: MobileGatewayProjectRegistry | None = None,
     host_id: str | None = None,
+    rotate_pairing: bool = False,
 ) -> MobileGatewayServeHandle:
     registry = project_registry or _running_server_project_registry()
     listen = parse_listen_address(command.listen)
@@ -119,11 +124,16 @@ def prepare_server_mobile_gateway(
         local_gateway_url = f'http://{host}:{port}'
         gateway_url = _public_gateway_url(command.public_url, fallback=local_gateway_url)
         route_provider = str(command.route_provider or 'lan')
-        pairing = service.create_pairing_payload(
-            gateway_url=gateway_url,
-            route_provider=route_provider,
-            expires_seconds=None,
-            reusable_claims=True,
+        pairing = (
+            service.rotate_reusable_pairing_payload(
+                gateway_url=gateway_url,
+                route_provider=route_provider,
+            )
+            if rotate_pairing
+            else service.ensure_reusable_pairing_payload(
+                gateway_url=gateway_url,
+                route_provider=route_provider,
+            )
         )
         relay_outbound = _relay_outbound_summary(resolved_host_id) if route_provider == 'relay' else None
     except Exception:

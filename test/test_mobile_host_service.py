@@ -178,7 +178,7 @@ def test_mobile_host_service_returns_pairing_written_by_spawned_child(
     assert result.pairing == _pairing_payload()
 
 
-def test_mobile_host_service_refreshes_pairing_for_live_matching_process(
+def test_mobile_host_service_preserves_pairing_for_live_matching_process(
     tmp_path: Path,
 ) -> None:
     state_dir = tmp_path / 'mobile'
@@ -225,16 +225,14 @@ def test_mobile_host_service_refreshes_pairing_for_live_matching_process(
     assert terminated == []
     assert spawned == []
     assert result.pairing is not None
-    assert result.pairing['pairing_code'] != pairing['pairing_code']
-    assert result.pairing['expires_at'] is None
-    assert result.pairing['reusable_claims'] is True
+    assert result.pairing['pairing_code'] == pairing['pairing_code']
+    assert result.pairing['expires_at'] == pairing['expires_at']
     assert result.to_record()['pairing'] == result.pairing
     store = MobileGatewayPairingStore(state_dir)
-    assert not store.pairing_code_is_claimable(str(pairing['pairing_code']))
-    assert store.pairing_code_is_claimable(str(result.pairing['pairing_code']))
+    assert store.pairing_code_is_claimable(str(pairing['pairing_code']))
 
 
-def test_mobile_host_service_refreshes_expired_pairing_without_restart(
+def test_mobile_host_service_does_not_rotate_legacy_expired_pairing_without_update(
     tmp_path: Path,
 ) -> None:
     state_dir = tmp_path / 'mobile'
@@ -284,17 +282,15 @@ def test_mobile_host_service_refreshes_expired_pairing_without_restart(
     assert terminated == []
     assert spawned == []
     assert result.pairing is not None
-    assert result.pairing['pairing_code'] != 'expired-code'
+    assert result.pairing['pairing_code'] == 'expired-code'
     assert result.pairing['gateway_url'] == 'https://desktop.tailnet.ts.net:8787'
     assert result.pairing['route_provider'] == 'tailnet'
-    assert result.pairing['expires_at'] is None
-    assert result.pairing['reusable_claims'] is True
+    assert result.pairing['expires_at'] == expired_pairing['expires_at']
     state = json.loads(paths.state_path.read_text(encoding='utf-8'))
     assert state['pairing'] == result.pairing
-    assert MobileGatewayPairingStore(state_dir).pairing_code_is_claimable(str(result.pairing['pairing_code']))
 
 
-def test_mobile_host_service_refreshes_claimed_pairing_without_restart(
+def test_mobile_host_service_preserves_claimed_reusable_pairing_without_restart(
     tmp_path: Path,
 ) -> None:
     state_dir = tmp_path / 'mobile'
@@ -342,12 +338,8 @@ def test_mobile_host_service_refreshes_claimed_pairing_without_restart(
     assert terminated == []
     assert spawned == []
     assert result.pairing is not None
-    assert result.pairing['pairing_code'] != pairing['pairing_code']
-    assert result.pairing['expires_at'] is None
-    assert result.pairing['reusable_claims'] is True
-    store = MobileGatewayPairingStore(state_dir)
-    assert not store.pairing_code_is_claimable(str(pairing['pairing_code']))
-    assert store.pairing_code_is_claimable(str(result.pairing['pairing_code']))
+    assert result.pairing['pairing_code'] == pairing['pairing_code']
+    assert result.pairing['expires_at'] == pairing['expires_at']
 
 
 def test_mobile_host_service_replaces_live_managed_process(tmp_path: Path) -> None:

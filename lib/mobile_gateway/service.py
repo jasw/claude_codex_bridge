@@ -58,6 +58,8 @@ _PAIRING_CAPABILITIES = (
     'file_download',
     'notifications',
     'invalidation_stream',
+    'event_cursor_resume',
+    'device_presence',
 )
 _REDACTED_NAMESPACE_KEYS = ('socket_path', 'session_name')
 _DEFAULT_ROUTE_PROVIDER = 'lan'
@@ -638,6 +640,41 @@ class MobileGatewayService:
             reusable_claims=reusable_claims,
         )
 
+    def ensure_reusable_pairing_payload(
+        self,
+        *,
+        gateway_url: str,
+        route_provider: str,
+        scopes: tuple[str, ...] = _DEFAULT_PAIRING_SCOPES,
+    ) -> dict[str, object]:
+        store = self._require_pairing_store()
+        store.write_gateway_state(
+            project_id=self._project_id,
+            gateway_url=gateway_url,
+            route_provider=route_provider,
+            capabilities=self._capabilities(),
+        )
+        return store.ensure_reusable_pairing_payload(
+            project_id=self._project_id,
+            gateway_url=gateway_url,
+            route_provider=route_provider,
+            scopes=scopes,
+        )
+
+    def rotate_reusable_pairing_payload(
+        self,
+        *,
+        gateway_url: str,
+        route_provider: str,
+        scopes: tuple[str, ...] = _DEFAULT_PAIRING_SCOPES,
+    ) -> dict[str, object]:
+        return self._require_pairing_store().rotate_reusable_pairing_payload(
+            project_id=self._project_id,
+            gateway_url=gateway_url,
+            route_provider=route_provider,
+            scopes=scopes,
+        )
+
     def dispatch_get(self, path: str, headers: Mapping[str, object] | None = None) -> tuple[int, dict[str, object]]:
         parsed = urlparse(path)
         route = parsed.path.rstrip('/') or '/'
@@ -687,11 +724,15 @@ class MobileGatewayService:
             )
         if route == '/v1/devices/me':
             device = self._authenticate(headers, required_scopes=('view',))
-            return 200, {
+            payload = {
                 'schema_version': _SCHEMA_VERSION,
                 'status': 'ok',
                 'device': device.public_payload(),
             }
+            presence = self._require_pairing_store().presence_for_device(device.device_id)
+            if presence is not None:
+                payload['presence'] = presence
+            return 200, payload
         raise MobileGatewayError('not found', status_code=404)
 
     def notification_stream_target_from_path(self, path: str) -> bool:
@@ -1075,6 +1116,20 @@ class MobileGatewayService:
             except MobileGatewayPairingError as exc:
                 raise MobileGatewayError(str(exc), status_code=exc.status_code) from exc
             return 201, result
+        if route == '/v1/devices/me/presence':
+            device = self._authenticate(headers, required_scopes=('view',))
+            try:
+                presence = self._require_pairing_store().record_presence(
+                    device_id=device.device_id,
+                    visible=bool(payload.get('visible')),
+                    focused_project_id=_optional_text(payload.get('focused_project_id')),
+                    focused_agent=_optional_text(payload.get('focused_agent')),
+                    terminal_id=_optional_text(payload.get('terminal_id')),
+                    user_activity=bool(payload.get('user_activity')),
+                )
+            except MobileGatewayPairingError as exc:
+                raise MobileGatewayError(str(exc), status_code=exc.status_code) from exc
+            return 200, {'schema_version': _SCHEMA_VERSION, 'status': 'ok', 'presence': presence}
         project_route = _parse_project_action_route(route)
         if project_route is not None:
             project_id, action = project_route

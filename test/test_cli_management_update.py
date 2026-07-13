@@ -893,6 +893,7 @@ def test_cmd_update_mobile_runs_onboarding_without_release_lookup(monkeypatch, t
             'listen': '127.0.0.1:8787',
             'public_url': 'https://desktop.tailnet.ts.net:8787',
             'route_provider': 'tailnet',
+            'rotate_pairing': True,
         }
     ]
 

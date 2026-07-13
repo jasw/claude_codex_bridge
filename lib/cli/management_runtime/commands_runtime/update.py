@@ -539,6 +539,7 @@ def _update_mobile_bundle(*, script_root: Path) -> int:
             listen=listen,
             public_url=public_url,
             route_provider=route_provider,
+            rotate_pairing=True,
         ).to_record()
 
     return run_mobile_update_onboarding(start_service_fn=_start_service)

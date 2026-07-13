@@ -77,11 +77,12 @@ class MobileNotificationEvent:
 class MobileNotificationStore:
     """Bounded event store with durable completion priority.
 
-    Completion events and fast invalidations intentionally never share a
-    journal. Invalidation records are a compact latest-state map keyed by
-    project/agent/kind/epoch, while completions retain a larger independent
-    bounded history. A trimmed/missing cursor yields an explicit resync event
-    rather than pretending the client is current.
+    Completion and invalidation records use separately bounded persistence,
+    but share one durable monotonic sequence and one cursor surface. This
+    keeps completion retention independent from compact latest-state
+    invalidations while allowing a client to resume one logical journal. A
+    trimmed/missing cursor yields an explicit resync event rather than
+    pretending the client is current.
     """
 
     def __init__(

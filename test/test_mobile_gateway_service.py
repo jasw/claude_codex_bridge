@@ -3548,6 +3548,96 @@ def test_reusable_pairing_can_claim_multiple_devices_until_revoked(tmp_path: Pat
     assert denied.value.reason == 'revoked'
 
 
+def test_reusable_handoff_survives_restart_and_manual_rotation_keeps_old_devices(tmp_path: Path) -> None:
+    mobile_dir = tmp_path / 'mobile'
+    store = MobileGatewayPairingStore(mobile_dir)
+    handoff = store.ensure_reusable_pairing_payload(
+        project_id='host-demo',
+        gateway_url='https://mobile.example.com',
+        route_provider='tailnet',
+        scopes=('view', 'notify'),
+    )
+    code = str(handoff['pairing_code'])
+    claims = [
+        store.claim_pairing(pairing_code=code, device_name=f'Phone {index}')
+        for index in range(4)
+    ]
+    old_token = str(claims[0]['device_token'])
+
+    restarted = MobileGatewayPairingStore(mobile_dir).ensure_reusable_pairing_payload(
+        project_id='host-demo',
+        gateway_url='https://mobile.example.com',
+        route_provider='tailnet',
+        scopes=('view', 'notify'),
+    )
+    assert restarted['pairing_code'] == code
+    assert restarted['generation'] == 1
+    assert (mobile_dir / 'pairing-handoff.json').stat().st_mode & 0o777 == 0o600
+
+    rotated = MobileGatewayPairingStore(mobile_dir).rotate_reusable_pairing_payload(
+        project_id='host-demo',
+        gateway_url='https://mobile.example.com',
+        route_provider='tailnet',
+        scopes=('view', 'notify'),
+    )
+    assert rotated['pairing_code'] != code
+    assert rotated['generation'] == 2
+    with pytest.raises(MobileGatewayPairingError) as denied:
+        store.claim_pairing(pairing_code=code, device_name='Old QR')
+    assert denied.value.reason == 'revoked'
+    assert store.authenticate_device(old_token, required_scopes=('view',)).device_id == claims[0]['device']['device_id']
+
+    audit = (mobile_dir / 'audit.jsonl').read_text(encoding='utf-8')
+    assert code not in audit
+    assert str(rotated['pairing_code']) not in audit
+    assert old_token not in audit
+
+
+def test_gateway_service_restart_reuses_persistent_handoff(tmp_path: Path) -> None:
+    first = _service(_FakeCcbdClient(), mobile_dir=tmp_path / 'mobile')
+    handoff = first.ensure_reusable_pairing_payload(
+        gateway_url='https://mobile.example.com',
+        route_provider='tailnet',
+    )
+    restarted = _service(_FakeCcbdClient(), mobile_dir=tmp_path / 'mobile')
+
+    restored = restarted.ensure_reusable_pairing_payload(
+        gateway_url='https://changed.example.com',
+        route_provider='lan',
+    )
+
+    assert restored['pairing_code'] == handoff['pairing_code']
+    assert restored['generation'] == handoff['generation']
+    assert restored['gateway_url'] == 'https://mobile.example.com'
+
+
+def test_device_presence_is_redacted_and_heartbeat_does_not_change_user_activity(tmp_path: Path) -> None:
+    service = _service(_FakeCcbdClient(), mobile_dir=tmp_path / 'mobile')
+    pairing = service.create_pairing_payload(gateway_url='http://127.0.0.1:8787')
+    _, claim = service.dispatch_post('/v1/pairing/claim', {'pairing_code': pairing['pairing_code']})
+    token = str(claim['device_token'])
+    headers = {'Authorization': f'Bearer {token}'}
+
+    _, first = service.dispatch_post('/v1/devices/me/presence', {
+        'visible': True,
+        'focused_project_id': 'proj-demo',
+        'focused_agent': 'mobile',
+        'terminal_id': 'term-demo',
+        'user_activity': True,
+    }, headers)
+    _, heartbeat = service.dispatch_post('/v1/devices/me/presence', {
+        'visible': True,
+        'focused_project_id': 'proj-demo',
+    }, headers)
+
+    assert first['presence']['last_user_activity_at'] == heartbeat['presence']['last_user_activity_at']
+    _, me = service.dispatch_get('/v1/devices/me', headers)
+    assert me['presence']['focused_agent'] == 'mobile'
+    stored = (tmp_path / 'mobile' / 'audit.jsonl').read_text(encoding='utf-8')
+    for secret in (token, str(pairing['pairing_code']), 'term-demo'):
+        assert secret not in stored
+
+
 def test_host_local_device_revoke_lists_devices_and_revokes_terminal_handles(tmp_path: Path) -> None:
     store = MobileGatewayPairingStore(tmp_path / 'mobile')
     pairing = store.create_pairing_payload(
