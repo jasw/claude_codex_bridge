@@ -4,6 +4,7 @@ import json
 from dataclasses import replace
 from pathlib import Path
 import subprocess
+import threading
 
 import pytest
 
@@ -904,6 +905,283 @@ def test_dispatcher_callback_rejects_without_active_parent(tmp_path: Path) -> No
         )
     assert MessageStore(layout).list_all() == []
     assert CallbackEdgeStore(layout).list_all() == []
+    assert dispatcher._job_store.list_agent('claude') == []
+    assert AttemptStore(layout).list_agent('claude') == []
+    assert InboundEventStore(layout).list_agent('claude') == []
+
+
+@pytest.mark.parametrize('completion_path', ('direct', 'poll'))
+def test_chain_submission_linearizes_parent_terminalization_before_edge_registration(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    completion_path: str,
+) -> None:
+    from ccbd.services.dispatcher_runtime import submission_recording
+
+    project_root = tmp_path / f'repo-callback-linearized-{completion_path}'
+    ctx = _bootstrap_test_project(project_root)
+    layout = PathLayout(project_root)
+    config = _provider_config('codex', 'claude')
+    registry = AgentRegistry(layout, config)
+    registry.upsert(_runtime('codex', project_id=ctx.project_id, layout=layout, pid=101))
+    registry.upsert(_runtime('claude', project_id=ctx.project_id, layout=layout, pid=102))
+    dispatcher = JobDispatcher(layout, config, registry, clock=lambda: '2026-03-30T00:00:00Z')
+    parent_job_id = dispatcher.submit(
+        MessageEnvelope(
+            project_id=ctx.project_id,
+            to_agent='codex',
+            from_actor='user',
+            body='root task',
+            task_id='task-callback-linearized',
+            reply_to=None,
+            message_type='ask',
+            delivery_scope=DeliveryScope.SINGLE,
+        )
+    ).jobs[0].job_id
+    dispatcher.tick()
+
+    if completion_path == 'poll':
+        class PollExecution:
+            def __init__(self) -> None:
+                self._emitted = False
+
+            def poll(self):
+                if self._emitted:
+                    return ()
+                self._emitted = True
+                return (
+                    ExecutionUpdate(
+                        job_id=parent_job_id,
+                        items=(),
+                        decision=_decision(reply='delegated'),
+                    ),
+                )
+
+            def finish(self, _job_id: str) -> None:
+                pass
+
+        dispatcher._execution_service = PollExecution()
+
+    registration_entered = threading.Event()
+    allow_registration = threading.Event()
+    completion_started = threading.Event()
+    completion_done = threading.Event()
+    original_register = submission_recording.register_callback_edge
+
+    def blocking_register(*args, **kwargs):
+        registration_entered.set()
+        assert allow_registration.wait(timeout=2)
+        return original_register(*args, **kwargs)
+
+    monkeypatch.setattr(submission_recording, 'register_callback_edge', blocking_register)
+    submitted: list[object] = []
+    submission_errors: list[BaseException] = []
+
+    def submit_child() -> None:
+        try:
+            submitted.append(
+                dispatcher.submit(
+                    MessageEnvelope(
+                        project_id=ctx.project_id,
+                        to_agent='claude',
+                        from_actor='codex',
+                        body='review',
+                        task_id='task-callback-linearized',
+                        reply_to=None,
+                        message_type='ask',
+                        delivery_scope=DeliveryScope.SINGLE,
+                        route_options={'mode': 'chain'},
+                    )
+                )
+            )
+        except BaseException as exc:
+            submission_errors.append(exc)
+
+    submit_thread = threading.Thread(target=submit_child)
+    submit_thread.start()
+    assert registration_entered.wait(timeout=2)
+
+    def complete_parent() -> None:
+        completion_started.set()
+        if completion_path == 'poll':
+            dispatcher.poll_completions()
+        else:
+            dispatcher.complete(parent_job_id, _decision(reply='delegated'))
+        completion_done.set()
+
+    complete_thread = threading.Thread(target=complete_parent)
+    complete_thread.start()
+    assert completion_started.wait(timeout=2)
+    assert not completion_done.wait(timeout=0.1)
+    allow_registration.set()
+    submit_thread.join(timeout=2)
+    complete_thread.join(timeout=2)
+
+    assert not submit_thread.is_alive()
+    assert not complete_thread.is_alive()
+    assert submission_errors == []
+    child_job_id = submitted[0].jobs[0].job_id
+    child_job = dispatcher.get(child_job_id)
+    assert child_job is not None
+    attempt = AttemptStore(layout).get_latest_by_job_id(child_job_id)
+    assert attempt is not None
+    message = MessageStore(layout).get_latest(attempt.message_id)
+    assert message is not None
+    inbound = InboundEventStore(layout).get_latest_for_attempt('claude', attempt.attempt_id)
+    assert inbound is not None
+    edge = CallbackEdgeStore(layout).get_latest_for_child_job(child_job_id)
+    assert edge is not None
+    assert edge.parent_job_id == parent_job_id
+    assert completion_done.is_set()
+
+
+def test_parent_terminal_before_chain_submission_has_zero_child_side_effects(
+    tmp_path: Path,
+) -> None:
+    project_root = tmp_path / 'repo-callback-parent-first'
+    ctx = _bootstrap_test_project(project_root)
+    layout = PathLayout(project_root)
+    config = _provider_config('codex', 'claude')
+    registry = AgentRegistry(layout, config)
+    registry.upsert(_runtime('codex', project_id=ctx.project_id, layout=layout, pid=101))
+    registry.upsert(_runtime('claude', project_id=ctx.project_id, layout=layout, pid=102))
+    dispatcher = JobDispatcher(layout, config, registry, clock=lambda: '2026-03-30T00:00:00Z')
+    parent_job_id = dispatcher.submit(
+        MessageEnvelope(
+            project_id=ctx.project_id,
+            to_agent='codex',
+            from_actor='user',
+            body='root task',
+            task_id='task-callback-parent-first',
+            reply_to=None,
+            message_type='ask',
+            delivery_scope=DeliveryScope.SINGLE,
+        )
+    ).jobs[0].job_id
+    dispatcher.tick()
+    dispatcher.complete(parent_job_id, _decision())
+    message_count = len(MessageStore(layout).list_all())
+
+    with pytest.raises(DispatchError, match='active parent job'):
+        dispatcher.submit(
+            MessageEnvelope(
+                project_id=ctx.project_id,
+                to_agent='claude',
+                from_actor='codex',
+                body='late review',
+                task_id='task-callback-parent-first',
+                reply_to=None,
+                message_type='ask',
+                delivery_scope=DeliveryScope.SINGLE,
+                route_options={'mode': 'chain'},
+            )
+        )
+
+    assert dispatcher._job_store.list_agent('claude') == []
+    assert len(MessageStore(layout).list_all()) == message_count
+    assert AttemptStore(layout).list_agent('claude') == []
+    assert InboundEventStore(layout).list_agent('claude') == []
+    assert CallbackEdgeStore(layout).list_all() == []
+
+
+@pytest.mark.parametrize('terminalizer', ('cancel', 'terminate'))
+def test_chain_submission_linearizes_cancel_and_terminate_without_locking_provider_io(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    terminalizer: str,
+) -> None:
+    from ccbd.services.dispatcher_runtime import submission_recording
+
+    project_root = tmp_path / f'repo-callback-{terminalizer}'
+    ctx = _bootstrap_test_project(project_root)
+    layout = PathLayout(project_root)
+    config = _provider_config('codex', 'claude')
+    registry = AgentRegistry(layout, config)
+    registry.upsert(_runtime('codex', project_id=ctx.project_id, layout=layout, pid=101))
+    registry.upsert(_runtime('claude', project_id=ctx.project_id, layout=layout, pid=102))
+    dispatcher = JobDispatcher(layout, config, registry, clock=lambda: '2026-03-30T00:00:00Z')
+    parent_job_id = dispatcher.submit(
+        MessageEnvelope(
+            project_id=ctx.project_id,
+            to_agent='codex',
+            from_actor='user',
+            body='root task',
+            task_id=f'task-callback-{terminalizer}',
+            reply_to=None,
+            message_type='ask',
+            delivery_scope=DeliveryScope.SINGLE,
+        )
+    ).jobs[0].job_id
+    dispatcher.tick()
+
+    provider_cancelled = threading.Event()
+
+    class ExecutionSpy:
+        def cancel(self, _job_id: str) -> None:
+            provider_cancelled.set()
+
+        def finish(self, _job_id: str) -> None:
+            pass
+
+    dispatcher._execution_service = ExecutionSpy()
+    registration_entered = threading.Event()
+    allow_registration = threading.Event()
+    original_register = submission_recording.register_callback_edge
+
+    def blocking_register(*args, **kwargs):
+        registration_entered.set()
+        assert allow_registration.wait(timeout=2)
+        return original_register(*args, **kwargs)
+
+    monkeypatch.setattr(submission_recording, 'register_callback_edge', blocking_register)
+    submitted: list[object] = []
+
+    def submit_child() -> None:
+        submitted.append(
+            dispatcher.submit(
+                MessageEnvelope(
+                    project_id=ctx.project_id,
+                    to_agent='claude',
+                    from_actor='codex',
+                    body='review',
+                    task_id=f'task-callback-{terminalizer}',
+                    reply_to=None,
+                    message_type='ask',
+                    delivery_scope=DeliveryScope.SINGLE,
+                    route_options={'mode': 'chain'},
+                )
+            )
+        )
+
+    submit_thread = threading.Thread(target=submit_child)
+    submit_thread.start()
+    assert registration_entered.wait(timeout=2)
+    terminal_errors: list[BaseException] = []
+
+    def terminalize_parent() -> None:
+        try:
+            if terminalizer == 'cancel':
+                dispatcher.cancel(parent_job_id)
+            else:
+                dispatcher.terminate_nonterminal_jobs(shutdown_reason='test', forced=True)
+        except BaseException as exc:
+            terminal_errors.append(exc)
+
+    terminal_thread = threading.Thread(target=terminalize_parent)
+    terminal_thread.start()
+    assert provider_cancelled.wait(timeout=2)
+    assert terminal_thread.is_alive()
+    allow_registration.set()
+    submit_thread.join(timeout=2)
+    terminal_thread.join(timeout=2)
+
+    assert not submit_thread.is_alive()
+    assert not terminal_thread.is_alive()
+    assert terminal_errors == []
+    child_job_id = submitted[0].jobs[0].job_id
+    edge = CallbackEdgeStore(layout).get_latest_for_child_job(child_job_id)
+    assert edge is not None
+    assert edge.parent_job_id == parent_job_id
 
 
 def test_dispatcher_rejects_plain_nested_ask_from_active_parent(tmp_path: Path) -> None:

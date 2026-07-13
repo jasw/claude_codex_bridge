@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from threading import RLock
+
 from .dispatcher_runtime import (
     DispatcherState,
     build_last_restore_report,
@@ -102,6 +104,7 @@ class JobDispatcher(DispatcherRuntimeStateMixin, DispatcherFacadeMixin):
             dispatch_rejected_error=DispatchRejectedError,
             terminal_event_by_status=_TERMINAL_EVENT_BY_STATUS,
             running_status=JobStatus.RUNNING,
+            chain_transition_lock=RLock(),
             timing_sink=timing_sink,
             last_restore_entries=(),
             last_restore_generated_at=None,
@@ -110,7 +113,8 @@ class JobDispatcher(DispatcherRuntimeStateMixin, DispatcherFacadeMixin):
         cleanup_stale_execution_states(self)
 
     def submit(self, request: MessageEnvelope) -> SubmitReceipt:
-        return submit_jobs(self, request)
+        with self._chain_transition_lock:
+            return submit_jobs(self, request)
 
     def tick(self) -> tuple[JobRecord, ...]:
         sweep_text_artifacts_if_due(self)

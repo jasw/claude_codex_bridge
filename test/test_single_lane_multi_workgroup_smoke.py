@@ -677,6 +677,32 @@ def test_clean_topology_release_records_explicit_zero_residue(tmp_path: Path) ->
     assert payload['observed']['release_incomplete_count'] == 0
 
 
+def test_terminal_observation_waits_for_release_and_zero_residue(tmp_path: Path) -> None:
+    module = _load_script()
+    loop_dir = tmp_path / '.ccb/runtime/loops/lp-g5'
+    loop_dir.mkdir(parents=True)
+    state_path = loop_dir / 'workgroup_scheduler_state.json'
+    release = {
+        'loop_topology_status': 'released',
+        'retained_count': 0,
+        'release_incomplete_count': 0,
+        'observed': {'agents': []},
+    }
+    module._find_loop_id = lambda *_args: 'lp-g5'
+
+    for status, topology_release, expected in (
+        ('result_imported', None, False),
+        ('release_blocked', release, False),
+        ('pass', release, True),
+        ('blocked', release, True),
+    ):
+        state_path.write_text(
+            json.dumps({'status': status, 'topology': {'release': topology_release}}),
+            encoding='utf-8',
+        )
+        assert module._terminal_release_complete(tmp_path) is expected
+
+
 @pytest.mark.ccb_lifecycle_smoke
 @pytest.mark.parametrize(
     ('count', 'shape'),

@@ -38,8 +38,6 @@ def cancel_job(dispatcher, job_id: str, *, record_reply: bool = True) -> CancelR
         # check this flag between steps and stop if it exists.
         write_cancel_flag(dispatcher._layout, current.agent_name, job_id)
         cleanup_cancel_flags(dispatcher._layout, current.agent_name)
-    dispatcher._state.remove_queued_for(current.target_kind, current.target_name, job_id)
-    dispatcher._state.clear_active_for(current.target_kind, current.target_name, job_id=job_id)
     if dispatcher._execution_service is not None:
         dispatcher._execution_service.cancel(job_id)
 
@@ -79,20 +77,33 @@ def cancel_with_decision(dispatcher, current, cancelled_at: str, reply: str, sna
         decision=decision,
         updated_at=cancelled_at,
     )
-    dispatcher._append_event(current, 'completion_terminal', decision.to_record(), timestamp=cancelled_at)
-    terminal = replace(
-        current,
-        status=JobStatus.CANCELLED,
-        terminal_decision=decision.to_record(),
-        updated_at=cancelled_at,
-        cancel_requested_at=cancelled_at,
-    )
-    dispatcher._append_job(terminal)
-    dispatcher._append_event(terminal, 'job_cancelled', {'status': JobStatus.CANCELLED.value}, timestamp=cancelled_at)
+    with dispatcher._chain_transition_lock:
+        dispatcher._append_event(current, 'completion_terminal', decision.to_record(), timestamp=cancelled_at)
+        terminal = replace(
+            current,
+            status=JobStatus.CANCELLED,
+            terminal_decision=decision.to_record(),
+            updated_at=cancelled_at,
+            cancel_requested_at=cancelled_at,
+        )
+        dispatcher._append_job(terminal)
+        dispatcher._append_event(
+            terminal,
+            'job_cancelled',
+            {'status': JobStatus.CANCELLED.value},
+            timestamp=cancelled_at,
+        )
+        dispatcher._state.remove_queued_for(current.target_kind, current.target_name, current.job_id)
+        dispatcher._state.clear_active_for(current.target_kind, current.target_name, job_id=current.job_id)
+        if dispatcher._message_bureau is not None:
+            dispatcher._message_bureau.record_terminal(
+                terminal,
+                decision,
+                finished_at=cancelled_at,
+                record_reply=record_reply,
+            )
     if current.target_kind is TargetKind.AGENT:
         dispatcher._sync_runtime(current.agent_name, state=AgentState.IDLE)
-    if dispatcher._message_bureau is not None:
-        dispatcher._message_bureau.record_terminal(terminal, decision, finished_at=cancelled_at, record_reply=record_reply)
     resolve_reply_delivery_terminal(dispatcher, terminal, finished_at=cancelled_at)
     return CancelReceipt(
         job_id=terminal.job_id,

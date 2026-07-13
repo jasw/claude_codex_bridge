@@ -57,8 +57,6 @@ def _terminate_job_for_shutdown(
     forced: bool,
 ):
     finished_at = dispatcher._clock()
-    dispatcher._state.remove_queued_for(current.target_kind, current.target_name, current.job_id)
-    dispatcher._state.clear_active_for(current.target_kind, current.target_name, job_id=current.job_id)
     if dispatcher._execution_service is not None:
         dispatcher._execution_service.cancel(current.job_id)
     snapshot = dispatcher._snapshot_writer.load(current.job_id)
@@ -80,7 +78,9 @@ def _terminate_job_for_shutdown(
             'forced': bool(forced),
         },
     )
-    return dispatcher.complete(current.job_id, decision)
+    terminal = dispatcher.complete(current.job_id, decision)
+    dispatcher._state.remove_queued_for(current.target_kind, current.target_name, current.job_id)
+    return terminal
 
 
 __all__ = ['terminate_nonterminal_jobs']

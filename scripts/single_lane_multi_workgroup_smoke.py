@@ -29,6 +29,7 @@ PLAN_SLUG = 'g5-fake-fullflow'
 TASK_ID = 'g5-multi-workgroup-task'
 TERMINAL_JOB_STATUSES = {'completed', 'failed', 'cancelled', 'timed_out'}
 TERMINAL_TASK_STATUSES = {'done', 'partial', 'blocked', 'replan_required'}
+TERMINAL_SCHEDULER_STATUSES = {'pass', 'partial', 'blocked', 'replan_required'}
 SCENARIO_SCHEMA = 'ccb.g5.source_fake_runtime_scenario.v1'
 REPORT_SCHEMA = 'ccb.g5.source_fake_runtime_report.v1'
 SCENARIO_EXPECTATIONS = {
@@ -929,7 +930,10 @@ def _run_until_terminal(
             timeout_s=timeout_s,
             label=f'{label_prefix}_task_show_{attempt}',
         )
-        if _task_record(shown).get('status') in TERMINAL_TASK_STATUSES:
+        if (
+            _task_record(shown).get('status') in TERMINAL_TASK_STATUSES
+            and _terminal_release_complete(project_root)
+        ):
             return results
         time.sleep(0.1)
     raise SmokeFailure('loop runner did not reach terminal task authority in 96 activations')
@@ -1010,6 +1014,25 @@ def _submit_pending_worker_reviews(
         if result['returncode'] == 0:
             submitted.append(_json_object(result['stdout']))
     return submitted
+
+
+def _terminal_release_complete(project_root: Path) -> bool:
+    loop_id = _find_loop_id(project_root, TASK_ID)
+    if not loop_id:
+        return False
+    state = _read_json(
+        project_root / '.ccb' / 'runtime' / 'loops' / loop_id / 'workgroup_scheduler_state.json'
+    )
+    if str(state.get('status') or '') not in TERMINAL_SCHEDULER_STATUSES:
+        return False
+    release = _mapping(_mapping(state.get('topology')).get('release'))
+    observed = _mapping(release.get('observed'))
+    return (
+        release.get('loop_topology_status') == 'released'
+        and int(release.get('retained_count') or 0) == 0
+        and int(release.get('release_incomplete_count') or 0) == 0
+        and not _live_observed_agents(observed)
+    )
 
 
 def _review_edges(project_root: Path, *, reviewer: str) -> list[dict[str, Any]]:

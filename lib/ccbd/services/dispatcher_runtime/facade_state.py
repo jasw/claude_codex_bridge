@@ -26,6 +26,7 @@ class DispatcherRuntimeState:
     dispatch_rejected_error: object
     terminal_event_by_status: dict
     running_status: object
+    chain_transition_lock: object
     timing_sink: object | None = None
     last_restore_entries: tuple = ()
     last_restore_generated_at: str | None = None
@@ -125,6 +126,10 @@ class DispatcherRuntimeStateMixin:
     @property
     def _running_status(self):
         return self._runtime_state.running_status
+
+    @property
+    def _chain_transition_lock(self):
+        return self._runtime_state.chain_transition_lock
 
     @property
     def _timing_sink(self):

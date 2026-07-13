@@ -58,11 +58,14 @@ def persist_terminal_completion(
         timestamp=finished_at,
     )
     dispatcher._state.clear_active_for(current.target_kind, current.target_name, job_id=current.job_id)
+    return terminal, terminal_decision, prior_snapshot
+
+
+def finish_terminal_runtime(dispatcher, current: JobRecord) -> None:
     if dispatcher._execution_service is not None:
         dispatcher._execution_service.finish(current.job_id)
     if current.target_kind is TargetKind.AGENT:
         sync_runtime(dispatcher, current.agent_name, state=AgentState.IDLE)
-    return terminal, terminal_decision, prior_snapshot
 
 
-__all__ = ['persist_terminal_completion']
+__all__ = ['finish_terminal_runtime', 'persist_terminal_completion']
