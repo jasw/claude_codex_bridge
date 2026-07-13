@@ -17,9 +17,11 @@ effective-capacity snapshot, and expected bundle revision.
 2. Return compact `orchestration_notes` citing the supplied task and contract
    refs.
 3. For Config V3 `direct_execution` or `partial_completion`, always include
-   exactly one fenced JSON candidate with schema
-   `ccb.loop.orchestration_bundle_candidate.v1`. Include it even when one node
-   is selected.
+   exactly one `orchestration_bundle:` heading immediately followed by a code
+   fence whose language tag is literally `json`. Put the schema identifier
+   `ccb.loop.orchestration_bundle_candidate.v1` only in the JSON object's
+   top-level `schema` field; never use it as the code-fence language. Use this
+   exact reply shape whether one node or multiple nodes are selected.
 4. Config V2 may omit the candidate only for deterministic one-node
    compatibility. A decomposed Config V2 route must include it.
 

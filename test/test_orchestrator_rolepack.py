@@ -882,7 +882,7 @@ def test_round_reviewer_and_orchestrator_templates_share_result_contract() -> No
     assert 'pass`, `rework_required`, `blocked`, `non_converged' in checker_ask
 
 
-def test_orchestrator_rolepack_does_not_project_command_skills_to_codex_home(
+def test_orchestrator_rolepack_projects_literal_json_bundle_fence_contract(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
@@ -923,9 +923,39 @@ def test_orchestrator_rolepack_does_not_project_command_skills_to_codex_home(
 
     assert not (target_home / 'skills' / 'orchestrator-capacity').exists()
     assert not (target_home / 'skills' / 'dynamic-agent-lifecycle').exists()
-    projected = target_home / 'skills' / 'orchestration-bundle-candidate' / 'SKILL.md'
-    assert projected.is_file()
-    assert 'ccb.loop.orchestration_bundle_candidate.v1' in projected.read_text(encoding='utf-8')
+    projected_memory = (target_home / 'AGENTS.md').read_text(encoding='utf-8')
+    projected_skill_path = (
+        target_home / 'skills' / 'orchestration-bundle-candidate' / 'SKILL.md'
+    )
+    assert projected_skill_path.is_file()
+    projected_skill = projected_skill_path.read_text(encoding='utf-8')
+    projected_template = (
+        installed / 'templates' / 'orchestration-bundle-candidate.md'
+    ).read_text(encoding='utf-8')
+
+    for projected_contract in (
+        projected_memory,
+        projected_skill,
+        projected_template,
+    ):
+        assert '`orchestration_bundle:`' in projected_contract
+        assert 'language tag is literally `json`' in projected_contract
+        assert 'only in the JSON object' in projected_contract
+        assert 'never use it as the code-fence language' in projected_contract
+        assert not re.search(
+            r'```ccb\.loop\.orchestration_bundle_candidate\.v1',
+            projected_contract,
+        )
+        assert (
+            'fenced `ccb.loop.orchestration_bundle_candidate.v1`'
+            not in projected_contract
+        )
+
+    assert re.search(
+        r'^orchestration_bundle:\n```json\n\{',
+        projected_template,
+        flags=re.MULTILINE,
+    )
 
 
 def test_planner_rolepack_projects_planner_skill_to_codex_home(tmp_path: Path, monkeypatch) -> None:

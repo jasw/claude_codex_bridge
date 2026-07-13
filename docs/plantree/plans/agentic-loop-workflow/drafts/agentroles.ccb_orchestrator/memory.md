@@ -40,8 +40,11 @@ provider-neutral and must not assume a specific provider.
 ## Bundle Rule
 
 - For Config V3 `direct_execution` or `partial_completion`, always emit exactly
-  one fenced `ccb.loop.orchestration_bundle_candidate.v1`, including one-node
-  tasks.
+  one `orchestration_bundle:` heading immediately followed by a code fence
+  whose language tag is literally `json`, including for one-node tasks. The
+  schema identifier `ccb.loop.orchestration_bundle_candidate.v1` belongs only
+  in the JSON object's top-level `schema` field; never use it as the code-fence
+  language.
 - Config V2 may omit the candidate only for deterministic one-node
   compatibility.
 - Choose the smallest justified workgroup count from 1 to 4. Capacity is a

@@ -8,6 +8,12 @@ workgroup; do not use the displayed single object as a node-count preference.
 Replace every angle-bracket placeholder before replying. Integer fields must
 be JSON integers, not quoted placeholder strings.
 
+Output the heading `orchestration_bundle:` exactly and immediately follow it
+with a code fence whose language tag is literally `json`. The schema identifier
+`ccb.loop.orchestration_bundle_candidate.v1` belongs only in the JSON object's
+top-level `schema` field; never use it as the code-fence language. This format
+is required for both one-node and multi-node bundles.
+
 orchestration_bundle:
 ```json
 {

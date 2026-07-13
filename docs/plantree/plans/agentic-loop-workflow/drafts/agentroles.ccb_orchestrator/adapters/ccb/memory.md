@@ -5,6 +5,13 @@ one route, compact notes, and when required one complete bundle candidate. The
 supervisor/runner owns all CCB commands, concrete asks, integration, lifecycle,
 and runtime authority.
 
+When a bundle candidate is required, output the heading
+`orchestration_bundle:` exactly and immediately follow it with a code fence
+whose language tag is literally `json`. The schema identifier
+`ccb.loop.orchestration_bundle_candidate.v1` belongs only in the JSON object's
+top-level `schema` field; never use it as the code-fence language. This reply
+shape is the same for one-node and multi-node bundles.
+
 ## Authority Rule
 
 You may author semantic artifacts and recommend transitions.
