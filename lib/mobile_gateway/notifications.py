@@ -213,7 +213,10 @@ class MobileNotificationStore:
             # overwritten, a legacy journal was retired, or completion history
             # was bounded. Make recovery explicit and advance the cursor so the
             # client does not receive a resync loop.
-            newest = max(_int(self._load_state().get('next_event_sequence'), 1) - 1, sequence)
+            newest = max(
+                (_event_sequence(event) for event in events),
+                default=max(_int(self._load_state().get('next_event_sequence'), 1) - 1, sequence),
+            )
             return [
                 *[event for event in events if _event_sequence(event) > sequence],
                 MobileNotificationEvent(
@@ -266,7 +269,7 @@ class MobileNotificationStore:
         return [
             event for event in _events_from_records(_read_jsonl(self.events_path))
             if event.kind == NOTIFICATION_KIND_TASK_COMPLETED
-        ]
+        ][-self._completion_limit :]
 
     def _invalidation_events(self) -> list[MobileNotificationEvent]:
         current = _events_from_records(_read_jsonl(self.invalidation_events_path))
@@ -275,7 +278,7 @@ class MobileNotificationStore:
         return [
             event for event in _events_from_records(_read_jsonl(self.events_path))
             if event.kind != NOTIFICATION_KIND_TASK_COMPLETED
-        ]
+        ][-self._recent_limit :]
 
     def _write_completion_events(self, events: list[MobileNotificationEvent]) -> None:
         _write_jsonl(self.completion_events_path, events[-self._completion_limit :])

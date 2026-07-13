@@ -4,7 +4,10 @@ import json
 from pathlib import Path
 import socket
 import tempfile
+import threading
 from types import SimpleNamespace
+from urllib.error import HTTPError
+from urllib.request import Request, urlopen
 
 import pytest
 
@@ -227,6 +230,73 @@ def test_prepare_server_mobile_gateway_uses_running_projects(tmp_path: Path, mon
         assert handle.summary['pairing']['reusable_claims'] is True
     finally:
         handle.close()
+
+
+def test_server_cli_reuses_handoff_and_update_rotation_preserves_claimed_device(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    state_dir = tmp_path / 'mobile-state'
+    monkeypatch.setattr('cli.services.mobile.mobile_host_state_dir', lambda: state_dir)
+    client = _FakeCcbdClient(project_id='proj-one', project_root='/srv/one', display_name='one')
+    registry = MobileGatewayProjectRegistry([
+        MobileGatewayProject('proj-one', Path('/srv/one'), lambda: client, display_name='one'),
+    ])
+    command = SimpleNamespace(listen='127.0.0.1:0', public_url=None, route_provider='lan')
+    first = prepare_server_mobile_gateway(command, project_registry=registry, host_id='host-test')
+    first_code = str(first.summary['pairing']['pairing_code'])
+    thread = threading.Thread(target=first.server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        base = f'http://{first.server.server_address[0]}:{first.server.server_address[1]}'
+        tokens = []
+        for index in range(4):
+            request = Request(
+                f'{base}/v1/pairing/claim',
+                data=json.dumps({'pairing_code': first_code, 'device_name': f'Phone {index}'}).encode(),
+                headers={'Content-Type': 'application/json'},
+                method='POST',
+            )
+            with urlopen(request, timeout=2) as response:
+                tokens.append(json.loads(response.read())['device_token'])
+    finally:
+        first.server.shutdown()
+        first.close()
+        thread.join(timeout=2)
+
+    restarted = prepare_server_mobile_gateway(command, project_registry=registry, host_id='host-test')
+    try:
+        assert restarted.summary['pairing']['pairing_code'] == first_code
+    finally:
+        restarted.close()
+
+    rotated = prepare_server_mobile_gateway(
+        command,
+        project_registry=registry,
+        host_id='host-test',
+        rotate_pairing=True,
+    )
+    assert rotated.summary['pairing']['pairing_code'] != first_code
+    thread = threading.Thread(target=rotated.server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        base = f'http://{rotated.server.server_address[0]}:{rotated.server.server_address[1]}'
+        denied = Request(
+            f'{base}/v1/pairing/claim',
+            data=json.dumps({'pairing_code': first_code}).encode(),
+            headers={'Content-Type': 'application/json'},
+            method='POST',
+        )
+        with pytest.raises(HTTPError) as error:
+            urlopen(denied, timeout=2)
+        assert error.value.code == 410
+        me = Request(f'{base}/v1/devices/me', headers={'Authorization': f'Bearer {tokens[0]}'})
+        with urlopen(me, timeout=2) as response:
+            assert json.loads(response.read())['status'] == 'ok'
+    finally:
+        rotated.server.shutdown()
+        rotated.close()
+        thread.join(timeout=2)
 
 
 def test_prepare_server_mobile_gateway_uses_published_registry_without_proc(

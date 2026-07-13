@@ -68,6 +68,7 @@ class MobileHostServiceResult:
     log_path: Path
     replaced_pid: int | None = None
     pairing: Mapping[str, object] | None = None
+    pairing_diagnostic: str | None = None
 
     def to_record(self) -> dict[str, object]:
         record: dict[str, object] = {
@@ -87,6 +88,8 @@ class MobileHostServiceResult:
             record['replaced_pid'] = self.replaced_pid
         if self.pairing is not None:
             record['pairing'] = dict(self.pairing)
+        if self.pairing_diagnostic:
+            record['pairing_diagnostic'] = self.pairing_diagnostic
         return record
 
 
@@ -150,6 +153,8 @@ def start_or_replace_mobile_host_service(
                     old_pid,
                     port_owner_fn=port_owner_fn,
                 ):
+                    if not rotate_pairing:
+                        state = _mobile_host_state_with_pairing_diagnostic(state, paths=paths)
                     state = (
                         _mobile_host_state_with_rotated_pairing(state, paths=paths)
                         if rotate_pairing
@@ -830,7 +835,31 @@ def _mobile_host_state_with_rotated_pairing(
         return None
     updated = dict(state or {})
     updated['pairing'] = refreshed
+    updated.pop('pairing_diagnostic', None)
     write_mobile_host_service_state(paths.state_path, updated)
+    return updated
+
+
+def _mobile_host_state_with_pairing_diagnostic(
+    state: dict[str, object] | None,
+    *,
+    paths: MobileHostServicePaths,
+) -> dict[str, object] | None:
+    pairing = _state_pairing(state)
+    if pairing is None:
+        return state
+    claimable = MobileGatewayPairingStore(paths.state_dir).pairing_code_is_claimable(
+        str(pairing.get('pairing_code') or '')
+    )
+    updated = dict(state or {})
+    if claimable:
+        updated.pop('pairing_diagnostic', None)
+    else:
+        updated['pairing_diagnostic'] = (
+            'Pairing handoff is no longer claimable; run `ccb update mobile` to rotate it.'
+        )
+    if updated != state:
+        write_mobile_host_service_state(paths.state_path, updated)
     return updated
 
 
@@ -903,6 +932,7 @@ def _mobile_host_result_from_state(
     if state is None:
         raise MobileHostServiceError(f'missing mobile host service state: {paths.state_path}')
     listen = _state_listen(state, listen='')
+    pairing_diagnostic = str((state or {}).get('pairing_diagnostic') or '').strip() or None
     return MobileHostServiceResult(
         status=status,
         pid=_state_pid(state) or 0,
@@ -914,7 +944,8 @@ def _mobile_host_result_from_state(
         state_dir=paths.state_dir,
         state_path=paths.state_path,
         log_path=paths.log_path,
-        pairing=_state_pairing(state),
+        pairing=None if pairing_diagnostic else _state_pairing(state),
+        pairing_diagnostic=pairing_diagnostic,
     )
 
 

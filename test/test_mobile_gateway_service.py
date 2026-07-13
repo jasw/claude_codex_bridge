@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 from concurrent.futures import Future
+from datetime import datetime, timedelta, timezone
 import json
 import os
 import socket
@@ -3636,6 +3637,51 @@ def test_device_presence_is_redacted_and_heartbeat_does_not_change_user_activity
     stored = (tmp_path / 'mobile' / 'audit.jsonl').read_text(encoding='utf-8')
     for secret in (token, str(pairing['pairing_code']), 'term-demo'):
         assert secret not in stored
+
+
+def test_presence_expires_authoritatively_and_revoke_isolated_to_one_device(tmp_path: Path) -> None:
+    now = [datetime(2026, 7, 13, tzinfo=timezone.utc)]
+    store = MobileGatewayPairingStore(
+        tmp_path / 'mobile',
+        clock=lambda: now[0],
+        presence_ttl_seconds=90,
+    )
+    pairing = store.create_pairing_payload(
+        project_id='host-demo',
+        gateway_url='https://mobile.example.com',
+        route_provider='tailnet',
+        scopes=('view',),
+        expires_seconds=None,
+        reusable_claims=True,
+    )
+    first = store.claim_pairing(pairing_code=str(pairing['pairing_code']), device_name='Phone A')
+    second = store.claim_pairing(pairing_code=str(pairing['pairing_code']), device_name='Phone B')
+    first_id = str(first['device']['device_id'])
+    second_id = str(second['device']['device_id'])
+    first_presence = store.record_presence(
+        device_id=first_id,
+        visible=True,
+        focused_project_id='project-a',
+        focused_agent='agent-a',
+        user_activity=True,
+    )
+    now[0] += timedelta(seconds=1)
+    heartbeat = store.record_presence(device_id=first_id, visible=True)
+    assert heartbeat['last_user_activity_at'] == first_presence['last_user_activity_at']
+    store.record_presence(device_id=second_id, visible=True, focused_project_id='project-b')
+    now[0] += timedelta(seconds=91)
+
+    stale = store.presence_for_device(first_id)
+    assert stale is not None
+    assert stale['freshness'] == 'stale'
+    assert stale['visible'] is False
+    assert stale['focused_project_id'] == ''
+
+    store.revoke_device_locally(device_id=first_id)
+    assert store.presence_for_device(first_id) is None
+    second_presence = store.presence_for_device(second_id)
+    assert second_presence is not None
+    assert second_presence['freshness'] == 'stale'
 
 
 def test_host_local_device_revoke_lists_devices_and_revokes_terminal_handles(tmp_path: Path) -> None:

@@ -20,6 +20,7 @@ _DEFAULT_TERMINAL_EXPIRES_SECONDS = 5 * 60
 _TERMINAL_LOG_COMPACT_BYTES = 8 * 1024 * 1024
 _HANDOFF_RECORD_TYPE = 'ccb_mobile_pairing_handoff'
 _PRESENCE_RECORD_TYPE = 'ccb_mobile_device_presence'
+_DEFAULT_PRESENCE_TTL_SECONDS = 90
 
 
 class MobileGatewayPairingError(RuntimeError):
@@ -53,11 +54,13 @@ class MobileGatewayPairingStore:
         clock: Callable[[], datetime] | None = None,
         token_factory: Callable[[int], str] | None = None,
         id_factory: Callable[[str], str] | None = None,
+        presence_ttl_seconds: int = _DEFAULT_PRESENCE_TTL_SECONDS,
     ) -> None:
         self._mobile_dir = Path(mobile_dir)
         self._clock = clock or _utc_now
         self._token_factory = token_factory or _token_urlsafe
         self._id_factory = id_factory or _random_id
+        self._presence_ttl_seconds = max(1, int(presence_ttl_seconds))
         self._lock = threading.RLock()
         self._terminal_state_cache: dict[str, dict[str, object]] | None = None
         self._terminal_state_cache_identity: tuple[int, int] | None = None
@@ -290,12 +293,20 @@ class MobileGatewayPairingStore:
                 visible=bool(visible),
                 user_activity=bool(user_activity),
             )
-            return _public_presence(updated)
+            return _public_presence(
+                updated,
+                now=self._clock(),
+                freshness_ttl_seconds=self._presence_ttl_seconds,
+            )
 
     def presence_for_device(self, device_id: str) -> dict[str, object] | None:
         with self._lock:
             record = self._read_presence().get(str(device_id or ''))
-            return _public_presence(record) if record else None
+            return _public_presence(
+                record,
+                now=self._clock(),
+                freshness_ttl_seconds=self._presence_ttl_seconds,
+            ) if record else None
 
     def revoke_pairing(self, pairing_id: str, *, reason: str = 'revoked') -> dict[str, object] | None:
         requested = str(pairing_id or '').strip()
@@ -1036,6 +1047,10 @@ class MobileGatewayPairingStore:
                 updated['revoked_at'] = now
             devices[index] = updated
             _write_json(self.devices_path, {'schema_version': _SCHEMA_VERSION, 'devices': devices})
+            presence = self._read_presence()
+            presence_removed = presence.pop(device_id, None) is not None
+            if presence_removed:
+                self._write_presence(presence)
             revoked_terminal_count = self._revoke_terminal_handles_for_device(
                 device_id=device_id,
                 now=now,
@@ -1049,12 +1064,14 @@ class MobileGatewayPairingStore:
                 revoked_by_device_id=revoked_by_device_id,
                 reason=reason,
                 revoked_terminal_count=revoked_terminal_count,
+                presence_removed=presence_removed,
             )
             return {
                 'schema_version': _SCHEMA_VERSION,
                 'status': 'revoked',
                 'device': _public_device(updated),
                 'revoked_terminal_count': revoked_terminal_count,
+                'presence_removed': presence_removed,
             }
         raise MobileGatewayPairingError('device not found', status_code=404, reason='not_found')
 
@@ -1140,12 +1157,24 @@ def _public_device(record: dict[str, object]) -> dict[str, object]:
     }
 
 
-def _public_presence(record: dict[str, object]) -> dict[str, object]:
+def _public_presence(
+    record: dict[str, object],
+    *,
+    now: datetime,
+    freshness_ttl_seconds: int,
+) -> dict[str, object]:
+    heartbeat_at = _parse_utc(record.get('last_heartbeat_at'))
+    fresh = (
+        heartbeat_at is not None
+        and now <= heartbeat_at + timedelta(seconds=max(1, int(freshness_ttl_seconds)))
+    )
     return {
-        'visible': bool(record.get('visible')),
-        'focused_project_id': str(record.get('focused_project_id') or ''),
-        'focused_agent': str(record.get('focused_agent') or ''),
-        'terminal_id': str(record.get('terminal_id') or ''),
+        # These are authoritative effective values, not the last stale report.
+        'visible': bool(record.get('visible')) if fresh else False,
+        'freshness': 'fresh' if fresh else 'stale',
+        'focused_project_id': str(record.get('focused_project_id') or '') if fresh else '',
+        'focused_agent': str(record.get('focused_agent') or '') if fresh else '',
+        'terminal_id': str(record.get('terminal_id') or '') if fresh else '',
         'last_heartbeat_at': record.get('last_heartbeat_at'),
         'last_user_activity_at': record.get('last_user_activity_at'),
     }

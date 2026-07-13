@@ -195,6 +195,55 @@ def test_invalidation_store_dedupes_redacts_and_bounds_event_journal(tmp_path: P
     assert '/srv/' not in payload
 
 
+def test_logical_journal_shares_monotonic_sequence_and_retained_cursor_is_exactly_once(
+    tmp_path: Path,
+) -> None:
+    store = MobileNotificationStore(tmp_path / 'mobile', recent_limit=8, completion_limit=8)
+    active = MobileNotificationSnapshot('p', 'p', 1, 'agent', 'active', '2026-07-13T00:00:00Z')
+    completed = MobileNotificationSnapshot('p', 'p', 1, 'agent', 'idle', '2026-07-13T00:00:03Z')
+    baseline = MobileInvalidationSnapshot('p', 'p', 1, 'agent', 'active', 'one', '2026-07-13T00:00:01Z')
+    changed = MobileInvalidationSnapshot('p', 'p', 1, 'agent', 'idle', 'two', '2026-07-13T00:00:02Z')
+
+    store.sync_snapshots([active])
+    store.sync_invalidations([baseline])
+    invalidations = store.sync_invalidations([changed])
+    completion = store.sync_snapshots([completed])
+    events = store.events_since(None)
+
+    assert [event.id for event in events] == sorted(event.id for event in events)
+    assert [event.kind for event in events] == [
+        'agent_activity_changed', 'conversation_changed', 'project_summary_changed', 'task_completed',
+    ]
+    resumed = store.events_since(invalidations[0].id)
+    assert [event.id for event in resumed] == [
+        invalidations[1].id, invalidations[2].id, completion[0].id,
+    ]
+    assert store.events_since(completion[0].id) == []
+
+
+def test_legacy_journal_read_is_bounded_and_missing_cursor_resyncs(tmp_path: Path) -> None:
+    store = MobileNotificationStore(tmp_path / 'mobile', recent_limit=1, completion_limit=1)
+    store.events_path.parent.mkdir(parents=True)
+    records = [
+        {
+            'id': f'mnotif_{index:012d}',
+            'kind': 'task_completed',
+            'project_id': 'p',
+            'project_short_name': 'p',
+            'agent': 'agent',
+            'completed_at': '2026-07-13T00:00:00Z',
+            'dedupe_key': f'legacy:{index}',
+        }
+        for index in range(1, 4)
+    ]
+    store.events_path.write_text('\n'.join(json.dumps(record) for record in records) + '\n', encoding='utf-8')
+
+    assert [event.id for event in store.events_since(None)] == ['mnotif_000000000003']
+    resync = store.events_since('mnotif_000000000001')
+    assert resync[-1].kind == 'resync_required'
+    assert store.events_since(resync[-1].id) == []
+
+
 def test_notification_watcher_is_shared_across_sse_clients(tmp_path: Path) -> None:
     client = _ActivityCcbdClient(project_id='proj-demo', project_root='/srv/demo', display_name='demo')
     service = _service(client, mobile_dir=tmp_path / 'mobile')

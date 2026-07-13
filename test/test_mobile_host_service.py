@@ -281,16 +281,15 @@ def test_mobile_host_service_does_not_rotate_legacy_expired_pairing_without_upda
     assert result.replaced_pid is None
     assert terminated == []
     assert spawned == []
-    assert result.pairing is not None
-    assert result.pairing['pairing_code'] == 'expired-code'
-    assert result.pairing['gateway_url'] == 'https://desktop.tailnet.ts.net:8787'
-    assert result.pairing['route_provider'] == 'tailnet'
-    assert result.pairing['expires_at'] == expired_pairing['expires_at']
+    assert result.pairing is None
+    assert result.pairing_diagnostic is not None
+    assert 'ccb update mobile' in result.pairing_diagnostic
+    assert result.to_record()['pairing_diagnostic'] == result.pairing_diagnostic
     state = json.loads(paths.state_path.read_text(encoding='utf-8'))
-    assert state['pairing'] == result.pairing
+    assert state['pairing'] == expired_pairing
 
 
-def test_mobile_host_service_preserves_claimed_reusable_pairing_without_restart(
+def test_mobile_host_service_diagnoses_claimed_legacy_one_shot_pairing_without_restart(
     tmp_path: Path,
 ) -> None:
     state_dir = tmp_path / 'mobile'
@@ -337,9 +336,60 @@ def test_mobile_host_service_preserves_claimed_reusable_pairing_without_restart(
     assert result.status == 'running'
     assert terminated == []
     assert spawned == []
+    assert result.pairing is None
+    assert result.pairing_diagnostic is not None
+    assert 'ccb update mobile' in result.pairing_diagnostic
+
+
+def test_mobile_host_update_rotation_invalidates_handoff_but_keeps_device_token(tmp_path: Path) -> None:
+    state_dir = tmp_path / 'mobile'
+    paths = mobile_host_service_paths(state_dir)
+    store = MobileGatewayPairingStore(state_dir)
+    pairing = store.ensure_reusable_pairing_payload(
+        project_id='host-test',
+        gateway_url='https://desktop.tailnet.ts.net:8787',
+        route_provider='tailnet',
+        scopes=('view',),
+    )
+    claim = store.claim_pairing(pairing_code=str(pairing['pairing_code']), device_name='Phone')
+    write_mobile_host_service_state(
+        paths.state_path,
+        {
+            'schema_version': 1,
+            'record_type': MOBILE_HOST_SERVICE_RECORD_TYPE,
+            'pid': 111,
+            'generation': 4,
+            'host_id': 'host-test',
+            'listen': '127.0.0.1:8787',
+            'local_gateway_url': 'http://127.0.0.1:8787',
+            'gateway_url': 'https://desktop.tailnet.ts.net:8787',
+            'route_provider': 'tailnet',
+            'pairing': pairing,
+            'state_dir': str(state_dir),
+            'command_kind': 'ccb_mobile_host_serve',
+        },
+    )
+
+    result = start_or_replace_mobile_host_service(
+        script_root=tmp_path / 'source',
+        listen='127.0.0.1:8787',
+        public_url='https://desktop.tailnet.ts.net:8787',
+        route_provider='tailnet',
+        state_dir=state_dir,
+        rotate_pairing=True,
+        process_exists_fn=lambda pid: pid == 111,
+        process_cmdline_fn=lambda pid: f'python ccb.py {MOBILE_HOST_SERVE_COMMAND} --state-dir {state_dir}' if pid == 111 else '',
+        terminate_pid_tree_fn=lambda *_args, **_kwargs: True,
+        port_owner_fn=lambda _listen: PortOwner(pid=111, command='python ccb.py __mobile-host-serve'),
+        spawn_fn=lambda *_args, **_kwargs: _FakeProcess(222),
+        health_check_fn=lambda _url: True,
+    )
+
+    assert result.status == 'running'
     assert result.pairing is not None
-    assert result.pairing['pairing_code'] == pairing['pairing_code']
-    assert result.pairing['expires_at'] == pairing['expires_at']
+    assert result.pairing['pairing_code'] != pairing['pairing_code']
+    assert not store.pairing_code_is_claimable(str(pairing['pairing_code']))
+    assert store.authenticate_device(str(claim['device_token']), required_scopes=('view',)).device_id == claim['device']['device_id']
 
 
 def test_mobile_host_service_replaces_live_managed_process(tmp_path: Path) -> None:
