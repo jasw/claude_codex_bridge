@@ -12,6 +12,7 @@ from mobile_gateway.terminal import (
     _send_tmux_terminal_literal,
     _select_tmux_terminal_pane,
     _terminal_client_env,
+    resolve_tmux_binary,
 )
 
 
@@ -139,12 +140,33 @@ def test_terminal_open_selects_target_pane_before_attach(monkeypatch) -> None:
 
 def test_terminal_attach_env_removes_nested_tmux_and_sets_term(monkeypatch) -> None:
     monkeypatch.setenv('TMUX', '/tmp/outer-tmux,1,0')
+    monkeypatch.setenv('TMUX_PANE', '%99')
     monkeypatch.setenv('TERM', 'dumb')
 
     env = _terminal_client_env()
 
     assert 'TMUX' not in env
+    assert 'TMUX_PANE' not in env
     assert env['TERM'] == 'xterm-256color'
+
+
+def test_terminal_selects_client_compatible_with_target_server(tmp_path) -> None:
+    old_bin = tmp_path / 'old' / 'tmux'
+    current_bin = tmp_path / 'current' / 'tmux'
+    old_bin.parent.mkdir()
+    current_bin.parent.mkdir()
+    old_bin.write_text('#!/bin/sh\necho "server exited unexpectedly" >&2\nexit 1\n')
+    current_bin.write_text('#!/bin/sh\nexit 0\n')
+    old_bin.chmod(0o755)
+    current_bin.chmod(0o755)
+
+    resolved = resolve_tmux_binary(
+        '/tmp/ccb-test/tmux.sock',
+        'ccb-test',
+        environ={'PATH': f'{old_bin.parent}:{current_bin.parent}', 'TERM': 'dumb'},
+    )
+
+    assert resolved == str(current_bin)
 
 
 def test_terminal_literal_input_targets_pane(monkeypatch) -> None:

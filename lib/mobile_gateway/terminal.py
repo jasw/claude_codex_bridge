@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import fcntl
 import os
 import pty
@@ -42,6 +42,7 @@ class TerminalAttachTarget:
     pane_id: str | None
     geometry: TerminalGeometry
     target_summary: dict[str, object]
+    tmux_binary: str = 'tmux'
 
     @property
     def command(self) -> list[str]:
@@ -58,11 +59,12 @@ class TerminalHistoryTarget:
     socket_path: str
     session_name: str
     max_lines: int = 200
+    tmux_binary: str = 'tmux'
 
     @property
     def command(self) -> list[str]:
         return [
-            'tmux',
+            self.tmux_binary,
             '-S',
             self.socket_path,
             'capture-pane',
@@ -83,9 +85,11 @@ class PaneMessageTarget:
     pane_id: str
     socket_path: str
     session_name: str
+    tmux_binary: str = 'tmux'
 
 
 def create_tmux_terminal_history(target: TerminalHistoryTarget) -> dict[str, object]:
+    target = _with_compatible_tmux(target)
     cp = subprocess.run(
         target.command,
         text=True,
@@ -93,6 +97,7 @@ def create_tmux_terminal_history(target: TerminalHistoryTarget) -> dict[str, obj
         stderr=subprocess.PIPE,
         check=False,
         timeout=2.0,
+        env=_terminal_client_env(),
     )
     if cp.returncode != 0:
         message = (cp.stderr or '').strip() or 'tmux capture-pane failed'
@@ -108,6 +113,7 @@ def create_tmux_terminal_history(target: TerminalHistoryTarget) -> dict[str, obj
 
 
 def send_tmux_pane_message(target: PaneMessageTarget, text: str) -> dict[str, object]:
+    target = _with_compatible_tmux(target)
     message = str(text or '')
     _tmux_run(target, ['send-keys', '-t', target.pane_id, 'C-u'])
     _tmux_run(target, ['send-keys', '-t', target.pane_id, '-l', message])
@@ -126,12 +132,13 @@ def _tmux_run(
     args: list[str],
 ) -> None:
     cp = subprocess.run(
-        ['tmux', '-S', target.socket_path, *args],
+        [target.tmux_binary, '-S', target.socket_path, *args],
         text=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         check=False,
         timeout=2.0,
+        env=_terminal_client_env(),
     )
     if cp.returncode != 0:
         message = (cp.stderr or '').strip() or 'tmux send failed'
@@ -206,15 +213,72 @@ class TmuxTerminalSession:
 
 
 def create_tmux_terminal_session(target: TerminalAttachTarget) -> TmuxTerminalSession:
-    return TmuxTerminalSession(target)
+    return TmuxTerminalSession(_with_compatible_tmux(target))
 
 
-def _terminal_client_env() -> dict[str, str]:
-    env = dict(os.environ)
+def _terminal_client_env(environ: Mapping[str, str] | None = None) -> dict[str, str]:
+    env = dict(os.environ if environ is None else environ)
     env.pop('TMUX', None)
+    env.pop('TMUX_PANE', None)
     if not env.get('TERM') or env.get('TERM') == 'dumb':
         env['TERM'] = 'xterm-256color'
     return env
+
+
+def resolve_tmux_binary(
+    socket_path: str,
+    session_name: str,
+    *,
+    environ: Mapping[str, str] | None = None,
+) -> str:
+    env = _terminal_client_env(environ)
+    candidates: list[str] = []
+    seen: set[str] = set()
+    for directory in os.get_exec_path(env):
+        candidate = os.path.join(directory, 'tmux')
+        if not os.path.isfile(candidate) or not os.access(candidate, os.X_OK):
+            continue
+        identity = os.path.realpath(candidate)
+        if identity in seen:
+            continue
+        seen.add(identity)
+        candidates.append(candidate)
+
+    failures: list[str] = []
+    for candidate in candidates:
+        try:
+            cp = subprocess.run(
+                [
+                    candidate,
+                    '-S',
+                    socket_path,
+                    'has-session',
+                    '-t',
+                    session_name,
+                ],
+                text=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
+                check=False,
+                timeout=2.0,
+                env=env,
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            failures.append(f'{candidate}: {exc}')
+            continue
+        if cp.returncode == 0:
+            return candidate
+        failures.append(f'{candidate}: {(cp.stderr or "").strip() or "incompatible"}')
+
+    detail = '; '.join(failures) or 'no executable tmux found in PATH'
+    raise RuntimeError(f'no compatible tmux client for {session_name}: {detail}')
+
+
+def _with_compatible_tmux(target):
+    return replace(
+        target,
+        tmux_binary=resolve_tmux_binary(target.socket_path, target.session_name),
+    )
 
 
 def _tmux_capture_command(
@@ -231,7 +295,7 @@ def _tmux_capture_command(
         max(1, int(geometry.rows)),
     )
     command = [
-        'tmux',
+        target.tmux_binary,
         '-S',
         target.socket_path,
         'capture-pane',
@@ -262,6 +326,7 @@ def _capture_tmux_terminal_pane(
         stderr=subprocess.PIPE,
         check=False,
         timeout=2.0,
+        env=_terminal_client_env(),
     )
     if cp.returncode != 0:
         message = (cp.stderr or b'').decode('utf-8', errors='replace').strip()
@@ -377,12 +442,13 @@ def _tmux_terminal_run(
     args: list[str],
 ) -> None:
     cp = subprocess.run(
-        ['tmux', '-S', target.socket_path, *args],
+        [target.tmux_binary, '-S', target.socket_path, *args],
         text=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         check=False,
         timeout=2.0,
+        env=_terminal_client_env(),
     )
     if cp.returncode != 0:
         message = (cp.stderr or '').strip() or 'tmux terminal input failed'
