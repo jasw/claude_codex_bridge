@@ -56,8 +56,17 @@ def terminal_pending_result(job: JobRecord, persisted, pending_items: list) -> E
     return terminal_pending_restore(job, persisted)
 
 
-def restarted_runtime_without_pending_result(service, job: JobRecord, persisted, pending_items: list, restored_context) -> ExecutionRestoreResult | None:
+def restarted_runtime_without_pending_result(
+    service,
+    adapter,
+    job: JobRecord,
+    persisted,
+    pending_items: list,
+    restored_context,
+) -> ExecutionRestoreResult | None:
     if pending_items or persisted.pending_decision is not None:
+        return None
+    if bool(getattr(adapter, 'restart_resume_supported', False)):
         return None
     if not _submission_requires_active_turn(persisted):
         return None

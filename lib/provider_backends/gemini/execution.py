@@ -26,6 +26,7 @@ from .session import load_project_session
 
 class GeminiProviderAdapter:
     provider = 'gemini'
+    restart_resume_supported = True
     completion_reliability_policy = CompletionReliabilityPolicy(
         provider='gemini',
         primary_authority='hook_artifact_or_session_snapshot',

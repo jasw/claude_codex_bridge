@@ -1480,6 +1480,46 @@ def _wait_for_phase2_status(cwd: Path, target: str, expected: str, *, timeout: f
     raise AssertionError(f'expected status {expected!r}; last stdout={last_stdout!r} stderr={last_stderr!r}')
 
 
+def _phase2_job_events(project_root: Path, job_id: str) -> list[dict]:
+    events_path = project_root / '.ccb' / 'agents' / 'demo' / 'events.jsonl'
+    events = []
+    for line in events_path.read_text(encoding='utf-8').splitlines():
+        event = json.loads(line)
+        if event.get('job_id') == job_id:
+            events.append(event)
+    return events
+
+
+def _phase2_completion_payloads(events: list[dict], kind: str) -> list[dict]:
+    return [
+        event['payload']['payload']
+        for event in events
+        if event['type'] == 'completion_item' and event['payload']['kind'] == kind
+    ]
+
+
+def _assert_phase2_observed_terminal(pend: str, project_root: Path, job_id: str, *, reply: str, session_path: str) -> list[dict]:
+    assert 'status: completed' in pend
+    assert f'reply: {reply}' in pend
+    assert 'completion_reason: session_reply_stable' in pend
+    assert 'completion_confidence: observed' in pend
+    assert 'observer_authority: supplementary_snapshot' in pend
+    assert 'observer_terminal: true' in pend
+
+    events = _phase2_job_events(project_root, job_id)
+    terminal_events = [event for event in events if event['type'] == 'completion_terminal']
+    assert terminal_events
+    terminal = terminal_events[-1]['payload']
+    assert terminal['status'] == 'completed'
+    assert terminal['reason'] == 'session_reply_stable'
+    assert terminal['confidence'] == 'observed'
+    assert terminal['reply'] == reply
+    assert terminal['reply_stable'] is True
+    assert terminal['source_cursor']['source_kind'] == 'session_snapshot'
+    assert terminal['source_cursor']['session_path'] == session_path
+    return events
+
+
 DUAL_PROVIDER_STATUS_TIMEOUT = 20.0
 
 
@@ -4249,16 +4289,28 @@ def test_ccb_gemini_real_adapter_recovers_after_ccbd_restart_and_rotate_clears_s
                 code, pend, stderr = _run_phase2_local(['pend', 'demo'], cwd=project_root)
                 assert code == 0, stderr
                 last_stdout = pend
-                if f'job_id: {job_id}' in pend and 'status: running' in pend and 'reply: old preview reply' not in pend:
+                if f'job_id: {job_id}' in pend and (
+                    ('status: running' in pend and 'reply: old preview reply' not in pend)
+                    or ('status: completed' in pend and 'reply: rotated final stable reply' in pend)
+                ):
                     break
                 time.sleep(0.05)
             else:
-                raise AssertionError(f'expected rotate to clear stale preview after restart; last={last_stdout!r}')
+                raise AssertionError(f'expected rotate to clear stale preview or complete after restart; last={last_stdout!r}')
 
             pend = _wait_for_phase2_status(project_root, job_id, 'completed', timeout=5.0)
-            assert 'reply: rotated final stable reply' in pend
-            assert 'completion_reason: session_reply_stable' in pend
-            assert 'completion_confidence: observed' in pend
+            assert 'reply: old preview reply' not in pend
+            events = _assert_phase2_observed_terminal(
+                pend,
+                project_root,
+                job_id,
+                reply='rotated final stable reply',
+                session_path=new_session_path,
+            )
+            assert any(
+                item['session_path'] == new_session_path
+                for item in _phase2_completion_payloads(events, 'session_rotate')
+            )
         finally:
             app2.request_shutdown()
             thread2.join(timeout=2)
@@ -5605,9 +5657,21 @@ def test_ccb_gemini_real_adapter_recovers_after_ccbd_restart(monkeypatch, tmp_pa
         _wait_for_path(app2.paths.ccbd_socket_path)
         try:
             pend = _wait_for_phase2_status(project_root, job_id, 'completed', timeout=5.0)
-            assert 'reply: final stable reply' in pend
-            assert 'completion_reason: session_reply_stable' in pend
-            assert 'completion_confidence: observed' in pend
+            events = _assert_phase2_observed_terminal(
+                pend,
+                project_root,
+                job_id,
+                reply='final stable reply',
+                session_path=str(tmp_path / 'gemini-session.json'),
+            )
+            assert FakeReader.instances >= 2
+            assert any(
+                item['reply'] == 'final stable reply'
+                and item['session_path'] == str(tmp_path / 'gemini-session.json')
+                and item['message_id'] == 'msg-2'
+                and item['last_updated'] == 222
+                for item in _phase2_completion_payloads(events, 'session_snapshot')
+            )
         finally:
             app2.request_shutdown()
             thread2.join(timeout=2)
@@ -5737,8 +5801,13 @@ def test_ccb_gemini_real_adapter_recovers_after_ccbd_restart_and_waits_for_post_
 
         running = _wait_for_phase2_status(project_root, 'demo', 'running')
         assert f'job_id: {job_id}' in running
-        assert 'reply: partial stable' in running
         assert 'completion_reason: None' in running
+        assert any(
+            item['reply'] == 'partial stable'
+            and item['session_path'] == session_path
+            and item['last_updated'] == 111
+            for item in _phase2_completion_payloads(_phase2_job_events(project_root, job_id), 'session_snapshot')
+        )
 
         app1.request_shutdown()
         thread1.join(timeout=2)
@@ -5755,17 +5824,26 @@ def test_ccb_gemini_real_adapter_recovers_after_ccbd_restart_and_waits_for_post_
                 code, pend, stderr = _run_phase2_local(['pend', 'demo'], cwd=project_root)
                 assert code == 0, stderr
                 last_stdout = pend
-                if f'job_id: {job_id}' in pend and 'status: running' in pend and 'reply: final stable reply' in pend:
-                    assert 'completion_reason: None' in pend
+                if f'job_id: {job_id}' in pend and (
+                    ('status: running' in pend and 'reply: final stable reply' in pend and 'completion_reason: None' in pend)
+                    or ('status: completed' in pend and 'reply: final stable reply' in pend)
+                ):
                     break
                 time.sleep(0.05)
             else:
-                raise AssertionError(f'expected running final preview after restart before settle completion; last={last_stdout!r}')
+                raise AssertionError(f'expected final preview or settled completion after restart; last={last_stdout!r}')
 
             pend = _wait_for_phase2_status(project_root, job_id, 'completed', timeout=6.0)
-            assert 'reply: final stable reply' in pend
-            assert 'completion_reason: session_reply_stable' in pend
-            assert 'completion_confidence: observed' in pend
+            events = _assert_phase2_observed_terminal(
+                pend,
+                project_root,
+                job_id,
+                reply='final stable reply',
+                session_path=session_path,
+            )
+            snapshots = _phase2_completion_payloads(events, 'session_snapshot')
+            assert any(item['reply'] == 'partial stable expanded' and item['last_updated'] == 222 for item in snapshots)
+            assert any(item['reply'] == 'final stable reply' and item['last_updated'] == 333 for item in snapshots)
         finally:
             app2.request_shutdown()
             thread2.join(timeout=2)
@@ -5921,8 +5999,11 @@ def test_ccb_gemini_real_adapter_recovers_after_restart_rotate_and_waits_for_new
 
         running = _wait_for_phase2_status(project_root, 'demo', 'running')
         assert f'job_id: {job_id}' in running
-        assert 'reply: old preview reply' in running
         assert 'completion_reason: None' in running
+        assert any(
+            item['reply'] == 'old preview reply' and item['session_path'] == old_session_path
+            for item in _phase2_completion_payloads(_phase2_job_events(project_root, job_id), 'session_snapshot')
+        )
 
         app1.request_shutdown()
         thread1.join(timeout=2)
@@ -5939,11 +6020,14 @@ def test_ccb_gemini_real_adapter_recovers_after_restart_rotate_and_waits_for_new
                 code, pend, stderr = _run_phase2_local(['pend', 'demo'], cwd=project_root)
                 assert code == 0, stderr
                 last_stdout = pend
-                if f'job_id: {job_id}' in pend and 'status: running' in pend and 'reply: old preview reply' not in pend:
+                if f'job_id: {job_id}' in pend and (
+                    ('status: running' in pend and 'reply: old preview reply' not in pend)
+                    or ('status: completed' in pend and 'reply: new final stable reply' in pend)
+                ):
                     break
                 time.sleep(0.05)
             else:
-                raise AssertionError(f'expected rotate to clear old preview after restart; last={last_stdout!r}')
+                raise AssertionError(f'expected rotate to clear old preview or complete after restart; last={last_stdout!r}')
 
             deadline = time.time() + 3.0
             last_stdout = ''
@@ -5951,18 +6035,31 @@ def test_ccb_gemini_real_adapter_recovers_after_restart_rotate_and_waits_for_new
                 code, pend, stderr = _run_phase2_local(['pend', 'demo'], cwd=project_root)
                 assert code == 0, stderr
                 last_stdout = pend
-                if f'job_id: {job_id}' in pend and 'status: running' in pend and 'reply: new final stable reply' in pend:
-                    assert 'completion_reason: None' in pend
+                if f'job_id: {job_id}' in pend and (
+                    ('status: running' in pend and 'reply: new final stable reply' in pend and 'completion_reason: None' in pend)
+                    or ('status: completed' in pend and 'reply: new final stable reply' in pend)
+                ):
                     break
                 time.sleep(0.05)
             else:
-                raise AssertionError(f'expected running new-session final preview before settle completion; last={last_stdout!r}')
+                raise AssertionError(f'expected new-session final preview or settled completion; last={last_stdout!r}')
 
             pend = _wait_for_phase2_status(project_root, job_id, 'completed', timeout=6.0)
             assert 'reply: old preview reply' not in pend
-            assert 'reply: new final stable reply' in pend
-            assert 'completion_reason: session_reply_stable' in pend
-            assert 'completion_confidence: observed' in pend
+            events = _assert_phase2_observed_terminal(
+                pend,
+                project_root,
+                job_id,
+                reply='new final stable reply',
+                session_path=new_session_path,
+            )
+            assert any(
+                item['session_path'] == new_session_path
+                for item in _phase2_completion_payloads(events, 'session_rotate')
+            )
+            snapshots = _phase2_completion_payloads(events, 'session_snapshot')
+            assert any(item['reply'] == 'new draft 2' and item['last_updated'] == 444 for item in snapshots)
+            assert any(item['reply'] == 'new final stable reply' and item['last_updated'] == 555 for item in snapshots)
         finally:
             app2.request_shutdown()
             thread2.join(timeout=2)

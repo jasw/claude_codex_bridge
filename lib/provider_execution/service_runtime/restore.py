@@ -41,7 +41,14 @@ def restore_submission(
         return pending_result
 
     restored_context = runtime_context or persisted.runtime_context
-    restarted_result = restarted_runtime_without_pending_result(service, job, persisted, pending_items, restored_context)
+    restarted_result = restarted_runtime_without_pending_result(
+        service,
+        adapter,
+        job,
+        persisted,
+        pending_items,
+        restored_context,
+    )
     if restarted_result is not None:
         return restarted_result
 
