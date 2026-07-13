@@ -19,6 +19,7 @@ import '../../models/ccb_project_view.dart';
 import '../../notifications/task_completion_notifications.dart';
 import '../../pairing/gateway_pairing.dart';
 import '../../repository/mobile_ccb_repository.dart';
+import '../../repository/gateway_mobile_ccb_repository.dart';
 import '../../transport/gateway_route_diagnostics.dart';
 import '../../transport/route_provider.dart';
 import '../../transport/terminal_transport.dart';
@@ -27,6 +28,7 @@ import 'project_home_connection_details_panel_host.dart';
 import 'project_home_focus_coordinator.dart';
 import 'project_home_gateway_profiles.dart';
 import 'project_home_lifecycle_coordinator.dart';
+import 'mobile_connection_supervisor.dart';
 import 'project_home_notification_target.dart';
 import 'project_home_onboarding.dart';
 import 'project_home_pairing_flow.dart';
@@ -214,6 +216,7 @@ class _ProjectHomeViewState extends State<_ProjectHomeView>
   final _taskCompletionUnreadClearInFlight = <String>{};
   late final TaskCompletionUnreadStore _taskCompletionUnreadStore;
   late final TaskCompletionNotificationController _taskNotifications;
+  late final MobileConnectionSupervisor _connectionSupervisor;
 
   @override
   void initState() {
@@ -240,6 +243,9 @@ class _ProjectHomeViewState extends State<_ProjectHomeView>
       onStreamError: _handleGatewayStreamError,
       shouldShowNotification: _shouldShowTaskCompletionNotification,
     );
+    _connectionSupervisor = MobileConnectionSupervisor(
+      onChanged: _handleSupervisorState,
+    );
     _activeRepository = widget.repository;
     _viewFuture = _loadActiveProjectView();
     _bootstrapProfiles();
@@ -250,6 +256,7 @@ class _ProjectHomeViewState extends State<_ProjectHomeView>
     WidgetsBinding.instance.removeObserver(this);
     _pairingForm.dispose();
     unawaited(_taskNotifications.dispose());
+    _connectionSupervisor.dispose();
     _lifecycleResultNotifier.dispose();
     _runningLifecycleActionNotifier.dispose();
     super.dispose();
@@ -258,6 +265,10 @@ class _ProjectHomeViewState extends State<_ProjectHomeView>
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     _appLifecycleState = state;
+    if (state == AppLifecycleState.resumed) {
+      _connectionSupervisor.foregroundResume();
+      _taskNotifications.retryNow();
+    }
   }
 
   @override
@@ -1185,6 +1196,7 @@ class _ProjectHomeViewState extends State<_ProjectHomeView>
           _viewFuture = session.viewFuture;
         });
         unawaited(_taskNotifications.stop());
+        _connectionSupervisor.stop();
         _lifecycleResultNotifier.value = null;
       case AppRuntimeMode.pairedGateway:
         final selection = selectProjectHomePairedRuntimeProfile(
@@ -1236,6 +1248,13 @@ class _ProjectHomeViewState extends State<_ProjectHomeView>
       _gatewayConnectionState = GatewayInvalidationConnectionState.connected;
       _gatewayReconnectRetryIn = null;
     });
+    _connectionSupervisor.start(
+      profile: profile,
+      probe:
+          session.repository is MobileGatewayProfileHealthProbe
+              ? session.repository as MobileGatewayProfileHealthProbe
+              : null,
+    );
     _startTaskCompletionNotifications(profile);
     _lifecycleResultNotifier.value = null;
     unawaited(_restoreGatewayProjectListSnapshot(profile));
@@ -1303,6 +1322,7 @@ class _ProjectHomeViewState extends State<_ProjectHomeView>
 
   void _returnToPairingSetup() {
     unawaited(_taskNotifications.stop());
+    _connectionSupervisor.stop();
     setState(() {
       _mode = AppRuntimeMode.fake;
       _showPairingSetup = true;
@@ -1541,6 +1561,33 @@ class _ProjectHomeViewState extends State<_ProjectHomeView>
           : 'Reconnecting. Retry in ${seconds}s.';
     }
     return 'Refresh target before sending';
+  }
+
+  void _handleSupervisorState(MobileConnectionSnapshot snapshot) {
+    if (!mounted || _mode != AppRuntimeMode.pairedGateway) return;
+    if (snapshot.state == MobileConnectionState.authenticationRequired) {
+      final profile = _selectedProfile;
+      if (profile != null) {
+        unawaited(() async {
+          await _invalidateGatewayProfile(profile);
+          if (mounted) _returnToPairingSetup();
+        }());
+      }
+      return;
+    }
+    if (snapshot.state == MobileConnectionState.online) {
+      _markGatewayRequestSucceeded();
+      return;
+    }
+    if (snapshot.state == MobileConnectionState.reconnecting ||
+        snapshot.state == MobileConnectionState.degraded ||
+        snapshot.state == MobileConnectionState.offline) {
+      setState(() {
+        _gatewayConnectionState =
+            GatewayInvalidationConnectionState.reconnecting;
+        _gatewayReconnectRetryIn = snapshot.retryIn;
+      });
+    }
   }
 
   void _handleGatewayConnectionStateChanged(
