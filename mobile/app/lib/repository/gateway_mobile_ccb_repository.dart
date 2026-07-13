@@ -7,12 +7,18 @@ import '../models/ccb_project_view.dart';
 import '../models/readable_terminal_history.dart';
 import '../transport/gateway_transport.dart';
 import '../transport/gateway_connection_outcome.dart';
+import '../transport/http_gateway_transport.dart';
 import 'mobile_ccb_repository.dart';
 
 abstract interface class MobileGatewayProfileHealthProbe {
   Future<GatewayHealth> health();
 
   Future<GatewayDevice> device();
+
+  /// Verifies both core routes as one supervisor-authoritative operation.
+  /// Implementations must not report a successful ordinary read until the
+  /// entire verification has completed.
+  Future<void> verifyCoreRoutes();
 }
 
 abstract interface class MobileGatewayPresenceReporter {
@@ -53,6 +59,18 @@ class GatewayMobileCcbRepository
     } catch (error) {
       _outcomeReporter?.failed(operation, error);
       rethrow;
+    }
+  }
+
+  @override
+  Future<void> verifyCoreRoutes() async {
+    final health = await _transport.health();
+    if (health.status.toLowerCase() != 'ok') {
+      throw GatewayHttpException(Uri(), 503, 'gateway health is degraded');
+    }
+    final device = await _transport.device();
+    if (device.revoked) {
+      throw GatewayHttpException(Uri(), 401, 'device revoked');
     }
   }
 

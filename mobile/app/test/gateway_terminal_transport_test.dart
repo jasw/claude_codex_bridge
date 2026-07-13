@@ -30,7 +30,41 @@ void main() {
       final timedOutSession = await timeoutTransport.open(_request());
       await Future<void>.delayed(const Duration(milliseconds: 20));
       expect(timeoutReporter.failures, [GatewayConnectionOperation.terminal]);
+      timeoutGateway.emit(
+        GatewayTerminalFrame.open(terminalId: 'late', token: ''),
+      );
+      await pumpEventQueue();
+      expect(timeoutReporter.successes, isEmpty);
       await timedOutSession.close();
+    },
+  );
+
+  test(
+    'terminal close cleans up after closed frame mutation failure',
+    () async {
+      final gateway = _FakeGatewayTransport()..failClosedFrame = true;
+      final firstReporter = _RecordingOutcomeReporter();
+      final transport = GatewayTerminalTransport(transport: gateway)
+        ..outcomeReporter = firstReporter;
+      final session = await transport.open(_request());
+      final outputDone = Completer<void>();
+      final outputSubscription = session.output.listen(
+        (_) {},
+        onDone: outputDone.complete,
+      );
+
+      await expectLater(session.close(), throwsA(isA<StateError>()));
+      await outputDone.future;
+      expect(gateway.activeFrameSubscriptions, 0);
+
+      final secondReporter = _RecordingOutcomeReporter();
+      transport.outcomeReporter = secondReporter;
+      gateway.emit(GatewayTerminalFrame.open(terminalId: 'late', token: ''));
+      await pumpEventQueue();
+      expect(firstReporter.successes, isEmpty);
+      expect(firstReporter.failures, [GatewayConnectionOperation.mutation]);
+      expect(secondReporter.successes, isEmpty);
+      await outputSubscription.cancel();
     },
   );
 
@@ -384,6 +418,8 @@ class _FakeGatewayTransport implements GatewayTransport {
   final invalidTerminalIds = <String>{};
   final handshakeClosedTerminalIds = <String>{};
   bool emitOpenFrame = true;
+  bool failClosedFrame = false;
+  var activeFrameSubscriptions = 0;
   final _frameControllers = <StreamController<GatewayTerminalFrame>>[];
   final _frameHandles = <GatewayTerminalHandle>[];
   final _lastOutputByTerminalId = <String, int>{};
@@ -517,6 +553,9 @@ class _FakeGatewayTransport implements GatewayTransport {
     GatewayTerminalHandle handle,
     GatewayTerminalFrame frame,
   ) async {
+    if (frame.type == GatewayTerminalFrameType.closed && failClosedFrame) {
+      throw StateError('closed frame rejected');
+    }
     sentFrameHandles.add(handle);
     sentFrames.add(frame);
   }
@@ -527,7 +566,10 @@ class _FakeGatewayTransport implements GatewayTransport {
     int? resumeCursor,
   }) {
     resumeCursors.add(resumeCursor);
-    final controller = StreamController<GatewayTerminalFrame>.broadcast();
+    final controller = StreamController<GatewayTerminalFrame>.broadcast(
+      onListen: () => activeFrameSubscriptions += 1,
+      onCancel: () => activeFrameSubscriptions -= 1,
+    );
     _frameControllers.add(controller);
     _frameHandles.add(handle);
     final lastOutput = _lastOutputByTerminalId[handle.terminalId] ?? 0;

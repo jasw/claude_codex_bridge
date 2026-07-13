@@ -353,6 +353,45 @@ void main() {
     );
 
     test(
+      'many live events keep connected notification state edge-bounded',
+      () async {
+        final streamClient = _DelayedConnectionTaskCompletionStreamClient();
+        final states = <GatewayInvalidationConnectionState>[];
+        var coreProbeCalls = 0;
+        final controller = TaskCompletionNotificationController(
+          streamClient: streamClient,
+          localNotifications: _FakeTaskCompletionLocalNotifications(),
+          seenStore: TaskCompletionSeenDedupeStore(
+            secureStore: MemorySecureStore(),
+          ),
+          onTap: (_) {},
+          onConnectionStateChanged: (state, _) {
+            states.add(state);
+            if (state == GatewayInvalidationConnectionState.connected) {
+              coreProbeCalls += 1;
+            }
+          },
+        );
+
+        await controller.start(_host(scopes: const {'notify'}));
+        streamClient.markConnected();
+        for (var index = 0; index < 40; index += 1) {
+          streamClient.add(_event(dedupeKey: 'burst-$index'));
+        }
+        await _drain();
+
+        expect(
+          states.where(
+            (state) => state == GatewayInvalidationConnectionState.connected,
+          ),
+          hasLength(1),
+        );
+        expect(coreProbeCalls, 1);
+        await controller.dispose();
+      },
+    );
+
+    test(
       'persists SSE id and resumes it after a normal controller restart',
       () async {
         final secureStore = MemorySecureStore();
@@ -913,6 +952,10 @@ class _DelayedConnectionTaskCompletionStreamClient
 
   void addError(Object error) {
     _controller.addError(error);
+  }
+
+  void add(TaskCompletionNotificationEvent event) {
+    _controller.add(event);
   }
 
   @override

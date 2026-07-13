@@ -717,6 +717,7 @@ class TaskCompletionNotificationController {
   int _reconnectAttempt = 0;
   int _lifecycleGeneration = 0;
   int _connectionGeneration = 0;
+  GatewayInvalidationConnectionState? _connectionState;
   final LinkedHashSet<String> _seenEventIds = LinkedHashSet<String>();
   Future<void> _eventHandlingTail = Future<void>.value();
 
@@ -976,6 +977,13 @@ class TaskCompletionNotificationController {
     GatewayInvalidationConnectionState state,
     Duration? retryIn,
   ) {
+    // Connected is an edge for consumers that use it to verify core routes.
+    // Events arriving on an established SSE connection are not reconnections.
+    if (state == GatewayInvalidationConnectionState.connected &&
+        _connectionState == state) {
+      return;
+    }
+    _connectionState = state;
     _onConnectionStateChanged?.call(state, retryIn);
   }
 }

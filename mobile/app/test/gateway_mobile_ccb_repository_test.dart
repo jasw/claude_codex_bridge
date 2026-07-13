@@ -2,6 +2,8 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:ccb_mobile/ccb_mobile.dart';
+import 'package:ccb_mobile/features/project_home/mobile_connection_supervisor.dart';
+import 'package:ccb_mobile/transport/gateway_connection_outcome.dart';
 import 'package:test/test.dart';
 
 void main() {
@@ -11,11 +13,13 @@ void main() {
   final requests = <String>[];
   final queries = <String>[];
   final bodies = <String>[];
+  var failDeviceProbe = false;
 
   setUp(() async {
     requests.clear();
     queries.clear();
     bodies.clear();
+    failDeviceProbe = false;
     server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     server.listen((request) async {
       if (request.method == 'GET' &&
@@ -33,6 +37,21 @@ void main() {
       requests.add(request.uri.path);
       queries.add(request.uri.query);
       bodies.add(body);
+      if (request.uri.path == '/v1/health') {
+        request.response.headers.contentType = ContentType.json;
+        request.response.write(
+          jsonEncode({'status': 'ok', 'server_time': '2026-07-13T00:00:00Z'}),
+        );
+        await request.response.close();
+        return;
+      }
+      if (request.uri.path == '/v1/devices/me' && failDeviceProbe) {
+        request.response.headers.contentType = ContentType.json;
+        request.response.statusCode = HttpStatus.serviceUnavailable;
+        request.response.write(jsonEncode({'status': 'error'}));
+        await request.response.close();
+        return;
+      }
       final payload = _payloadForRequest(
         request.method,
         request.uri.path,
@@ -78,6 +97,36 @@ void main() {
     expect(view.agentByName('mobile')?.active, isTrue);
     expect(requests, ['/v1/projects', '/v1/projects/proj-demo/view']);
   });
+
+  test(
+    'core probe does not report online after health succeeds then device fails',
+    () async {
+      failDeviceProbe = true;
+      final states = <MobileConnectionState>[];
+      final supervisor = MobileConnectionSupervisor(
+        onChanged: (snapshot) => states.add(snapshot.state),
+        initialDelay: const Duration(hours: 1),
+        maxDelay: const Duration(hours: 1),
+      );
+      repository.outcomeReporter = MobileConnectionOutcomeAdapter(
+        supervisor: supervisor,
+        isCurrent: () => true,
+      );
+
+      supervisor.start(
+        profile: GatewayPairedHost(
+          profile: transport.profile,
+          deviceToken: 'device-secret',
+        ),
+        probe: repository,
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+
+      expect(states, isNot(contains(MobileConnectionState.online)));
+      expect(supervisor.snapshot.state, MobileConnectionState.reconnecting);
+      supervisor.dispose();
+    },
+  );
 
   test('focuses through authenticated gateway routes', () async {
     final agentView = await repository.focusAgent(
@@ -218,9 +267,12 @@ void main() {
 
 class _RecordingOutcomeReporter implements GatewayConnectionOutcomeReporter {
   final successes = <GatewayConnectionOperation>[];
+  final failures = <GatewayConnectionOperation>[];
 
   @override
-  void failed(GatewayConnectionOperation operation, Object error) {}
+  void failed(GatewayConnectionOperation operation, Object error) {
+    failures.add(operation);
+  }
 
   @override
   void succeeded(GatewayConnectionOperation operation) {

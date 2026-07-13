@@ -363,6 +363,18 @@ class _RecordingRepository
   }
 
   @override
+  Future<void> verifyCoreRoutes() async {
+    final health = await this.health();
+    if (health.status.toLowerCase() != 'ok') {
+      throw GatewayHttpException(Uri(), 503, 'gateway health is degraded');
+    }
+    final device = await this.device();
+    if (device.revoked) {
+      throw GatewayHttpException(Uri(), 401, 'device revoked');
+    }
+  }
+
+  @override
   Future<CcbProjectView> getProjectView(String projectId) async {
     getProjectViewCalls.add(projectId);
     return CcbProjectView.fromProjectViewPayload(demoProjectViewFixture);
