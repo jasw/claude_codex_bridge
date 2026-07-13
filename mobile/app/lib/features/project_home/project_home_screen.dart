@@ -466,23 +466,19 @@ class _ProjectHomeViewState extends State<_ProjectHomeView>
   ) async {
     _connectionSupervisor.reportFailure(
       error,
-      auth: error is GatewayHttpException && error.statusCode == 401
-          ? MobileAuthDisposition.credentialInvalid
-          : MobileAuthDisposition.none,
+      auth:
+          (error is GatewayHttpException && error.statusCode == 401) ||
+                  (error is ProjectHomeGatewayActivationException &&
+                      error.kind ==
+                          ProjectHomeGatewayActivationFailureKind.tokenInvalid)
+              ? MobileAuthDisposition.credentialInvalid
+              : MobileAuthDisposition.none,
     );
     if (_mode != AppRuntimeMode.pairedGateway ||
         error is ProjectHomeGatewayActivationException) {
-      if (error is ProjectHomeGatewayActivationException &&
-          error.kind == ProjectHomeGatewayActivationFailureKind.tokenInvalid) {
-        await _invalidateGatewayProfile(profile);
-      }
       return error;
     }
     final normalized = projectHomeGatewayActivationExceptionFor(error);
-    if (normalized.kind ==
-        ProjectHomeGatewayActivationFailureKind.tokenInvalid) {
-      await _invalidateGatewayProfile(profile);
-    }
     return normalized;
   }
 
@@ -1655,16 +1651,11 @@ class _ProjectHomeViewState extends State<_ProjectHomeView>
         error.statusCode != 401) {
       return;
     }
-    final profile = _selectedProfile;
-    if (profile == null) {
-      return;
-    }
-    unawaited(() async {
-      await _invalidateGatewayProfile(profile);
-      if (mounted && _selectedProfile == null) {
-        _returnToPairingSetup();
-      }
-    }());
+    _connectionSupervisor.reportFailure(
+      error,
+      auth: MobileAuthDisposition.credentialInvalid,
+      kind: MobileTransportKind.sse,
+    );
   }
 
   Future<void> _refreshAfterGatewayReconnect({

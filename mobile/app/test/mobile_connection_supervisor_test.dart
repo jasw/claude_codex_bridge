@@ -49,15 +49,35 @@ void main() {
       auth: MobileAuthDisposition.scopeDenied,
       kind: MobileTransportKind.mutation,
     );
-    expect(supervisor.snapshot.state, isNot(MobileConnectionState.authenticationRequired));
+    expect(
+      supervisor.snapshot.state,
+      isNot(MobileConnectionState.authenticationRequired),
+    );
     supervisor.dispose();
   });
+
+  test(
+    'profile switch drains a queued latest probe after stale completion',
+    () async {
+      final first = _ProbeRepository()..gate = Completer<void>();
+      final second = _ProbeRepository();
+      final supervisor = MobileConnectionSupervisor(onChanged: (_) {});
+      supervisor.start(profile: _profile(), probe: first);
+      supervisor.start(profile: _profile(device: 'new'), probe: second);
+      first.gate!.complete();
+      await Future<void>.delayed(Duration.zero);
+      await Future<void>.delayed(Duration.zero);
+      expect(second.healthCalls, greaterThan(0));
+      expect(supervisor.snapshot.state, MobileConnectionState.online);
+      supervisor.dispose();
+    },
+  );
 }
 
-GatewayPairedHost _profile() => GatewayPairedHost(
+GatewayPairedHost _profile({String device = 'device'}) => GatewayPairedHost(
   profile: GatewayHostProfile(
     hostId: 'host',
-    deviceId: 'device',
+    deviceId: device,
     scopes: const {'view'},
     routeProvider: RouteProvider(
       kind: RouteProviderKind.lan,
@@ -69,8 +89,12 @@ GatewayPairedHost _profile() => GatewayPairedHost(
 
 class _ProbeRepository implements MobileGatewayProfileHealthProbe {
   bool fail = false;
+  Completer<void>? gate;
+  var healthCalls = 0;
   @override
   Future<GatewayHealth> health() async {
+    healthCalls += 1;
+    await gate?.future;
     if (fail) throw TimeoutException('route');
     return GatewayHealth(
       status: 'ok',

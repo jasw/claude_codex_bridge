@@ -40,7 +40,6 @@ class MobileConnectionSupervisor {
     this.initialDelay = const Duration(seconds: 1),
     this.maxDelay = const Duration(seconds: 30),
     Random? random,
-    this.onRecoverReadSubscriptions,
   }) : _onChanged = onChanged,
        _random = random ?? Random();
 
@@ -48,13 +47,13 @@ class MobileConnectionSupervisor {
   final Duration initialDelay;
   final Duration maxDelay;
   final Random _random;
-  final void Function(int generation)? onRecoverReadSubscriptions;
   Timer? _retryTimer;
   GatewayPairedHost? _profile;
   MobileGatewayProfileHealthProbe? _probe;
   Duration? _nextDelay;
   var _disposed = false;
-  var _probing = false;
+  int? _inFlightGeneration;
+  int? _queuedGeneration;
   var _generation = 0;
 
   MobileConnectionSnapshot _snapshot = const MobileConnectionSnapshot(
@@ -74,7 +73,7 @@ class MobileConnectionSupervisor {
     _probeNow(_generation);
   }
 
-  void reportSuccess({MobileTransportKind kind = MobileTransportKind.httpRead}) {
+  void reportSuccess() {
     if (_profile == null || _disposed) return;
     _retryTimer?.cancel();
     _nextDelay = initialDelay;
@@ -122,8 +121,12 @@ class MobileConnectionSupervisor {
   }
 
   Future<void> _probeNow(int generation) async {
-    if (_probing || _profile == null || _disposed) return;
-    _probing = true;
+    if (_profile == null || _disposed) return;
+    if (_inFlightGeneration != null) {
+      _queuedGeneration = generation;
+      return;
+    }
+    _inFlightGeneration = generation;
     _emit(const MobileConnectionSnapshot(MobileConnectionState.connecting));
     try {
       final probe = _probe;
@@ -139,11 +142,15 @@ class MobileConnectionSupervisor {
       }
       if (generation != _generation) return;
       reportSuccess();
-      onRecoverReadSubscriptions?.call(generation);
     } catch (error) {
       if (generation == _generation) reportFailure(error);
     } finally {
-      _probing = false;
+      _inFlightGeneration = null;
+      final queued = _queuedGeneration;
+      _queuedGeneration = null;
+      if (queued != null && queued == _generation && !_disposed) {
+        _probeNow(queued);
+      }
     }
   }
 
