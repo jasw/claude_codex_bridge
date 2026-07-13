@@ -553,15 +553,95 @@ void main() {
       );
 
       expect(model.executionStatus?.state, 'working');
-      expect(model.workingReplyItemId, 'reply-current');
+      final presentationId = syntheticAgentWorkingConversationItemId(
+        agent.name,
+      );
+      expect(model.workingReplyItemId, presentationId);
       expect(model.timelineItems.map((item) => item.id), [
         'user-current',
-        'reply-current',
+        presentationId,
       ]);
-      expect(
-        model.timelineItems.map((item) => item.id),
-        isNot(contains(syntheticAgentWorkingConversationItemId(agent.name))),
+      expect(model.timelineItems.last.body, 'visible live reply text');
+    },
+  );
+
+  test(
+    'keeps working element identity from placeholder through completion',
+    () {
+      final chatController = AgentChatController();
+      final workingAgent = _agent(
+        activityState: 'active',
+        activitySource: 'codex_runtime',
+        activityReason: 'codex_working_status_line',
       );
+      final view = _view(agent: workingAgent);
+      final presentationId = syntheticAgentWorkingConversationItemId(
+        workingAgent.name,
+      );
+
+      final placeholderModel = selectedAgentWorkspaceModel(
+        view: view,
+        agent: workingAgent,
+        chatController: chatController,
+        isAwaitingAgentResponse: false,
+      );
+      expect(placeholderModel.timelineItems.single.id, presentationId);
+      expect(placeholderModel.timelineItems.single.body, 'Working...');
+
+      chatController.applyRemoteConversation(
+        agentName: workingAgent.name,
+        shouldScroll: true,
+        conversation: CcbAgentConversation(
+          projectId: view.project.id,
+          agentName: workingAgent.name,
+          namespaceEpoch: view.namespaceEpoch!,
+          items: [
+            CcbConversationItem(
+              id: 'user-current',
+              agentName: workingAgent.name,
+              kind: CcbConversationItemKind.userMessage,
+              title: 'You',
+              body: 'new request',
+              sentAt: DateTime.utc(2026, 7, 2, 9),
+            ),
+            CcbConversationItem(
+              id: 'reply-current',
+              agentName: workingAgent.name,
+              kind: CcbConversationItemKind.agentReply,
+              title: 'Agent reply',
+              body: 'visible live reply text',
+              source: 'provider_native/codex',
+              startedAt: DateTime.utc(2026, 7, 2, 9, 0, 1),
+              completedAt: DateTime.utc(2026, 7, 2, 9, 0, 2),
+            ),
+          ],
+          generatedAt: DateTime.utc(2026, 7, 2),
+        ),
+      );
+
+      final liveReplyModel = selectedAgentWorkspaceModel(
+        view: view,
+        agent: workingAgent,
+        chatController: chatController,
+        isAwaitingAgentResponse: false,
+      );
+      expect(liveReplyModel.timelineItems.last.id, presentationId);
+      expect(liveReplyModel.timelineItems.last.body, 'visible live reply text');
+      expect(liveReplyModel.workingReplyItemId, presentationId);
+
+      final idleAgent = _agent(
+        activityState: 'idle',
+        activitySource: 'codex_runtime',
+        activityReason: 'codex_session_task_complete',
+      );
+      final completedModel = selectedAgentWorkspaceModel(
+        view: _view(agent: idleAgent),
+        agent: idleAgent,
+        chatController: chatController,
+        isAwaitingAgentResponse: false,
+      );
+      expect(completedModel.timelineItems.last.id, presentationId);
+      expect(completedModel.workingReplyItemId, isNull);
     },
   );
 
@@ -798,7 +878,7 @@ void main() {
     expect(model.executionStatus?.state, 'working');
     expect(
       model.workingReplyItemId,
-      'native-current-reply-${agent.name}-reply-running',
+      syntheticAgentWorkingConversationItemId(agent.name),
     );
   });
 }

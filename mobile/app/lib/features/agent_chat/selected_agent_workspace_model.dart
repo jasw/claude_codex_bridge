@@ -58,19 +58,44 @@ SelectedAgentWorkspaceModel selectedAgentWorkspaceModel({
     isAwaitingAgentResponse: isAwaitingAgentResponse,
     hasLocalExecutionException: hasLocalExecutionException,
   );
-  final timelineItems = [
-    // Chat is deliberately limited to provider/native history plus local
-    // optimistic user messages. Terminal history is an explicit fallback.
+  final rawTimelineItems = [
     if (remoteConversation != null)
       for (final item in remoteConversation.items)
-        if (_isDefaultChatRemoteItem(item))
-          chatController.presentationItemFor(agent.name, item),
+        if (_isDefaultChatRemoteItem(item)) item,
     ...chatController.localMessagesFor(agent.name),
   ];
-  final workingReplyItemId =
+  final rawWorkingReplyItemId =
       executionStatus.state == 'working'
-          ? selectedAgentWorkingReplyItemId(timelineItems)
+          ? selectedAgentWorkingReplyItemId(rawTimelineItems)
           : null;
+  final workingPresentationId = syntheticAgentWorkingConversationItemId(
+    agent.name,
+  );
+  final timelineItems = <CcbConversationItem>[];
+  String? workingReplyItemId;
+  if (remoteConversation != null) {
+    for (final item in remoteConversation.items) {
+      if (!_isDefaultChatRemoteItem(item)) {
+        continue;
+      }
+      final presented = chatController.presentationItemFor(
+        agent.name,
+        item,
+        preferredPresentationId:
+            item.id == rawWorkingReplyItemId ? workingPresentationId : null,
+      );
+      timelineItems.add(presented);
+      if (item.id == rawWorkingReplyItemId) {
+        workingReplyItemId = presented.id;
+      }
+    }
+  }
+  for (final item in chatController.localMessagesFor(agent.name)) {
+    timelineItems.add(item);
+    if (item.id == rawWorkingReplyItemId) {
+      workingReplyItemId = item.id;
+    }
+  }
   final visibleTimelineItems =
       workingReplyItemId == null && executionStatus.state == 'working'
           ? [
@@ -83,9 +108,7 @@ SelectedAgentWorkspaceModel selectedAgentWorkspaceModel({
           : timelineItems;
   final visibleWorkingReplyItemId =
       workingReplyItemId ??
-      (executionStatus.state == 'working'
-          ? syntheticAgentWorkingConversationItemId(agent.name)
-          : null);
+      (executionStatus.state == 'working' ? workingPresentationId : null);
   return SelectedAgentWorkspaceModel(
     agent: agent,
     contentItems: view.contentForAgent(agent.name),

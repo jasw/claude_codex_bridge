@@ -2452,8 +2452,8 @@ void main() {
       expect(find.text('running after activity update'), findsOneWidget);
       expect(
         find.byKey(
-          const ValueKey(
-            'conversation-working-native-current-reply-mobile-reply-running',
+          ValueKey(
+            'conversation-working-${syntheticAgentWorkingConversationItemId('mobile')}',
           ),
         ),
         findsOneWidget,

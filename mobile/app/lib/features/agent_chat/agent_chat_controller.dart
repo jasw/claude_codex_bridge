@@ -74,8 +74,9 @@ class AgentChatController {
   /// current reply arrives and subsequently completes.
   CcbConversationItem presentationItemFor(
     String agentName,
-    CcbConversationItem item,
-  ) {
+    CcbConversationItem item, {
+    String? preferredPresentationId,
+  }) {
     if (item.kind != CcbConversationItemKind.agentReply ||
         !(item.source?.startsWith('provider_native/') ?? false)) {
       return item;
@@ -85,15 +86,23 @@ class AgentChatController {
     if (existing != null) {
       return item.copyWith(id: existing);
     }
+    if (preferredPresentationId != null) {
+      _rememberRemotePresentationId(key, preferredPresentationId);
+      return item.copyWith(id: preferredPresentationId);
+    }
     if (item.completedAt == null) {
       final presentationId = 'native-current-reply-$agentName-${item.id}';
-      _remotePresentationIds[key] = presentationId;
-      while (_remotePresentationIds.length > 256) {
-        _remotePresentationIds.remove(_remotePresentationIds.keys.first);
-      }
+      _rememberRemotePresentationId(key, presentationId);
       return item.copyWith(id: presentationId);
     }
     return item;
+  }
+
+  void _rememberRemotePresentationId(String key, String presentationId) {
+    _remotePresentationIds[key] = presentationId;
+    while (_remotePresentationIds.length > 256) {
+      _remotePresentationIds.remove(_remotePresentationIds.keys.first);
+    }
   }
 
   String? olderConversationCursor(String agentName) {
