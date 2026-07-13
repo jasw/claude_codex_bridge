@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from agents.models import parse_layout_spec
 from ccbd.reload_additive_agents import window_agent_names, window_map
 
 @dataclass(frozen=True)
@@ -57,30 +58,42 @@ def reflow_agent_window_fixed(
     runner = getattr(backend, '_tmux_run', None)
     if not callable(runner):
         return False, 'tmux backend does not support fixed-layout reflow'
-    agent_names = _topology_window_agent_names(topology_plan, window_name)
-    if not agent_names or len(agent_names) > 6:
+    topology_window = _topology_window(topology_plan, window_name)
+    agent_names = window_agent_names(topology_window) if topology_window is not None else ()
+    user_layout = str(getattr(topology_window, 'user_layout', '') or '').strip()
+    if not agent_names or (not user_layout and len(agent_names) > 6):
         return False, None
     panes, error = _observed_panes(runner, window_target=window_target, timeout_s=timeout_s)
     if error is not None:
         return False, error
     if not panes:
         return False, None
-    sidebar_panes, agent_panes = _classify_panes(panes, agent_names=agent_names, window_name=window_name)
-    if len(agent_panes) != len(agent_names) or len(sidebar_panes) > 1:
-        return False, None
-    managed_count = len(sidebar_panes) + len(agent_panes)
-    if managed_count != len(panes):
-        return False, None
     total_width = max(pane.pane_left + pane.pane_width for pane in panes)
     total_height = max(pane.pane_top + pane.pane_height for pane in panes)
     if total_width <= 0 or total_height <= 0:
         return False, None
-    layout_root, desired_order = _build_fixed_layout(
-        sidebar=sidebar_panes[0] if sidebar_panes else None,
-        agent_panes=agent_panes,
+    topology_layout = _build_topology_layout(
+        panes,
+        topology_window=topology_window,
+        window_name=window_name,
         total_width=total_width,
         total_height=total_height,
     )
+    if topology_layout is not None:
+        layout_root, desired_order = topology_layout
+    else:
+        sidebar_panes, agent_panes = _classify_panes(panes, agent_names=agent_names, window_name=window_name)
+        if len(agent_panes) != len(agent_names) or len(sidebar_panes) > 1:
+            return False, None
+        managed_count = len(sidebar_panes) + len(agent_panes)
+        if managed_count != len(panes):
+            return False, None
+        layout_root, desired_order = _build_fixed_layout(
+            sidebar=sidebar_panes[0] if sidebar_panes else None,
+            agent_panes=agent_panes,
+            total_width=total_width,
+            total_height=total_height,
+        )
     if layout_root is None:
         return False, None
     body = _render_layout(layout_root)
@@ -89,16 +102,20 @@ def reflow_agent_window_fixed(
     if int(getattr(completed, 'returncode', 1) or 0) != 0:
         detail = str(getattr(completed, 'stderr', '') or getattr(completed, 'stdout', '') or '').strip()
         return False, detail or 'fixed select-layout failed'
-    swap_error = _apply_visual_order(runner, current_order=[pane.pane_id for pane in panes], desired_order=desired_order, timeout_s=timeout_s)
+    swap_error = _apply_visual_order(
+        runner,
+        current_order=[pane.pane_id for pane in panes],
+        desired_order=desired_order,
+        timeout_s=timeout_s,
+    )
     if swap_error is not None:
         return False, swap_error
     return True, None
 
 
-def _topology_window_agent_names(topology_plan, window_name: str) -> tuple[str, ...]:
+def _topology_window(topology_plan, window_name: str):
     windows = window_map(topology_plan)
-    window = windows.get(str(window_name))
-    return window_agent_names(window) if window is not None else ()
+    return windows.get(str(window_name))
 
 
 def _observed_panes(runner, *, window_target: str, timeout_s: float | None) -> tuple[tuple[_ObservedPane, ...], str | None]:
@@ -158,6 +175,181 @@ def _classify_panes(
         if pane.role == 'agent' and pane.window_name == window_name and pane.slot in agent_set:
             agent_by_name[pane.slot] = pane
     return tuple(sidebar_panes), tuple(agent_by_name[name] for name in agent_names if name in agent_by_name)
+
+
+def _build_topology_layout(
+    panes: tuple[_ObservedPane, ...],
+    *,
+    topology_window,
+    window_name: str,
+    total_width: int,
+    total_height: int,
+) -> tuple[object, list[str]] | None:
+    user_layout = str(getattr(topology_window, 'user_layout', '') or '').strip()
+    if not user_layout:
+        return None
+    try:
+        layout_spec = parse_layout_spec(user_layout)
+    except ValueError:
+        return None
+    leaf_names = tuple(str(leaf.name) for leaf in layout_spec.iter_leaves())
+    if not leaf_names or len(set(leaf_names)) != len(leaf_names):
+        return None
+    sidebar_panes, pane_by_leaf = _classify_topology_panes(
+        panes,
+        leaf_names=leaf_names,
+        window_name=window_name,
+    )
+    if len(sidebar_panes) > 1 or set(pane_by_leaf) != set(leaf_names):
+        return None
+    if len(sidebar_panes) + len(pane_by_leaf) != len(panes):
+        return None
+
+    sidebar = sidebar_panes[0] if sidebar_panes else None
+    sidebar_width = sidebar.pane_width if sidebar is not None else 0
+    user_width = total_width - sidebar_width - (1 if sidebar is not None else 0)
+    if user_width <= 0:
+        return None
+    sidebar_position = str(getattr(getattr(topology_window, 'sidebar', None), 'position', 'left') or 'left')
+    user_left = (
+        0
+        if sidebar is not None and sidebar_position == 'right'
+        else sidebar_width + (1 if sidebar is not None else 0)
+    )
+    user = _layout_from_spec(
+        layout_spec,
+        pane_by_leaf=pane_by_leaf,
+        width=user_width,
+        height=total_height,
+        left=user_left,
+        top=0,
+    )
+    if user is None:
+        return None
+    desired_user_order = [pane_by_leaf[name].pane_id for name in leaf_names]
+    if sidebar is None:
+        return user, desired_user_order
+
+    sidebar_left = user_width + 1 if sidebar_position == 'right' else 0
+    sidebar_leaf = _LayoutLeaf(sidebar.pane_id, sidebar_width, total_height, sidebar_left, 0)
+    if sidebar_position == 'right':
+        children = (user, sidebar_leaf)
+        desired_order = [*desired_user_order, sidebar.pane_id]
+    else:
+        children = (sidebar_leaf, user)
+        desired_order = [sidebar.pane_id, *desired_user_order]
+    return (
+        _LayoutBranch(
+            width=total_width,
+            height=total_height,
+            left=0,
+            top=0,
+            delimiter='horizontal',
+            children=children,
+        ),
+        desired_order,
+    )
+
+
+def _classify_topology_panes(
+    panes: tuple[_ObservedPane, ...],
+    *,
+    leaf_names: tuple[str, ...],
+    window_name: str,
+) -> tuple[tuple[_ObservedPane, ...], dict[str, _ObservedPane]]:
+    expected = set(leaf_names)
+    sidebar_panes: list[_ObservedPane] = []
+    pane_by_leaf: dict[str, _ObservedPane] = {}
+    for pane in panes:
+        if pane.role == 'sidebar' and (pane.sidebar_instance == window_name or pane.slot == f'sidebar:{window_name}'):
+            sidebar_panes.append(pane)
+            continue
+        leaf_name = pane.slot.removeprefix('tool:') if pane.role == 'tool' else pane.slot
+        if pane.window_name == window_name and leaf_name in expected and pane.role in {'agent', 'tool'}:
+            pane_by_leaf[leaf_name] = pane
+    return tuple(sidebar_panes), pane_by_leaf
+
+
+def _layout_from_spec(node, *, pane_by_leaf: dict[str, _ObservedPane], width: int, height: int, left: int, top: int):
+    if node.kind == 'leaf':
+        pane = pane_by_leaf.get(str(node.leaf.name))
+        return _LayoutLeaf(pane.pane_id, width, height, left, top) if pane is not None else None
+    assert node.left is not None and node.right is not None
+    if node.kind == 'horizontal':
+        left_size, right_size = _split_sizes(node, width)
+        if left_size <= 0 or right_size <= 0:
+            return None
+        left_child = _layout_from_spec(
+            node.left,
+            pane_by_leaf=pane_by_leaf,
+            width=left_size,
+            height=height,
+            left=left,
+            top=top,
+        )
+        right_child = _layout_from_spec(
+            node.right,
+            pane_by_leaf=pane_by_leaf,
+            width=right_size,
+            height=height,
+            left=left + left_size + 1,
+            top=top,
+        )
+    else:
+        left_size, right_size = _split_sizes(node, height)
+        if left_size <= 0 or right_size <= 0:
+            return None
+        left_child = _layout_from_spec(
+            node.left,
+            pane_by_leaf=pane_by_leaf,
+            width=width,
+            height=left_size,
+            left=left,
+            top=top,
+        )
+        right_child = _layout_from_spec(
+            node.right,
+            pane_by_leaf=pane_by_leaf,
+            width=width,
+            height=right_size,
+            left=left,
+            top=top + left_size + 1,
+        )
+    if left_child is None or right_child is None:
+        return None
+    return _LayoutBranch(
+        width=width,
+        height=height,
+        left=left,
+        top=top,
+        delimiter=node.kind,
+        children=(left_child, right_child),
+    )
+
+
+def _split_sizes(node, total_size: int) -> tuple[int, int]:
+    available = total_size - 1
+    if available < 2:
+        return 0, 0
+    right_percent = _specified_percent(node.right)
+    left_percent = _specified_percent(node.left)
+    if right_percent is not None:
+        percent = max(1, min(99, right_percent))
+    elif left_percent is not None:
+        percent = max(1, min(99, 100 - left_percent))
+    else:
+        percent = round((node.right.leaf_count * 100) / max(1, node.leaf_count))
+    right_size = max(1, min(available - 1, round((available * percent) / 100)))
+    return available - right_size, right_size
+
+
+def _specified_percent(node) -> int | None:
+    if node.kind == 'leaf':
+        return node.leaf.percent
+    for leaf in node.iter_leaves():
+        if leaf.percent is not None:
+            return leaf.percent
+    return None
 
 
 def _build_fixed_layout(

@@ -300,11 +300,13 @@ Contract:
   unrelated panes.
 - Guarded reload should reflow a window after successful append-only
   `add_agent` and idle `remove_agent` mutations, then reapply managed sidebar
-  width. For fully CCB-managed agent windows with one to six effective agent
-  panes, reflow should apply the fixed visual order used by the runtime layout
-  planner: `p1,p3,p5` in the left column and `p2,p4,p6` in the right column,
-  preserving pane identity through tmux movement instead of respawning
-  providers. Windows outside that safe shape fall back to tmux even compaction.
+  width. When the target Window exposes a validated `user_layout`, reflow must
+  realize that target binary topology, including horizontal/vertical direction,
+  explicit `@N` hints, inline managed tools, and Sidebar position, while
+  preserving pane identity. Legacy topology records without a usable layout may
+  apply the fixed runtime order for one to six effective Agent panes:
+  `p1,p3,p5` in the left column and `p2,p4,p6` in the right column. Windows
+  outside either safe shape fall back to tmux even compaction.
   Reflow must preserve surviving pane identity and report
   `namespace_reflowed_windows` or `namespace_reflow_errors` in apply
   diagnostics.

@@ -259,8 +259,17 @@ When `ccb` starts a managed Claude agent:
   `claude_session_env_root` into the agent session file
 - it must not rely on global `~/.claude/projects` as the default managed Claude
   namespace
-- it must not create, delete, or rewrite project-level `.claude/settings.json`
-  or `.claude/settings.local.json` during startup
+- it must not create or delete project-level `.claude/settings.json` or
+  `.claude/settings.local.json` during startup, and must not rewrite unrelated
+  project settings or hooks
+- one compatibility migration may rewrite an existing project settings file:
+  it may remove only command hooks whose executable is Python and whose script
+  argument is an extensionless `ccb-provider-finish-hook` or
+  `ccb-provider-activity-hook`; these are legacy CCB-owned launcher commands
+  that execute Bash as Python
+- that migration must parse settings structurally, preserve every unrelated
+  hook and setting, skip malformed files without mutation, write atomically,
+  and be idempotent
 
 Absent an explicit validated provider-profile runtime home, the managed
 agent-scoped private `HOME` is the default authority.

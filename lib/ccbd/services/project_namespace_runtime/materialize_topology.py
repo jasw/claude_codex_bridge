@@ -21,7 +21,7 @@ from .backend import (
     split_pane,
     window_root_pane,
 )
-from .sidebar_helper import sidebar_respawn_args
+from .sidebar_helper import SIDEBAR_HELPER_ID_OPTION, sidebar_helper_fingerprint, sidebar_respawn_args
 
 
 def refresh_topology_ui(context) -> None:
@@ -40,6 +40,7 @@ def refresh_topology_ui_for_project(
     topology_plan,
     timeout_s: float | None = None,
 ) -> None:
+    refresh_topology_sidebar_helpers(controller, context.backend, topology_plan=topology_plan)
     apply_project_tmux_ui(
         tmux_socket_path=context.desired_socket_path,
         ccbd_socket_path=str(controller._layout.ccbd_socket_path),
@@ -314,6 +315,7 @@ def _materialize_sidebar(
             namespace_epoch=epoch,
             managed_by='ccbd',
         )
+        _record_sidebar_helper_identity(context.backend, sidebar_pane)
         return root_pane
     user_root = split_pane(
         context.backend,
@@ -340,7 +342,49 @@ def _materialize_sidebar(
         namespace_epoch=epoch,
         managed_by='ccbd',
     )
+    _record_sidebar_helper_identity(context.backend, root_pane)
     return user_root
+
+
+def refresh_topology_sidebar_helpers(controller, backend, *, topology_plan) -> tuple[str, ...]:
+    desired_identity = sidebar_helper_fingerprint()
+    if not desired_identity:
+        return ()
+    refreshed: list[str] = []
+    for window in tuple(getattr(topology_plan, 'windows', ()) or ()):
+        sidebar = getattr(window, 'sidebar', None)
+        if sidebar is None:
+            continue
+        matches = _list_panes_by_user_options(
+            backend,
+            {
+                '@ccb_project_id': controller._project_id,
+                '@ccb_role': 'sidebar',
+                '@ccb_sidebar_instance': str(window.name),
+                '@ccb_managed_by': 'ccbd',
+            },
+        )
+        if len(matches) != 1:
+            continue
+        pane_id = matches[0]
+        if _pane_option(backend, pane_id, SIDEBAR_HELPER_ID_OPTION) == desired_identity:
+            continue
+        _respawn_sidebar(
+            backend,
+            pane_id,
+            tuple(getattr(sidebar, 'launch_args', ()) or ()),
+            cwd=str(controller._layout.project_root),
+        )
+        _record_sidebar_helper_identity(backend, pane_id, identity=desired_identity)
+        refreshed.append(pane_id)
+    return tuple(refreshed)
+
+
+def _record_sidebar_helper_identity(backend, pane_id: str, *, identity: str | None = None) -> None:
+    resolved = identity or sidebar_helper_fingerprint()
+    if not resolved:
+        return
+    backend.set_pane_user_option(pane_id, SIDEBAR_HELPER_ID_OPTION, resolved)
 
 
 def _materialize_agent_layout(
@@ -833,6 +877,7 @@ def _respawn_sidebar(backend, pane_id: str, launch_args: tuple[str, ...], *, cwd
 __all__ = [
     'existing_topology_agent_panes',
     'materialize_topology',
+    'refresh_topology_sidebar_helpers',
     'refresh_topology_ui',
     'refresh_topology_ui_for_project',
     'sync_topology_sidebar_widths',

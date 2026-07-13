@@ -2080,6 +2080,14 @@ sidebar_helper_runs_on_this_host() {
   esac
 }
 
+sidebar_helper_source_is_newer() {
+  local binary="$1"
+  local crate_dir="$2"
+  [[ -e "$binary" ]] || return 0
+  find "$crate_dir/src" "$crate_dir/Cargo.toml" "$crate_dir/Cargo.lock" \
+    -type f -newer "$binary" -print -quit 2>/dev/null | grep -q .
+}
+
 require_sidebar_rust_toolchain() {
   local missing=()
   if ! command -v cargo >/dev/null 2>&1; then
@@ -2257,7 +2265,9 @@ build_sidebar_helper_if_possible() {
   fi
 
   if install_uses_live_source; then
-    if [[ -x "$binary" ]] && sidebar_helper_runs_on_this_host "$binary"; then
+    if [[ -x "$binary" ]] \
+      && sidebar_helper_runs_on_this_host "$binary" \
+      && ! sidebar_helper_source_is_newer "$binary" "$crate_dir"; then
       return
     fi
     require_sidebar_rust_toolchain
@@ -2270,11 +2280,16 @@ build_sidebar_helper_if_possible() {
   fi
 
   mkdir -p "$asset_root/bin"
-  if [[ -x "$target" ]] && ! is_sidebar_wrapper "$target" && sidebar_helper_runs_on_this_host "$target"; then
-    return
+  if [[ -x "$binary" ]]; then
+    if [[ ! -x "$target" ]] || is_sidebar_wrapper "$target" || ! cmp -s "$binary" "$target"; then
+      if install_prebuilt_sidebar_helper "$binary" "$target"; then
+        return
+      fi
+    elif sidebar_helper_runs_on_this_host "$target"; then
+      return
+    fi
   fi
-
-  if [[ -x "$binary" ]] && install_prebuilt_sidebar_helper "$binary" "$target"; then
+  if [[ -x "$target" ]] && ! is_sidebar_wrapper "$target" && sidebar_helper_runs_on_this_host "$target"; then
     return
   fi
 

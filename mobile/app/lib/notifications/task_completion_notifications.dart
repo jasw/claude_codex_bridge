@@ -540,6 +540,10 @@ class HttpGatewayTaskCompletionNotificationStreamClient
       final subscription = eventSubscription;
       eventSubscription = null;
       await subscription?.cancel();
+      // Cancellation closes the owned socket synchronously, but the peer
+      // observes that close on its next I/O turn. Keep replacement streams
+      // serialized across that short transport handoff as well.
+      await Future<void>.delayed(const Duration(milliseconds: 25));
     }
 
     Future<void> connect() async {
@@ -720,6 +724,7 @@ class TaskCompletionNotificationController {
   Future<void>? _subscriptionReconcileFuture;
   bool _subscriptionReconcileRequested = false;
   bool _subscriptionDesiredConnected = false;
+  bool _startInitializing = false;
   GatewayInvalidationConnectionState? _connectionState;
   final LinkedHashSet<String> _seenEventIds = LinkedHashSet<String>();
   Future<void> _eventHandlingTail = Future<void>.value();
@@ -737,7 +742,8 @@ class TaskCompletionNotificationController {
       return TaskCompletionNotificationSubscriptionStatus.missingNotifyScope;
     }
     _started = true;
-    _subscriptionDesiredConnected = true;
+    _startInitializing = true;
+    _subscriptionDesiredConnected = false;
     _activeHost = host;
     _watch = watch;
     // Secure storage is normally immediate. Keep subscription recovery
@@ -756,6 +762,8 @@ class TaskCompletionNotificationController {
     if (generation != _lifecycleGeneration) {
       return TaskCompletionNotificationSubscriptionStatus.subscribed;
     }
+    _startInitializing = false;
+    _subscriptionDesiredConnected = true;
     await _requestSubscriptionReconcile();
     return _permissionStatus ==
             TaskCompletionLocalNotificationPermissionStatus.granted
@@ -768,6 +776,9 @@ class TaskCompletionNotificationController {
       return;
     }
     _watch = watch;
+    if (_startInitializing) {
+      return;
+    }
     retryNow();
   }
 
@@ -783,6 +794,7 @@ class TaskCompletionNotificationController {
 
   void _setStoppedDesiredState() {
     _started = false;
+    _startInitializing = false;
     _subscriptionDesiredConnected = false;
     _activeHost = null;
     _watch = null;
@@ -933,7 +945,7 @@ class TaskCompletionNotificationController {
   }
 
   void retryNow() {
-    if (!_started) {
+    if (!_started || _startInitializing) {
       return;
     }
     _reconnectTimer?.cancel();

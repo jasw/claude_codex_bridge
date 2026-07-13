@@ -10,7 +10,7 @@ from ccbd.lifecycle_report_store import CcbdStartupReportStore
 from ccbd.models import CcbdStartupReport
 from cli.context import CliContextBuilder
 from cli.models import ParsedStartCommand
-from cli.services.start import start_agents
+from cli.services.start import _refresh_running_sidebar_helpers, start_agents
 from project.resolver import bootstrap_project
 from storage.paths import PathLayout
 from workspace.materializer import WorkspaceMaterializer
@@ -80,6 +80,57 @@ def test_start_agents_calls_ccbd_start_with_cli_flags(tmp_path: Path, monkeypatc
     assert summary.started == ('demo',)
     assert summary.daemon_started is True
     assert summary.socket_path == str(context.paths.ccbd_socket_path)
+
+
+def test_foreground_start_refreshes_sidebar_with_current_cli_when_daemon_is_reused(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    project_root = tmp_path / 'repo-start-sidebar-upgrade'
+    namespace = SimpleNamespace(tmux_socket_path=str(project_root / '.ccb' / 'ccbd' / 'tmux.sock'))
+    controller = SimpleNamespace(load=lambda: namespace)
+    backend = object()
+    topology_plan = object()
+    seen: dict[str, object] = {}
+    context = SimpleNamespace(
+        paths=PathLayout(project_root),
+        project=SimpleNamespace(project_id='project-1', project_root=project_root),
+    )
+
+    monkeypatch.setattr(
+        'cli.services.start.ProjectNamespaceController',
+        lambda layout, project_id: controller,
+    )
+    monkeypatch.setattr(
+        'cli.services.start.load_project_config',
+        lambda root: SimpleNamespace(config=object()),
+    )
+    monkeypatch.setattr(
+        'cli.services.start.build_namespace_topology_plan',
+        lambda config: topology_plan,
+    )
+    monkeypatch.setattr(
+        'cli.services.start.TmuxBackend',
+        lambda *, socket_path: seen.setdefault('backend_socket', socket_path) and backend,
+    )
+
+    def refresh(current_controller, current_backend, *, topology_plan):
+        seen['controller'] = current_controller
+        seen['backend'] = current_backend
+        seen['topology_plan'] = topology_plan
+        return ('%7',)
+
+    monkeypatch.setattr('cli.services.start.refresh_topology_sidebar_helpers', refresh)
+
+    result = _refresh_running_sidebar_helpers(context)
+
+    assert result == {'status': 'refreshed', 'panes': ('%7',)}
+    assert seen == {
+        'backend_socket': namespace.tmux_socket_path,
+        'controller': controller,
+        'backend': backend,
+        'topology_plan': topology_plan,
+    }
 
 
 def test_start_agents_passes_terminal_size_when_provided(tmp_path: Path, monkeypatch) -> None:

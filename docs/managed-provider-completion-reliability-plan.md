@@ -686,6 +686,13 @@ Likely modules:
 - `bin/ccb-provider-finish-hook`
 - `lib/provider_hooks/artifacts_runtime/`
 
+Managed Claude preparation also owns one legacy completion-hook migration. An
+existing project or local Claude settings file may contain the old CCB command
+shape `python .../ccb-provider-finish-hook`, which asks Python to parse the
+extensionless Bash launcher. Preparation must remove only that CCB-specific
+Python-wrapped finish/activity command, preserve unrelated hooks and settings,
+and install the current direct launcher command in the managed Claude home.
+
 ### 11.4 Diagnostics Layer
 
 Expose reliability state in:

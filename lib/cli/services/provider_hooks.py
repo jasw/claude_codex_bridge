@@ -20,6 +20,7 @@ from provider_hooks.settings import (
     build_hook_command,
     install_workspace_activity_hooks,
     install_workspace_completion_hooks,
+    migrate_legacy_project_ccb_hooks,
 )
 from provider_profiles.codex_home_config import materialize_codex_home_config
 from provider_profiles import (
@@ -37,12 +38,24 @@ def prepare_workspace_provider_hooks(
     agent_name: str,
     home_root: Path | None,
     project_id: str | None = None,
+    project_root: Path | None = None,
     runtime_dir: Path | None = None,
     resolved_profile: ResolvedProviderProfile | None = None,
 ) -> Path | None:
     normalized = str(provider or '').strip().lower()
     if normalized not in {'claude', 'gemini'}:
         return None
+    if normalized == 'claude':
+        roots = (Path(workspace_path), Path(project_root) if project_root is not None else None)
+        migrated_roots: set[Path] = set()
+        for root in roots:
+            if root is None:
+                continue
+            normalized_root = root.expanduser().absolute()
+            if normalized_root in migrated_roots:
+                continue
+            migrated_roots.add(normalized_root)
+            migrate_legacy_project_ccb_hooks(workspace_root=normalized_root)
     command = build_hook_command(
         provider=normalized,
         script_path=Path(__file__).resolve().parents[3] / 'bin' / 'ccb-provider-finish-hook',
@@ -123,6 +136,7 @@ def prepare_provider_workspace(
             resolved_profile=resolved_profile,
         ),
         project_id=getattr(layout, 'project_id', None),
+        project_root=layout.project_root,
         runtime_dir=runtime_dir,
         resolved_profile=resolved_profile,
     )

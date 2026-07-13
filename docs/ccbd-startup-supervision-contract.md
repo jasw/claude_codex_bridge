@@ -258,7 +258,8 @@ Managed Claude session authority rules:
 
 Managed provider startup mutation rules:
 
-- startup preparation must not create, delete, or rewrite project-level provider dotfiles such as `.claude/settings.json`, `.claude/settings.local.json`, `.gemini/settings.json`, `.codex/*`, or equivalent provider-owned workspace config
+- startup preparation must not create or delete project-level provider dotfiles such as `.claude/settings.json`, `.claude/settings.local.json`, `.gemini/settings.json`, `.codex/*`, or equivalent provider-owned workspace config, and must not rewrite unrelated project settings
+- as a narrow compatibility exception, managed Claude preparation may atomically remove only legacy CCB command hooks that invoke an extensionless `ccb-provider-finish-hook` or `ccb-provider-activity-hook` through Python; it must preserve all other project settings and hooks and leave malformed settings files untouched
 - startup may create `.ccb/ccb_memory.md` under the project anchor when it is missing, but must
   treat it as user-editable project memory after creation
 - startup must not create, import, or otherwise rely on project-root `CCB.md`
@@ -599,6 +600,10 @@ Manual pane restart:
 - the restart target set is all configured agents from `.ccb/ccb.config`, not only the currently focused or default subset
 - the restart must inherit restore and auto-permission choices from the persisted project start policy
 - when requested from a sidebar pane, the sidebar must remain attached while the daemon restarts agent panes
+- each managed sidebar pane records the content identity of the helper binary that it is running; topology refresh must compare that identity with the currently installed helper and respawn only a stale sidebar pane in place
+- refreshing a stale sidebar helper must preserve the project tmux session, window topology, and every configured agent pane; helper replacement must not be coupled to agent restart or full namespace reflow
+- after a successful start RPC, the current foreground CLI must perform the same bounded helper-identity repair directly against the authoritative project tmux socket; this compatibility path updates sidebars when a healthy daemon from an older compatible CCB release is still resident
+- foreground helper repair failure must be reported in start output without reclassifying a successfully started project or mutating namespace, lifecycle, lease, or agent-runtime authority
 
 Project-socket cleanup rules:
 

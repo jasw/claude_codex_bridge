@@ -110,6 +110,17 @@ dry-run and reload endpoints; it does not mutate lifecycle or runtime files
 itself. A blocked dry-run leaves the valid desired config saved and reports the
 runtime mismatch explicitly.
 
+Selected Agent deletion follows the same authority boundary. The visual editor
+removes one Agent leaf from the draft and collapses the released binary split
+by promoting its sibling subtree. Removing the sole leaf of a Window removes
+that Window only when another Window remains; the final project Pane cannot be
+deleted. Agent history and provider state are not deleted. Hot reload delegates
+the resulting `remove_agent` plan to ccbd, and busy or outstanding work remains
+in drain until the Agent can be unloaded safely. After unload, the affected
+Window is reflowed from its target `user_layout`, so promoting a vertical or
+horizontal sibling subtree in the editor produces the same live tmux topology
+without respawning surviving providers.
+
 `POST /api/render` accepts the structured V1/V2 document produced by the
 visual editor, validates it, and renders deterministic TOML on the server. The
 browser does not implement its own TOML writer. Profile endpoints are confined
@@ -190,6 +201,7 @@ After writing:
 Landed visual mapping:
 
 - recursive binary window layout trees and Rich leaves;
+- selected Agent deletion with sibling promotion, Window collapse, and undo;
 - V2 named-window management and V1 single-window reuse;
 - topology-owned provider/workspace fields plus agent overlays;
 - sidebar topology/view fields and multiline tips;

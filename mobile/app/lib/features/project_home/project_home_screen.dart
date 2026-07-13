@@ -1962,6 +1962,7 @@ class _ProjectHomeViewState extends State<_ProjectHomeView>
         projectId: spec.projectId,
         agentName: spec.agentName,
         expectedNamespaceEpoch: spec.namespaceEpoch,
+        expectedWindowName: spec.windowName,
         expectedPaneId: spec.paneId,
         terminalTransport: transport,
         gatewayTerminal: spec.gatewayTerminal,

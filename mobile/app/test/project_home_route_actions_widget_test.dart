@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:xterm/xterm.dart';
@@ -59,6 +61,39 @@ void main() {
       find.byKey(const ValueKey('terminal-compact-reconnect')),
       findsOneWidget,
     );
+  });
+
+  testWidgets('terminal route rejects a changed agent window identity', (
+    tester,
+  ) async {
+    final transport = RecordingTerminalTransport();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: _ActionHost(
+          onPressed:
+              (context) => pushProjectHomeTerminalRoute(
+                context,
+                repository: FakeMobileCcbRepository(
+                  projectViewPayload: _payloadWithLeadWindow('review'),
+                ),
+                projectId: 'proj-demo',
+                agentName: 'lead',
+                expectedNamespaceEpoch: 4,
+                expectedWindowName: 'main',
+                expectedPaneId: '%1',
+                terminalTransport: transport,
+                gatewayTerminal: true,
+              ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.byKey(const ValueKey('route-action-button')));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(TerminalView), findsNothing);
+    expect(transport.requests, isEmpty);
+    expect(find.textContaining('Project view is stale'), findsOneWidget);
   });
 
   testWidgets('connection details route helper shows supplied panel', (
@@ -145,6 +180,19 @@ void main() {
 
     expect(find.text('result: true'), findsOneWidget);
   });
+}
+
+Map<String, Object?> _payloadWithLeadWindow(String window) {
+  final payload =
+      jsonDecode(jsonEncode(demoPayloadWithReviewWindow()))
+          as Map<String, Object?>;
+  final view = payload['view']! as Map<String, Object?>;
+  final agents = view['agents']! as List<Object?>;
+  final lead = agents.cast<Map<String, Object?>>().firstWhere(
+    (agent) => agent['name'] == 'lead',
+  );
+  lead['window'] = window;
+  return payload;
 }
 
 Future<void> _pumpStopConfirmationHost(WidgetTester tester) {

@@ -15,6 +15,7 @@ from ccbd.services.project_namespace_runtime import (
     build_namespace_topology_plan,
     snapshot_preserved_agent_panes,
 )
+from ccbd.services.project_namespace_runtime.sidebar_helper import SIDEBAR_HELPER_ID_OPTION
 from ccbd.services.project_namespace_state import ProjectNamespaceState, ProjectNamespaceStateStore
 from storage.paths import PathLayout
 
@@ -288,6 +289,7 @@ def test_apply_add_window_creates_only_new_window_sidebar_and_agent_panes(tmp_pa
     assert result.created_windows == ('review',)
     assert result.agent_panes == {'agent3': '%4', 'agent4': '%5'}
     assert result.sidebar_panes == {'review': '%3'}
+    assert backend.pane_options['%3'][SIDEBAR_HELPER_ID_OPTION].startswith('sha256:')
     assert result.preserved_before == {'agent1': '%1', 'agent2': '%2'}
     assert result.preserved_after == {'agent1': '%1', 'agent2': '%2'}
     assert result.diagnostics['graph_published'] is False

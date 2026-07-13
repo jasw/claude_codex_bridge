@@ -10,6 +10,7 @@ from terminal_runtime.tmux_identity import apply_ccb_pane_identity
 from terminal_runtime.tmux_theme import tmux_theme_profile
 
 from .backend import create_window, session_window_target, split_pane, window_root_pane
+from .sidebar_helper import SIDEBAR_HELPER_ID_OPTION, sidebar_helper_fingerprint
 
 
 @dataclass
@@ -143,6 +144,9 @@ def _maybe_create_sidebar(
         namespace_epoch=current.namespace_epoch,
         managed_by='ccbd',
     )
+    helper_identity = sidebar_helper_fingerprint()
+    if helper_identity:
+        backend.set_pane_user_option(root_pane, SIDEBAR_HELPER_ID_OPTION, helper_identity)
     result.sidebar_panes[window_name] = root_pane
     return user_root
 

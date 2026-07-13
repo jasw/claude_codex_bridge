@@ -23,8 +23,9 @@ The top panel shows inline controls on the right side of the `Sidebar` title bar
 - `×`: kill project (`Q`)
 
 The settings action launches the project-scoped CCB CLI without blocking the
-sidebar. Keyboard `r` remains available for deliberate pane restart, but restart
-is no longer exposed as a header icon.
+sidebar. The Comms panel reports launch progress, the local URL, or a concrete
+startup error. Keyboard `r` remains available for deliberate pane restart, but
+restart is no longer exposed as a header icon.
 
 Upstream inspiration and future UI component migration come from
 `hiroppy/tmux-agent-sidebar`; its MIT license is retained in `LICENSE.upstream`.

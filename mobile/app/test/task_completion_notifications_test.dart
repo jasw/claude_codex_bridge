@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:ccb_mobile/ccb_mobile.dart';
 import 'package:ccb_mobile/features/project_home/project_home_task_completion_notifications.dart';
@@ -721,34 +722,109 @@ void main() {
     );
 
     test(
+      'start initialization coalesces watch changes before one cursor resume',
+      () async {
+        final secureStore = _DelayedReadSecureStore();
+        final streamClient = _FakeTaskCompletionStreamClient();
+        final localNotifications = _FakeTaskCompletionLocalNotifications();
+        final liveEvents = <TaskCompletionNotificationEvent>[];
+        final controller = _controller(
+          streamClient: streamClient,
+          localNotifications: localNotifications,
+          cursorStore: GatewayInvalidationCursorStore(secureStore: secureStore),
+          onLiveEvent: liveEvents.add,
+        );
+        final host = _host(scopes: const {'notify'});
+        const initialWatch = GatewayInvalidationWatch(
+          projectId: 'proj-demo',
+          agent: 'mobile',
+          namespaceEpoch: 4,
+        );
+        const latestWatch = GatewayInvalidationWatch(
+          projectId: 'proj-demo',
+          agent: 'lead',
+          namespaceEpoch: 5,
+        );
+
+        final start = controller.start(host, initialWatch);
+        await secureStore.readStarted.future;
+        controller
+          ..updateWatch(latestWatch)
+          ..retryNow();
+        streamClient.add(_event(dedupeKey: 'before-baseline'));
+        await _drain();
+
+        expect(streamClient.subscribeCalls, 0);
+        expect(localNotifications.shown, isEmpty);
+        expect(liveEvents, isEmpty);
+
+        secureStore.completeRead('mnotif_000000000077');
+        await start;
+
+        expect(streamClient.subscribeCalls, 1);
+        expect(streamClient.lastEventIds, ['mnotif_000000000077']);
+        expect(streamClient.watches, [latestWatch]);
+        await controller.dispose();
+      },
+    );
+
+    test(
       'HTTP SSE replacement coalesces watch changes and awaits cancellation',
       () async {
-        final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+        final server = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
         var requestCount = 0;
-        final responses = <HttpResponse>[];
-        server.listen((request) async {
+        var serverActive = 0;
+        var serverPeak = 0;
+        final sockets = <Socket>[];
+        server.listen((socket) {
           requestCount += 1;
-          final response =
-              request.response
-                ..statusCode = HttpStatus.ok
-                ..headers.contentType = ContentType(
-                  'text',
-                  'event-stream',
-                  charset: 'utf-8',
-                )
-                ..write(': connected\n\n');
-          responses.add(response);
-          await response.flush();
+          serverActive += 1;
+          serverPeak = serverPeak > serverActive ? serverPeak : serverActive;
+          sockets.add(socket);
+          var responded = false;
+          var closed = false;
+          final requestBytes = BytesBuilder(copy: false);
+          void markClosed() {
+            if (closed) {
+              return;
+            }
+            closed = true;
+            serverActive -= 1;
+          }
+
+          socket.listen(
+            (bytes) {
+              if (responded) {
+                return;
+              }
+              requestBytes.add(bytes);
+              if (!ascii
+                  .decode(requestBytes.toBytes(), allowInvalid: true)
+                  .contains('\r\n\r\n')) {
+                return;
+              }
+              responded = true;
+              socket.add(
+                ascii.encode(
+                  'HTTP/1.1 200 OK\r\n'
+                  'Content-Type: text/event-stream; charset=utf-8\r\n'
+                  'Cache-Control: no-cache\r\n'
+                  'Transfer-Encoding: chunked\r\n'
+                  'Connection: keep-alive\r\n'
+                  '\r\n'
+                  'd\r\n: connected\n\n\r\n',
+                ),
+              );
+            },
+            onDone: markClosed,
+            onError: (_) => markClosed(),
+          );
         });
         addTearDown(() async {
-          for (final response in responses) {
-            try {
-              await response.close();
-            } on Object {
-              // A canceled client may already have closed the response.
-            }
+          for (final socket in sockets) {
+            socket.destroy();
           }
-          await server.close(force: true);
+          await server.close();
         });
         final httpClient = HttpGatewayTaskCompletionNotificationStreamClient(
           timeout: const Duration(seconds: 2),
@@ -797,12 +873,16 @@ void main() {
           )
           ..retryNow();
         await _waitFor(
-          () => requestCount == 2 && streamClient.active == 1,
+          () =>
+              requestCount == 2 &&
+              streamClient.active == 1 &&
+              serverActive == 1,
           description:
               () =>
-                  'requestCount=$requestCount active=${streamClient.active} peak=${streamClient.peak}',
+                  'requestCount=$requestCount active=${streamClient.active} peak=${streamClient.peak} serverActive=$serverActive serverPeak=$serverPeak',
         );
         expect(streamClient.peak, lessThanOrEqualTo(1));
+        expect(serverPeak, lessThanOrEqualTo(1));
 
         controller.updateWatch(
           const GatewayInvalidationWatch(
@@ -1026,6 +1106,7 @@ class _FakeTaskCompletionStreamClient
       StreamController<TaskCompletionNotificationEvent>.broadcast();
   var subscribeCalls = 0;
   final lastEventIds = <String?>[];
+  final watches = <GatewayInvalidationWatch?>[];
 
   void add(TaskCompletionNotificationEvent event) {
     _controller.add(event);
@@ -1040,7 +1121,38 @@ class _FakeTaskCompletionStreamClient
   ]) {
     subscribeCalls += 1;
     lastEventIds.add(lastEventId);
+    watches.add(watch);
     return _controller.stream;
+  }
+}
+
+class _DelayedReadSecureStore implements GatewaySecureStore {
+  final readStarted = Completer<void>();
+  final _readResult = Completer<String?>();
+  final values = <String, String>{};
+
+  void completeRead(String? value) {
+    if (!_readResult.isCompleted) {
+      _readResult.complete(value);
+    }
+  }
+
+  @override
+  Future<String?> read({required String key}) {
+    if (!readStarted.isCompleted) {
+      readStarted.complete();
+    }
+    return _readResult.future;
+  }
+
+  @override
+  Future<void> write({required String key, required String value}) async {
+    values[key] = value;
+  }
+
+  @override
+  Future<void> delete({required String key}) async {
+    values.remove(key);
   }
 }
 

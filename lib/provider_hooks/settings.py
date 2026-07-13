@@ -5,4 +5,13 @@ from .settings_runtime import (
     build_hook_command,
     install_workspace_activity_hooks,
     install_workspace_completion_hooks,
+    migrate_legacy_project_ccb_hooks,
 )
+
+__all__ = [
+    'build_activity_hook_command',
+    'build_hook_command',
+    'install_workspace_activity_hooks',
+    'install_workspace_completion_hooks',
+    'migrate_legacy_project_ccb_hooks',
+]

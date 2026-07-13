@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
+import re
+import shlex
 
 from provider_backends.claude.home_layout import ClaudeHomeLayout, claude_layout_for_home
 
@@ -17,6 +20,20 @@ _CLAUDE_ACTIVITY_EVENTS = (
 )
 _CCB_FINISH_HOOK_NAME = 'ccb-provider-finish-hook'
 _CCB_ACTIVITY_HOOK_NAME = 'ccb-provider-activity-hook'
+_LEGACY_CCB_HOOK_NAMES = {_CCB_FINISH_HOOK_NAME, _CCB_ACTIVITY_HOOK_NAME}
+_PYTHON_EXECUTABLE_RE = re.compile(r'^python(?:\d+(?:\.\d+)*)?$', re.IGNORECASE)
+
+
+def migrate_legacy_project_ccb_hooks(*, workspace_root: Path) -> tuple[Path, ...]:
+    migrated: list[Path] = []
+    settings_dir = Path(workspace_root).expanduser() / '.claude'
+    for settings_path in (
+        settings_dir / 'settings.json',
+        settings_dir / 'settings.local.json',
+    ):
+        if _migrate_legacy_project_ccb_hook_file(settings_path):
+            migrated.append(settings_path)
+    return tuple(migrated)
 
 
 def install_claude_hooks(*, home_root: Path, command: str) -> Path:
@@ -140,6 +157,61 @@ def _is_stale_ccb_managed_hook(
     return managed_hook_name in command and command != current_command
 
 
+def _migrate_legacy_project_ccb_hook_file(settings_path: Path) -> bool:
+    try:
+        payload = json.loads(settings_path.read_text(encoding='utf-8'))
+    except (OSError, json.JSONDecodeError):
+        return False
+    if not isinstance(payload, dict) or not isinstance(payload.get('hooks'), dict):
+        return False
+    hooks = payload['hooks']
+    changed = False
+    for event_name, raw_groups in tuple(hooks.items()):
+        if not isinstance(raw_groups, list):
+            continue
+        groups, event_changed = _remove_legacy_python_wrapped_ccb_hooks(raw_groups)
+        if event_changed:
+            hooks[event_name] = groups
+            changed = True
+    if changed:
+        save_json(settings_path, payload)
+    return changed
+
+
+def _remove_legacy_python_wrapped_ccb_hooks(groups: list[object]) -> tuple[list[object], bool]:
+    migrated: list[object] = []
+    changed = False
+    for group in groups:
+        if not isinstance(group, dict) or not isinstance(group.get('hooks'), list):
+            migrated.append(group)
+            continue
+        kept = [hook for hook in group['hooks'] if not _is_legacy_python_wrapped_ccb_hook(hook)]
+        if len(kept) == len(group['hooks']):
+            migrated.append(group)
+            continue
+        changed = True
+        if kept:
+            next_group = dict(group)
+            next_group['hooks'] = kept
+            migrated.append(next_group)
+    return migrated, changed
+
+
+def _is_legacy_python_wrapped_ccb_hook(hook: object) -> bool:
+    if not isinstance(hook, dict):
+        return False
+    if str(hook.get('type') or '').strip().lower() != 'command':
+        return False
+    try:
+        parts = shlex.split(str(hook.get('command') or '').strip())
+    except ValueError:
+        return False
+    if len(parts) < 2 or not _PYTHON_EXECUTABLE_RE.fullmatch(Path(parts[0]).name):
+        return False
+    launcher = Path(parts[1])
+    return launcher.name in _LEGACY_CCB_HOOK_NAMES and not launcher.suffix
+
+
 def _load_settings(path: Path) -> dict[str, object]:
     if not path.exists():
         return {}
@@ -177,5 +249,6 @@ __all__ = [
     'claude_hook_home_layout',
     'install_claude_activity_hooks',
     'install_claude_hooks',
+    'migrate_legacy_project_ccb_hooks',
     'trust_claude_workspace',
 ]

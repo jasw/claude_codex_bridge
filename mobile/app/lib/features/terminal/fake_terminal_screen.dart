@@ -15,6 +15,7 @@ class FakeTerminalScreen extends StatefulWidget {
     this.agentName,
     this.windowName,
     this.expectedNamespaceEpoch,
+    this.expectedWindowName,
     this.expectedPaneId,
     this.terminalTransport,
     this.gatewayTerminal = false,
@@ -29,6 +30,7 @@ class FakeTerminalScreen extends StatefulWidget {
   final String? agentName;
   final String? windowName;
   final int? expectedNamespaceEpoch;
+  final String? expectedWindowName;
   final String? expectedPaneId;
   final TerminalTransport? terminalTransport;
   final bool gatewayTerminal;
@@ -55,6 +57,8 @@ class _FakeTerminalScreenState extends State<FakeTerminalScreen> {
     if (widget.agentName != null &&
         (widget.expectedNamespaceEpoch != null &&
                 target.namespaceEpoch != widget.expectedNamespaceEpoch ||
+            widget.expectedWindowName != null &&
+                target.window != widget.expectedWindowName ||
             widget.expectedPaneId != null &&
                 target.paneId != widget.expectedPaneId)) {
       throw StateError(

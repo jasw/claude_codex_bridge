@@ -1,8 +1,10 @@
 use std::collections::HashSet;
 use std::env;
-use std::io;
+use std::io::{self, BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::{Arc, Mutex};
+use std::thread;
 use std::time::{Duration, Instant};
 
 use crossterm::event::{
@@ -41,6 +43,7 @@ const DEFAULT_TIPS_HEIGHT_PERCENT: u16 = 35;
 const TREE_CONTROL_CONTENT_WIDTH: u16 = 3;
 const TREE_SETTINGS_SYMBOL: &str = "⚙";
 const TREE_KILL_SYMBOL: &str = "×";
+const SIDEBAR_CCB_BIN_ENV: &str = "CCB_SIDEBAR_CCB_BIN";
 const COMMS_ACTION_RETRY_COLS: std::ops::RangeInclusive<u16> = 0..=1;
 const COMMS_ACTION_CANCEL_COLS: std::ops::RangeInclusive<u16> = 3..=4;
 const COMMS_ACTION_CLEAR_COLS: std::ops::RangeInclusive<u16> = 6..=7;
@@ -166,19 +169,37 @@ fn run_ccb_kill_with_program(program: PathBuf, project_root: &Path) -> io::Resul
 }
 
 fn ccb_program() -> PathBuf {
+    if let Some(program) = env::var_os(SIDEBAR_CCB_BIN_ENV)
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .filter(|path| path.is_file())
+    {
+        return program;
+    }
     env::current_exe()
         .ok()
-        .and_then(|path| ccb_sibling_for_sidebar(&path))
+        .and_then(|path| ccb_program_for_sidebar(&path))
         .unwrap_or_else(|| PathBuf::from("ccb"))
 }
 
-fn launch_config_ui(project_root: &Path, program: &Path) -> io::Result<()> {
-    config_ui_command(project_root, program)
+fn launch_config_ui(project_root: &Path, program: &Path) -> io::Result<ConfigUiLaunch> {
+    let mut child = config_ui_command(project_root, program)
         .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
         .spawn()?;
-    Ok(())
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| io::Error::other("config ui stdout pipe unavailable"))?;
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| io::Error::other("config ui stderr pipe unavailable"))?;
+    let launch = Arc::new(Mutex::new(ConfigUiLaunchStatus::Opening));
+    let worker_launch = Arc::clone(&launch);
+    thread::spawn(move || monitor_config_ui(child, stdout, stderr, worker_launch));
+    Ok(launch)
 }
 
 fn config_ui_command(project_root: &Path, program: &Path) -> Command {
@@ -192,13 +213,95 @@ fn config_ui_command(project_root: &Path, program: &Path) -> Command {
     command
 }
 
-fn ccb_sibling_for_sidebar(sidebar_exe: &Path) -> Option<PathBuf> {
-    let candidate = sidebar_exe.parent()?.join("ccb");
-    if candidate.exists() {
-        Some(candidate)
-    } else {
-        None
+fn ccb_program_for_sidebar(sidebar_exe: &Path) -> Option<PathBuf> {
+    for ancestor in sidebar_exe.ancestors().skip(1).take(8) {
+        let candidate = ancestor.join("ccb");
+        if candidate.is_file() {
+            return Some(candidate);
+        }
     }
+    None
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ConfigUiLaunchStatus {
+    Opening,
+    Ready(String),
+    Failed(String),
+}
+
+type ConfigUiLaunch = Arc<Mutex<ConfigUiLaunchStatus>>;
+
+fn monitor_config_ui(
+    mut child: std::process::Child,
+    stdout: impl Read,
+    stderr: impl Read + Send + 'static,
+    launch: ConfigUiLaunch,
+) {
+    let stderr_text = Arc::new(Mutex::new(String::new()));
+    let stderr_result = Arc::clone(&stderr_text);
+    let stderr_worker = thread::spawn(move || {
+        let mut text = String::new();
+        let _ = BufReader::new(stderr).read_to_string(&mut text);
+        if let Ok(mut target) = stderr_result.lock() {
+            *target = text;
+        }
+    });
+    let mut reported_url = false;
+    for line in BufReader::new(stdout).lines().map_while(Result::ok) {
+        if let Some(url) = line.trim().strip_prefix("url: ")
+            && !url.trim().is_empty()
+        {
+            reported_url = true;
+            set_config_ui_launch_status(
+                &launch,
+                ConfigUiLaunchStatus::Ready(url.trim().to_string()),
+            );
+        }
+    }
+    let result = child.wait();
+    let _ = stderr_worker.join();
+    let stderr = stderr_text
+        .lock()
+        .map(|text| text.trim().to_string())
+        .unwrap_or_else(|_| "config ui stderr unavailable".to_string());
+    match result {
+        Ok(status) if status.success() && reported_url => {
+            set_config_ui_launch_status(
+                &launch,
+                ConfigUiLaunchStatus::Failed("session closed; click to reopen".to_string()),
+            );
+        }
+        Ok(status) if status.success() => {
+            set_config_ui_launch_status(
+                &launch,
+                ConfigUiLaunchStatus::Failed("exited before reporting a URL".to_string()),
+            );
+        }
+        Ok(status) => {
+            let detail = if stderr.is_empty() {
+                format!("exited with status {status}")
+            } else {
+                compact_launch_error(&stderr)
+            };
+            set_config_ui_launch_status(&launch, ConfigUiLaunchStatus::Failed(detail));
+        }
+        Err(err) => set_config_ui_launch_status(
+            &launch,
+            ConfigUiLaunchStatus::Failed(format!("wait failed: {err}")),
+        ),
+    }
+}
+
+fn set_config_ui_launch_status(launch: &ConfigUiLaunch, status: ConfigUiLaunchStatus) {
+    if let Ok(mut current) = launch.lock() {
+        *current = status;
+    }
+}
+
+fn compact_launch_error(error: &str) -> String {
+    let one_line = error.split_whitespace().collect::<Vec<_>>().join(" ");
+    one_line.chars().take(180).collect()
 }
 
 struct TuiSession;
@@ -228,6 +331,7 @@ pub struct SidebarApp {
     selection_follows_focus: bool,
     refresh_after: Instant,
     theme: SidebarTheme,
+    config_ui_launch: Option<ConfigUiLaunch>,
 }
 
 impl SidebarApp {
@@ -252,6 +356,7 @@ impl SidebarApp {
             selection_follows_focus: true,
             refresh_after: Instant::now(),
             theme,
+            config_ui_launch: None,
         }
     }
 
@@ -347,8 +452,11 @@ impl SidebarApp {
         let areas = self.sidebar_areas(area);
         match header_action_at(column, row, areas.tree) {
             Some(HeaderMouseAction::Settings) => {
-                if let Err(err) = launch_config_ui(project_root, ccb_program) {
-                    self.set_error(format!("config ui launch failed: {err}"));
+                if !self.config_ui_launch_is_active() {
+                    match launch_config_ui(project_root, ccb_program) {
+                        Ok(launch) => self.config_ui_launch = Some(launch),
+                        Err(err) => self.set_error(format!("config ui launch failed: {err}")),
+                    }
                 }
                 return None;
             }
@@ -481,8 +589,7 @@ impl SidebarApp {
         area: Rect,
     ) -> Option<(usize, CommsMouseAction)> {
         let areas = self.sidebar_areas(area);
-        let prefix_lines = u16::from(self.last_error.is_some())
-            .saturating_add(u16::from(self.sidebar_config_error().is_some()));
+        let prefix_lines = self.comms_prefix_lines();
         let items = self.visible_comms_limited();
         let content_width = usize::from(areas.comms.width.saturating_sub(2));
         let scroll = self.comms_scroll.min(comms_scroll_max_for_items(
@@ -507,8 +614,7 @@ impl SidebarApp {
     }
 
     fn comms_scroll_max(&self, area: Rect) -> usize {
-        let prefix_lines = u16::from(self.last_error.is_some())
-            .saturating_add(u16::from(self.sidebar_config_error().is_some()));
+        let prefix_lines = self.comms_prefix_lines();
         let items = self.visible_comms_limited();
         comms_scroll_max_for_items(
             &items,
@@ -652,9 +758,45 @@ impl SidebarApp {
             Some("ccbd ✕")
         } else if self.sidebar_config_error().is_some() {
             Some("config ✕")
+        } else if matches!(
+            self.config_ui_launch_status(),
+            Some(ConfigUiLaunchStatus::Failed(_))
+        ) {
+            Some("config ui ✕")
         } else {
             None
         }
+    }
+
+    fn config_ui_launch_status(&self) -> Option<ConfigUiLaunchStatus> {
+        let launch = self.config_ui_launch.as_ref()?;
+        match launch.lock() {
+            Ok(status) => Some(status.clone()),
+            Err(_) => Some(ConfigUiLaunchStatus::Failed(
+                "status unavailable; click to retry".to_string(),
+            )),
+        }
+    }
+
+    fn config_ui_launch_is_active(&self) -> bool {
+        matches!(
+            self.config_ui_launch_status(),
+            Some(ConfigUiLaunchStatus::Opening | ConfigUiLaunchStatus::Ready(_))
+        )
+    }
+
+    fn config_ui_status_line(&self) -> Option<String> {
+        match self.config_ui_launch_status()? {
+            ConfigUiLaunchStatus::Opening => Some("config ui: opening...".to_string()),
+            ConfigUiLaunchStatus::Ready(url) => Some(format!("config ui: {url}")),
+            ConfigUiLaunchStatus::Failed(error) => Some(format!("config ui failed: {error}")),
+        }
+    }
+
+    fn comms_prefix_lines(&self) -> u16 {
+        u16::from(self.last_error.is_some())
+            .saturating_add(u16::from(self.sidebar_config_error().is_some()))
+            .saturating_add(u16::from(self.config_ui_status_line().is_some()))
     }
 
     fn view(&self) -> Option<&ProjectView> {
@@ -1074,7 +1216,7 @@ fn header_action_at(column: u16, row: u16, area: Rect) -> Option<HeaderMouseActi
         return None;
     }
     let relative_column = column.saturating_sub(controls.x);
-    if relative_column == 0 {
+    if relative_column <= 1 {
         Some(HeaderMouseAction::Settings)
     } else if relative_column == 2 {
         Some(HeaderMouseAction::KillProject)
@@ -1394,6 +1536,16 @@ fn draw_comms(frame: &mut Frame<'_>, area: Rect, app: &SidebarApp) {
                 usize::from(area.width.saturating_sub(2)),
             ),
             Style::default().fg(app.theme().warning),
+        )));
+    }
+    if let Some(status) = app.config_ui_status_line() {
+        lines.push(Line::from(Span::styled(
+            truncate_comms_preview(&status, usize::from(area.width.saturating_sub(2))),
+            Style::default().fg(if status.starts_with("config ui failed:") {
+                app.theme().warning
+            } else {
+                app.theme().info
+            }),
         )));
     }
     let prefix_lines = lines.len() as u16;
@@ -2137,7 +2289,7 @@ mod tests {
         std::fs::write(&ccb, b"#!/bin/sh\n").unwrap();
         let sidebar = dir.join("ccb-agent-sidebar");
 
-        assert_eq!(ccb_sibling_for_sidebar(&sidebar), Some(ccb));
+        assert_eq!(ccb_program_for_sidebar(&sidebar), Some(ccb));
 
         let _ = std::fs::remove_dir_all(dir);
     }
@@ -2153,6 +2305,92 @@ mod tests {
             ["--project", "/repo/demo", "config", "ui"]
         );
         assert_eq!(command.get_current_dir(), Some(project_root));
+    }
+
+    #[test]
+    fn ccb_program_resolution_finds_release_root_above_bin() {
+        let dir = std::env::temp_dir().join(format!(
+            "ccb-agent-sidebar-program-test-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let sidebar = dir.join("bin/ccb-agent-sidebar");
+        let ccb = dir.join("ccb");
+        std::fs::create_dir_all(sidebar.parent().unwrap()).unwrap();
+        std::fs::write(&sidebar, b"sidebar").unwrap();
+        std::fs::write(&ccb, b"ccb").unwrap();
+
+        assert_eq!(ccb_program_for_sidebar(&sidebar), Some(ccb));
+
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn config_ui_launch_reports_ready_url_and_late_failure() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = std::env::temp_dir().join(format!(
+            "ccb-agent-sidebar-config-ui-test-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let ready = dir.join("ready-ccb");
+        std::fs::write(
+            &ready,
+            b"#!/bin/sh\nprintf 'config_ui_status: serving\\nurl: http://127.0.0.1:43123/?token=test\\n'\nsleep 1\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&ready, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let launch = launch_config_ui(&dir, &ready).unwrap();
+
+        let ready_status = wait_for_config_ui_status(&launch, |status| {
+            matches!(status, ConfigUiLaunchStatus::Ready(_))
+        });
+        assert_eq!(
+            ready_status,
+            ConfigUiLaunchStatus::Ready("http://127.0.0.1:43123/?token=test".to_string())
+        );
+
+        let failed = dir.join("failed-ccb");
+        std::fs::write(
+            &failed,
+            b"#!/bin/sh\nprintf 'browser unavailable\\n' >&2\nexit 7\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&failed, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let launch = launch_config_ui(&dir, &failed).unwrap();
+        let failed_status = wait_for_config_ui_status(&launch, |status| {
+            matches!(status, ConfigUiLaunchStatus::Failed(_))
+        });
+        assert_eq!(
+            failed_status,
+            ConfigUiLaunchStatus::Failed("browser unavailable".to_string())
+        );
+
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[cfg(unix)]
+    fn wait_for_config_ui_status(
+        launch: &ConfigUiLaunch,
+        predicate: impl Fn(&ConfigUiLaunchStatus) -> bool,
+    ) -> ConfigUiLaunchStatus {
+        for _ in 0..100 {
+            let status = launch.lock().unwrap().clone();
+            if predicate(&status) {
+                return status;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        launch.lock().unwrap().clone()
     }
 
     #[cfg(unix)]
@@ -2614,6 +2852,14 @@ mod tests {
         assert_eq!(
             app.handle_mouse_down(controls.x, 0, area, &client, project_root, ccb_program,),
             None
+        );
+        assert_eq!(
+            header_action_at(
+                controls.x + 1,
+                0,
+                sidebar_areas(area, app.sidebar_view()).tree
+            ),
+            Some(HeaderMouseAction::Settings)
         );
 
         assert!(app.last_error.is_none());

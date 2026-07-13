@@ -12,9 +12,14 @@ except ModuleNotFoundError:  # pragma: no cover - Python < 3.11
     import tomli as tomllib
 
 from agents.models import AgentSpec, PermissionMode, ProviderProfileSpec, QueuePolicy, RestoreMode, RuntimeMode, WorkspaceMode
-from cli.services.provider_hooks import prepare_provider_workspace
+from cli.services.provider_hooks import prepare_provider_workspace, prepare_workspace_provider_hooks
 import provider_core.source_home as source_home_module
-from provider_hooks.settings import build_hook_command, install_workspace_activity_hooks, install_workspace_completion_hooks
+from provider_hooks.settings import (
+    build_hook_command,
+    install_workspace_activity_hooks,
+    install_workspace_completion_hooks,
+    migrate_legacy_project_ccb_hooks,
+)
 from storage.paths import PathLayout
 
 
@@ -70,6 +75,115 @@ def test_build_hook_command_uses_python_for_python_script(tmp_path: Path) -> Non
     )
 
     assert shlex.split(command)[:2] == ['/usr/bin/python3', str(script_path)]
+
+
+def test_migrate_legacy_project_ccb_hooks_removes_only_python_wrapped_launchers(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / 'workspace'
+    settings_path = workspace / '.claude' / 'settings.json'
+    settings_path.parent.mkdir(parents=True)
+    stale_finish = '/usr/bin/python3 /old/bin/ccb-provider-finish-hook --provider claude'
+    stale_activity = (
+        '/opt/python3.11 /old/bin/ccb-provider-activity-hook --provider claude'
+    )
+    correct_launcher = '/current/bin/ccb-provider-finish-hook --provider claude'
+    python_script = '/usr/bin/python3 /current/bin/ccb-provider-finish-hook.py --provider claude'
+    settings_path.write_text(
+        json.dumps(
+            {
+                'theme': 'dark',
+                'hooks': {
+                    'Stop': [
+                        {
+                            'matcher': 'preserve-group',
+                            'hooks': [
+                                {'type': 'command', 'command': stale_finish},
+                                {'type': 'command', 'command': 'echo user-stop'},
+                                {'type': 'command', 'command': correct_launcher},
+                                {'type': 'command', 'command': python_script},
+                            ],
+                        }
+                    ],
+                    'UserPromptSubmit': [
+                        {'hooks': [{'type': 'command', 'command': stale_activity}]}
+                    ],
+                },
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding='utf-8',
+    )
+
+    migrated = migrate_legacy_project_ccb_hooks(workspace_root=workspace)
+
+    assert migrated == (settings_path,)
+    payload = json.loads(settings_path.read_text(encoding='utf-8'))
+    assert payload['theme'] == 'dark'
+    assert payload['hooks']['Stop'][0]['matcher'] == 'preserve-group'
+    commands = [hook['command'] for hook in payload['hooks']['Stop'][0]['hooks']]
+    assert commands == ['echo user-stop', correct_launcher, python_script]
+    assert payload['hooks']['UserPromptSubmit'] == []
+
+
+def test_prepare_workspace_provider_hooks_migrates_project_and_workspace_before_install(
+    tmp_path: Path,
+) -> None:
+    project_root = tmp_path / 'project'
+    workspace = project_root / '.ccb' / 'workspaces' / 'clauder'
+    home_root = project_root / '.ccb' / 'agents' / 'clauder' / 'provider-state' / 'claude' / 'home'
+    stale = '/usr/bin/python3 /old/bin/ccb-provider-finish-hook --provider claude'
+    for root, user_command in (
+        (project_root, 'echo project-hook'),
+        (workspace, 'echo workspace-hook'),
+    ):
+        settings_path = root / '.claude' / 'settings.json'
+        settings_path.parent.mkdir(parents=True, exist_ok=True)
+        settings_path.write_text(
+            json.dumps(
+                {
+                    'hooks': {
+                        'Stop': [
+                            {
+                                'hooks': [
+                                    {'type': 'command', 'command': stale},
+                                    {'type': 'command', 'command': user_command},
+                                ]
+                            }
+                        ]
+                    }
+                }
+            ),
+            encoding='utf-8',
+        )
+
+    managed_settings = prepare_workspace_provider_hooks(
+        provider='claude',
+        workspace_path=workspace,
+        completion_dir=project_root / '.ccb' / 'completion',
+        agent_name='clauder',
+        home_root=home_root,
+        project_id='project-1',
+        project_root=project_root,
+        runtime_dir=project_root / '.ccb' / 'agents' / 'clauder' / 'provider-runtime' / 'claude',
+    )
+
+    for root, expected in (
+        (project_root, 'echo project-hook'),
+        (workspace, 'echo workspace-hook'),
+    ):
+        payload = json.loads((root / '.claude' / 'settings.json').read_text(encoding='utf-8'))
+        commands = [hook['command'] for hook in payload['hooks']['Stop'][0]['hooks']]
+        assert commands == [expected]
+    managed_payload = json.loads(Path(managed_settings).read_text(encoding='utf-8'))
+    managed_commands = [
+        hook['command']
+        for group in managed_payload['hooks']['Stop']
+        for hook in group['hooks']
+    ]
+    assert any(command.startswith(str(Path(__file__).resolve().parents[1] / 'bin')) for command in managed_commands)
+    assert all(not command.startswith('/usr/bin/python3 ') for command in managed_commands)
 
 
 def test_install_claude_hooks_writes_managed_home_settings_only(tmp_path: Path) -> None:

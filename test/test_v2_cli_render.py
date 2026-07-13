@@ -1223,6 +1223,34 @@ def test_render_start_surfaces_layout_identity_summary_failure() -> None:
     assert 'layout_summary_error: layout probe failed' in lines
 
 
+def test_render_start_reports_sidebar_helper_refresh_and_failure() -> None:
+    base = {
+        'project_root': '/tmp/repo',
+        'project_id': 'proj-1',
+        'daemon_started': False,
+        'socket_path': '/tmp/repo/.ccb/ccbd/ccbd.sock',
+        'started': ('frontdesk',),
+        'cleanup_summaries': (),
+    }
+
+    refreshed = render_start(
+        SimpleNamespace(**base, sidebar_helper_refresh={'status': 'refreshed', 'panes': ('%1', '%4')})
+    )
+    failed = render_start(
+        SimpleNamespace(
+            **base,
+            sidebar_helper_refresh={
+                'status': 'failed',
+                'error_type': 'RuntimeError',
+                'error': 'tmux unavailable',
+            },
+        )
+    )
+
+    assert 'sidebar_helper_refresh: refreshed panes=%1,%4' in refreshed
+    assert 'sidebar_helper_refresh: failed RuntimeError: tmux unavailable' in failed
+
+
 def test_render_logs_includes_tail_content() -> None:
     summary = SimpleNamespace(
         project_id='proj-1',

@@ -4,6 +4,10 @@ from dataclasses import replace
 
 from agents.config_loader import load_project_config
 from ccbd.lifecycle_report_store import CcbdStartupReportStore
+from ccbd.services.project_namespace import ProjectNamespaceController
+from ccbd.services.project_namespace_runtime import build_namespace_topology_plan
+from ccbd.services.project_namespace_runtime.materialize_topology import refresh_topology_sidebar_helpers
+from terminal_runtime import TmuxBackend
 
 from .daemon import ensure_daemon_started
 from .daemon_runtime.policy import STARTUP_TRANSACTION_TIMEOUT_S
@@ -31,6 +35,7 @@ def start_agents(
         enrich_summary_fn=_merge_workspace_guard_summary,
         start_rpc_timeout_s=STARTUP_TRANSACTION_TIMEOUT_S,
     )
+    summary = replace(summary, sidebar_helper_refresh=_refresh_running_sidebar_helpers(context))
     summary = _attach_start_layout_summary(context, summary)
     heartbeat_summary = startup_ensure_maintenance_heartbeat(context)
     if heartbeat_summary is None:
@@ -57,6 +62,33 @@ def _merge_workspace_guard_summary(context, summary: StartSummary, guard_summary
         worktree_warnings=tuple(getattr(guard_summary, 'warnings', ()) or ()),
         worktree_retired=tuple(getattr(guard_summary, 'retired', ()) or ()),
     )
+
+
+def _refresh_running_sidebar_helpers(context) -> dict[str, object]:
+    try:
+        controller = ProjectNamespaceController(context.paths, context.project.project_id)
+        namespace = controller.load()
+        if namespace is None:
+            return {'status': 'not_mounted'}
+        topology_plan = build_namespace_topology_plan(
+            load_project_config(context.project.project_root).config
+        )
+        backend = TmuxBackend(socket_path=namespace.tmux_socket_path)
+        refreshed = refresh_topology_sidebar_helpers(
+            controller,
+            backend,
+            topology_plan=topology_plan,
+        )
+    except Exception as exc:
+        return {
+            'status': 'failed',
+            'error_type': type(exc).__name__,
+            'error': str(exc),
+        }
+    return {
+        'status': 'refreshed' if refreshed else 'current',
+        'panes': refreshed,
+    }
 
 
 def _attach_start_layout_summary(context, summary: StartSummary) -> StartSummary:

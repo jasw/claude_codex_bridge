@@ -2,6 +2,22 @@
 
 ## v8.1.4 (2026-07-13)
 
+### Mobile Connection Recovery
+
+- **Gateway Recovery Is Centrally Supervised**: foreground resume, route
+  activation, repository probes, terminal transport, and task notifications
+  now report through one bounded connection state machine instead of starting
+  competing recovery loops.
+- **Stale Outcomes Cannot Replace Current State**: generation fencing and
+  atomic route verification discard late probe, activation, and reconnect
+  results after profile or route changes.
+- **Background Notifications Release Their Sockets**: notification streams
+  suspend with the app lifecycle, close their active connections, and resume
+  through serialized subscriptions without duplicate listeners.
+- **Authentication Failures Stay Actionable**: authorization failures are
+  classified separately from transient transport failures so reconnect policy
+  cannot hide a required re-pair operation.
+
 ### Codex Native Subagent Isolation
 
 - **Child Rollouts Cannot Capture CCB Requests**: managed Codex session
@@ -36,6 +52,35 @@
 - **Real Cross-Agent Path Verified**: a two-Grok authenticated source-runtime
   test passed visible Grok-to-Grok ask and result recovery, native `EndTurn`
   completion, named `ccb clear grok2`, and post-clear isolation checks.
+
+### Sidebar Config Entry Reliability
+
+- **Current Helper Replaces Stale Panes In Place**: managed sidebar panes record
+  the installed helper content identity, and both daemon topology refresh and
+  foreground startup repair stale helpers without restarting agent panes.
+- **Release Installs Replace Runnable Old Helpers**: installation now compares
+  bundled helper content and rebuilds live-source helpers when Rust inputs are
+  newer, rather than treating any runnable binary as current.
+- **Settings Launch Is Observable**: the gear action resolves the CCB executable
+  from the same install tree, accepts the full two-cell hit area, and reports
+  opening state, the local URL, or the concrete startup error in the sidebar.
+
+### Claude Legacy Hook Migration
+
+- **Old Project Hooks Self-Heal**: managed Claude preparation removes only the
+  legacy CCB commands that run extensionless finish/activity Bash launchers
+  through Python, while preserving user hooks, valid Python scripts, current
+  direct launchers, and every unrelated project setting.
+
+### Config Control Agent Removal
+
+- **Selected Agents Can Be Removed Visually**: the V1/V2 config editor removes
+  the selected Agent leaf, collapses its binary split by promoting the sibling
+  subtree, cleans the stale Agent overlay, and supports undo before activation.
+- **Hot Removal Preserves Unrelated Sessions**: guarded hot reload delegates to
+  the existing `remove_agent` transaction, reflows only the affected Window,
+  realizes the target binary topology, preserves other Agent panes, and reports
+  busy Agent drain as saved pending work instead of a generic failure.
 
 ### Release Surface
 

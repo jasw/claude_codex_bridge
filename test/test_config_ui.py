@@ -33,6 +33,9 @@ def test_config_ui_asset_is_packaged_source_content() -> None:
     assert path.is_file()
     page = path.read_text(encoding='utf-8')
     assert '<title>CCB Config Control Panel Demo</title>' in page
+    assert 'id="staticDeletePane"' in page
+    assert 'id="basicDeletePane"' in page
+    assert 'function deleteSelectedPane()' in page
     match = re.search(r'CCB_MOBILE_ICON_DATA = "data:image/png;base64,([^"]+)"', page)
     assert match is not None
     embedded_icon = base64.b64decode(match.group(1))
@@ -326,6 +329,74 @@ def test_config_ui_rejects_invalid_candidate_without_writing(tmp_path: Path) -> 
         assert invalid.value.code == 422
         assert config_path.read_text(encoding='utf-8') == original
         assert not tuple(config_path.parent.glob('ccb.config.bak.*'))
+    finally:
+        thread.join(timeout=2)
+        handle.close()
+    assert not thread.is_alive()
+
+
+def test_config_ui_hot_reload_removes_agent_and_preserves_remaining_overlay(tmp_path: Path) -> None:
+    project_root = tmp_path / 'repo-remove-agent'
+    config_path = project_root / '.ccb' / 'ccb.config'
+    config_path.parent.mkdir(parents=True)
+    original = '''version = 2
+
+[windows]
+main = "agent1:codex, agent2:claude"
+
+[agents.agent1]
+role = "agentroles.coder"
+
+[agents.agent2]
+role = "agentroles.code_reviewer"
+'''
+    updated = '''version = 2
+
+[windows]
+main = "agent1:codex"
+
+[agents.agent1]
+role = "agentroles.coder"
+'''
+    config_path.write_text(original, encoding='utf-8')
+    page = tmp_path / 'index.html'
+    page.write_text('<!doctype html><title>settings</title>', encoding='utf-8')
+    reload_calls: list[bool] = []
+
+    def _reload(dry_run: bool) -> dict[str, object]:
+        reload_calls.append(dry_run)
+        if dry_run:
+            return {'status': 'ok', 'plan_class': 'remove_agent', 'future_safe_to_apply': True}
+        return {'status': 'published', 'plan_class': 'remove_agent'}
+
+    handle = prepare_config_ui(
+        _context(project_root),
+        ParsedConfigUiCommand(project=None),
+        asset_path=page,
+        token='test-token',
+        idle_timeout_s=1.0,
+        reload_action=_reload,
+    )
+    thread = threading.Thread(target=handle.serve_forever)
+    thread.start()
+
+    try:
+        config = _get_json(handle.url, '/api/config')
+        applied = _post_json(
+            handle.url,
+            '/api/apply',
+            {'text': updated, 'expected_digest': config['digest'], 'mode': 'hot_reload'},
+        )
+
+        assert applied['status'] == 'reloaded'
+        assert applied['dry_run']['plan_class'] == 'remove_agent'
+        assert applied['reload']['status'] == 'published'
+        assert reload_calls == [True, False]
+        saved_text = config_path.read_text(encoding='utf-8')
+        assert saved_text == updated
+        assert '[agents.agent1]' in saved_text
+        assert '[agents.agent2]' not in saved_text
+        assert Path(applied['backup_path']).read_text(encoding='utf-8') == original
     finally:
         thread.join(timeout=2)
         handle.close()

@@ -352,6 +352,118 @@ build_sidebar_helper_if_possible
     assert out_bin.read_text(encoding='utf-8') == target_bin.read_text(encoding='utf-8')
 
 
+def test_install_script_replaces_runnable_stale_sidebar_with_prebuilt_binary(tmp_path: Path) -> None:
+    install_prefix = tmp_path / 'install'
+    crate_dir = install_prefix / 'tools' / 'ccb-agent-sidebar'
+    target_bin = crate_dir / 'target' / 'release' / 'ccb-agent-sidebar'
+    out_bin = install_prefix / 'bin' / 'ccb-agent-sidebar'
+    target_bin.parent.mkdir(parents=True)
+    out_bin.parent.mkdir(parents=True)
+    (crate_dir / 'Cargo.toml').write_text('[package]\nname = "ccb-agent-sidebar"\nversion = "0.0.0"\n', encoding='utf-8')
+    target_bin.write_text('#!/bin/sh\n[ "${1:-}" = --help ] && exit 2\necho current-sidebar\n', encoding='utf-8')
+    target_bin.chmod(0o755)
+    out_bin.write_text('#!/bin/sh\n[ "${1:-}" = --help ] && exit 2\necho stale-sidebar\n', encoding='utf-8')
+    out_bin.chmod(0o755)
+    harness = tmp_path / 'harness.sh'
+    install_text = Path('install.sh').read_text(encoding='utf-8')
+    install_body = install_text.rsplit('main "$@"', 1)[0]
+    harness.write_text(
+        f"""#!/usr/bin/env bash
+set -euo pipefail
+export CODEX_INSTALL_PREFIX={install_prefix}
+export CODEX_BIN_DIR={tmp_path / 'bin'}
+export CCB_SOURCE_KIND=release
+{install_body}
+build_sidebar_helper_if_possible
+""",
+        encoding='utf-8',
+    )
+    harness.chmod(0o755)
+
+    proc = subprocess.run(
+        [str(harness)],
+        env={**os.environ, 'PATH': '/usr/bin:/bin'},
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        check=False,
+    )
+
+    assert proc.returncode == 0, proc.stderr
+    assert 'Installed prebuilt ccb-agent-sidebar' in proc.stdout
+    assert 'current-sidebar' in out_bin.read_text(encoding='utf-8')
+
+
+def test_install_script_rebuilds_live_sidebar_when_source_is_newer(tmp_path: Path) -> None:
+    source_root = tmp_path / 'source'
+    crate_dir = source_root / 'tools' / 'ccb-agent-sidebar'
+    target_bin = crate_dir / 'target' / 'release' / 'ccb-agent-sidebar'
+    source_file = crate_dir / 'src' / 'main.rs'
+    fake_bin = tmp_path / 'fake-bin'
+    target_bin.parent.mkdir(parents=True)
+    source_file.parent.mkdir(parents=True)
+    fake_bin.mkdir()
+    (crate_dir / 'Cargo.toml').write_text('[package]\nname = "ccb-agent-sidebar"\nversion = "0.0.0"\n', encoding='utf-8')
+    (crate_dir / 'Cargo.lock').write_text('', encoding='utf-8')
+    target_bin.write_text('#!/bin/sh\n[ "${1:-}" = --help ] && exit 2\necho stale-sidebar\n', encoding='utf-8')
+    target_bin.chmod(0o755)
+    source_file.write_text('fn main() {}\n', encoding='utf-8')
+    old_time = target_bin.stat().st_mtime - 10
+    os.utime(target_bin, (old_time, old_time))
+    fake_cargo = fake_bin / 'cargo'
+    fake_cargo.write_text(
+        """#!/usr/bin/env bash
+set -euo pipefail
+manifest=""
+while [[ $# -gt 0 ]]; do
+  if [[ "$1" == "--manifest-path" ]]; then shift; manifest="$1"; fi
+  shift || true
+done
+crate_dir="$(cd "$(dirname "$manifest")" && pwd)"
+cat > "$crate_dir/target/release/ccb-agent-sidebar" <<'BIN'
+#!/bin/sh
+[ "${1:-}" = --help ] && exit 2
+echo rebuilt-sidebar
+BIN
+chmod +x "$crate_dir/target/release/ccb-agent-sidebar"
+""",
+        encoding='utf-8',
+    )
+    fake_cargo.chmod(0o755)
+    fake_rustc = fake_bin / 'rustc'
+    fake_rustc.write_text('#!/bin/sh\nexit 0\n', encoding='utf-8')
+    fake_rustc.chmod(0o755)
+    harness = tmp_path / 'harness.sh'
+    install_text = Path('install.sh').read_text(encoding='utf-8')
+    install_body = install_text.rsplit('main "$@"', 1)[0]
+    harness.write_text(
+        f"""#!/usr/bin/env bash
+set -euo pipefail
+export CODEX_INSTALL_PREFIX={tmp_path / 'install'}
+export CODEX_BIN_DIR={tmp_path / 'bin'}
+export CCB_SOURCE_KIND=source
+export CCB_SOURCE_ROOT={source_root}
+{install_body}
+build_sidebar_helper_if_possible
+""",
+        encoding='utf-8',
+    )
+    harness.chmod(0o755)
+
+    proc = subprocess.run(
+        [str(harness)],
+        env={**os.environ, 'PATH': f'{fake_bin}:/usr/bin:/bin'},
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        check=False,
+    )
+
+    assert proc.returncode == 0, proc.stderr
+    assert 'Built ccb-agent-sidebar' in proc.stdout
+    assert 'rebuilt-sidebar' in target_bin.read_text(encoding='utf-8')
+
+
 def test_install_script_prefers_prebuilt_rs_helper_binary(tmp_path: Path) -> None:
     install_prefix = tmp_path / 'install'
     crate_dir = install_prefix / 'tools' / 'ccb-rs-helper'

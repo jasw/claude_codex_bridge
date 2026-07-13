@@ -1484,6 +1484,7 @@
               <button class="btn" id="staticSplitLr" data-i18n="splitLeftRight">Split LR</button>
               <button class="btn" id="staticSplitTb" data-i18n="splitTopBottom">Split TB</button>
               <button class="btn" id="staticUndo" data-i18n="undo">Undo</button>
+              <button class="btn danger" id="staticDeletePane" data-i18n="deleteSelectedPane">Delete selected</button>
               <span class="toolbar-note" data-i18n="binarySplitNote">50/50 binary split</span>
             </span>
             <span class="spacer"></span>
@@ -1527,6 +1528,7 @@
               <button class="btn" id="basicSplitLr" data-i18n="splitLeftRight">Split LR</button>
               <button class="btn" id="basicSplitTb" data-i18n="splitTopBottom">Split TB</button>
               <button class="btn" id="basicUndo" data-i18n="undo">Undo</button>
+              <button class="btn danger" id="basicDeletePane" data-i18n="deleteSelectedPane">Delete selected</button>
               <span class="toolbar-note" data-i18n="binarySplitNote">50/50 binary split</span>
             </span>
             <span class="spacer"></span>
@@ -1912,6 +1914,9 @@ model = "gpt-5.5"</pre>
         splitLeftRight: "Split left/right",
         splitTopBottom: "Split top/bottom",
         undo: "Undo",
+        deleteSelectedPane: "Delete selected",
+        deletePaneConfirm: "Delete {agent} from {window}? The adjacent pane will expand into the released space.",
+        deletePaneWindowConfirm: "Delete {agent} and its window {window}?",
         windows: "Windows",
         entryThreePanes: "entry · 3 panes",
         add: "Add",
@@ -2040,6 +2045,7 @@ model = "gpt-5.5"</pre>
         configValid: "Config is valid",
         configSaved: "Active config saved with a timestamped backup",
         configReloaded: "Config saved and hot reload completed",
+        configRemovalPending: "Config saved. The selected agent is busy and will be removed after it becomes idle.",
         configDryRun: "Reload dry-run completed",
         configOperationFailed: "Config operation failed",
         tomlEditorNote: "This editor and the V1/V2 visual controls share one active config draft. Advanced fields can still be edited here.",
@@ -2194,6 +2200,9 @@ model = "gpt-5.5"</pre>
         splitLeftRight: "左右拆分",
         splitTopBottom: "上下拆分",
         undo: "撤销",
+        deleteSelectedPane: "删除所选",
+        deletePaneConfirm: "从 {window} 删除 {agent}？相邻分屏将自动扩展填充释放的空间。",
+        deletePaneWindowConfirm: "删除 {agent} 及其窗口 {window}？",
         windows: "窗口",
         entryThreePanes: "入口 · 3 个分屏",
         add: "新增",
@@ -2322,6 +2331,7 @@ model = "gpt-5.5"</pre>
         configValid: "配置校验通过",
         configSaved: "当前配置已保存，并已生成时间戳备份",
         configReloaded: "配置已保存并完成热加载",
+        configRemovalPending: "配置已保存。所选 Agent 正忙，将在空闲后自动删除。",
         configDryRun: "热加载 dry-run 已完成",
         configOperationFailed: "配置操作失败",
         tomlEditorNote: "此编辑器与 V1/V2 可视化控件共享同一份当前配置草稿；高级字段仍可在这里编辑。",
@@ -2965,7 +2975,10 @@ main = "demo:codex"
 
     function renderVisualEditors() {
       if (!visualState) return;
-      const toolbarIds = ["staticSplitLr", "staticSplitTb", "staticUndo", "basicSplitLr", "basicSplitTb", "basicUndo"];
+      const toolbarIds = [
+        "staticSplitLr", "staticSplitTb", "staticUndo", "staticDeletePane",
+        "basicSplitLr", "basicSplitTb", "basicUndo", "basicDeletePane"
+      ];
       toolbarIds.forEach((id) => { document.getElementById(id).disabled = visualState.visual_supported === false; });
       if (visualState.visual_supported === false) {
         const message = `<div class="drawer-card"><p>${t("visualUnsupported")}</p></div>`;
@@ -2978,6 +2991,9 @@ main = "demo:codex"
       }
       const windowItem = selectedWindow();
       if (!nodeAtPath(windowItem.tree, selectedPanePath)) selectedPanePath = firstLeafPath(windowItem.tree);
+      const deleteDisabled = !canDeleteSelectedPane();
+      document.getElementById("staticDeletePane").disabled = deleteDisabled;
+      document.getElementById("basicDeletePane").disabled = deleteDisabled;
       renderWindowRail();
       ["staticLayoutPreview", "basicLayoutPreview"].forEach((id) => {
         const container = document.getElementById(id);
@@ -3092,6 +3108,43 @@ main = "demo:codex"
       });
     }
 
+    function canDeleteSelectedPane() {
+      const windowItem = selectedWindow();
+      const leaf = selectedLeaf();
+      if (!windowItem || !leaf || leaf.kind !== "leaf" || !leaf.provider) return false;
+      return collectLeaves(windowItem.tree).length > 1 || visualState.windows.length > 1;
+    }
+
+    function deleteSelectedPane() {
+      if (!canDeleteSelectedPane()) return;
+      const windowItem = selectedWindow();
+      const leaf = selectedLeaf();
+      const selectedPath = [...selectedPanePath];
+      const removesWindow = collectLeaves(windowItem.tree).length === 1;
+      const confirmation = removesWindow
+        ? tf("deletePaneWindowConfirm", { agent: leaf.name, window: windowItem.name })
+        : tf("deletePaneConfirm", { agent: leaf.name, window: windowItem.name });
+      if (!window.confirm(confirmation)) return;
+      mutateVisual(() => {
+        if (removesWindow) {
+          const removedIndex = selectedWindowIndex;
+          visualState.windows.splice(removedIndex, 1);
+          selectedWindowIndex = Math.min(removedIndex, visualState.windows.length - 1);
+          if (visualState.entry_window === windowItem.name) {
+            visualState.entry_window = visualState.windows[selectedWindowIndex].name;
+          }
+          selectedPanePath = firstLeafPath(selectedWindow().tree);
+          return;
+        }
+        const parentPath = selectedPath.slice(0, -1);
+        const selectedSide = selectedPath[selectedPath.length - 1];
+        const parent = nodeAtPath(windowItem.tree, parentPath);
+        const sibling = clone(parent[selectedSide === "left" ? "right" : "left"]);
+        windowItem.tree = replaceNodeAtPath(windowItem.tree, parentPath, sibling);
+        selectedPanePath = [...parentPath, ...firstLeafPath(sibling)];
+      });
+    }
+
     function addWindow() {
       const defaultName = `window${visualState.windows.length + 1}`;
       const name = String(window.prompt(t("add"), defaultName) || "").trim().toLowerCase();
@@ -3156,9 +3209,11 @@ main = "demo:codex"
       document.getElementById("staticSplitLr").addEventListener("click", () => splitSelected("horizontal"));
       document.getElementById("staticSplitTb").addEventListener("click", () => splitSelected("vertical"));
       document.getElementById("staticUndo").addEventListener("click", undoVisual);
+      document.getElementById("staticDeletePane").addEventListener("click", deleteSelectedPane);
       document.getElementById("basicSplitLr").addEventListener("click", () => splitSelected("horizontal"));
       document.getElementById("basicSplitTb").addEventListener("click", () => splitSelected("vertical"));
       document.getElementById("basicUndo").addEventListener("click", undoVisual);
+      document.getElementById("basicDeletePane").addEventListener("click", deleteSelectedPane);
     }
 
     function syncProfileOptions(records, selected = "active") {
@@ -3288,6 +3343,17 @@ main = "demo:codex"
       });
     }
 
+    function pendingAgentRemoval(payload) {
+      const reload = payload && payload.reload;
+      const diagnostics = reload && reload.diagnostics;
+      const reason = diagnostics && diagnostics.reason;
+      return Boolean(
+        payload && payload.saved
+        && reload && reload.plan_class === "remove_agent" && reload.status === "blocked"
+        && (reason === "agent_busy" || reason === "agent_has_outstanding_work")
+      );
+    }
+
     async function applyDraft(mode) {
       syncDraftFromEditor();
       if (!draftLoaded || !(await validateDraft())) return;
@@ -3329,6 +3395,16 @@ main = "demo:codex"
           activeConfigDigest = error.payload.digest;
           updateDigestBadge();
           draftDirty = false;
+        }
+        if (mode === "hot_reload" && pendingAgentRemoval(error.payload)) {
+          const planClass = error.payload.reload.plan_class;
+          document.getElementById("dryRunState").className = "badge ok";
+          document.getElementById("dryRunState").textContent = planClass;
+          document.getElementById("applyState").className = "badge warn";
+          document.getElementById("applyState").textContent = t("waiting");
+          document.getElementById("planClass").textContent = planClass;
+          setActionStatus(t("configRemovalPending"));
+          return;
         }
         document.getElementById("applyState").className = "badge warn";
         document.getElementById("applyState").textContent = t("blocked");

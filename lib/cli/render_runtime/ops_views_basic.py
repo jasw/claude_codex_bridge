@@ -91,6 +91,16 @@ def render_start(summary) -> tuple[str, ...]:
     layout_summary = getattr(summary, 'layout_summary', None)
     if isinstance(layout_summary, Mapping):
         lines.extend(_render_start_layout_summary(layout_summary))
+    sidebar_refresh = getattr(summary, 'sidebar_helper_refresh', None)
+    if isinstance(sidebar_refresh, Mapping):
+        status = str(sidebar_refresh.get('status') or '').strip()
+        if status == 'refreshed':
+            panes = ','.join(str(item) for item in sidebar_refresh.get('panes') or ()) or '-'
+            lines.append(f'sidebar_helper_refresh: refreshed panes={panes}')
+        elif status == 'failed':
+            error_type = str(sidebar_refresh.get('error_type') or 'Error').strip()
+            error = str(sidebar_refresh.get('error') or 'unknown error').strip()
+            lines.append(f'sidebar_helper_refresh: failed {error_type}: {error}')
     lines.extend(render_tmux_cleanup_summaries(getattr(summary, 'cleanup_summaries', ()) or ()))
     return tuple(lines)
 

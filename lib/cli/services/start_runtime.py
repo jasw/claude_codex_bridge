@@ -15,6 +15,7 @@ class StartSummary:
     worktree_retired: tuple[object, ...] = ()
     maintenance_heartbeat: dict | None = None
     layout_summary: dict | None = None
+    sidebar_helper_refresh: dict | None = None
 
 
 def start_agents(

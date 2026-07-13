@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import hashlib
 import os
 from pathlib import Path
 import shutil
@@ -9,6 +10,8 @@ from typing import Mapping
 
 SIDEBAR_BINARY_NAME = 'ccb-agent-sidebar'
 SIDEBAR_ENV_PATH = 'CCB_AGENT_SIDEBAR_BIN'
+SIDEBAR_HELPER_ID_OPTION = '@ccb_sidebar_helper_id'
+_SIDEBAR_WRAPPER_MARKER = b'CCB_AGENT_SIDEBAR_WRAPPER'
 
 
 @dataclass(frozen=True)
@@ -70,6 +73,24 @@ def sidebar_respawn_args(
     return missing_sidebar_respawn_args(resolution.reason)
 
 
+def sidebar_helper_fingerprint(
+    *,
+    env: Mapping[str, str] | None = None,
+    which=shutil.which,
+    script_root: Path | None = None,
+) -> str | None:
+    root = script_root or _default_script_root()
+    resolution = resolve_sidebar_helper(env=env, which=which, script_root=root)
+    if not resolution.available or resolution.path is None:
+        return None
+    runtime_binary = _sidebar_runtime_binary(Path(resolution.path), script_root=root)
+    try:
+        digest = hashlib.sha256(runtime_binary.read_bytes()).hexdigest()
+    except OSError:
+        return None
+    return f'sha256:{digest}'
+
+
 def missing_sidebar_respawn_args(reason: str | None = None) -> tuple[str, ...]:
     message = 'CCB sidebar helper unavailable'
     detail = _clean_text(reason) or f'{SIDEBAR_BINARY_NAME} not found'
@@ -92,6 +113,17 @@ def _resolve_explicit(path: Path, *, source: str) -> SidebarHelperResolution:
     )
 
 
+def _sidebar_runtime_binary(path: Path, *, script_root: Path) -> Path:
+    try:
+        prefix = path.read_bytes()[:4096]
+    except OSError:
+        return path
+    if _SIDEBAR_WRAPPER_MARKER not in prefix:
+        return path
+    candidate = script_root / 'tools' / 'ccb-agent-sidebar' / 'target' / 'release' / SIDEBAR_BINARY_NAME
+    return candidate if candidate.is_file() else path
+
+
 def _default_script_root() -> Path:
     return Path(__file__).resolve().parents[4]
 
@@ -112,8 +144,10 @@ def _shell_single_quote_text(value: object) -> str:
 __all__ = [
     'SIDEBAR_BINARY_NAME',
     'SIDEBAR_ENV_PATH',
+    'SIDEBAR_HELPER_ID_OPTION',
     'SidebarHelperResolution',
     'missing_sidebar_respawn_args',
     'resolve_sidebar_helper',
+    'sidebar_helper_fingerprint',
     'sidebar_respawn_args',
 ]
