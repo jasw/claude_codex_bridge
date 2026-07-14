@@ -33,7 +33,7 @@ from .planner_feedback import (
     validate_planner_feedback_authority,
 )
 from .planner_feedback_apply import plan_revision_authority
-from .detailer_replan_backfill import apply_detailer_replan_backfill
+from .detailer_replan_backfill import apply_detailer_replan_backfill, has_pending_detailer_replan_recovery
 from .planner_task_set_import_transaction import (
     PlannerTaskSetImportConflict,
     authority_trace as planner_task_set_transaction_trace,
@@ -4194,8 +4194,15 @@ def _detailer_replan_cross_binding_error(*, context, planner_record, wrapper, ac
         'evidence_refs': evidence_refs, 'request_identity': parsed_raw['request_identity'],
         'detail_digest': parsed_raw['detail_digest'], 'macro_impact_digest': parsed_raw['macro_impact_digest'],
     }
-    if active_state and authority != expected_authority:
-        return 'independent_authority_mismatch'
+    if active_state:
+        try:
+            recovery = has_pending_detailer_replan_recovery(
+                context, authority=authority, planner_job_id=job_id,
+            )
+        except ValueError:
+            return 'recovery_transaction_invalid'
+        if authority != expected_authority and not recovery:
+            return 'independent_authority_mismatch'
     return None
 
 

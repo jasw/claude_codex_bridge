@@ -67,6 +67,46 @@ def apply_detailer_replan_backfill(context, proposal: PlannerBackfillProposal, *
             return _result(root, backfill_path, tx_path, record, idempotent=False)
 
 
+def has_pending_detailer_replan_recovery(context, *, authority: dict[str, object], planner_job_id: str) -> bool:
+    """Authenticate the sole recoverable interrupted Detailer projection.
+
+    A transaction is recoverable only at its canonical task/revision path, with
+    the active authority as its exact preimage and every selected target still
+    at that transaction's exact preimage or target text.
+    """
+    _validate_authority_shape(authority, planner_job_id)
+    root = plan_projection_root(context, str(authority['plan_slug']))
+    state_root = root / 'tasks' / str(authority['task_id']) / 'planner-replan'
+    tx_path = state_root / f"backfill-r{int(authority['task_revision'])}.transaction.json"
+    transactions = tuple(state_root.glob('*.transaction.json')) if state_root.is_dir() else ()
+    if not transactions:
+        return False
+    if transactions != (tx_path,) or not tx_path.is_file():
+        raise ValueError('detailer replan recovery transaction path invalid')
+    transaction = _read(tx_path)
+    _validate_transaction_shape(context, transaction, authority=authority, planner_job_id=planner_job_id)
+    if transaction['preimage_plan_revision'] != authority['expected_plan_revision']:
+        raise ValueError('detailer replan recovery transaction preimage authority invalid')
+    preimages, targets, existing_paths = {}, {}, set()
+    for item in transaction['targets']:
+        path = str(item['path'])
+        preimages[path], targets[path] = item['preimage_text'], item['target_text']
+        if item['preimage_exists']:
+            existing_paths.add(path)
+    if plan_projection_revision_from_texts(context, root, preimages, include_paths=existing_paths) != transaction['preimage_plan_revision']:
+        raise ValueError('detailer replan recovery transaction preimage invalid')
+    if plan_projection_revision_from_texts(context, root, targets) != transaction['target_plan_revision']:
+        raise ValueError('detailer replan recovery transaction target invalid')
+    for item, path in zip(transaction['targets'], select_plan_projection_targets(context, root)):
+        current = path.read_text(encoding='utf-8') if path.is_file() else ''
+        digest = plan_projection_text_digest(current)
+        if digest == item['target_digest']:
+            continue
+        if digest != item['preimage_digest'] or path.is_file() is not item['preimage_exists']:
+            raise ValueError('detailer replan recovery target file revision conflict')
+    return True
+
+
 def _validate_authority(proposal, authority, planner_job_id):
     required = {'task_id', 'task_revision', 'plan_slug', 'expected_plan_revision', 'closure_evidence_digest', 'evidence_refs', 'request_identity', 'detail_digest', 'macro_impact_digest'}
     if not isinstance(authority, dict) or set(authority) != required:
@@ -77,6 +117,14 @@ def _validate_authority(proposal, authority, planner_job_id):
     actual = (proposal.expected_plan_revision, proposal.task_or_task_set_id, proposal.task_or_task_set_revision, proposal.closure_evidence_digest)
     if actual != expected or any(ref not in proposal.evidence_refs for ref in authority['evidence_refs']):
         raise ValueError('detailer replan proposal authority mismatch')
+
+
+def _validate_authority_shape(authority, planner_job_id):
+    required = {'task_id', 'task_revision', 'plan_slug', 'expected_plan_revision', 'closure_evidence_digest', 'evidence_refs', 'request_identity', 'detail_digest', 'macro_impact_digest'}
+    if not isinstance(authority, dict) or set(authority) != required or not planner_job_id:
+        raise ValueError('detailer replan recovery authority invalid')
+    if not isinstance(authority['task_revision'], int) or isinstance(authority['task_revision'], bool):
+        raise ValueError('detailer replan recovery task revision invalid')
 
 
 def _derive_transaction(context, plan_root, proposal, authority, planner_job_id, *, persisted):

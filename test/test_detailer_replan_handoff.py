@@ -257,6 +257,96 @@ def _envelope(dispatcher, source_job_id: str, *, body: str | None = None, silenc
     )
 
 
+def _detailer_replan_proposal(authority: dict[str, object]) -> dict[str, object]:
+    milestone = {'kind': 'selected', 'ref': 'replanned-task-a', 'rationale': 'Use the corrected interface.'}
+    return {
+        'schema': 'ccb.planner.backfill_proposal.v1', 'mode': 'detailer_replan',
+        'expected_plan_revision': authority['expected_plan_revision'], 'task_or_task_set_id': authority['task_id'],
+        'task_or_task_set_revision': authority['task_revision'], 'closure_evidence_digest': authority['closure_evidence_digest'],
+        'aggregate_result': 'replan_required', 'result': 'task_set_replanned', 'brief_summary': 'Revise the macro task.',
+        'roadmap_transitions': [], 'todo_transitions': [], 'decision_refs': [], 'open_question_refs': [],
+        'evidence_refs': authority['evidence_refs'], 'accepted_scope': ['preserved fact'], 'unresolved_scope': ['replanned scope'],
+        'blockers': [], 'replan_inputs': ['detailer macro impact'], 'next_milestone': milestone,
+        'frontdesk_notification_required': False,
+        'frontdesk_status': {'schema': 'ccb.planner.frontdesk_status.v1', 'notification_identity': 'task-a-replan',
+            'aggregate_result': 'replan_required', 'accepted_scope': ['preserved fact'], 'unresolved_scope': ['replanned scope'],
+            'blockers': [], 'next_milestone': milestone, 'evidence_refs': authority['evidence_refs'], 'user_report_body': 'Replanned.'},
+    }
+
+
+def _completed_detailer_replan_snapshot(project_root: Path, planner_job_id: str, proposal: dict[str, object]) -> None:
+    snapshot_path = project_root / '.ccb' / 'ccbd' / 'snapshots' / f'{planner_job_id}.json'
+    snapshot_path.write_text(json.dumps({'job_id': planner_job_id, 'agent_name': 'planner', 'state': {'terminal': True}, 'latest_decision': {'terminal': True, 'status': 'completed', 'reply': '**planner-backfill.json**\n```json\n' + json.dumps(proposal) + '\n```\n'}}) + '\n', encoding='utf-8')
+
+
+@pytest.mark.parametrize('crash_on_write', (2, 3))
+def test_detailer_replan_import_recovers_partial_projection_exactly_once(tmp_path: Path, monkeypatch, crash_on_write: int) -> None:
+    project_root, dispatcher, source_job_id, _runner_calls = _setup(tmp_path, monkeypatch)
+    planner_job_id = dispatcher.submit(_envelope(dispatcher, source_job_id)).jobs[0].job_id
+    context = _context(project_root)
+    activation = json.loads(next((project_root / '.ccb' / 'runtime' / 'loops' / 'activations').glob('act-detailer-replan-*.json')).read_text(encoding='utf-8'))
+    authority = activation['planner_authority']
+    _completed_detailer_replan_snapshot(project_root, planner_job_id, _detailer_replan_proposal(authority))
+    from cli.services import detailer_replan_backfill as backfill_module
+    original_write, writes = backfill_module.atomic_write_text, 0
+
+    def interrupt(path, text):
+        nonlocal writes
+        writes += 1
+        if writes == crash_on_write:
+            raise RuntimeError('injected projection interruption')
+        return original_write(path, text)
+
+    monkeypatch.setattr(backfill_module, 'atomic_write_text', interrupt)
+    with pytest.raises(RuntimeError, match='injected projection interruption'):
+        consume_explicit_role_output(context, SimpleNamespace(role_job_id=planner_job_id, task_id='task-a'), services=SimpleNamespace(plan_task=plan_task))
+    monkeypatch.setattr(backfill_module, 'atomic_write_text', original_write)
+    transaction = json.loads(next((project_root / 'docs' / 'plantree' / 'plans' / 'demo' / 'tasks' / 'task-a' / 'planner-replan').glob('*.transaction.json')).read_text(encoding='utf-8'))
+    observed = [(project_root / target['path']).read_text(encoding='utf-8') if (project_root / target['path']).is_file() else '' for target in transaction['targets']]
+    assert {text == target['target_text'] for text, target in zip(observed, transaction['targets'])} == {True, False}
+
+    imported = consume_explicit_role_output(context, SimpleNamespace(role_job_id=planner_job_id, task_id='task-a'), services=SimpleNamespace(plan_task=plan_task))
+    assert imported['action'] == 'imported_detailer_replan_planner_backfill'
+    assert [ (project_root / target['path']).read_text(encoding='utf-8') for target in transaction['targets'] ] == [target['target_text'] for target in transaction['targets']]
+    assert plan_task(context, SimpleNamespace(action='task-show', task_id='task-a'))['status'] == 'ready_for_orchestration'
+    log = project_root / '.ccb' / 'runtime' / 'role-output-imports.jsonl'
+    assert sum(json.loads(line)['action'] == 'imported_detailer_replan_planner_backfill' for line in log.read_text(encoding='utf-8').splitlines()) == 1
+    assert consume_explicit_role_output(context, SimpleNamespace(role_job_id=planner_job_id, task_id='task-a'), services=SimpleNamespace(plan_task=plan_task))['action'] == 'role_output_already_consumed'
+
+
+@pytest.mark.parametrize('mutation', ('transaction', 'third_state'))
+def test_detailer_replan_import_rejects_invalid_pending_projection_recovery(tmp_path: Path, monkeypatch, mutation: str) -> None:
+    project_root, dispatcher, source_job_id, _runner_calls = _setup(tmp_path, monkeypatch)
+    planner_job_id = dispatcher.submit(_envelope(dispatcher, source_job_id)).jobs[0].job_id
+    context = _context(project_root)
+    authority = json.loads(next((project_root / '.ccb' / 'runtime' / 'loops' / 'activations').glob('act-detailer-replan-*.json')).read_text(encoding='utf-8'))['planner_authority']
+    _completed_detailer_replan_snapshot(project_root, planner_job_id, _detailer_replan_proposal(authority))
+    from cli.services import detailer_replan_backfill as backfill_module
+    original_write, writes = backfill_module.atomic_write_text, 0
+    def interrupt(path, text):
+        nonlocal writes
+        writes += 1
+        if writes == 2:
+            raise RuntimeError('injected projection interruption')
+        return original_write(path, text)
+    monkeypatch.setattr(backfill_module, 'atomic_write_text', interrupt)
+    with pytest.raises(RuntimeError, match='injected projection interruption'):
+        consume_explicit_role_output(context, SimpleNamespace(role_job_id=planner_job_id, task_id='task-a'), services=SimpleNamespace(plan_task=plan_task))
+    monkeypatch.setattr(backfill_module, 'atomic_write_text', original_write)
+    tx_path = next((project_root / 'docs' / 'plantree' / 'plans' / 'demo' / 'tasks' / 'task-a' / 'planner-replan').glob('*.transaction.json'))
+    transaction = json.loads(tx_path.read_text(encoding='utf-8'))
+    if mutation == 'transaction':
+        transaction['targets'][0]['target_text'] += 'tampered\n'
+        tx_path.write_text(json.dumps(transaction), encoding='utf-8')
+    else:
+        target = project_root / transaction['targets'][1]['path']
+        target.write_text('third state\n', encoding='utf-8')
+    blocked = consume_explicit_role_output(context, SimpleNamespace(role_job_id=planner_job_id, task_id='task-a'), services=SimpleNamespace(plan_task=plan_task))
+    assert blocked['action'] == 'role_output_import_blocked'
+    assert blocked['reason'] == 'detailer_replan_authority_invalid'
+    assert plan_task(context, SimpleNamespace(action='task-show', task_id='task-a'))['status'] == 'replan_required'
+
+
 def test_detailer_replan_is_exact_once_and_fences_task_authority(tmp_path: Path, monkeypatch) -> None:
     project_root, dispatcher, source_job_id, runner_calls = _setup(tmp_path, monkeypatch)
     request = _envelope(dispatcher, source_job_id)
@@ -343,21 +433,7 @@ def test_valid_revised_planner_authority_reopens_fresh_orchestrator(tmp_path: Pa
     planner_job_id = planner.jobs[0].job_id
     activation = json.loads(next((project_root / '.ccb' / 'runtime' / 'loops' / 'activations').glob('act-detailer-replan-*.json')).read_text(encoding='utf-8'))
     authority = activation['planner_authority']
-    evidence_refs = authority['evidence_refs']
-    milestone = {'kind': 'selected', 'ref': 'replanned-task-a', 'rationale': 'Use the corrected interface.'}
-    proposal = {
-        'schema': 'ccb.planner.backfill_proposal.v1', 'mode': 'detailer_replan',
-        'expected_plan_revision': authority['expected_plan_revision'], 'task_or_task_set_id': authority['task_id'],
-        'task_or_task_set_revision': authority['task_revision'], 'closure_evidence_digest': authority['closure_evidence_digest'],
-        'aggregate_result': 'replan_required', 'result': 'task_set_replanned', 'brief_summary': 'Revise the macro task.',
-        'roadmap_transitions': [], 'todo_transitions': [], 'decision_refs': [], 'open_question_refs': [],
-        'evidence_refs': evidence_refs, 'accepted_scope': ['preserved fact'], 'unresolved_scope': ['replanned scope'],
-        'blockers': [], 'replan_inputs': ['detailer macro impact'], 'next_milestone': milestone,
-        'frontdesk_notification_required': False,
-        'frontdesk_status': {'schema': 'ccb.planner.frontdesk_status.v1', 'notification_identity': 'task-a-replan',
-            'aggregate_result': 'replan_required', 'accepted_scope': ['preserved fact'], 'unresolved_scope': ['replanned scope'],
-            'blockers': [], 'next_milestone': milestone, 'evidence_refs': evidence_refs, 'user_report_body': 'Replanned.'},
-    }
+    proposal = _detailer_replan_proposal(authority)
     snapshot_path = project_root / '.ccb' / 'ccbd' / 'snapshots' / f'{planner_job_id}.json'
     snapshot_path.write_text(
         json.dumps(
