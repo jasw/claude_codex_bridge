@@ -120,8 +120,9 @@ def test_apply_rejects_revision_conflict_before_write(tmp_path: Path) -> None:
     assert not list(Path(context.project.project_root).rglob('planner-backfill.json'))
 
 
-def test_apply_recovers_partial_target_writes_exactly_once(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize('crash_on_write', (2, 3))
+def test_apply_recovers_after_each_partial_target_write_exactly_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, crash_on_write: int,
 ) -> None:
     context = _context(tmp_path)
     from cli.services import planner_feedback_apply as service
@@ -137,14 +138,14 @@ def test_apply_recovers_partial_target_writes_exactly_once(
     original = service.atomic_write_text
     writes = 0
 
-    def crash_after_first(path, text):
+    def crash_after_partial_write(path, text):
         nonlocal writes
         writes += 1
-        if writes == 2:
+        if writes == crash_on_write:
             raise RuntimeError('injected crash')
         return original(path, text)
 
-    monkeypatch.setattr(service, 'atomic_write_text', crash_after_first)
+    monkeypatch.setattr(service, 'atomic_write_text', crash_after_partial_write)
     with pytest.raises(RuntimeError, match='injected crash'):
         service.apply_planner_feedback(context, proposal, authority)
     monkeypatch.setattr(service, 'atomic_write_text', original)
@@ -152,6 +153,64 @@ def test_apply_recovers_partial_target_writes_exactly_once(
     recovered = service.apply_planner_feedback(context, proposal, authority)
     assert recovered['status'] == 'imported'
     assert Path(recovered['planner_backfill_path']).is_file()
+    for target in json.loads(Path(recovered['transaction_path']).read_text())['targets']:
+        assert (Path(context.project.project_root) / target['path']).read_text() == target['target_text']
+
+
+def test_projection_preflight_rejects_later_target_conflict_without_partial_write(tmp_path: Path) -> None:
+    context = _context(tmp_path)
+    from cli.services import planner_feedback_apply as service
+    revision = service.current_plan_revision(context, 'demo')
+    proposal = _proposal(revision)
+    authority = {
+        'task_set_id': 'set-a', 'task_set_revision': 1, 'closure_intent_id': 'tsi-a',
+        'closure_digest': _digest('c'), 'ordered_terminal_evidence_digest': _digest('a'),
+        'expected_plan_revision': revision, 'planner_job_id': 'job-planner',
+        'planner_feedback_digest': planner_feedback_digest(proposal), 'plan_slug': 'demo',
+    }
+    _authority_files(context, authority)
+    plan_root = Path(context.project.project_root) / 'docs/plantree/plans/demo'
+    transaction = service._derive_transaction(context, plan_root, proposal, authority, persisted=None)
+    roadmap = plan_root / 'roadmap.md'
+    roadmap.write_text('concurrent roadmap edit\n', encoding='utf-8')
+
+    with pytest.raises(ValueError, match='file revision conflict'):
+        service.apply_plan_projection_targets(context, transaction, write=service.atomic_write_text)
+
+    assert not (plan_root / 'brief.md').exists()
+    assert roadmap.read_text(encoding='utf-8') == 'concurrent roadmap edit\n'
+    assert not (plan_root / 'TODO.md').exists()
+
+
+def test_same_plan_revision_competitor_is_stale_and_has_no_success_record(tmp_path: Path) -> None:
+    context = _context(tmp_path)
+    from cli.services import planner_feedback_apply as service
+    revision = service.current_plan_revision(context, 'demo')
+    first_proposal = _proposal(revision, identity='set-a')
+    first_authority = {
+        'task_set_id': 'set-a', 'task_set_revision': 1, 'closure_intent_id': 'tsi-a',
+        'closure_digest': _digest('c'), 'ordered_terminal_evidence_digest': _digest('a'),
+        'expected_plan_revision': revision, 'planner_job_id': 'job-planner-a',
+        'planner_feedback_digest': planner_feedback_digest(first_proposal), 'plan_slug': 'demo',
+    }
+    second_proposal = _proposal(revision, identity='set-b')
+    second_authority = {
+        'task_set_id': 'set-b', 'task_set_revision': 1, 'closure_intent_id': 'tsi-b',
+        'closure_digest': _digest('c'), 'ordered_terminal_evidence_digest': _digest('a'),
+        'expected_plan_revision': revision, 'planner_job_id': 'job-planner-b',
+        'planner_feedback_digest': planner_feedback_digest(second_proposal), 'plan_slug': 'demo',
+    }
+    _authority_files(context, first_authority)
+    _authority_files(context, second_authority)
+    service.apply_planner_feedback(context, first_proposal, first_authority)
+    projected = (Path(context.project.project_root) / 'docs/plantree/plans/demo/brief.md').read_text()
+
+    with pytest.raises(ValueError, match='revision conflict'):
+        service.apply_planner_feedback(context, second_proposal, second_authority)
+
+    plan_root = Path(context.project.project_root) / 'docs/plantree/plans/demo'
+    assert (plan_root / 'brief.md').read_text() == projected
+    assert not (plan_root / 'task-sets/set-b/planner-backfill-r1.json').exists()
 
 
 def test_persisted_transaction_rejects_arbitrary_target_and_tampering(tmp_path: Path) -> None:

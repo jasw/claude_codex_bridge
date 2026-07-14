@@ -11,12 +11,16 @@ from storage.locks import file_lock
 
 from .planner_feedback import PlannerBackfillProposal, planner_feedback_digest
 from .planner_feedback_apply import (
-    _plan_revision_from_texts,
-    _plan_root,
-    _sections,
-    _select_target_paths,
-    _text_digest,
+    apply_plan_projection_targets,
+    canonical_plan_projection_target,
     current_plan_revision,
+    plan_projection_lock,
+    plan_projection_revision_from_texts,
+    plan_projection_root,
+    plan_projection_sections,
+    plan_projection_text_digest,
+    select_plan_projection_targets,
+    validate_plan_projection_targets,
 )
 
 
@@ -29,35 +33,38 @@ def apply_detailer_replan_backfill(context, proposal: PlannerBackfillProposal, *
     _validate_authority(proposal, authority, planner_job_id)
     root = Path(context.project.project_root)
     slug, task_id, revision = str(authority['plan_slug']), str(authority['task_id']), int(authority['task_revision'])
-    plan_root = _plan_root(context, slug)
+    plan_root = plan_projection_root(context, slug)
     state_root = plan_root / 'tasks' / task_id / 'planner-replan'
     state_root.mkdir(parents=True, exist_ok=True)
     tx_path = state_root / f'backfill-r{revision}.transaction.json'
     backfill_path = state_root / f'backfill-r{revision}.json'
-    with file_lock(state_root / f'backfill-r{revision}.lock'):
-        persisted = _read(tx_path) if tx_path.is_file() else None
-        transaction = _derive_transaction(context, plan_root, proposal, authority, planner_job_id, persisted=persisted)
-        if persisted is None:
-            if current_plan_revision(context, slug) != authority['expected_plan_revision']:
-                raise ValueError('detailer replan plan revision conflict')
-            atomic_write_json(tx_path, transaction)
-        elif persisted != transaction:
-            raise ValueError('detailer replan transaction authority conflict')
-        record = _json_native(_backfill_record(context, proposal, authority, planner_job_id, transaction, tx_path))
-        if backfill_path.is_file():
-            existing = _read(backfill_path)
-            if existing != record:
-                raise ValueError('detailer replan backfill conflicts with persisted authority')
-            _validate_targets(context, transaction)
+    # Acquire the shared plan fence before the identity lock, matching task-set
+    # backfill lock ordering and preventing cross-path last-writer-wins.
+    with plan_projection_lock(context, slug):
+        with file_lock(state_root / f'backfill-r{revision}.lock'):
+            persisted = _read(tx_path) if tx_path.is_file() else None
+            transaction = _derive_transaction(context, plan_root, proposal, authority, planner_job_id, persisted=persisted)
+            if persisted is None:
+                if current_plan_revision(context, slug) != authority['expected_plan_revision']:
+                    raise ValueError('detailer replan plan revision conflict')
+                atomic_write_json(tx_path, transaction)
+            elif persisted != transaction:
+                raise ValueError('detailer replan transaction authority conflict')
+            record = _json_native(_backfill_record(context, proposal, authority, planner_job_id, transaction, tx_path))
+            if backfill_path.is_file():
+                existing = _read(backfill_path)
+                if existing != record:
+                    raise ValueError('detailer replan backfill conflicts with persisted authority')
+                validate_plan_projection_targets(context, transaction)
+                if current_plan_revision(context, slug) != transaction['target_plan_revision']:
+                    raise ValueError('detailer replan replay target revision conflict')
+                return _result(root, backfill_path, tx_path, record, idempotent=True)
+            apply_plan_projection_targets(context, transaction, write=atomic_write_text)
+            validate_plan_projection_targets(context, transaction)
             if current_plan_revision(context, slug) != transaction['target_plan_revision']:
-                raise ValueError('detailer replan replay target revision conflict')
-            return _result(root, backfill_path, tx_path, record, idempotent=True)
-        _apply_targets(context, transaction)
-        _validate_targets(context, transaction)
-        if current_plan_revision(context, slug) != transaction['target_plan_revision']:
-            raise ValueError('detailer replan target revision conflict')
-        atomic_write_json(backfill_path, record)
-        return _result(root, backfill_path, tx_path, record, idempotent=False)
+                raise ValueError('detailer replan target revision conflict')
+            atomic_write_json(backfill_path, record)
+            return _result(root, backfill_path, tx_path, record, idempotent=False)
 
 
 def _validate_authority(proposal, authority, planner_job_id):
@@ -73,47 +80,56 @@ def _validate_authority(proposal, authority, planner_job_id):
 
 
 def _derive_transaction(context, plan_root, proposal, authority, planner_job_id, *, persisted):
+    if persisted is not None:
+        _validate_transaction_shape(context, persisted, authority=authority, planner_job_id=planner_job_id)
     targets, projected, preimages, existing_paths = [], {}, {}, set()
-    for semantic, path in zip(('brief', 'roadmap', 'todo'), _select_target_paths(context, plan_root)):
+    for semantic, path in zip(('brief', 'roadmap', 'todo'), select_plan_projection_targets(context, plan_root)):
         relative = str(path.relative_to(context.project.project_root))
         prior = _persisted_target(persisted, relative)
         current = path.read_text(encoding='utf-8') if path.is_file() else ''
         if prior is None:
             before, exists = current, path.is_file()
         else:
-            if _text_digest(current) not in {prior['preimage_digest'], prior['target_digest']} or path.is_file() is not prior['preimage_exists'] and _text_digest(current) == prior['preimage_digest']:
+            if plan_projection_text_digest(current) not in {prior['preimage_digest'], prior['target_digest']} or path.is_file() is not prior['preimage_exists'] and plan_projection_text_digest(current) == prior['preimage_digest']:
                 raise ValueError('detailer replan target file revision conflict')
             before, exists = prior['preimage_text'], prior['preimage_exists']
-        after = _append_block(before, str(authority['task_id']), int(authority['task_revision']), semantic, _sections(proposal)[semantic])
-        target = {'path': relative, 'preimage_digest': _text_digest(before), 'preimage_exists': exists, 'preimage_text': before, 'target_digest': _text_digest(after), 'target_text': after}
+        after = _append_block(before, str(authority['task_id']), int(authority['task_revision']), semantic, plan_projection_sections(proposal)[semantic])
+        target = canonical_plan_projection_target(
+            context, path, before=before, preimage_exists=exists, target_text=after,
+        )
         targets.append(target); projected[relative] = after; preimages[relative] = before
         if exists: existing_paths.add(relative)
-    preimage = _plan_revision_from_texts(context, plan_root, preimages, include_paths=existing_paths)
+    preimage = plan_projection_revision_from_texts(context, plan_root, preimages, include_paths=existing_paths)
     if preimage != authority['expected_plan_revision']:
         raise ValueError('detailer replan transaction preimage revision conflict')
-    tx = {'schema': _TX_SCHEMA, 'schema_version': 2, 'task_id': authority['task_id'], 'task_revision': authority['task_revision'], 'planner_job_id': planner_job_id, 'planner_feedback_digest': planner_feedback_digest(proposal), 'authority': authority, 'preimage_plan_revision': preimage, 'target_plan_revision': _plan_revision_from_texts(context, plan_root, projected), 'targets': targets}
+    tx = {'schema': _TX_SCHEMA, 'schema_version': 2, 'task_id': authority['task_id'], 'task_revision': authority['task_revision'], 'planner_job_id': planner_job_id, 'planner_feedback_digest': planner_feedback_digest(proposal), 'authority': authority, 'preimage_plan_revision': preimage, 'target_plan_revision': plan_projection_revision_from_texts(context, plan_root, projected), 'targets': targets}
     tx['transaction_digest'] = _digest(tx)
     return tx
 
 
-def _apply_targets(context, transaction):
-    root = Path(context.project.project_root)
-    for item in transaction['targets']:
-        path = root / item['path']
-        current = path.read_text(encoding='utf-8') if path.is_file() else ''
-        if _text_digest(current) == item['target_digest']:
-            continue
-        if _text_digest(current) != item['preimage_digest'] or path.is_file() is not item['preimage_exists']:
-            raise ValueError('detailer replan target file revision conflict')
-        atomic_write_text(path, item['target_text'])
-
-
-def _validate_targets(context, transaction):
-    root = Path(context.project.project_root)
-    for item in transaction['targets']:
-        path = root / item['path']
-        if not path.is_file() or _text_digest(path.read_text(encoding='utf-8')) != item['target_digest']:
-            raise ValueError('detailer replan projected target drift')
+def _validate_transaction_shape(context, transaction, *, authority, planner_job_id) -> None:
+    fields = {
+        'schema', 'schema_version', 'task_id', 'task_revision', 'planner_job_id',
+        'planner_feedback_digest', 'authority', 'preimage_plan_revision',
+        'target_plan_revision', 'targets', 'transaction_digest',
+    }
+    if set(transaction) != fields or transaction.get('schema') != _TX_SCHEMA or transaction.get('schema_version') != 2:
+        raise ValueError('detailer replan transaction schema or fields invalid')
+    if transaction.get('authority') != authority or transaction.get('planner_job_id') != planner_job_id:
+        raise ValueError('detailer replan transaction identity mismatch')
+    if transaction.get('task_id') != authority['task_id'] or transaction.get('task_revision') != authority['task_revision']:
+        raise ValueError('detailer replan transaction task identity mismatch')
+    if transaction.get('transaction_digest') != _digest({key: value for key, value in transaction.items() if key != 'transaction_digest'}):
+        raise ValueError('detailer replan transaction digest invalid')
+    targets = transaction.get('targets')
+    expected = [str(path.relative_to(context.project.project_root)) for path in select_plan_projection_targets(context, plan_projection_root(context, str(authority['plan_slug'])))]
+    if not isinstance(targets, list) or [item.get('path') if isinstance(item, dict) else None for item in targets] != expected:
+        raise ValueError('detailer replan transaction target path authority invalid')
+    for item in targets:
+        if set(item) != _TARGET_FIELDS or not isinstance(item.get('preimage_exists'), bool):
+            raise ValueError('detailer replan transaction target fields invalid')
+        if item['preimage_digest'] != plan_projection_text_digest(str(item['preimage_text'])) or item['target_digest'] != plan_projection_text_digest(str(item['target_text'])):
+            raise ValueError('detailer replan transaction target digest invalid')
 
 
 def _backfill_record(context, proposal, authority, planner_job_id, tx, tx_path):
