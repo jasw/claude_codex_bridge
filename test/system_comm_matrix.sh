@@ -298,7 +298,7 @@ ask_all_jobs() {
   local project="$1"
   local sender="$2"
   local message="$3"
-  ccb_project "${project}" ask all from "${sender}" "${message}"
+  ccb_project "${project}" ask --silence all from "${sender}" "${message}"
 }
 
 watch_job() {
@@ -509,8 +509,8 @@ run_mixed_matrix() {
   check_workspace_binding "${project}" "reviewer"
   check_workspace_binding "${project}" "analyst"
   check_reply_flow "${project}" "writer" "user" "mixed-codex" "mixed writer"
-  check_reply_flow "${project}" "reviewer" "writer" "mixed-claude" "mixed reviewer"
-  check_reply_flow "${project}" "analyst" "reviewer" "mixed-gemini" "mixed analyst"
+  check_reply_flow "${project}" "reviewer" "user" "mixed-claude" "mixed reviewer"
+  check_reply_flow "${project}" "analyst" "user" "mixed-gemini" "mixed analyst"
   check_tmux_title "${project}" "writer"
   check_tmux_title "${project}" "reviewer"
   check_tmux_title "${project}" "analyst"

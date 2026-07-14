@@ -17,6 +17,10 @@
 - **WSL Uses A Current Rust Toolchain**: mounted-drive jobs install a minimal
   stable rustup toolchain instead of depending on an older distribution Cargo
   that may not support the repository lockfile.
+- **Communication Smoke Matches Nested Ask Policy**: independent provider
+  checks use an external sender, while agent-originated broadcasts explicitly
+  use silent delivery so CI does not create recursive reply traffic or violate
+  the active-task `--chain`/`--silence` contract.
 
 ### Release Surface
 
