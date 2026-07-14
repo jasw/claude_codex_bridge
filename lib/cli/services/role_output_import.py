@@ -4106,6 +4106,12 @@ def _detailer_replan_feedbacks_for_job(context, deps, job_id: str) -> list[dict[
 
 
 def _detailer_replan_cross_binding_error(*, context, planner_record, wrapper, activation, intent, feedback, job_id: str) -> str | None:
+    intent_error = _detailer_replan_intent_error(intent)
+    if intent_error:
+        return intent_error
+    task_error = _detailer_replan_task_feedback_error(feedback, job_id=job_id)
+    if task_error:
+        return task_error
     request = planner_record.get('request') if isinstance(planner_record.get('request'), dict) else {}
     source = activation.get('source_replan_request')
     authority = activation.get('planner_authority')
@@ -4174,6 +4180,60 @@ def _detailer_replan_cross_binding_error(*, context, planner_record, wrapper, ac
     }
     if active_state and authority != expected_authority:
         return 'independent_authority_mismatch'
+    return None
+
+
+def _detailer_replan_intent_error(intent: object) -> str | None:
+    if not isinstance(intent, dict):
+        return 'intent_schema_invalid'
+    required = {
+        'schema', 'record_type', 'status', 'request_identity', 'task_id', 'source_task_revision',
+        'detail_digest', 'macro_impact_digest', 'source_detailer_job_id', 'request_body_sha256', 'request',
+        'created_at', 'accepted_task_revision', 'activation_id', 'activation_path', 'updated_at',
+        'planner_job_id', 'planner_job_status',
+    }
+    optional = {'runner_start_error'}
+    if set(intent) - optional != required or intent.get('schema') != 'ccb.detailer.replan_intent.v1' or intent.get('record_type') != 'ccb_detailer_replan_intent':
+        return 'intent_schema_invalid'
+    allowed_statuses = {'planner_submitted', 'planner_submitted_runner_start_failed'}
+    if intent.get('status') not in allowed_statuses or (intent.get('status') == 'planner_submitted_runner_start_failed') != ('runner_start_error' in intent):
+        return 'intent_status_invalid'
+    request = intent.get('request')
+    request_fields = {'project_id', 'to_agent', 'from_actor', 'body', 'task_id', 'reply_to', 'message_type', 'delivery_scope', 'silence_on_success', 'route_options', 'body_artifact'}
+    if not isinstance(request, dict) or set(request) != request_fields:
+        return 'intent_request_schema_invalid'
+    if request.get('to_agent') != 'planner' or request.get('from_actor') != 'task_detailer' or request.get('message_type') != 'ask' or request.get('delivery_scope') != 'single' or request.get('silence_on_success') is not True or request.get('reply_to') is not None or request.get('body_artifact') is not None or not isinstance(request.get('route_options'), dict) or request['route_options']:
+        return 'intent_request_route_invalid'
+    strings = ('request_identity', 'task_id', 'detail_digest', 'macro_impact_digest', 'source_detailer_job_id', 'request_body_sha256', 'activation_id', 'activation_path', 'planner_job_id', 'planner_job_status')
+    if any(not isinstance(intent.get(key), str) or not intent[key] for key in strings):
+        return 'intent_scalar_invalid'
+    if isinstance(intent.get('source_task_revision'), bool) or not isinstance(intent.get('source_task_revision'), int) or isinstance(intent.get('accepted_task_revision'), bool) or not isinstance(intent.get('accepted_task_revision'), int):
+        return 'intent_revision_invalid'
+    if not re.fullmatch(r'[0-9a-f]{64}', intent['request_body_sha256']) or any(not re.fullmatch(r'sha256:[0-9a-f]{64}', intent[key]) for key in ('request_identity', 'detail_digest', 'macro_impact_digest')):
+        return 'intent_digest_invalid'
+    if not isinstance(request.get('body'), str) or hashlib.sha256(request['body'].encode('utf-8')).hexdigest() != intent['request_body_sha256']:
+        return 'intent_raw_request_invalid'
+    return None
+
+
+def _detailer_replan_task_feedback_error(task: object, *, job_id: str) -> str | None:
+    if not isinstance(task, dict):
+        return 'task_authority_schema_invalid'
+    feedback = task.get('replan_feedback')
+    fields = {
+        'schema', 'request_identity', 'detail_digest', 'macro_impact_digest', 'source_task_revision',
+        'accepted_task_revision', 'source_detailer_job_id', 'planner_job_id', 'superseded_artifacts', 'accepted_at', 'updated_at',
+    }
+    if not isinstance(feedback, dict) or set(feedback) != fields or feedback.get('schema') != 'ccb.detailer.replan_acceptance.v1':
+        return 'task_feedback_schema_invalid'
+    if feedback.get('planner_job_id') != job_id or not isinstance(feedback.get('superseded_artifacts'), list) or not feedback['superseded_artifacts']:
+        return 'task_feedback_binding_invalid'
+    if any(not isinstance(value, str) or not re.fullmatch(r'sha256:[0-9a-f]{64}', value) for value in (feedback.get('request_identity'), feedback.get('detail_digest'), feedback.get('macro_impact_digest'))):
+        return 'task_feedback_digest_invalid'
+    if any(isinstance(feedback.get(key), bool) or not isinstance(feedback.get(key), int) or feedback[key] <= 0 for key in ('source_task_revision', 'accepted_task_revision')):
+        return 'task_feedback_revision_invalid'
+    if task.get('task_revision') != feedback['accepted_task_revision'] or not isinstance(task.get('plan_slug'), str) or not task['plan_slug']:
+        return 'task_authority_binding_invalid'
     return None
 
 

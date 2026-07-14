@@ -616,7 +616,7 @@ def test_detailer_replan_runner_start_retry_reuses_persisted_planner_job(tmp_pat
 
 @pytest.mark.parametrize(
     'mutation',
-    ('missing_activation', 'tampered_wrapper', 'raw_whitespace', 'tampered_activation', 'tampered_intent', 'tampered_feedback', 'duplicate_intent', 'duplicate_job_record', 'correlated_plan_revision', 'correlated_closure', 'correlated_evidence'),
+    ('missing_activation', 'tampered_wrapper', 'raw_whitespace', 'tampered_activation', 'tampered_intent', 'tampered_feedback', 'duplicate_intent', 'duplicate_job_record', 'correlated_plan_revision', 'correlated_closure', 'correlated_evidence', 'activation_unknown', 'intent_unknown', 'intent_status', 'intent_request_route', 'task_unknown', 'task_revision', 'task_missing_superseded'),
 )
 def test_detailer_replan_durable_authority_mutations_block_before_import(
     tmp_path: Path, monkeypatch, mutation: str,
@@ -650,10 +650,33 @@ def test_detailer_replan_durable_authority_mutations_block_before_import(
         intent = json.loads(intent_path.read_text(encoding='utf-8'))
         intent['detail_digest'] = 'sha256:' + '0' * 64
         intent_path.write_text(json.dumps(intent), encoding='utf-8')
+    elif mutation in {'intent_unknown', 'intent_status', 'intent_request_route'}:
+        intent = json.loads(intent_path.read_text(encoding='utf-8'))
+        if mutation == 'intent_unknown':
+            intent['unexpected'] = True
+        elif mutation == 'intent_status':
+            intent['status'] = 'accepted'
+        else:
+            intent['request']['delivery_scope'] = 'broadcast'
+        intent_path.write_text(json.dumps(intent), encoding='utf-8')
     elif mutation == 'tampered_feedback':
         index = json.loads(index_path.read_text(encoding='utf-8'))
         index['tasks'][0]['replan_feedback']['source_detailer_job_id'] = 'wrong-job'
         index_path.write_text(json.dumps(index), encoding='utf-8')
+    elif mutation in {'task_unknown', 'task_revision', 'task_missing_superseded'}:
+        index = json.loads(index_path.read_text(encoding='utf-8'))
+        feedback = index['tasks'][0]['replan_feedback']
+        if mutation == 'task_unknown':
+            feedback['unexpected'] = True
+        elif mutation == 'task_revision':
+            feedback['accepted_task_revision'] = '2'
+        else:
+            feedback['superseded_artifacts'] = []
+        index_path.write_text(json.dumps(index), encoding='utf-8')
+    elif mutation == 'activation_unknown':
+        activation = json.loads(activation_path.read_text(encoding='utf-8'))
+        activation['unexpected'] = True
+        activation_path.write_text(json.dumps(activation), encoding='utf-8')
     elif mutation == 'duplicate_intent':
         duplicate = json.loads(intent_path.read_text(encoding='utf-8'))
         (intent_path.parent / 'duplicate.json').write_text(json.dumps(duplicate), encoding='utf-8')
