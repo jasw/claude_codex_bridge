@@ -646,6 +646,23 @@ detail-packet.manifest.json:
         assert parsed['readiness'] == readiness
 
 
+def test_task_detailer_rolepack_template_is_a_terminal_canonical_manifest() -> None:
+    template = (
+        Path(__file__).resolve().parents[1]
+        / 'docs/plantree/plans/agentic-loop-workflow/drafts/agentroles.ccb_task_detailer/templates/detail-packet.md'
+    ).read_text(encoding='utf-8')
+
+    parsed = _parse_task_detailer_reply(template)
+
+    assert parsed['status'] == 'ok'
+    assert parsed['result'] == 'local_detail_ready'
+    assert parsed['readiness'] == 'detail_ready'
+    manifest = json.loads(str(parsed['detail_packet']))
+    assert manifest['schema'] == 'ccb.detail_packet_manifest.v1'
+    assert manifest['global_impact'] == 'none'
+    assert template.rstrip().endswith('```')
+
+
 @pytest.mark.parametrize(
     'manifest',
     (

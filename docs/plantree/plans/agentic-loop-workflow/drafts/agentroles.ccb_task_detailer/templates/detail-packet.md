@@ -25,6 +25,13 @@ global impact rationale: <compact rationale>
 planner backfill evidence: <none or compact invariant/dependency/decision update>
 planner action recommendation: <none|record_bounded_summary|replan_before_execution>
 
+This reply is evidence only. The task detailer never dispatches workers,
+writes import files, or mutates task authority. Its sole downstream action is
+the versioned direct silent Planner ask for `planner_replan_required`.
+
+Allowed contract: `global impact: none|bounded|macro`; use only the parser-
+defined legal detail result, readiness, and global-impact combinations.
+
 detail-packet.manifest.json:
 ```json
 {
@@ -34,7 +41,3 @@ detail-packet.manifest.json:
   "global_impact": "none"
 }
 ```
-
-This reply is evidence only. The task detailer never dispatches workers,
-writes import files, or mutates task authority. Its sole downstream action is
-the versioned direct silent Planner ask for `planner_replan_required`.
