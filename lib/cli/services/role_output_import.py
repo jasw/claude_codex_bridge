@@ -178,10 +178,14 @@ def _consume_job(context, command, deps, *, job_id: str, activation: dict[str, o
         return _blocked_payload(context, job_id=job_id, agent_name=agent_name, reason='missing_reply')
     normalized_agent = _base_agent_name(agent_name)
     stale_activation = _stale_activation_revision(context, deps, activation=activation)
+    strict_detailer_replan = (
+        _parse_task_detailer_reply(reply).get('result') == 'planner_replan_required'
+        if normalized_agent == 'task_detailer'
+        else False
+    )
     accepted_detailer_replan = (
         _accepted_detailer_replan_intent(context, source_job_id=job_id)
-        if normalized_agent == 'task_detailer'
-        and _task_detailer_readiness(reply) == 'planner_replan_required'
+        if strict_detailer_replan
         else None
     )
     if stale_activation is not None and accepted_detailer_replan is None:
