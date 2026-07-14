@@ -31,6 +31,7 @@ from cli.services.planner_feedback import parse_planner_feedback_reply, planner_
 from cli.services.plan_tasks import find_first_actionable_task
 from cli.services.loop_orchestration_bundle import load_task_orchestration_bundle
 from cli.services.role_output_import import _parse_task_detailer_reply, consume_explicit_role_output
+import cli.services.role_output_import as role_output_import_module
 from project.ids import compute_project_id
 from storage.paths import PathLayout
 
@@ -373,12 +374,32 @@ def test_valid_revised_planner_authority_reopens_fresh_orchestrator(tmp_path: Pa
         + '\n',
         encoding='utf-8',
     )
+    original_log_import = role_output_import_module._log_import
+    failed_once = {'value': False}
+    def fail_after_settlement(*args, **kwargs):
+        if not failed_once['value']:
+            failed_once['value'] = True
+            raise RuntimeError('injected import-log failure')
+        return original_log_import(*args, **kwargs)
+    monkeypatch.setattr(role_output_import_module, '_log_import', fail_after_settlement)
+    with pytest.raises(RuntimeError, match='injected import-log failure'):
+        consume_explicit_role_output(
+            context,
+            SimpleNamespace(role_job_id=planner_job_id, task_id='task-a'),
+            services=SimpleNamespace(plan_task=plan_task),
+        )
+    after_crash = plan_task(context, SimpleNamespace(action='task-show', task_id='task-a'))
+    assert after_crash['status'] == 'ready_for_orchestration'
+    assert after_crash['task']['task_revision'] == authority['task_revision']
+    assert after_crash['task']['artifacts']['orchestration_bundle']['authority_status'] == 'superseded'
+    assert find_first_actionable_task(context, task_id='task-a')['runner_action'] == 'activate_orchestrator'
+    monkeypatch.setattr(role_output_import_module, '_log_import', original_log_import)
     imported = consume_explicit_role_output(
         context,
         SimpleNamespace(role_job_id=planner_job_id, task_id='task-a'),
         services=SimpleNamespace(plan_task=plan_task),
     )
-    assert imported['action'] == 'imported_detailer_replan_planner_backfill'
+    assert imported['action'] == 'imported_detailer_replan_planner_backfill', imported
     assert imported['task_status'] == 'ready_for_orchestration'
     assert imported['backfill']['target_plan_revision'] != authority['expected_plan_revision']
     transaction_path = project_root / imported['backfill']['transaction_path']
@@ -407,6 +428,12 @@ def test_valid_revised_planner_authority_reopens_fresh_orchestrator(tmp_path: Pa
     )
     assert replay['idempotent'] is True
     assert replay['status'] == 'ready_for_orchestration'
+    consumed = consume_explicit_role_output(
+        context,
+        SimpleNamespace(role_job_id=planner_job_id, task_id='task-a'),
+        services=SimpleNamespace(plan_task=plan_task),
+    )
+    assert consumed['action'] == 'role_output_already_consumed'
 
 
 def test_task_detailer_replan_reply_settles_only_against_accepted_direct_intent(
