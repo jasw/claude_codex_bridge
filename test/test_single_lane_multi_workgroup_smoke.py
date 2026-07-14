@@ -224,6 +224,45 @@ def test_fake_orchestrator_candidate_normalizes_for_one_to_four_nodes(
     ]
 
 
+@pytest.mark.parametrize(
+    'bundle',
+    (
+        '```\n{"schema": "ccb.loop.orchestration_bundle_candidate.v1"}\n```',
+        '```text\n{"schema": "ccb.loop.orchestration_bundle_candidate.v1"}\n```',
+        '```ccb.loop.orchestration_bundle_candidate.v1\n{}\n```',
+        '```json\n{"schema": "ccb.loop.orchestration_bundle_candidate.v1"}\n```\n\norchestration_bundle:\n```json\n{"schema": "ccb.loop.orchestration_bundle_candidate.v1"}\n```',
+    ),
+)
+def test_orchestrator_v3_rejects_nonliteral_or_ambiguous_bundle_fence(bundle: str) -> None:
+    reply = f'''route: direct_execution
+orchestration_notes: bounded task.
+orchestration_bundle:
+{bundle}
+'''
+
+    parsed = _parse_orchestrator_reply(reply)
+
+    assert parsed == {
+        'status': 'blocked',
+        'reason': 'orchestrator_reply_bundle_requires_fenced_json',
+    }
+
+
+def test_orchestrator_v3_rejects_schema_outside_the_top_level_field() -> None:
+    reply = '''route: direct_execution
+orchestration_notes: bounded task.
+orchestration_bundle:
+```json
+{"schema": "ccb.loop.orchestration_bundle_candidate.v1", "nested": {"schema": "wrong"}}
+```
+'''
+
+    assert _parse_orchestrator_reply(reply) == {
+        'status': 'blocked',
+        'reason': 'orchestrator_reply_bundle_schema_not_top_level',
+    }
+
+
 def test_fake_scheduler_worker_writes_only_node_bound_allowed_path(tmp_path: Path) -> None:
     workspace = tmp_path / 'node-worktree'
     body = (

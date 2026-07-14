@@ -1,8 +1,11 @@
 # CCB Adapter Notes For Task Detailer
 
 Use reply-visible artifacts as the durable boundary. Prefer producing
-`task-detail-design.md`, `brief-update-summary.md`, and `detail-packet.md`
-sections for the supervisor/runner to import or review.
+`task-detail-design.md`, `brief-update-summary.md`, and one
+`detail-packet.manifest.json:` literal-`json` fence for the supervisor/runner
+to import or review. The manifest uses only `ccb.detail_packet_manifest.v1`;
+Markdown packets, old labels, non-`json` fences, and mixed outcome fields are
+not importable.
 
 The brief update must include `global impact: none|bounded|macro`, its compact
 rationale, and planner backfill evidence. The detail packet remains task-local.

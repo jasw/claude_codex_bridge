@@ -13,6 +13,7 @@ from cli.services.loop_runner import loop_runner_auto
 from cli.services.loop_orchestration_bundle import bundle_digest, task_input_digest
 from cli.services.multi_workgroup_scheduler import (
     MultiWorkgroupScheduler,
+    _round_decision,
     _verification_commands,
     resume_pending_multi_workgroup_scheduler,
 )
@@ -798,7 +799,7 @@ def test_scheduler_accepts_legacy_round_result_field_with_space(tmp_path: Path) 
     assert integration.payload['status'] == 'accepted'
 
 
-def test_scheduler_accepts_unique_noncanonical_late_round_result_with_source(
+def test_scheduler_rejects_noncanonical_late_round_result(
     tmp_path: Path,
 ) -> None:
     scheduler, harness, integration = _scheduler(tmp_path, 1)
@@ -821,10 +822,24 @@ def test_scheduler_accepts_unique_noncanonical_late_round_result_with_source(
 
     final = scheduler.run_once()
 
-    assert final['round_result'] == 'pass'
-    assert final['round_result_source'] == 'round_reviewer_reply_noncanonical'
-    assert final['controller_status'] == 'pass'
-    assert integration.payload['status'] == 'accepted'
+    assert final['round_result'] == 'replan_required'
+    assert final['controller_status'] == 'replan_required'
+    assert integration.payload['status'] == 'rolled_back'
+
+
+@pytest.mark.parametrize(
+    'reply',
+    (
+        'round_result: pass',
+        '- round result: pass',
+        '```\nround result: pass\n```',
+        'preamble\nround result: pass',
+        'round result: accepted',
+        'round result: pass\nround result: blocked',
+    ),
+)
+def test_round_decision_v3_rejects_noncanonical_or_conflicting_reply(reply: str) -> None:
+    assert _round_decision(reply)[0] is None
 
 
 def test_scheduler_rejects_conflicting_round_result_lines(tmp_path: Path) -> None:

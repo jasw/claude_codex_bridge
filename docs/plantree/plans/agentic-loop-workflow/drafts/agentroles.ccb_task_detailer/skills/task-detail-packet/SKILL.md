@@ -15,8 +15,9 @@ orchestrator dispatch.
    activation.
 2. Draft task-scoped detail design and source-evidence map.
 3. Produce detailed acceptance, verification, and worker handoff notes.
-4. Return three parser-stable sections: `task-detail-design.md`,
-   `brief-update-summary.md`, and `detail-packet.md`.
+4. Return `task-detail-design.md`, `brief-update-summary.md`, and exactly one
+   canonical `detail-packet.manifest.json:` section immediately followed by a
+   literal `json` fence. The packet is JSON, never Markdown.
 5. Classify the result as exactly `local_detail_ready`,
    `planner_replan_required`, `needs_clarification`, or `blocked`.
 6. In the brief update, classify `global impact: none|bounded|macro`, give a
@@ -24,6 +25,14 @@ orchestrator dispatch.
 7. For `planner_replan_required` only, author the versioned request and submit
    exactly one direct silent inline ask to resident `planner` through the
    managed capability. For every other result, submit no Planner ask.
+
+The manifest must contain exactly `schema`, `detail_result`, `readiness`, and
+`global_impact`. Set `schema` to `ccb.detail_packet_manifest.v1`. Legal tuples
+are `local_detail_ready/detail_ready/none`,
+`planner_replan_required/planner_replan_required/macro`,
+`needs_clarification/needs_clarification/none|bounded`, and
+`blocked/blocked/none|bounded|macro`. Do not use an old label, a schema-named
+fence, a second manifest, or a cross-outcome tuple.
 
 ## Boundaries
 

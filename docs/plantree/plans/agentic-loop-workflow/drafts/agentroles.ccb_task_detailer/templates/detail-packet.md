@@ -4,8 +4,6 @@
 
 task id: <task-id>
 detailer: <agent-name>
-detail result: local_detail_ready|planner_replan_required|needs_clarification|blocked
-detail readiness recommendation: detail_ready|planner_replan_required|needs_clarification|blocked
 
 ### Source Evidence
 
@@ -23,23 +21,19 @@ detail readiness recommendation: detail_ready|planner_replan_required|needs_clar
 
 # Brief Update Summary
 
-global impact: none|bounded|macro
 global impact rationale: <compact rationale>
 planner backfill evidence: <none or compact invariant/dependency/decision update>
 planner action recommendation: <none|record_bounded_summary|replan_before_execution>
 
-## detail-packet.md
-
-# Detail Packet
-
-task id: <task-id>
-declared refs: <task, contract, decision, and source refs>
-allowed paths: <project-relative paths>
-non-goals: <excluded work>
-dependency evidence: <refs or none>
-acceptance refs: <refs>
-verification refs: <refs>
-bounded worker handoff: <implementation packet for later controller dispatch>
+detail-packet.manifest.json:
+```json
+{
+  "schema": "ccb.detail_packet_manifest.v1",
+  "detail_result": "local_detail_ready",
+  "readiness": "detail_ready",
+  "global_impact": "none"
+}
+```
 
 This reply is evidence only. The task detailer never dispatches workers,
 writes import files, or mutates task authority. Its sole downstream action is

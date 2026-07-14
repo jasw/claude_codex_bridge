@@ -768,9 +768,11 @@ def test_p1_task_detailer_returns_global_impact_and_planner_backfill_evidence() 
     for heading in (
         '## task-detail-design.md',
         '## brief-update-summary.md',
-        '## detail-packet.md',
     ):
         assert heading in template
+    assert 'detail-packet.manifest.json:' in template
+    assert '```json' in template
+    assert '"schema": "ccb.detail_packet_manifest.v1"' in template
 
 
 def test_p2_task_detailer_has_only_restricted_direct_planner_replan_capability() -> None:

@@ -405,16 +405,21 @@ def test_task_detailer_replan_reply_settles_only_against_accepted_direct_intent(
                 'latest_decision': {
                     'terminal': True,
                     'status': 'completed',
-                    'reply': '''Detail readiness recommendation: planner_replan_required
-
-## task-detail-design.md
+                    'reply': '''## task-detail-design.md
 Source evidence proves the public interface must change.
 
 ## brief-update-summary.md
 Global impact: macro. Planner replan request submitted.
 
-## detail-packet.md
-Preserve the standard-library constraint while revising acceptance.
+detail-packet.manifest.json:
+```json
+{
+  "schema": "ccb.detail_packet_manifest.v1",
+  "detail_result": "planner_replan_required",
+  "readiness": "planner_replan_required",
+  "global_impact": "macro"
+}
+```
 ''',
                 },
             }
@@ -429,7 +434,7 @@ Preserve the standard-library constraint while revising acceptance.
         services=SimpleNamespace(plan_task=plan_task),
     )
 
-    assert imported['action'] == 'imported_task_detailer_replan_feedback'
+    assert imported['action'] == 'imported_task_detailer_replan_feedback', imported
     assert imported['task_status'] == 'replan_required'
     assert imported['next_owner'] == 'planner'
     assert imported['planner_job_id'] == planner.jobs[0].job_id
@@ -543,28 +548,35 @@ def test_detailer_replan_rejects_stale_revision_and_unrelated_source_job(tmp_pat
 
 
 @pytest.mark.parametrize(
-    ('result', 'expected_status'),
+    ('result', 'readiness', 'impact', 'expected_status'),
     (
-        ('local_detail_ready', 'ok'),
-        ('planner_replan_required', 'ok'),
-        ('needs_clarification', 'blocked'),
-        ('blocked', 'blocked'),
+        ('local_detail_ready', 'detail_ready', 'none', 'ok'),
+        ('planner_replan_required', 'planner_replan_required', 'macro', 'ok'),
+        ('needs_clarification', 'needs_clarification', 'bounded', 'blocked'),
+        ('blocked', 'blocked', 'none', 'blocked'),
     ),
 )
 def test_task_detailer_result_contract_distinguishes_all_four_results(
     result: str,
+    readiness: str,
+    impact: str,
     expected_status: str,
 ) -> None:
-    reply = f'''Detail readiness recommendation: {result}
-
-## task-detail-design.md
+    reply = f'''## task-detail-design.md
 Source-backed detail design.
 
 ## brief-update-summary.md
-Global impact: {'macro' if result == 'planner_replan_required' else 'none'}.
+Global impact: {impact}.
 
-## detail-packet.md
-Bounded detail packet.
+detail-packet.manifest.json:
+```json
+{{
+  "schema": "ccb.detail_packet_manifest.v1",
+  "detail_result": "{result}",
+  "readiness": "{readiness}",
+  "global_impact": "{impact}"
+}}
+```
 '''
 
     parsed = _parse_task_detailer_reply(reply)
@@ -573,4 +585,28 @@ Bounded detail packet.
     if expected_status == 'ok':
         assert parsed['result'] == result
     else:
-        assert parsed['readiness'] == result
+        assert parsed['readiness'] == readiness
+
+
+@pytest.mark.parametrize(
+    'manifest',
+    (
+        '```markdown\n# Detail Packet\n```',
+        '```ccb.detail_packet_manifest.v1\n{}\n```',
+        '```json\n{"schema": "wrong"}\n```',
+        '```json\n{"schema": "ccb.detail_packet_manifest.v1", "detail_result": "local_detail_ready", "readiness": "blocked", "global_impact": "none"}\n```',
+        '```json\n{"schema": "ccb.detail_packet_manifest.v1", "detail_result": "local_detail_ready", "readiness": "detail_ready", "global_impact": "none"}\n```\n\n## detail-packet.md\nMarkdown fallback.',
+    ),
+)
+def test_task_detailer_rejects_noncanonical_manifest(manifest: str) -> None:
+    reply = f'''## task-detail-design.md
+Design.
+
+## brief-update-summary.md
+Summary.
+
+detail-packet.manifest.json:
+{manifest}
+'''
+
+    assert _parse_task_detailer_reply(reply)['status'] == 'blocked'

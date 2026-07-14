@@ -1428,35 +1428,27 @@ def _review_decision(reply: str) -> str:
 
 
 def _round_decision(reply: str) -> tuple[str | None, str]:
-    first_nonempty_seen = False
-    valid: list[tuple[str, str]] = []
-    invalid_machine_line = False
-    for raw_line in reply.splitlines():
-        line = raw_line.strip().lower()
-        if not line:
-            continue
-        is_first = not first_nonempty_seen
-        first_nonempty_seen = True
-        if line.startswith('round_result:'):
-            value = line.split(':', 1)[1].strip()
-        elif line.startswith('round result:'):
-            value = line.split(':', 1)[1].strip()
-        else:
-            continue
-        if value in {'pass', 'partial', 'replan_required', 'blocked'}:
-            valid.append((value, 'round_reviewer_reply' if is_first else 'round_reviewer_reply_noncanonical'))
-        else:
-            invalid_machine_line = True
-    if not valid:
-        if invalid_machine_line:
-            return None, 'unknown_round_result'
-        return None, 'malformed_round_review' if first_nonempty_seen else 'missing_round_result'
-    values = {value for value, _source in valid}
-    if len(values) != 1:
-        return None, 'conflicting_round_result'
-    canonical_sources = {source for _value, source in valid}
-    source = 'round_reviewer_reply' if canonical_sources == {'round_reviewer_reply'} else 'round_reviewer_reply_noncanonical'
-    return valid[0][0], source
+    first_line_index: int | None = None
+    first_line = ''
+    lines = reply.splitlines()
+    for index, raw_line in enumerate(lines):
+        line = raw_line.strip()
+        if line:
+            first_line_index = index
+            first_line = line
+            break
+    if first_line_index is None:
+        return None, 'missing_round_result'
+    match = re.fullmatch(
+        r'round result: (pass|partial|replan_required|blocked)',
+        first_line,
+    )
+    if not match:
+        return None, 'malformed_round_review'
+    for raw_line in lines[first_line_index + 1:]:
+        if re.match(r'^\s*round[ _]result:', raw_line, flags=re.IGNORECASE):
+            return None, 'conflicting_round_result'
+    return match.group(1), 'round_reviewer_reply'
 
 
 def _active_workspaces(

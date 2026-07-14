@@ -43,6 +43,13 @@ _VALID_READINESS = frozenset({'ready', 'needs_clarification', 'blocked', 'not_re
 _VALID_STATUS_RECOMMENDATIONS = frozenset(
     {'blocked', 'detail_ready', 'needs_clarification', 'ready_for_orchestration', 'replan_required'}
 )
+_DETAIL_PACKET_MANIFEST_SCHEMA = 'ccb.detail_packet_manifest.v1'
+_DETAIL_PACKET_OUTCOMES = {
+    'local_detail_ready': ('detail_ready', frozenset({'none'})),
+    'planner_replan_required': ('planner_replan_required', frozenset({'macro'})),
+    'needs_clarification': ('needs_clarification', frozenset({'none', 'bounded'})),
+    'blocked': ('blocked', frozenset({'none', 'bounded', 'macro'})),
+}
 _TERMINAL_STATUS_CONSTRAINT_SCHEMA_VERSION = 1
 _TERMINAL_STATUS_CONSTRAINT_BASIS = 'verified_detail_ready_stop_contract'
 _SEGMENT_RE = re.compile(r'^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$')
@@ -2825,7 +2832,6 @@ def _parse_task_detailer_reply(
         'task-detail-design.md',
         'brief-update-summary.md',
         'detail-packet.manifest.json',
-        'detail-packet.md',
     )
     detail_design = _labeled_section(
         reply,
@@ -2837,34 +2843,22 @@ def _parse_task_detailer_reply(
         ('brief-update-summary.md', 'brief-update-summary'),
         terminator_names=detail_terminator_labels,
     )
-    detail_packet = _labeled_section(
-        reply,
-        ('detail-packet.manifest.json', 'detail-packet.md', 'detail-packet'),
-        terminator_names=detail_terminator_labels,
-    )
-    readiness = _task_detailer_readiness(reply)
-    controller_expected_stop = _task_detailer_controller_expected_stop(reply)
+    manifest = _strict_detail_packet_manifest(reply)
     missing = []
     if not detail_design:
         missing.append('task-detail-design.md section')
     if not detail_summary:
         missing.append('brief-update-summary.md section')
-    if not detail_packet:
+    if manifest is None:
         missing.append('detail-packet.manifest.json section')
     if missing:
         return {'status': 'blocked', 'reason': 'task_detailer_reply_missing_required_sections', 'missing_fields': missing}
-    result = 'local_detail_ready' if readiness in {'detail_ready', 'local_detail_ready'} else readiness
-    effective_readiness = 'detail_ready' if readiness == 'local_detail_ready' else readiness
-    contract_status = ''
-    if isinstance(detail_ready_stop_contract, dict):
-        contract_status = str(detail_ready_stop_contract.get('status') or '').strip().lower()
-    if (
-        effective_readiness != 'detail_ready'
-        and controller_expected_stop == 'detail_ready'
-        and contract_status == 'detail_ready'
-    ):
-        effective_readiness = 'detail_ready'
-    if effective_readiness == 'planner_replan_required':
+    if manifest is None:
+        return {'status': 'blocked', 'reason': 'task_detailer_reply_invalid_manifest'}
+    result = str(manifest['detail_result'])
+    readiness = str(manifest['readiness'])
+    detail_packet = json.dumps(manifest, ensure_ascii=False, indent=2) + '\n'
+    if result == 'planner_replan_required':
         return {
             'status': 'ok',
             'result': 'planner_replan_required',
@@ -2872,28 +2866,56 @@ def _parse_task_detailer_reply(
             'detail_design': detail_design,
             'detail_summary': detail_summary,
             'detail_packet': detail_packet,
-            'controller_expected_stop': controller_expected_stop or None,
         }
-    if effective_readiness != 'detail_ready':
+    if result != 'local_detail_ready':
         return {
             'status': 'blocked',
             'reason': 'task_detailer_reply_not_detail_ready',
             'readiness': readiness or 'missing',
-            'controller_expected_stop': controller_expected_stop or None,
             'detail_design': detail_design,
             'detail_summary': detail_summary,
             'detail_packet': detail_packet,
         }
     return {
         'status': 'ok',
-        'result': result or 'local_detail_ready',
+        'result': result,
         'detail_design': detail_design,
         'detail_summary': detail_summary,
         'detail_packet': detail_packet,
-        'readiness': effective_readiness,
-        'detail_readiness_recommendation': readiness or None,
-        'controller_expected_stop': controller_expected_stop or None,
+        'readiness': readiness,
+        'detail_readiness_recommendation': readiness,
     }
+
+
+def _strict_detail_packet_manifest(reply: str) -> dict[str, object] | None:
+    if re.search(r'(?mi)^\s*(?:#+\s*)?(?:artifact:\s*)?`?detail-packet(?:\.md)?`?\s*:?\s*$', reply):
+        return None
+    matches = list(re.finditer(
+        r'(?m)^detail-packet\.manifest\.json:\n```json\n(.*?)\n```\s*$',
+        reply,
+        flags=re.DOTALL,
+    ))
+    if len(matches) != 1:
+        return None
+    try:
+        manifest = json.loads(matches[0].group(1))
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(manifest, dict) or set(manifest) != {
+        'schema', 'detail_result', 'readiness', 'global_impact',
+    }:
+        return None
+    if manifest.get('schema') != _DETAIL_PACKET_MANIFEST_SCHEMA:
+        return None
+    result = manifest.get('detail_result')
+    readiness = manifest.get('readiness')
+    impact = manifest.get('global_impact')
+    if not all(isinstance(value, str) for value in (result, readiness, impact)):
+        return None
+    expected = _DETAIL_PACKET_OUTCOMES.get(result)
+    if expected is None or readiness != expected[0] or impact not in expected[1]:
+        return None
+    return manifest
 
 
 def _resolve_completion_reply_artifact(context, reply: str) -> dict[str, object]:
@@ -2947,9 +2969,8 @@ def _parse_orchestrator_reply(reply: str) -> dict[str, object]:
     if not re.search(r'(?mi)^\s*[-*]?\s*orchestration[_ ]notes\s*:', reply):
         return {'status': 'blocked', 'reason': 'orchestrator_reply_missing_orchestration_notes'}
     parsed: dict[str, object] = {'status': 'ok', 'route': route, 'orchestration_notes': reply.strip() + '\n'}
-    has_bundle_label = bool(re.search(r'(?mi)^\s*[-*]?\s*orchestration[_ ]bundle\s*:', reply))
-    bundle_text = _fenced_section(reply, ('orchestration_bundle', 'orchestration bundle'))
-    if has_bundle_label and not bundle_text:
+    bundle_text, bundle_error = _strict_orchestration_bundle_candidate(reply)
+    if bundle_error:
         return {'status': 'blocked', 'reason': 'orchestrator_reply_bundle_requires_fenced_json'}
     if bundle_text:
         try:
@@ -2969,8 +2990,42 @@ def _parse_orchestrator_reply(reply: str) -> dict[str, object]:
                 'schema': candidate.get('schema'),
                 'expected_schema': ORCHESTRATION_BUNDLE_CANDIDATE_SCHEMA,
             }
+        if (
+            reply.count(ORCHESTRATION_BUNDLE_CANDIDATE_SCHEMA) != 1
+            or not _schema_is_top_level_only(candidate)
+        ):
+            return {'status': 'blocked', 'reason': 'orchestrator_reply_bundle_schema_not_top_level'}
         parsed['orchestration_bundle_candidate'] = candidate
     return parsed
+
+
+def _strict_orchestration_bundle_candidate(reply: str) -> tuple[str, bool]:
+    label_matches = list(re.finditer(r'(?mi)^\s*(?:#+\s*)?orchestration[_ ]bundle\s*:', reply))
+    if not label_matches:
+        return '', False
+    matches = list(re.finditer(
+        r'(?m)^orchestration_bundle:\n```json\n(.*?)\n```\s*$',
+        reply,
+        flags=re.DOTALL,
+    ))
+    if len(label_matches) != 1 or len(matches) != 1:
+        return '', True
+    return matches[0].group(1), False
+
+
+def _schema_is_top_level_only(candidate: dict[str, object]) -> bool:
+    def has_nested_schema(value: object) -> bool:
+        if isinstance(value, dict):
+            return 'schema' in value or any(has_nested_schema(item) for item in value.values())
+        if isinstance(value, list):
+            return any(has_nested_schema(item) for item in value)
+        return False
+
+    return not any(
+        has_nested_schema(value)
+        for key, value in candidate.items()
+        if key != 'schema'
+    )
 
 
 def _fenced_section(text: str, names: tuple[str, ...]) -> str:
