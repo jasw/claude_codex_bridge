@@ -380,17 +380,23 @@ def test_tests_workflow_runs_workflow_closure_layout_cleanup_smoke() -> None:
     text = Path(".github/workflows/test.yml").read_text(encoding="utf-8")
 
     assert "Guard workflow closure layout cleanup smoke" in text
-    assert "scripts/workflow_closure_smoke.py" in text
-    assert "ci-workflow-closure" in text
+    assert "scripts/single_lane_multi_workgroup_smoke.py" in text
+    assert "--count 1" in text
+    assert "--shape parallel" in text
+    assert "--scenario pass" in text
     assert "matrix.os == 'ubuntu-latest' && matrix.python-version == '3.11'" in text
-    assert 'run["workflow_smoke_status"] == "ok"' in text
-    assert 'checks["mount_topology_ready"] is True' in text
-    assert 'checks["release_status_released"] is True' in text
-    assert 'checks["release_retained_zero"] is True' in text
-    assert 'checks["release_count_two"] is True' in text
-    assert 'checks["dynamic_agents_absent_from_ps"] is True' in text
-    assert 'release["loop_topology_status"] == "released"' in text
-    assert 'release["retained_count"] == 0' in text
+    assert 'payload["status"] == "pass"' in text
+    for key in (
+        "release_clean",
+        "raw_observed_no_live_agents",
+        "dynamic_residue_absent",
+        "child_worktree_residue_absent",
+        "external_cleanup_succeeded",
+        "process_residue_absent",
+        "socket_residue_absent",
+        "socket_filesystem_entries_absent",
+    ):
+        assert f'"{key}",' in text
 
 
 def _json(payload: dict[str, object]) -> str:

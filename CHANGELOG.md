@@ -43,9 +43,9 @@
 - **Fake Runtime Rework Chains Are Race-Free**: the full-flow smoke driver
   retries only the brief active-parent transition before reviewer recheck, so
   it cannot consume a valid rework chain before its continuation is ready.
-- **Workflow Cleanup Gates Use Public Evidence**: CI validates normalized
-  topology, release, and agent-residue checks instead of assuming every valid
-  release payload contains the internal `release.apply` diagnostic object.
+- **Workflow Cleanup Gates Use Current Public Evidence**: CI runs the
+  bundle-first G5 CLI smoke and validates its release, agent, worktree,
+  process, and socket cleanup checks instead of the retired one-shot path.
 
 ### Release Surface
 
