@@ -384,10 +384,13 @@ def test_tests_workflow_runs_workflow_closure_layout_cleanup_smoke() -> None:
     assert "ci-workflow-closure" in text
     assert "matrix.os == 'ubuntu-latest' && matrix.python-version == '3.11'" in text
     assert 'run["workflow_smoke_status"] == "ok"' in text
-    assert 'release["loop_capacity_status"] == "released"' in text
+    assert 'checks["mount_topology_ready"] is True' in text
+    assert 'checks["release_status_released"] is True' in text
+    assert 'checks["release_retained_zero"] is True' in text
+    assert 'checks["release_count_two"] is True' in text
+    assert 'checks["dynamic_agents_absent_from_ps"] is True' in text
+    assert 'release["loop_topology_status"] == "released"' in text
     assert 'release["retained_count"] == 0' in text
-    assert 'not apply["namespace_reflow_errors"]' in text
-    assert 'not apply["pane_identity_report"]["reflow_errors"]' in text
 
 
 def _json(payload: dict[str, object]) -> str:

@@ -40,6 +40,12 @@
 - **Real Integration Verification Is Cross-Version**: scheduler fixtures run a
   concrete worker-output unittest instead of treating an empty unittest suite
   as success, preserving the integration gate on Python 3.10 through 3.12.
+- **Fake Runtime Rework Chains Are Race-Free**: the full-flow smoke driver
+  retries only the brief active-parent transition before reviewer recheck, so
+  it cannot consume a valid rework chain before its continuation is ready.
+- **Workflow Cleanup Gates Use Public Evidence**: CI validates normalized
+  topology, release, and agent-residue checks instead of assuming every valid
+  release payload contains the internal `release.apply` diagnostic object.
 
 ### Release Surface
 

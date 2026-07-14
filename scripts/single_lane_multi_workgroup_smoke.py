@@ -1008,17 +1008,62 @@ def _submit_pending_worker_reviews(
             )
         )
     submitted = []
-    for result in _run_logged_concurrent(
+    for result in _run_chain_commands_with_parent_retry(
         command_log,
         commands,
         cwd=test_root,
         env=env,
         logs_dir=logs_dir,
         timeout_s=timeout_s,
-        allow_failure=True,
     ):
         if result['returncode'] == 0:
             submitted.append(_json_object(result['stdout']))
+    return submitted
+
+
+def _run_chain_commands_with_parent_retry(
+    command_log: list[dict[str, Any]],
+    commands: list[tuple[str, list[str]]],
+    *,
+    cwd: Path,
+    env: dict[str, str],
+    logs_dir: Path,
+    timeout_s: int,
+    retry_attempts: int = 31,
+    retry_delay_s: float = 0.1,
+) -> list[dict[str, Any]]:
+    pending = list(commands)
+    submitted: list[dict[str, Any]] = []
+    for retry_index in range(retry_attempts):
+        if not pending:
+            break
+        if retry_index:
+            time.sleep(retry_delay_s)
+        attempted = [
+            (
+                label if retry_index == 0 else f'{label}_parent_retry_{retry_index}',
+                argv,
+            )
+            for label, argv in pending
+        ]
+        records = _run_logged_concurrent(
+            command_log,
+            attempted,
+            cwd=cwd,
+            env=env,
+            logs_dir=logs_dir,
+            timeout_s=timeout_s,
+            allow_failure=True,
+        )
+        retry_pending: list[tuple[str, list[str]]] = []
+        for original, record in zip(pending, records):
+            if record['returncode'] == 0:
+                submitted.append(record)
+                continue
+            error = f'{record.get("stderr") or ""}\n{record.get("stdout") or ""}'
+            if 'ask --chain requires an active parent job for the sender' in error:
+                retry_pending.append(original)
+        pending = retry_pending
     return submitted
 
 

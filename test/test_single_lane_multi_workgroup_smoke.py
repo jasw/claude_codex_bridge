@@ -796,6 +796,74 @@ def test_logged_concurrent_commands_launch_in_same_observation_window(tmp_path: 
     assert 'second released first' in (tmp_path / 'second.stdout').read_text(encoding='utf-8')
 
 
+def test_chain_submission_retries_only_while_parent_continuation_is_pending(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _load_script()
+    outcomes = [
+        (1, '', 'error: ask --chain requires an active parent job for the sender'),
+        (1, '', 'error: ask --chain requires an active parent job for the sender'),
+        (0, '{"job_id":"job-recheck"}', ''),
+    ]
+
+    def run_concurrent(command_log, commands, **_kwargs):
+        records = []
+        for label, argv in commands:
+            returncode, stdout, stderr = outcomes.pop(0)
+            record = {
+                'label': label,
+                'argv': argv,
+                'returncode': returncode,
+                'stdout': stdout,
+                'stderr': stderr,
+            }
+            command_log.append(record)
+            records.append(record)
+        return records
+
+    monkeypatch.setattr(module, '_run_logged_concurrent', run_concurrent)
+    command_log: list[dict[str, object]] = []
+
+    submitted = module._run_chain_commands_with_parent_retry(
+        command_log,
+        [('worker_chain_node-001_2_6', ['ccb_test', 'ask', '--chain'])],
+        cwd=tmp_path,
+        env={},
+        logs_dir=tmp_path,
+        timeout_s=5,
+        retry_attempts=3,
+        retry_delay_s=0,
+    )
+
+    assert [item['label'] for item in command_log] == [
+        'worker_chain_node-001_2_6',
+        'worker_chain_node-001_2_6_parent_retry_1',
+        'worker_chain_node-001_2_6_parent_retry_2',
+    ]
+    assert [item['label'] for item in submitted] == [
+        'worker_chain_node-001_2_6_parent_retry_2'
+    ]
+    assert outcomes == []
+
+    outcomes.append((1, '', 'error: permission denied'))
+    command_log = []
+    submitted = module._run_chain_commands_with_parent_retry(
+        command_log,
+        [('worker_chain_node-001_2_7', ['ccb_test', 'ask', '--chain'])],
+        cwd=tmp_path,
+        env={},
+        logs_dir=tmp_path,
+        timeout_s=5,
+        retry_attempts=3,
+        retry_delay_s=0,
+    )
+
+    assert [item['label'] for item in command_log] == ['worker_chain_node-001_2_7']
+    assert submitted == []
+    assert outcomes == []
+
+
 @pytest.mark.ccb_lifecycle_smoke
 @REQUIRES_AGENT_ROLES_RUNTIME
 @pytest.mark.parametrize(

@@ -245,13 +245,16 @@ jobs:
           run = payload["run"]
           summary = run["summary"]
           release = summary["release"]
-          apply = release["apply"]
+          checks = summary["checks"]
           assert run["workflow_smoke_status"] == "ok"
           assert summary["ok"] is True
-          assert release["loop_capacity_status"] == "released"
+          assert checks["mount_topology_ready"] is True
+          assert checks["release_status_released"] is True
+          assert checks["release_retained_zero"] is True
+          assert checks["release_count_two"] is True
+          assert checks["dynamic_agents_absent_from_ps"] is True
+          assert release["loop_topology_status"] == "released"
           assert release["retained_count"] == 0
-          assert not apply["namespace_reflow_errors"]
-          assert not apply["pane_identity_report"]["reflow_errors"]
           print(
               json.dumps(
                   {
@@ -259,7 +262,7 @@ jobs:
                       "loop_id": summary["loop_id"],
                       "final_status": summary["final_status"],
                       "released_count": release["released_count"],
-                      "reflowed_windows": apply["namespace_reflowed_windows"],
+                      "dynamic_agents_absent": checks["dynamic_agents_absent_from_ps"],
                   },
                   sort_keys=True,
               )
