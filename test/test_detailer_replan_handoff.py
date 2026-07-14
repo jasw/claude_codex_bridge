@@ -31,7 +31,7 @@ from cli.services.planner_feedback import parse_planner_feedback_reply, planner_
 from cli.services.detailer_replan_backfill import apply_detailer_replan_backfill
 from cli.services.plan_tasks import find_first_actionable_task
 from cli.services.loop_orchestration_bundle import load_task_orchestration_bundle
-from cli.services.role_output_import import _parse_task_detailer_reply, consume_explicit_role_output
+from cli.services.role_output_import import _blocked_for_detailer_replan_claim, _parse_task_detailer_reply, consume_explicit_role_output
 import cli.services.role_output_import as role_output_import_module
 from project.ids import compute_project_id
 from storage.paths import PathLayout
@@ -616,7 +616,7 @@ def test_detailer_replan_runner_start_retry_reuses_persisted_planner_job(tmp_pat
 
 @pytest.mark.parametrize(
     'mutation',
-    ('missing_activation', 'tampered_wrapper', 'raw_whitespace', 'tampered_activation', 'tampered_intent', 'tampered_feedback', 'duplicate_intent', 'duplicate_job_record'),
+    ('missing_activation', 'tampered_wrapper', 'raw_whitespace', 'tampered_activation', 'tampered_intent', 'tampered_feedback', 'duplicate_intent', 'duplicate_job_record', 'correlated_plan_revision', 'correlated_closure', 'correlated_evidence'),
 )
 def test_detailer_replan_durable_authority_mutations_block_before_import(
     tmp_path: Path, monkeypatch, mutation: str,
@@ -657,6 +657,20 @@ def test_detailer_replan_durable_authority_mutations_block_before_import(
     elif mutation == 'duplicate_intent':
         duplicate = json.loads(intent_path.read_text(encoding='utf-8'))
         (intent_path.parent / 'duplicate.json').write_text(json.dumps(duplicate), encoding='utf-8')
+    elif mutation.startswith('correlated_'):
+        activation = json.loads(activation_path.read_text(encoding='utf-8'))
+        jobs = [json.loads(line) for line in jobs_path.read_text(encoding='utf-8').splitlines()]
+        wrapper = json.loads(jobs[0]['request']['body'])
+        key, value = {
+            'correlated_plan_revision': ('expected_plan_revision', 'sha256:' + '0' * 64),
+            'correlated_closure': ('closure_evidence_digest', 'sha256:' + '1' * 64),
+            'correlated_evidence': ('evidence_refs', ['tampered-evidence']),
+        }[mutation]
+        activation['planner_authority'][key] = value
+        wrapper['authority'][key] = value
+        activation_path.write_text(json.dumps(activation), encoding='utf-8')
+        jobs[0]['request']['body'] = json.dumps(wrapper, sort_keys=True, separators=(',', ':'))
+        jobs_path.write_text('\n'.join(json.dumps(record) for record in jobs) + '\n', encoding='utf-8')
     else:
         jobs_path.write_text(jobs_path.read_text(encoding='utf-8') * 2, encoding='utf-8')
     snapshot_path = project_root / '.ccb' / 'ccbd' / 'snapshots' / f'{job_id}.json'
@@ -670,6 +684,16 @@ def test_detailer_replan_durable_authority_mutations_block_before_import(
     after = plan_task(_context(project_root), SimpleNamespace(action='task-show', task_id='task-a'))['task']
     assert after == before
     assert (import_log.read_text(encoding='utf-8') if import_log.exists() else '') == log_before
+
+
+def test_ordinary_blocked_job_keeps_import_audit_record(tmp_path: Path, monkeypatch) -> None:
+    project_root, _dispatcher, _source_job_id, _runner_calls = _setup(tmp_path, monkeypatch)
+    result = _blocked_for_detailer_replan_claim(
+        _context(project_root), deps=SimpleNamespace(plan_task=plan_task), job_id='ordinary-job',
+        agent_name='planner', reason='terminal_job_not_completed', evidence={'terminal_status': 'failed'},
+    )
+    assert result['action'] == 'role_output_import_blocked'
+    assert 'role_output_import' in result
 
 
 def test_detailer_replan_post_submit_append_crash_recovers_persisted_job(tmp_path: Path, monkeypatch) -> None:

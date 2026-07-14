@@ -165,8 +165,9 @@ def _consume_job(context, command, deps, *, job_id: str, activation: dict[str, o
                 status = str(decision.get('status') or '').strip().lower()
     reply = str(decision.get('reply') or '')
     if status != 'completed':
-        return _detailer_replan_blocked_payload(
+        return _blocked_for_detailer_replan_claim(
             context,
+            deps=deps,
             job_id=job_id,
             agent_name=agent_name,
             reason='terminal_job_not_completed',
@@ -174,8 +175,9 @@ def _consume_job(context, command, deps, *, job_id: str, activation: dict[str, o
         )
     resolved_reply = _resolve_completion_reply_artifact(context, reply)
     if resolved_reply.get('status') == 'blocked':
-        return _detailer_replan_blocked_payload(
+        return _blocked_for_detailer_replan_claim(
             context,
+            deps=deps,
             job_id=job_id,
             agent_name=agent_name,
             reason=str(resolved_reply.get('reason') or 'completion_reply_artifact_unavailable'),
@@ -3990,6 +3992,14 @@ def _detailer_replan_wrapper(context, job_id: str) -> dict[str, object] | None:
     return wrapper
 
 
+def _blocked_for_detailer_replan_claim(context, *, deps, job_id: str, agent_name: str | None, reason: str, evidence: dict[str, object]) -> dict[str, object]:
+    """Preserve ordinary import auditing unless durable controller state claims replan."""
+    resolved = _resolve_detailer_replan_authority(context, deps, job_id=job_id)
+    if resolved['claimed']:
+        return _detailer_replan_blocked_payload(context, job_id=job_id, agent_name=agent_name, reason=reason, evidence=evidence)
+    return _blocked_payload(context, job_id=job_id, agent_name=agent_name, reason=reason, evidence=evidence)
+
+
 def _resolve_detailer_replan_authority(context, deps, *, job_id: str) -> dict[str, object]:
     """Resolve the controller-owned Detailer→Planner authority fail-closed.
 
@@ -4006,6 +4016,12 @@ def _resolve_detailer_replan_authority(context, deps, *, job_id: str) -> dict[st
     # whenever another durable record binds this job, which prevents fallback.
     for record in planner_records:
         request = record.get('request') if isinstance(record.get('request'), dict) else {}
+        # Script-owned envelope metadata survives a body deletion/corruption.
+        claimed = claimed or (
+            request.get('from_actor') == 'task_detailer'
+            and bool(re.fullmatch(r'detailer-replan-[0-9a-f]{32}', str(request.get('task_id') or '')))
+            and request.get('to_agent') == 'planner'
+        )
         body = request.get('body')
         if isinstance(body, str):
             try:
@@ -4033,6 +4049,7 @@ def _resolve_detailer_replan_authority(context, deps, *, job_id: str) -> dict[st
     if activation_error:
         return _detailer_replan_resolution_error('activation_invalid')
     error = _detailer_replan_cross_binding_error(
+        context=context,
         planner_record=planner_records[0], wrapper=wrapper, activation=activation,
         intent=intent, feedback=feedback, job_id=job_id,
     )
@@ -4088,7 +4105,7 @@ def _detailer_replan_feedbacks_for_job(context, deps, job_id: str) -> list[dict[
     return matches
 
 
-def _detailer_replan_cross_binding_error(*, planner_record, wrapper, activation, intent, feedback, job_id: str) -> str | None:
+def _detailer_replan_cross_binding_error(*, context, planner_record, wrapper, activation, intent, feedback, job_id: str) -> str | None:
     request = planner_record.get('request') if isinstance(planner_record.get('request'), dict) else {}
     source = activation.get('source_replan_request')
     authority = activation.get('planner_authority')
@@ -4103,6 +4120,9 @@ def _detailer_replan_cross_binding_error(*, planner_record, wrapper, activation,
         parsed_raw = json.loads(raw)
     except json.JSONDecodeError:
         return 'raw_request_json_invalid'
+    raw_error = _detailer_replan_raw_request_error(parsed_raw)
+    if raw_error:
+        return raw_error
     if not isinstance(parsed_raw, dict) or parsed_raw != wrapper.get('source_request') or raw != wrapper.get('source_request_body'):
         return 'raw_request_mismatch'
     if source.get('source_request_body_sha256') != wrapper.get('source_request_body_sha256') or intent_request.get('body') != raw:
@@ -4130,7 +4150,61 @@ def _detailer_replan_cross_binding_error(*, planner_record, wrapper, activation,
         return 'accepted_revision_mismatch'
     if task_feedback.get('planner_job_id') != job_id or intent.get('planner_job_id') != job_id:
         return 'planner_job_binding_mismatch'
+    settled = feedback.get('planner_replan_backfill') if isinstance(feedback.get('planner_replan_backfill'), dict) else {}
+    active_state = feedback.get('status') == 'replan_required' and feedback.get('owner') == 'planner' and feedback.get('next_owner') == 'planner'
+    replay_state = feedback.get('status') == 'ready_for_orchestration' and settled.get('planner_job_id') == job_id
+    if not active_state and not replay_state:
+        return 'task_feedback_state_invalid'
+    if feedback.get('plan_slug') != activation.get('plan_slug'):
+        return 'task_plan_slug_mismatch'
+    artifacts = feedback.get('artifacts') if isinstance(feedback.get('artifacts'), dict) else {}
+    if any(not isinstance(artifacts.get(kind), dict) or artifacts[kind].get('authority_status') != 'superseded' for kind in task_feedback.get('superseded_artifacts', ())):
+        return 'superseded_authority_invalid'
+    detail = parsed_raw['detail']
+    evidence_refs = list(dict.fromkeys([*detail['artifact_refs'], *detail['clarification_refs']]))
+    expected_authority = {
+        'task_id': feedback['task_id'], 'task_revision': feedback['task_revision'], 'plan_slug': feedback['plan_slug'],
+        'expected_plan_revision': plan_revision_authority(context, feedback['plan_slug'])['digest'],
+        'closure_evidence_digest': _detailer_replan_canonical_digest({
+            'request_identity': parsed_raw['request_identity'], 'detail_digest': parsed_raw['detail_digest'],
+            'macro_impact_digest': parsed_raw['macro_impact_digest'], 'evidence_refs': tuple(evidence_refs),
+        }),
+        'evidence_refs': evidence_refs, 'request_identity': parsed_raw['request_identity'],
+        'detail_digest': parsed_raw['detail_digest'], 'macro_impact_digest': parsed_raw['macro_impact_digest'],
+    }
+    if active_state and authority != expected_authority:
+        return 'independent_authority_mismatch'
     return None
+
+
+def _detailer_replan_raw_request_error(payload: object) -> str | None:
+    fields = {
+        'schema', 'request_identity', 'task_id', 'task_revision', 'source_detailer_job_id', 'source_role',
+        'target_role', 'silence', 'detail', 'detail_digest', 'macro_impact', 'macro_impact_digest',
+    }
+    if not isinstance(payload, dict) or set(payload) != fields or payload.get('schema') != 'ccb.detailer.replan_request.v1':
+        return 'raw_request_schema_invalid'
+    detail, macro = payload.get('detail'), payload.get('macro_impact')
+    detail_fields = {'summary', 'artifact_refs', 'clarification_refs'}
+    macro_fields = {'categories', 'summary', 'preserved_facts', 'proposed_changes', 'acceptance_impacts', 'dependency_impacts', 'roadmap_impacts'}
+    if not isinstance(detail, dict) or set(detail) != detail_fields or not isinstance(macro, dict) or set(macro) != macro_fields:
+        return 'raw_request_nested_schema_invalid'
+    if payload.get('source_role') != 'task_detailer' or payload.get('target_role') != 'planner' or payload.get('silence') is not True:
+        return 'raw_request_route_invalid'
+    if isinstance(payload.get('task_revision'), bool) or not isinstance(payload.get('task_revision'), int) or payload['task_revision'] <= 0:
+        return 'raw_request_revision_invalid'
+    if not all(isinstance(value, str) and re.fullmatch(r'sha256:[0-9a-f]{64}', value) for value in (payload.get('request_identity'), payload.get('detail_digest'), payload.get('macro_impact_digest'))):
+        return 'raw_request_digest_format_invalid'
+    if payload['detail_digest'] != _detailer_replan_canonical_digest(detail) or payload['macro_impact_digest'] != _detailer_replan_canonical_digest(macro):
+        return 'raw_request_digest_mismatch'
+    if payload['request_identity'] != _detailer_replan_canonical_digest({'task_id': payload['task_id'], 'task_revision': payload['task_revision'], 'detail_digest': payload['detail_digest']}):
+        return 'raw_request_identity_mismatch'
+    return None
+
+
+def _detailer_replan_canonical_digest(value: object) -> str:
+    encoded = json.dumps(value, ensure_ascii=True, sort_keys=True, separators=(',', ':')).encode('utf-8')
+    return 'sha256:' + hashlib.sha256(encoded).hexdigest()
 
 
 def _detailer_replan_activation_error(activation: dict[str, object] | None, *, job_id: str) -> str | None:
