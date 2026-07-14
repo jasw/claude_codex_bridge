@@ -294,10 +294,16 @@ def _task_artifact(context, command) -> dict[str, object]:
         text = _read_utf8_artifact(source_path)
         text_sha = hashlib.sha256(text.encode('utf-8')).hexdigest()
         existing = _artifact_record(record, artifact_kind)
+        refresh_role_output_detail = (
+            _is_role_output_detail_import(command, artifact_kind=artifact_kind)
+            and existing is not None
+            and int(existing.get('task_revision') or 0) != task_revision(record)
+        )
         if (
             artifact_kind in _SEMANTIC_TASK_ARTIFACTS
             and existing is not None
             and str(existing.get('sha256') or '') == text_sha
+            and not refresh_role_output_detail
         ):
             if route and str(existing.get('orchestrator_route') or '') != route:
                 raise ValueError('semantic artifact metadata conflicts with byte-identical import')

@@ -1998,9 +1998,10 @@ Design:
 
 The missing task detail is now resolved.
 
-**detail-packet.md**
-
-Readiness recommendation: `detail_ready`
+detail-packet.manifest.json:
+```json
+{"schema":"ccb.detail_packet_manifest.v1","detail_result":"local_detail_ready","readiness":"detail_ready","global_impact":"none"}
+```
 
 Recommended route: `direct_execution`
 """,
@@ -7652,13 +7653,10 @@ None.
 
 The task-local detail is sufficient for the needs-detail route validation.
 
-## detail-packet.md
-
-# Detail Packet Manifest
-
-task_id: `phase6b-l3-needs-detail`
-readiness_recommendation: `detail_ready`
-macro_adjustment_request: none
+detail-packet.manifest.json:
+```json
+{"schema":"ccb.detail_packet_manifest.v1","detail_result":"local_detail_ready","readiness":"detail_ready","global_impact":"none"}
+```
 """,
     )
 
@@ -7725,12 +7723,9 @@ The missing detail has been resolved without authorizing direct implementation.
 The task is now detailed enough for planner follow-up.
 ```
 
-## Artifact: `detail-packet.md`
-
-```markdown
-# Detail Packet
-
-detail_readiness_recommendation: `detail_ready`
+detail-packet.manifest.json:
+```json
+{"schema":"ccb.detail_packet_manifest.v1","detail_result":"local_detail_ready","readiness":"detail_ready","global_impact":"none"}
 ```
 """,
     )
@@ -7807,10 +7802,9 @@ The missing task detail is resolved.
 The task is locally detail-ready.
 ```
 
-## Artifact: `detail-packet.md`
-```markdown
-# Detail Packet
-detail_readiness_recommendation: detail_ready
+detail-packet.manifest.json:
+```json
+{"schema":"ccb.detail_packet_manifest.v1","detail_result":"local_detail_ready","readiness":"detail_ready","global_impact":"none"}
 ```
 """,
     )
@@ -7909,10 +7903,9 @@ Resolved.
 Resolved.
 ```
 
-## Artifact: `detail-packet.md`
-```markdown
-# Detail Packet
-detail_readiness_recommendation: detail_ready
+detail-packet.manifest.json:
+```json
+{"schema":"ccb.detail_packet_manifest.v1","detail_result":"local_detail_ready","readiness":"detail_ready","global_impact":"none"}
 ```
 """,
     )
@@ -8177,10 +8170,9 @@ Detail readiness recommendation: `detail_ready`
 # Detail Summary V2
 ```
 
-## Artifact: `detail-packet.md`
-```markdown
-# Detail Packet V2
-detail_readiness_recommendation: detail_ready
+detail-packet.manifest.json:
+```json
+{"schema":"ccb.detail_packet_manifest.v1","detail_result":"local_detail_ready","readiness":"detail_ready","global_impact":"none"}
 ```
 """,
     )
@@ -8790,12 +8782,9 @@ External API, auth, data mapping, and sync policy are not specified.
 Clarification is still required before implementation.
 ```
 
-## Artifact: `detail-packet.md`
-
-```markdown
-# Detail Packet
-
-detail status: needs_clarification
+detail-packet.manifest.json:
+```json
+{"schema":"ccb.detail_packet_manifest.v1","detail_result":"needs_clarification","readiness":"needs_clarification","global_impact":"bounded"}
 ```
 """,
     )
@@ -8863,11 +8852,10 @@ Create only `lab_docs/l3_provider_readiness.md`.
 
 L3 is detail-ready. No macro adjustment is required.
 
-## detail-packet.md
-
-detail_readiness_recommendation: `detail_ready`
-macro_adjustment_request: none
-authorized_follow_on_route: `direct_execution`
+detail-packet.manifest.json:
+```json
+{"schema":"ccb.detail_packet_manifest.v1","detail_result":"local_detail_ready","readiness":"detail_ready","global_impact":"none"}
+```
 """,
     )
 
@@ -8953,16 +8941,9 @@ Do not authorize implementation for this task. Preserve the route as `needs_deta
 This remains a needs-detail validation case with a controller-level detail_ready stop.
 ```
 
-**detail-packet.md**
-```markdown
-# Detail Packet Manifest
-
-task_id: phase6b-l3-needs-detail
-route: needs_detail
-detail_readiness_recommendation: needs_clarification
-controller_expected_stop: detail_ready
-implementation_authorized: false
-allowed_paths: []
+detail-packet.manifest.json:
+```json
+{"schema":"ccb.detail_packet_manifest.v1","detail_result":"local_detail_ready","readiness":"detail_ready","global_impact":"none"}
 ```
 """,
     )
@@ -9021,11 +9002,10 @@ controller_expected_stop: detail_ready
 
 Summary exists.
 
-## detail-packet.md
-
-detail_readiness_recommendation: needs_clarification
-controller_expected_stop: detail_ready
-macro_adjustment_request: none
+detail-packet.manifest.json:
+```json
+{"schema":"ccb.detail_packet_manifest.v1","detail_result":"needs_clarification","readiness":"needs_clarification","global_impact":"bounded"}
+```
 """,
     )
 
@@ -9094,9 +9074,10 @@ The task cannot be refined into implementation until the approved external API c
 
 The task remains blocked on missing external integration details.
 
-**detail-packet.md**
-
-detail status: blocked
+detail-packet.manifest.json:
+```json
+{"schema":"ccb.detail_packet_manifest.v1","detail_result":"blocked","readiness":"blocked","global_impact":"none"}
+```
 
 ## Worker Handoff
 
@@ -9170,9 +9151,10 @@ Original detail design.
 
 Original summary.
 
-**detail-packet.md**
-
-Readiness recommendation: `detail_ready`
+detail-packet.manifest.json:
+```json
+{"schema":"ccb.detail_packet_manifest.v1","detail_result":"local_detail_ready","readiness":"detail_ready","global_impact":"none"}
+```
 """,
     )
     second = loop_runner_once(
