@@ -27,6 +27,7 @@ from ccbd.services.dispatcher_runtime.detailer_replan_handoff import (
 import ccbd.services.dispatcher_runtime.detailer_replan_handoff as replan_handoff_module
 from ccbd.services.registry import AgentRegistry
 from cli.services.plan_tasks import plan_task
+from cli.services.planner_feedback import parse_planner_feedback_reply, planner_feedback_digest
 from cli.services.plan_tasks import find_first_actionable_task
 from cli.services.loop_orchestration_bundle import load_task_orchestration_bundle
 from cli.services.role_output_import import _parse_task_detailer_reply, consume_explicit_role_output
@@ -379,12 +380,33 @@ def test_valid_revised_planner_authority_reopens_fresh_orchestrator(tmp_path: Pa
     )
     assert imported['action'] == 'imported_detailer_replan_planner_backfill'
     assert imported['task_status'] == 'ready_for_orchestration'
+    assert imported['backfill']['target_plan_revision'] != authority['expected_plan_revision']
+    transaction_path = project_root / imported['backfill']['transaction_path']
+    transaction = json.loads(transaction_path.read_text(encoding='utf-8'))
+    assert transaction['preimage_plan_revision'] == authority['expected_plan_revision']
+    assert transaction['target_plan_revision'] == imported['backfill']['target_plan_revision']
+    assert len(transaction['targets']) == 3
+    for target in transaction['targets']:
+        assert (project_root / target['path']).read_text(encoding='utf-8') == target['target_text']
     ready = plan_task(context, SimpleNamespace(action='task-show', task_id='task-a'))
     assert ready['task']['task_revision'] == authority['task_revision']
     assert ready['status'] == 'ready_for_orchestration'
     actionable = find_first_actionable_task(context, task_id='task-a')
     assert actionable is not None
     assert actionable['runner_action'] == 'activate_orchestrator'
+    replay = plan_task(
+        context,
+        SimpleNamespace(
+            action='task-complete-detailer-replan', task_id='task-a',
+            expected_task_revision=authority['task_revision'], planner_job_id=planner_job_id,
+            planner_feedback_digest=planner_feedback_digest(
+                parse_planner_feedback_reply('**planner-backfill.json**\n```json\n' + json.dumps(proposal) + '\n```\n')
+            ),
+            backfill_path=imported['backfill']['backfill_path'],
+        ),
+    )
+    assert replay['idempotent'] is True
+    assert replay['status'] == 'ready_for_orchestration'
 
 
 def test_task_detailer_replan_reply_settles_only_against_accepted_direct_intent(

@@ -663,8 +663,8 @@ def _task_complete_detailer_replan(context, command) -> dict[str, object]:
         task = _require_task(context, command.task_id)
         record = _materialize_task_revision(task['record'])
         expected = getattr(command, 'expected_task_revision', None)
-        if expected != task_revision(record) or record.get('status') != 'replan_required':
-            raise ValueError('detailer replan completion revision or status conflict')
+        if expected != task_revision(record):
+            raise ValueError('detailer replan completion revision conflict')
         feedback = record.get('replan_feedback') if isinstance(record.get('replan_feedback'), dict) else {}
         job_id = _normalize_job_id(getattr(command, 'planner_job_id', None))
         if feedback.get('planner_job_id') != job_id:
@@ -677,6 +677,14 @@ def _task_complete_detailer_replan(context, command) -> dict[str, object]:
         expected_record = {'planner_job_id': job_id, 'planner_feedback_digest': digest, 'backfill_path': backfill_path}
         if existing is not None and existing != expected_record:
             raise ValueError('detailer replan completion authority conflict')
+        if existing is not None:
+            if record.get('status') != 'ready_for_orchestration' or record.get('current_loop') is not None:
+                raise ValueError('detailer replan completion replay state conflict')
+            payload = _payload(context, action='task-complete-detailer-replan', record=record)
+            payload['idempotent'] = True
+            return payload
+        if record.get('status') != 'replan_required':
+            raise ValueError('detailer replan completion status conflict')
         record['planner_replan_backfill'] = expected_record
         record['status'] = 'ready_for_orchestration'
         record['owner'] = 'orchestrator'
@@ -687,7 +695,7 @@ def _task_complete_detailer_replan(context, command) -> dict[str, object]:
         _replace_record(task['tasks_root'], task['index'], record)
         _write_task_readme(context, record)
         payload = _payload(context, action='task-complete-detailer-replan', record=record)
-        payload['idempotent'] = existing is not None
+        payload['idempotent'] = False
         return payload
 
 
