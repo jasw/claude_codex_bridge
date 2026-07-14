@@ -809,7 +809,7 @@ def test_message_with_reply_guidance_uses_silent_hint_for_silenced_asks() -> Non
 
 
 def test_ask_guidance_source_has_no_literal_chinese_characters() -> None:
-    source = Path('lib/cli/services/ask_runtime/submission.py').read_text(encoding='utf-8')
+    source = (Path(__file__).resolve().parents[1] / 'lib' / 'cli' / 'services' / 'ask_runtime' / 'submission.py').read_text(encoding='utf-8')
     assert re.search(r'[\u4e00-\u9fff]', source) is None
 
 
