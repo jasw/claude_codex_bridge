@@ -28,6 +28,7 @@ import ccbd.services.dispatcher_runtime.detailer_replan_handoff as replan_handof
 from ccbd.services.registry import AgentRegistry
 from cli.services.plan_tasks import plan_task
 from cli.services.planner_feedback import parse_planner_feedback_reply, planner_feedback_digest
+from cli.services.detailer_replan_backfill import apply_detailer_replan_backfill
 from cli.services.plan_tasks import find_first_actionable_task
 from cli.services.loop_orchestration_bundle import load_task_orchestration_bundle
 from cli.services.role_output_import import _parse_task_detailer_reply, consume_explicit_role_output
@@ -428,6 +429,18 @@ def test_valid_revised_planner_authority_reopens_fresh_orchestrator(tmp_path: Pa
     )
     assert replay['idempotent'] is True
     assert replay['status'] == 'ready_for_orchestration'
+    backfill_path = project_root / imported['backfill']['backfill_path']
+    tampered = json.loads(backfill_path.read_text(encoding='utf-8'))
+    tampered['proposal']['brief_summary'] = 'tampered provider authority'
+    tampered['unexpected'] = True
+    backfill_path.write_text(json.dumps(tampered), encoding='utf-8')
+    with pytest.raises(ValueError, match='conflicts with persisted authority'):
+        apply_detailer_replan_backfill(
+            context,
+            parse_planner_feedback_reply('**planner-backfill.json**\n```json\n' + json.dumps(proposal) + '\n```\n'),
+            authority=authority,
+            planner_job_id=planner_job_id,
+        )
     consumed = consume_explicit_role_output(
         context,
         SimpleNamespace(role_job_id=planner_job_id, task_id='task-a'),

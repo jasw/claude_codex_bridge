@@ -43,10 +43,10 @@ def apply_detailer_replan_backfill(context, proposal: PlannerBackfillProposal, *
             atomic_write_json(tx_path, transaction)
         elif persisted != transaction:
             raise ValueError('detailer replan transaction authority conflict')
-        record = _backfill_record(context, proposal, authority, planner_job_id, transaction, tx_path)
+        record = _json_native(_backfill_record(context, proposal, authority, planner_job_id, transaction, tx_path))
         if backfill_path.is_file():
             existing = _read(backfill_path)
-            if any(existing.get(key) != record.get(key) for key in ('schema', 'schema_version', 'authority', 'planner_job_id', 'planner_feedback_digest', 'transaction_digest', 'target_plan_revision', 'transaction_path', 'backfill_digest')):
+            if existing != record:
                 raise ValueError('detailer replan backfill conflicts with persisted authority')
             _validate_targets(context, transaction)
             if current_plan_revision(context, slug) != transaction['target_plan_revision']:
@@ -148,3 +148,7 @@ def _read(path):
 
 def _digest(value):
     return 'sha256:' + hashlib.sha256(json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(',', ':')).encode('utf-8')).hexdigest()
+
+
+def _json_native(value):
+    return json.loads(json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(',', ':')))
