@@ -441,6 +441,64 @@ detail-packet.manifest.json:
     assert imported['next_activation'] == 'planner'
 
 
+@pytest.mark.parametrize(
+    'reply',
+    (
+        'Detail readiness recommendation: planner_replan_required\n\n## detail-packet.md\nLegacy packet.',
+        '''## task-detail-design.md
+Design.
+
+## brief-update-summary.md
+Summary.
+
+detail-packet.manifest.json:
+```json
+{"schema":"wrong","detail_result":"planner_replan_required","readiness":"planner_replan_required","global_impact":"macro"}
+```''',
+    ),
+)
+def test_stale_detailer_replan_requires_strict_manifest_before_bypass(
+    tmp_path: Path, monkeypatch, reply: str,
+) -> None:
+    project_root, dispatcher, source_job_id, _runner_calls = _setup(tmp_path, monkeypatch)
+    dispatcher.submit(_envelope(dispatcher, source_job_id))
+    before = plan_task(_context(project_root), SimpleNamespace(action='task-show', task_id='task-a'))['task']
+    snapshot = project_root / '.ccb' / 'ccbd' / 'snapshots' / f'{source_job_id}.json'
+    snapshot.parent.mkdir(parents=True, exist_ok=True)
+    snapshot.write_text(json.dumps({'job_id': source_job_id, 'agent_name': 'task_detailer', 'state': {'terminal': True}, 'latest_decision': {'terminal': True, 'status': 'completed', 'reply': reply}}) + '\n', encoding='utf-8')
+
+    blocked = consume_explicit_role_output(_context(project_root), SimpleNamespace(role_job_id=source_job_id, task_id='task-a'), services=SimpleNamespace(plan_task=plan_task))
+
+    assert blocked['action'] == 'role_output_import_blocked'
+    assert blocked['reason'] == 'stale_managed_activation_task_revision'
+    after = plan_task(_context(project_root), SimpleNamespace(action='task-show', task_id='task-a'))['task']
+    assert {key: after.get(key) for key in ('task_revision', 'status', 'replan_feedback')} == {key: before.get(key) for key in ('task_revision', 'status', 'replan_feedback')}
+
+
+def test_canonical_detailer_replan_without_accepted_intent_cannot_import(tmp_path: Path, monkeypatch) -> None:
+    project_root, _dispatcher, source_job_id, _runner_calls = _setup(tmp_path, monkeypatch)
+    before = plan_task(_context(project_root), SimpleNamespace(action='task-show', task_id='task-a'))['task']
+    snapshot = project_root / '.ccb' / 'ccbd' / 'snapshots' / f'{source_job_id}.json'
+    snapshot.parent.mkdir(parents=True, exist_ok=True)
+    snapshot.write_text(json.dumps({'job_id': source_job_id, 'agent_name': 'task_detailer', 'state': {'terminal': True}, 'latest_decision': {'terminal': True, 'status': 'completed', 'reply': '''## task-detail-design.md
+Design.
+
+## brief-update-summary.md
+Summary.
+
+detail-packet.manifest.json:
+```json
+{"schema":"ccb.detail_packet_manifest.v1","detail_result":"planner_replan_required","readiness":"planner_replan_required","global_impact":"macro"}
+```'''}}) + '\n', encoding='utf-8')
+
+    blocked = consume_explicit_role_output(_context(project_root), SimpleNamespace(role_job_id=source_job_id, task_id='task-a'), services=SimpleNamespace(plan_task=plan_task))
+
+    assert blocked['action'] == 'role_output_import_blocked'
+    assert blocked['reason'] == 'task_detailer_planner_replan_direct_handoff_missing'
+    after = plan_task(_context(project_root), SimpleNamespace(action='task-show', task_id='task-a'))['task']
+    assert {key: after.get(key) for key in ('task_revision', 'status', 'replan_feedback')} == {key: before.get(key) for key in ('task_revision', 'status', 'replan_feedback')}
+
+
 def test_detailer_replan_pre_submit_and_runner_start_crashes_recover_one_job(tmp_path: Path, monkeypatch) -> None:
     project_root, dispatcher, source_job_id, _runner_calls = _setup(tmp_path, monkeypatch)
     request = _envelope(dispatcher, source_job_id)
