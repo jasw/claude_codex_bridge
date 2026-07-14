@@ -3,7 +3,9 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import json
+import os
 from pathlib import Path
+import sys
 from types import SimpleNamespace
 
 import pytest
@@ -701,6 +703,54 @@ def test_terminal_observation_waits_for_release_and_zero_residue(tmp_path: Path)
             encoding='utf-8',
         )
         assert module._terminal_release_complete(tmp_path) is expected
+
+
+def test_logged_concurrent_commands_launch_in_same_observation_window(tmp_path: Path) -> None:
+    module = _load_script()
+    started = tmp_path / 'first.started'
+    release = tmp_path / 'release.first'
+    first = (
+        "from pathlib import Path\n"
+        "import sys, time\n"
+        "started = Path(sys.argv[1]); release = Path(sys.argv[2])\n"
+        "started.write_text('1', encoding='utf-8')\n"
+        "deadline = time.time() + 3\n"
+        "while not release.exists():\n"
+        "    if time.time() > deadline:\n"
+        "        raise SystemExit('release marker missing')\n"
+        "    time.sleep(0.02)\n"
+        "print('first released')\n"
+    )
+    second = (
+        "from pathlib import Path\n"
+        "import sys, time\n"
+        "started = Path(sys.argv[1]); release = Path(sys.argv[2])\n"
+        "deadline = time.time() + 3\n"
+        "while not started.exists():\n"
+        "    if time.time() > deadline:\n"
+        "        raise SystemExit('first marker missing')\n"
+        "    time.sleep(0.02)\n"
+        "release.write_text('1', encoding='utf-8')\n"
+        "print('second released first')\n"
+    )
+    command_log: list[dict[str, object]] = []
+
+    records = module._run_logged_concurrent(
+        command_log,
+        [
+            ('first', [sys.executable, '-c', first, str(started), str(release)]),
+            ('second', [sys.executable, '-c', second, str(started), str(release)]),
+        ],
+        cwd=tmp_path,
+        env=dict(os.environ),
+        logs_dir=tmp_path,
+        timeout_s=5,
+    )
+
+    assert [item['returncode'] for item in records] == [0, 0]
+    assert [item['label'] for item in command_log] == ['first', 'second']
+    assert 'first released' in (tmp_path / 'first.stdout').read_text(encoding='utf-8')
+    assert 'second released first' in (tmp_path / 'second.stdout').read_text(encoding='utf-8')
 
 
 @pytest.mark.ccb_lifecycle_smoke

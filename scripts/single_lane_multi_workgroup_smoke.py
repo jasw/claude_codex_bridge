@@ -958,7 +958,7 @@ def _submit_pending_worker_reviews(
     )
     nodes = _mapping(state.get('nodes'))
     maximum = int(_mapping(_mapping(state.get('bundle')).get('policy')).get('max_node_rework_rounds') or 0)
-    submitted = []
+    commands: list[tuple[str, list[str]]] = []
     for node_id in sorted(nodes):
         node = _mapping(nodes.get(node_id))
         if node.get('status') not in {'worker_pending', 'worker_submission_unknown'}:
@@ -998,19 +998,25 @@ def _submit_pending_worker_reviews(
             f'{marker}\nReview the current node tree against its canonical packet.\n'
             'First non-empty line must be status: pass|rework_required|blocked|non_converged.'
         )
-        result = _run_logged(
-            command_log,
-            f'worker_chain_{node_id}_{len(edges) + 1}_{attempt}',
-            [
-                str(ccb_test), '--project', str(project_root), 'ask', '--chain',
-                '--artifact-reply', reviewer, 'from', worker, '--', message,
-            ],
-            cwd=test_root,
-            env=env,
-            logs_dir=logs_dir,
-            timeout_s=timeout_s,
-            allow_failure=True,
+        commands.append(
+            (
+                f'worker_chain_{node_id}_{len(edges) + 1}_{attempt}',
+                [
+                    str(ccb_test), '--project', str(project_root), 'ask', '--chain',
+                    '--artifact-reply', reviewer, 'from', worker, '--', message,
+                ],
+            )
         )
+    submitted = []
+    for result in _run_logged_concurrent(
+        command_log,
+        commands,
+        cwd=test_root,
+        env=env,
+        logs_dir=logs_dir,
+        timeout_s=timeout_s,
+        allow_failure=True,
+    ):
         if result['returncode'] == 0:
             submitted.append(_json_object(result['stdout']))
     return submitted
@@ -1291,6 +1297,76 @@ def _run_logged(
             f'{label} failed rc={completed.returncode}: {completed.stderr or completed.stdout}'
         )
     return record
+
+
+def _run_logged_concurrent(
+    command_log: list[dict[str, Any]],
+    commands: list[tuple[str, list[str]]],
+    *,
+    cwd: Path,
+    env: dict[str, str],
+    logs_dir: Path,
+    timeout_s: int,
+    allow_failure: bool = False,
+) -> list[dict[str, Any]]:
+    if not commands:
+        return []
+    existing_labels = {str(item.get('label') or '') for item in command_log}
+    labels = [label for label, _argv in commands]
+    duplicate_labels = sorted(label for label in set(labels) if labels.count(label) > 1 or label in existing_labels)
+    if duplicate_labels:
+        raise SmokeFailure(f'duplicate command label: {duplicate_labels[0]}')
+
+    launched: list[tuple[str, list[str], subprocess.Popen[str], float]] = []
+    for label, argv in commands:
+        launched.append(
+            (
+                label,
+                argv,
+                subprocess.Popen(
+                    argv,
+                    cwd=str(cwd),
+                    env=env,
+                    text=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                ),
+                time.monotonic(),
+            )
+        )
+
+    records: list[dict[str, Any]] = []
+    for label, argv, process, started_at in launched:
+        timed_out = False
+        try:
+            stdout, stderr = process.communicate(timeout=max(0.1, timeout_s - (time.monotonic() - started_at)))
+        except subprocess.TimeoutExpired:
+            timed_out = True
+            process.kill()
+            stdout, stderr = process.communicate()
+        if timed_out:
+            stderr = (stderr or '') + f'\ncommand timed out after {timeout_s}s'
+        stdout_path = logs_dir / f'{label}.stdout'
+        stderr_path = logs_dir / f'{label}.stderr'
+        stdout_path.write_text(stdout or '', encoding='utf-8')
+        stderr_path.write_text(stderr or '', encoding='utf-8')
+        record = {
+            'label': label,
+            'argv': argv,
+            'cwd': str(cwd),
+            'returncode': process.returncode,
+            'stdout': stdout or '',
+            'stderr': stderr or '',
+            'stdout_path': str(stdout_path),
+            'stderr_path': str(stderr_path),
+        }
+        command_log.append(record)
+        records.append(record)
+        if process.returncode != 0 and not allow_failure:
+            raise SmokeFailure(
+                f'{label} failed rc={process.returncode}: {record["stderr"] or record["stdout"]}'
+            )
+    return records
 
 
 def _smoke_env(*, test_root: Path, project_root: Path, role_store: Path, source_home: Path) -> dict[str, str]:
