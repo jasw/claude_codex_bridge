@@ -211,7 +211,8 @@ def test_update_via_tarball_uses_staged_unix_installer(monkeypatch, tmp_path: Pa
 
     assert code == 0
     assert calls["action"] == "install"
-    assert calls["source_dir"] == tmp_base / "ccb_update" / update_runtime._release_extract_dir_name(update_runtime._release_artifact_name())
+    assert calls["source_dir"].name == update_runtime._release_extract_dir_name(update_runtime._release_artifact_name())
+    assert calls["source_dir"].parent != install_dir
     assert calls["install_dir"] == install_dir
     assert calls["extra_env"] == {
         "CODEX_INSTALL_PREFIX": str(install_dir),
@@ -302,6 +303,155 @@ def test_update_restores_prior_prefix_when_installer_fails(monkeypatch, tmp_path
 
     assert code == 23
     assert (install_dir / "identity.txt").read_text(encoding="utf-8") == "old build\n"
+
+
+def test_update_uses_external_transaction_when_temp_base_is_inside_prefix(monkeypatch, tmp_path: Path) -> None:
+    install_dir = tmp_path / "install"
+    install_dir.mkdir()
+    (install_dir / "identity.txt").write_text("old build\n", encoding="utf-8")
+    tmp_base = install_dir / ".tmp"
+    tmp_base.mkdir()
+    safe_tmp = tmp_path / "safe-tmp"
+    safe_tmp.mkdir()
+    monkeypatch.setattr(update_runtime.tempfile, "gettempdir", lambda: str(safe_tmp))
+
+    transaction_dir = update_runtime._safe_update_transaction_dir(tmp_base=tmp_base, install_dir=install_dir)
+    try:
+        assert transaction_dir.parent == safe_tmp
+        backup_dir = update_runtime._backup_install_prefix(install_dir=install_dir, transaction_dir=transaction_dir)
+        assert backup_dir is not None
+        assert (backup_dir / "identity.txt").read_text(encoding="utf-8") == "old build\n"
+        assert not (backup_dir / ".tmp" / "previous-install").exists()
+    finally:
+        shutil.rmtree(transaction_dir, ignore_errors=True)
+
+
+def test_update_restores_prior_prefix_when_transaction_base_is_inside_prefix(monkeypatch, tmp_path: Path) -> None:
+    install_dir = tmp_path / "install"
+    install_dir.mkdir()
+    (install_dir / "identity.txt").write_bytes(b"old build\x00\n")
+    tmp_base = install_dir / ".tmp"
+    tmp_base.mkdir()
+    safe_tmp = tmp_path / "safe-tmp"
+    safe_tmp.mkdir()
+    monkeypatch.setattr(update_runtime.platform, "system", lambda: "Linux")
+    monkeypatch.setattr(update_runtime.platform, "machine", lambda: "x86_64")
+    monkeypatch.setattr(update_runtime.tempfile, "gettempdir", lambda: str(safe_tmp))
+
+    def _fake_download(_url: str, destination: Path) -> bool:
+        source_dir = tmp_path / "payload"
+        source_dir.mkdir()
+        (source_dir / "install.sh").write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+        (source_dir / "VERSION").write_text("8.1.3\n", encoding="utf-8")
+        (source_dir / "BUILD_INFO.json").write_text('{"version":"8.1.3","commit":"newbuild"}', encoding="utf-8")
+        with tarfile.open(destination, "w:gz") as archive:
+            archive.add(source_dir, arcname="ccb-linux-x86_64")
+        return True
+
+    def _fake_install(*_args, **_kwargs) -> int:
+        shutil.rmtree(install_dir)
+        install_dir.mkdir()
+        (install_dir / "identity.txt").write_bytes(b"partial\n")
+        return 23
+
+    monkeypatch.setattr(update_runtime, "download_tarball", _fake_download)
+    monkeypatch.setattr(update_runtime, "run_staged_unix_installer", _fake_install)
+
+    code = update_runtime._update_via_tarball(
+        tmp_base,
+        install_dir=install_dir,
+        target_version="8.1.3",
+        old_info={"version": "8.1.4", "commit": "oldbuild"},
+    )
+
+    assert code == 23
+    assert (install_dir / "identity.txt").read_bytes() == b"old build\x00\n"
+    assert not list((install_dir / ".tmp").rglob("previous-install"))
+
+
+def test_new_install_failure_removes_partial_prefix(monkeypatch, tmp_path: Path) -> None:
+    install_dir = tmp_path / "install"
+    transaction_dir = tmp_path / "transaction"
+    transaction_dir.mkdir()
+
+    def _fake_install(*_args, **_kwargs) -> int:
+        install_dir.mkdir()
+        (install_dir / "partial.txt").write_text("partial\n", encoding="utf-8")
+        return 23
+
+    monkeypatch.setattr(update_runtime, "run_staged_unix_installer", _fake_install)
+    code = update_runtime.run_staged_unix_installer("install", source_dir=tmp_path, install_dir=install_dir)
+    assert code == 23
+    update_runtime._restore_install_prefix(install_dir=install_dir, backup_dir=None)
+    assert not install_dir.exists()
+
+
+def test_update_fails_closed_when_no_external_transaction_directory_exists(monkeypatch, tmp_path: Path, capsys) -> None:
+    install_dir = tmp_path / "install"
+    install_dir.mkdir()
+    tmp_base = install_dir / ".tmp"
+    tmp_base.mkdir()
+    calls: list[str] = []
+    monkeypatch.setattr(update_runtime.tempfile, "gettempdir", lambda: str(tmp_base))
+    monkeypatch.setattr(update_runtime.platform, "system", lambda: "Linux")
+    monkeypatch.setattr(update_runtime.platform, "machine", lambda: "x86_64")
+    monkeypatch.setattr(update_runtime, "download_tarball", lambda *_args, **_kwargs: calls.append("download") or True)
+    monkeypatch.setattr(update_runtime, "run_staged_unix_installer", lambda *_args, **_kwargs: calls.append("install") or 0)
+
+    code = update_runtime._update_via_tarball(
+        tmp_base,
+        install_dir=install_dir,
+        target_version="8.1.3",
+        old_info={"version": "8.1.4", "commit": "oldbuild"},
+    )
+
+    assert code == 1
+    assert calls == []
+    assert "safe external rollback storage" in capsys.readouterr().out
+
+
+def test_update_rejects_symlinked_install_prefix_before_backup(monkeypatch, tmp_path: Path, capsys) -> None:
+    target_dir = tmp_path / "target"
+    target_dir.mkdir()
+    install_dir = tmp_path / "install-link"
+    install_dir.symlink_to(target_dir, target_is_directory=True)
+    tmp_base = tmp_path / "tmp-base"
+    tmp_base.mkdir()
+    calls: list[str] = []
+    monkeypatch.setattr(update_runtime.platform, "system", lambda: "Linux")
+    monkeypatch.setattr(update_runtime.platform, "machine", lambda: "x86_64")
+    monkeypatch.setattr(update_runtime, "download_tarball", lambda *_args, **_kwargs: calls.append("download") or True)
+
+    code = update_runtime._update_via_tarball(
+        tmp_base,
+        install_dir=install_dir,
+        target_version="8.1.3",
+        old_info={"version": "8.1.4", "commit": "oldbuild"},
+    )
+
+    assert code == 1
+    assert calls == []
+    assert not list(tmp_base.iterdir())
+    assert "symbolic link" in capsys.readouterr().out
+
+
+def test_restore_failure_retains_external_backup_evidence(monkeypatch, tmp_path: Path, capsys) -> None:
+    install_dir = tmp_path / "install"
+    install_dir.mkdir()
+    (install_dir / "identity.txt").write_text("old build\n", encoding="utf-8")
+    tmp_base = tmp_path / "tmp-base"
+    tmp_base.mkdir()
+    transaction_dir = tmp_path / "safe-transaction"
+    transaction_dir.mkdir()
+    backup_dir = update_runtime._backup_install_prefix(install_dir=install_dir, transaction_dir=transaction_dir)
+
+    monkeypatch.setattr(update_runtime, "_restore_install_prefix", lambda **_kwargs: (_ for _ in ()).throw(OSError("disk full")))
+
+    retained = update_runtime._restore_or_retain_backup(install_dir=install_dir, backup_dir=backup_dir)
+
+    assert retained is True
+    assert backup_dir is not None and backup_dir.exists()
+    assert "recoverable backup retained at" in capsys.readouterr().out
 
 
 def test_post_update_delegation_runs_installed_entrypoint(monkeypatch, tmp_path: Path) -> None:
@@ -1044,7 +1194,8 @@ def test_update_via_tarball_uses_macos_release_artifact(monkeypatch, tmp_path: P
     assert code == 0
     assert str(calls["downloaded_to"]).endswith("ccb-macos-universal.tar.gz")
     assert calls["action"] == "install"
-    assert calls["source_dir"] == tmp_base / "ccb_update" / "ccb-macos-universal"
+    assert calls["source_dir"].name == "ccb-macos-universal"
+    assert calls["source_dir"].parent != install_dir
     assert calls["install_dir"] == install_dir
 
 

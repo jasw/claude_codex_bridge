@@ -4,6 +4,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import subprocess
 import tarfile
 from types import SimpleNamespace
 
@@ -54,6 +55,54 @@ def test_release_identity_requires_matching_package_version_and_unique_manifest(
         assert "collision" in str(exc)
     else:
         raise AssertionError("expected a release manifest collision")
+
+
+def test_release_identity_allows_exact_checked_out_release_tag(monkeypatch, tmp_path: Path) -> None:
+    module = _load_module()
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    _git(repo_root, "init")
+    _git(repo_root, "config", "user.email", "test@example.com")
+    _git(repo_root, "config", "user.name", "Test")
+    (repo_root / "VERSION").write_text("8.1.5\n", encoding="utf-8")
+    (repo_root / "package.json").write_text(json.dumps({"version": "8.1.5"}), encoding="utf-8")
+    _git(repo_root, "add", "VERSION", "package.json")
+    _git(repo_root, "commit", "-m", "release")
+    _git(repo_root, "tag", "v8.1.5")
+
+    commit, _date = module.resolve_git_metadata(repo_root, git_ref="HEAD")
+
+    module.validate_release_identity(repo_root, version="8.1.5", commit=commit, git_ref="HEAD")
+
+
+def test_release_identity_rejects_same_version_tag_on_different_commit(tmp_path: Path) -> None:
+    module = _load_module()
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    _git(repo_root, "init")
+    _git(repo_root, "config", "user.email", "test@example.com")
+    _git(repo_root, "config", "user.name", "Test")
+    (repo_root / "VERSION").write_text("8.1.5\n", encoding="utf-8")
+    (repo_root / "package.json").write_text(json.dumps({"version": "8.1.5"}), encoding="utf-8")
+    _git(repo_root, "add", "VERSION", "package.json")
+    _git(repo_root, "commit", "-m", "tagged release")
+    _git(repo_root, "tag", "v8.1.5")
+    (repo_root / "note.txt").write_text("next commit\n", encoding="utf-8")
+    _git(repo_root, "add", "note.txt")
+    _git(repo_root, "commit", "-m", "different build")
+
+    commit, _date = module.resolve_git_metadata(repo_root, git_ref="HEAD")
+
+    try:
+        module.validate_release_identity(repo_root, version="8.1.5", commit=commit, git_ref="HEAD")
+    except RuntimeError as exc:
+        assert "different commit" in str(exc)
+    else:
+        raise AssertionError("expected a release tag collision")
+
+
+def _git(repo_root: Path, *args: str) -> None:
+    subprocess.run(["git", "-C", str(repo_root), *args], check=True, capture_output=True, text=True)
 
 
 def test_copy_repo_tree_excludes_runtime_state(tmp_path: Path) -> None:

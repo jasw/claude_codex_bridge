@@ -214,8 +214,12 @@ def validate_release_identity(
         )
     if not commit:
         raise RuntimeError("release identity requires an exact Git commit")
-    if is_git_checkout(repo_root) and run_git(repo_root, ["tag", "-l", f"v{version}"]):
-        raise RuntimeError(f"release identity collision: Git tag v{version} already exists")
+    if is_git_checkout(repo_root):
+        tagged_commit = run_git(repo_root, ["rev-parse", "--short", f"v{version}^{{commit}}"])
+        if tagged_commit and tagged_commit != commit:
+            raise RuntimeError(
+                f"release identity collision: Git tag v{version} resolves to different commit {tagged_commit}"
+            )
     if release_manifest is not None:
         _reject_manifest_version_collision(release_manifest, version=version, commit=commit)
 

@@ -8,6 +8,7 @@ import shutil
 import subprocess
 import sys
 import tarfile
+import tempfile
 
 from release_artifacts import release_artifact_name
 from cli.roles_runtime.commands import cmd_roles
@@ -140,21 +141,22 @@ def _update_via_tarball(tmp_base: Path, *, install_dir: Path, target_version: st
     tarball_url = _release_artifact_url(target_version, artifact_name=artifact_name)
     extracted_name = artifact_name
 
-    tmp_dir = tmp_base / "ccb_update"
+    transaction_dir: Path | None = None
+    backup_dir: Path | None = None
+    preserve_backup = False
+    install_attempted = False
     try:
+        transaction_dir = _safe_update_transaction_dir(tmp_base=tmp_base, install_dir=install_dir)
         print(f"📥 Downloading v{target_version}...")
-        if tmp_dir.exists():
-            shutil.rmtree(tmp_dir)
-        tmp_dir.mkdir(parents=True, exist_ok=True)
-        tarball_path = tmp_dir / artifact_name
+        tarball_path = transaction_dir / artifact_name
         if not download_tarball(tarball_url, tarball_path):
             print("❌ Update failed: unable to download release tarball")
             return 1
 
         print("📂 Extracting...")
         with tarfile.open(tarball_path, "r:gz") as tar:
-            safe_extract_tar(tar, tmp_dir)
-        extracted_dir = tmp_dir / _release_extract_dir_name(extracted_name)
+            safe_extract_tar(tar, transaction_dir)
+        extracted_dir = transaction_dir / _release_extract_dir_name(extracted_name)
         staged_info = get_version_info(extracted_dir)
         identity_error = _update_identity_error(
             old_info=old_info,
@@ -165,9 +167,10 @@ def _update_via_tarball(tmp_base: Path, *, install_dir: Path, target_version: st
             print(f"❌ Update failed: {identity_error}")
             return 1
 
-        backup_dir = _backup_install_prefix(install_dir=install_dir, transaction_dir=tmp_dir)
+        backup_dir = _backup_install_prefix(install_dir=install_dir, transaction_dir=transaction_dir)
 
         print("🔧 Installing...")
+        install_attempted = True
         returncode = run_staged_unix_installer(
             "install",
             source_dir=extracted_dir,
@@ -179,32 +182,29 @@ def _update_via_tarball(tmp_base: Path, *, install_dir: Path, target_version: st
             },
         )
         if returncode != 0:
-            _restore_install_prefix(install_dir=install_dir, backup_dir=backup_dir)
+            preserve_backup = _restore_or_retain_backup(install_dir=install_dir, backup_dir=backup_dir)
             print(f"❌ Update failed: installer exited with code {returncode}")
             return returncode
 
         new_info = get_version_info(install_dir)
         installed_identity_error = _installed_identity_error(staged_info=staged_info, new_info=new_info)
         if installed_identity_error:
-            _restore_install_prefix(install_dir=install_dir, backup_dir=backup_dir)
+            preserve_backup = _restore_or_retain_backup(install_dir=install_dir, backup_dir=backup_dir)
             print(f"❌ Update failed: {installed_identity_error}")
             return 1
         _print_update_outcome(old_info, new_info)
         if not _run_post_update_with_new_entrypoint(install_dir=install_dir, old_info=old_info, new_info=new_info):
-            _restore_install_prefix(install_dir=install_dir, backup_dir=backup_dir)
+            preserve_backup = _restore_or_retain_backup(install_dir=install_dir, backup_dir=backup_dir)
             return 1
         return 0
     except Exception as exc:
-        if 'backup_dir' in locals():
-            try:
-                _restore_install_prefix(install_dir=install_dir, backup_dir=backup_dir)
-            except Exception as restore_exc:
-                print(f"❌ Update rollback failed: {restore_exc}")
+        if install_attempted:
+            preserve_backup = _restore_or_retain_backup(install_dir=install_dir, backup_dir=backup_dir)
         print(f"❌ Update failed: {exc}")
         return 1
     finally:
-        if tmp_dir.exists():
-            shutil.rmtree(tmp_dir, ignore_errors=True)
+        if transaction_dir is not None and not preserve_backup:
+            shutil.rmtree(transaction_dir, ignore_errors=True)
 
 
 def _update_identity_error(
@@ -248,6 +248,42 @@ def _backup_install_prefix(*, install_dir: Path, transaction_dir: Path) -> Path 
     return backup_dir
 
 
+def _safe_update_transaction_dir(*, tmp_base: Path, install_dir: Path) -> Path:
+    install_dir = Path(install_dir).expanduser()
+    if install_dir.is_symlink():
+        raise RuntimeError("refusing update because the install prefix is a symbolic link")
+    install_root = _resolved_update_path(install_dir)
+    candidate_roots = (Path(tmp_base).expanduser(), Path(tempfile.gettempdir()).expanduser())
+    seen: set[Path] = set()
+    for candidate_root in candidate_roots:
+        resolved_root = _resolved_update_path(candidate_root)
+        if resolved_root in seen or _path_is_within(install_root, resolved_root):
+            continue
+        seen.add(resolved_root)
+        try:
+            resolved_root.mkdir(parents=True, exist_ok=True)
+            transaction_dir = Path(tempfile.mkdtemp(prefix="ccb-update-", dir=str(resolved_root)))
+        except OSError:
+            continue
+        if _path_is_within(install_root, _resolved_update_path(transaction_dir)):
+            shutil.rmtree(transaction_dir, ignore_errors=True)
+            continue
+        return transaction_dir
+    raise RuntimeError("no safe external rollback storage is available for this update")
+
+
+def _resolved_update_path(path: Path) -> Path:
+    return Path(path).expanduser().resolve(strict=False)
+
+
+def _path_is_within(root: Path, candidate: Path) -> bool:
+    try:
+        candidate.relative_to(root)
+        return True
+    except ValueError:
+        return False
+
+
 def _restore_install_prefix(*, install_dir: Path, backup_dir: Path | None) -> None:
     if install_dir.exists() or install_dir.is_symlink():
         if install_dir.is_dir() and not install_dir.is_symlink():
@@ -257,6 +293,18 @@ def _restore_install_prefix(*, install_dir: Path, backup_dir: Path | None) -> No
     if backup_dir is None:
         return
     shutil.copytree(backup_dir, install_dir, symlinks=True)
+
+
+def _restore_or_retain_backup(*, install_dir: Path, backup_dir: Path | None) -> bool:
+    try:
+        _restore_install_prefix(install_dir=install_dir, backup_dir=backup_dir)
+        return False
+    except Exception as exc:
+        if backup_dir is not None and backup_dir.exists():
+            print(f"❌ Update rollback failed: {exc}; recoverable backup retained at: {backup_dir}")
+            return True
+        print(f"❌ Update rollback cleanup failed: {exc}")
+        return False
 
 
 def maybe_handle_post_update_command(tokens: list[str], *, script_root: Path) -> int | None:
