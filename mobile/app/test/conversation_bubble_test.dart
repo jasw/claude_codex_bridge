@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart' show ScrollDirection;
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -594,6 +595,137 @@ void main() {
     );
     expect(handedBack, isTrue);
     expect(timelineController.offset, lessThan(afterBottomHandoff));
+  });
+
+  testWidgets('expanded bubble reports inner drags to the timeline owner', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(400, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    final directions = <ScrollDirection>[];
+    final item = CcbConversationItem(
+      id: 'long-reply',
+      agentName: 'lead',
+      kind: CcbConversationItemKind.agentReply,
+      title: 'Agent reply',
+      body: List.generate(100, (index) => 'line $index').join('\n'),
+      source: 'completion_snapshot',
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: ConversationBubble(
+            item: item,
+            expanded: true,
+            onUserScrollDirectionChanged: directions.add,
+            onToggleExpanded: (_) {},
+          ),
+        ),
+      ),
+    );
+
+    final scrollableContext = tester.element(
+      find.descendant(
+        of: find.byKey(const ValueKey('conversation-body-viewport-long-reply')),
+        matching: find.byType(SingleChildScrollView),
+      ),
+    );
+    ScrollUpdateNotification(
+      metrics: FixedScrollMetrics(
+        minScrollExtent: 0,
+        maxScrollExtent: 800,
+        pixels: 120,
+        viewportDimension: 360,
+        axisDirection: AxisDirection.down,
+        devicePixelRatio: 1,
+      ),
+      context: scrollableContext,
+      dragDetails: DragUpdateDetails(
+        globalPosition: Offset(200, 200),
+        delta: Offset(0, -40),
+      ),
+      scrollDelta: 40,
+    ).dispatch(scrollableContext);
+    await tester.pump();
+
+    expect(directions, contains(ScrollDirection.reverse));
+  });
+
+  testWidgets('expanded bubble boundary handoff preserves fling momentum', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(400, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    final timelineController = ScrollController();
+    addTearDown(timelineController.dispose);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: ListView(
+            controller: timelineController,
+            children: const [SizedBox(height: 1600)],
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    timelineController.jumpTo(300);
+    await tester.pump();
+
+    final beforeFling = timelineController.offset;
+    expect(
+      continueConversationBodyBoundaryFling(-1400, timelineController),
+      isTrue,
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 120));
+
+    expect(timelineController.offset, greaterThan(beforeFling));
+  });
+
+  testWidgets('new inner drag stops previous timeline momentum', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(400, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    final timelineController = ScrollController();
+    addTearDown(timelineController.dispose);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: ListView(
+            controller: timelineController,
+            children: const [SizedBox(height: 1600)],
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    timelineController.jumpTo(200);
+    await tester.pump();
+    timelineController.animateTo(
+      700,
+      duration: const Duration(seconds: 1),
+      curve: Curves.linear,
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 120));
+
+    expect(stopConversationTimelineActivity(timelineController), isTrue);
+    final stoppedOffset = timelineController.offset;
+    await tester.pump(const Duration(milliseconds: 500));
+
+    expect(timelineController.offset, closeTo(stoppedOffset, 0.1));
   });
 
   test('unconfirmed pane sends use check pane label', () {

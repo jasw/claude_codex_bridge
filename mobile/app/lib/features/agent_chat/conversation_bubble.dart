@@ -1,6 +1,8 @@
 import 'dart:async';
 
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart' show ScrollDirection;
 
 import '../../l10n/ccb_mobile_localizations.dart';
 import '../../models/ccb_conversation_item.dart';
@@ -24,6 +26,7 @@ class ConversationBubble extends StatelessWidget {
     this.downloadedAttachmentIds = const {},
     this.timelineViewportHeight,
     this.timelineScrollController,
+    this.onUserScrollDirectionChanged,
     this.isWorking = false,
     super.key,
   });
@@ -40,6 +43,7 @@ class ConversationBubble extends StatelessWidget {
   final Set<String> downloadedAttachmentIds;
   final double? timelineViewportHeight;
   final ScrollController? timelineScrollController;
+  final ValueChanged<ScrollDirection>? onUserScrollDirectionChanged;
   final bool isWorking;
 
   void _toggleExpanded() {
@@ -224,6 +228,8 @@ class ConversationBubble extends StatelessWidget {
                           item: item,
                           timelineViewportHeight: timelineViewportHeight,
                           timelineScrollController: timelineScrollController,
+                          onUserScrollDirectionChanged:
+                              onUserScrollDirectionChanged,
                           child: body,
                         ),
                       if (item.attachments.isNotEmpty) ...[
@@ -557,6 +563,7 @@ class ConversationBodyViewport extends StatefulWidget {
     required this.child,
     this.timelineViewportHeight,
     this.timelineScrollController,
+    this.onUserScrollDirectionChanged,
     super.key,
   });
 
@@ -564,6 +571,7 @@ class ConversationBodyViewport extends StatefulWidget {
   final Widget child;
   final double? timelineViewportHeight;
   final ScrollController? timelineScrollController;
+  final ValueChanged<ScrollDirection>? onUserScrollDirectionChanged;
 
   @override
   State<ConversationBodyViewport> createState() =>
@@ -572,6 +580,53 @@ class ConversationBodyViewport extends StatefulWidget {
 
 class _ConversationBodyViewportState extends State<ConversationBodyViewport> {
   late final ScrollController _scrollController = ScrollController();
+  VelocityTracker? _velocityTracker;
+  int? _activePointer;
+  bool _didHandoffToTimeline = false;
+
+  void _handlePointerDown(PointerDownEvent event) {
+    if (_activePointer != null) {
+      return;
+    }
+    _activePointer = event.pointer;
+    _velocityTracker = VelocityTracker.withKind(event.kind)
+      ..addPosition(event.timeStamp, event.position);
+    _didHandoffToTimeline = false;
+  }
+
+  void _handlePointerMove(PointerMoveEvent event) {
+    if (_activePointer != event.pointer) {
+      return;
+    }
+    _velocityTracker?.addPosition(event.timeStamp, event.position);
+  }
+
+  void _handlePointerUp(PointerUpEvent event) {
+    if (_activePointer != event.pointer) {
+      return;
+    }
+    final tracker =
+        _velocityTracker?..addPosition(event.timeStamp, event.position);
+    if (_didHandoffToTimeline && tracker != null) {
+      continueConversationBodyBoundaryFling(
+        tracker.getVelocity().pixelsPerSecond.dy,
+        widget.timelineScrollController,
+      );
+    }
+    _resetPointerTracking();
+  }
+
+  void _handlePointerCancel(PointerCancelEvent event) {
+    if (_activePointer == event.pointer) {
+      _resetPointerTracking();
+    }
+  }
+
+  void _resetPointerTracking() {
+    _activePointer = null;
+    _velocityTracker = null;
+    _didHandoffToTimeline = false;
+  }
 
   @override
   void dispose() {
@@ -594,27 +649,82 @@ class _ConversationBodyViewportState extends State<ConversationBodyViewport> {
     return SizedBox(
       key: ValueKey('conversation-body-viewport-${widget.item.id}'),
       height: maxHeight,
-      child: NotificationListener<ScrollNotification>(
-        onNotification: (notification) {
-          handoffConversationBodyBoundaryOverscroll(
-            notification,
-            widget.timelineScrollController,
-          );
-          return true;
-        },
-        child: Scrollbar(
-          controller: _scrollController,
-          thumbVisibility: true,
-          child: SingleChildScrollView(
+      child: Listener(
+        onPointerDown: _handlePointerDown,
+        onPointerMove: _handlePointerMove,
+        onPointerUp: _handlePointerUp,
+        onPointerCancel: _handlePointerCancel,
+        child: NotificationListener<ScrollNotification>(
+          onNotification: (notification) {
+            if (notification is ScrollStartNotification &&
+                notification.dragDetails != null) {
+              stopConversationTimelineActivity(widget.timelineScrollController);
+            }
+            final direction = conversationBodyUserScrollDirection(notification);
+            if (direction != ScrollDirection.idle) {
+              widget.onUserScrollDirectionChanged?.call(direction);
+            }
+            _didHandoffToTimeline =
+                handoffConversationBodyBoundaryOverscroll(
+                  notification,
+                  widget.timelineScrollController,
+                ) ||
+                _didHandoffToTimeline;
+            return true;
+          },
+          child: Scrollbar(
             controller: _scrollController,
-            primary: false,
-            padding: EdgeInsets.zero,
-            child: widget.child,
+            thumbVisibility: true,
+            child: SingleChildScrollView(
+              controller: _scrollController,
+              primary: false,
+              padding: EdgeInsets.zero,
+              child: widget.child,
+            ),
           ),
         ),
       ),
     );
   }
+}
+
+@visibleForTesting
+bool stopConversationTimelineActivity(
+  ScrollController? timelineScrollController,
+) {
+  if (timelineScrollController == null ||
+      !timelineScrollController.hasClients ||
+      !timelineScrollController.position.isScrollingNotifier.value) {
+    return false;
+  }
+  timelineScrollController.jumpTo(timelineScrollController.position.pixels);
+  return true;
+}
+
+@visibleForTesting
+ScrollDirection conversationBodyUserScrollDirection(
+  ScrollNotification notification,
+) {
+  if (notification is ScrollUpdateNotification &&
+      notification.dragDetails != null) {
+    final delta = notification.dragDetails!.delta.dy;
+    if (delta < 0) {
+      return ScrollDirection.reverse;
+    }
+    if (delta > 0) {
+      return ScrollDirection.forward;
+    }
+  }
+  if (notification is OverscrollNotification &&
+      notification.dragDetails != null) {
+    if (notification.overscroll > 0) {
+      return ScrollDirection.reverse;
+    }
+    if (notification.overscroll < 0) {
+      return ScrollDirection.forward;
+    }
+  }
+  return ScrollDirection.idle;
 }
 
 @visibleForTesting
@@ -638,6 +748,37 @@ bool handoffConversationBodyBoundaryOverscroll(
     return false;
   }
   position.jumpTo(target.toDouble());
+  return true;
+}
+
+@visibleForTesting
+bool continueConversationBodyBoundaryFling(
+  double pointerVelocity,
+  ScrollController? timelineScrollController,
+) {
+  if (pointerVelocity == 0 ||
+      timelineScrollController == null ||
+      !timelineScrollController.hasClients) {
+    return false;
+  }
+  final position = timelineScrollController.position;
+  final scrollVelocity = -pointerVelocity;
+  if ((scrollVelocity < 0 && position.pixels <= position.minScrollExtent) ||
+      (scrollVelocity > 0 && position.pixels >= position.maxScrollExtent)) {
+    return false;
+  }
+  final target = (position.pixels + (scrollVelocity * 0.22)).clamp(
+    position.minScrollExtent,
+    position.maxScrollExtent,
+  );
+  final durationMs = (pointerVelocity.abs() / 5).clamp(140, 360).round();
+  unawaited(
+    timelineScrollController.animateTo(
+      target.toDouble(),
+      duration: Duration(milliseconds: durationMs),
+      curve: Curves.decelerate,
+    ),
+  );
   return true;
 }
 
