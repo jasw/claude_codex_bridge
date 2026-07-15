@@ -77,26 +77,29 @@ class GatewayMobileCcbRepository
       if (device.revoked) {
         throw GatewayHttpException(Uri(), 401, 'device revoked');
       }
-      _outcomeReporter?.succeeded(GatewayConnectionOperation.read);
+      _outcomeReporter?.succeeded(GatewayConnectionOperation.coreRead);
     } catch (error) {
-      _outcomeReporter?.failed(GatewayConnectionOperation.read, error);
+      _outcomeReporter?.failed(GatewayConnectionOperation.coreRead, error);
       rethrow;
     }
   }
 
   @override
   Future<List<CcbProject>> listProjects() {
-    return _report(GatewayConnectionOperation.read, _transport.listProjects);
+    return _report(
+      GatewayConnectionOperation.dataRead,
+      _transport.listProjects,
+    );
   }
 
   @override
   Future<GatewayHealth> health() {
-    return _report(GatewayConnectionOperation.read, _transport.health);
+    return _report(GatewayConnectionOperation.dataRead, _transport.health);
   }
 
   @override
   Future<GatewayDevice> device() {
-    return _report(GatewayConnectionOperation.read, _transport.device);
+    return _report(GatewayConnectionOperation.dataRead, _transport.device);
   }
 
   @override
@@ -124,7 +127,7 @@ class GatewayMobileCcbRepository
   @override
   Future<CcbProjectView> getProjectView(String projectId) {
     return _report(
-      GatewayConnectionOperation.read,
+      GatewayConnectionOperation.dataRead,
       () => _transport.getProjectView(projectId),
     );
   }
@@ -169,7 +172,7 @@ class GatewayMobileCcbRepository
     int maxLines = 200,
   }) {
     return _report(
-      GatewayConnectionOperation.read,
+      GatewayConnectionOperation.dataRead,
       () => _transport.getReadableTerminalHistory(
         projectId: projectId,
         agent: agent,
@@ -188,7 +191,7 @@ class GatewayMobileCcbRepository
     String? cursor,
   }) {
     return _report(
-      GatewayConnectionOperation.read,
+      GatewayConnectionOperation.dataRead,
       () => _transport.getAgentConversation(
         projectId: projectId,
         agent: agent,
@@ -279,7 +282,7 @@ class GatewayMobileCcbRepository
     required String fileId,
   }) {
     return _report(
-      GatewayConnectionOperation.read,
+      GatewayConnectionOperation.dataRead,
       () => _transport.downloadFile(
         projectId: projectId,
         agentName: agentName,

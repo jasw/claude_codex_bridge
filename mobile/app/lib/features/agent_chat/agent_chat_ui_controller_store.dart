@@ -17,6 +17,11 @@ class AgentChatUiControllerStore {
   final Map<String, List<CcbMessageAttachment>> _draftAttachments = {};
   final Map<String, _AgentChatTimelineScrollController> _scrollControllers = {};
   final Map<String, int> _timelineAutoFollowGenerations = {};
+  final Map<String, int> _timelineAutoFollowRequestRevisions = {};
+  final Map<String, _TimelineAutoFollowRequest> _timelineAutoFollowRequests =
+      {};
+  final Set<String> _timelineAutoFollowScheduledAgents = {};
+  final Set<String> _timelineAutoFollowAnimatingAgents = {};
 
   TextEditingController draftController(String agentName) {
     return _draftControllers.putIfAbsent(agentName, TextEditingController.new);
@@ -81,6 +86,7 @@ class AgentChatUiControllerStore {
   void cancelTimelineAutoFollow(String agentName) {
     _timelineAutoFollowGenerations[agentName] =
         (_timelineAutoFollowGenerations[agentName] ?? 0) + 1;
+    _timelineAutoFollowRequests.remove(agentName);
   }
 
   void scrollTimelineToEnd(
@@ -88,48 +94,116 @@ class AgentChatUiControllerStore {
     required AgentChatAgentIsActive isActive,
     String? targetItemId,
     int attempt = 0,
-    int? generation,
   }) {
-    generation ??= _timelineAutoFollowGenerations[agentName] ?? 0;
+    final requestRevision =
+        (_timelineAutoFollowRequestRevisions[agentName] ?? 0) + 1;
+    _timelineAutoFollowRequestRevisions[agentName] = requestRevision;
+    _timelineAutoFollowRequests[agentName] = _TimelineAutoFollowRequest(
+      revision: requestRevision,
+      interactionGeneration: _timelineAutoFollowGenerations[agentName] ?? 0,
+      isActive: isActive,
+      attempt: attempt,
+    );
+    _scheduleTimelineAutoFollow(agentName);
+  }
+
+  void _scheduleTimelineAutoFollow(String agentName) {
+    if (_timelineAutoFollowAnimatingAgents.contains(agentName) ||
+        !_timelineAutoFollowScheduledAgents.add(agentName)) {
+      return;
+    }
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!isActive(agentName) ||
-          generation != (_timelineAutoFollowGenerations[agentName] ?? 0)) {
-        return;
-      }
-      final controller = _scrollControllers[agentName];
-      if (controller == null || !controller.hasClients) {
-        if (attempt < 5) {
-          scrollTimelineToEnd(
-            agentName,
-            isActive: isActive,
-            targetItemId: targetItemId,
-            attempt: attempt + 1,
-            generation: generation,
-          );
-        }
-        return;
-      }
-      final target = controller.position.maxScrollExtent;
-      final current = controller.position.pixels;
-      if ((target - current).abs() > 1) {
-        unawaited(
-          controller.animateTo(
-            target,
-            duration: agentChatFollowLatestScrollDuration,
-            curve: Curves.easeOutCubic,
-          ),
-        );
-      }
-      if (attempt < 3) {
-        scrollTimelineToEnd(
-          agentName,
-          isActive: isActive,
-          targetItemId: targetItemId,
-          attempt: attempt + 1,
-          generation: generation,
-        );
-      }
+      _timelineAutoFollowScheduledAgents.remove(agentName);
+      _flushTimelineAutoFollow(agentName);
     });
+  }
+
+  void _flushTimelineAutoFollow(String agentName) {
+    if (_timelineAutoFollowAnimatingAgents.contains(agentName)) {
+      return;
+    }
+    final request = _timelineAutoFollowRequests[agentName];
+    if (request == null) {
+      return;
+    }
+    if (!_isCurrentAutoFollowRequest(agentName, request)) {
+      _timelineAutoFollowRequests.remove(agentName);
+      return;
+    }
+    final controller = _scrollControllers[agentName];
+    if (controller == null || !controller.hasClients) {
+      if (request.attempt < 5) {
+        _timelineAutoFollowRequests[agentName] = request.nextAttempt();
+        _scheduleTimelineAutoFollow(agentName);
+      }
+      return;
+    }
+    final target = controller.position.maxScrollExtent;
+    final current = controller.position.pixels;
+    if ((target - current).abs() <= agentChatLayoutCorrectionTolerance) {
+      _timelineAutoFollowRequests.remove(agentName);
+      return;
+    }
+    _timelineAutoFollowAnimatingAgents.add(agentName);
+    unawaited(
+      _animateTimelineToEnd(
+        agentName: agentName,
+        controller: controller,
+        request: request,
+        target: target,
+      ),
+    );
+  }
+
+  Future<void> _animateTimelineToEnd({
+    required String agentName,
+    required ScrollController controller,
+    required _TimelineAutoFollowRequest request,
+    required double target,
+  }) async {
+    try {
+      await controller.animateTo(
+        target,
+        duration: agentChatFollowLatestScrollDuration,
+        curve: Curves.easeOutCubic,
+      );
+    } catch (_) {
+      // Disposal or direct user interaction can cancel the animation.
+    } finally {
+      _timelineAutoFollowAnimatingAgents.remove(agentName);
+    }
+    final latest = _timelineAutoFollowRequests[agentName];
+    if (latest == null) {
+      return;
+    }
+    if (!_isCurrentAutoFollowRequest(agentName, latest)) {
+      _timelineAutoFollowRequests.remove(agentName);
+      return;
+    }
+    if (latest.revision != request.revision) {
+      _scheduleTimelineAutoFollow(agentName);
+      return;
+    }
+    final needsLayoutCorrection =
+        controller.hasClients &&
+        (controller.position.maxScrollExtent - controller.position.pixels)
+                .abs() >
+            agentChatLayoutCorrectionTolerance;
+    if (needsLayoutCorrection && latest.attempt < 2) {
+      _timelineAutoFollowRequests[agentName] = latest.nextAttempt();
+      _scheduleTimelineAutoFollow(agentName);
+      return;
+    }
+    _timelineAutoFollowRequests.remove(agentName);
+  }
+
+  bool _isCurrentAutoFollowRequest(
+    String agentName,
+    _TimelineAutoFollowRequest request,
+  ) {
+    return request.isActive(agentName) &&
+        request.interactionGeneration ==
+            (_timelineAutoFollowGenerations[agentName] ?? 0);
   }
 
   void dispose() {
@@ -142,6 +216,29 @@ class AgentChatUiControllerStore {
     for (final controller in _scrollControllers.values) {
       controller.dispose();
     }
+  }
+}
+
+class _TimelineAutoFollowRequest {
+  const _TimelineAutoFollowRequest({
+    required this.revision,
+    required this.interactionGeneration,
+    required this.isActive,
+    required this.attempt,
+  });
+
+  final int revision;
+  final int interactionGeneration;
+  final AgentChatAgentIsActive isActive;
+  final int attempt;
+
+  _TimelineAutoFollowRequest nextAttempt() {
+    return _TimelineAutoFollowRequest(
+      revision: revision,
+      interactionGeneration: interactionGeneration,
+      isActive: isActive,
+      attempt: attempt + 1,
+    );
   }
 }
 

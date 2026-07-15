@@ -2517,7 +2517,7 @@ void main() {
     expect(find.text('Credits remaining: 42%'), findsOneWidget);
   });
 
-  testWidgets('paired Tab quick key types draft into pane without Enter', (
+  testWidgets('paired Tab quick key keeps a visible queued user bubble', (
     tester,
   ) async {
     await setTestSurfaceSize(tester, const Size(390, 844));
@@ -2572,6 +2572,7 @@ void main() {
     expect(terminalTransport.sessions.single.written, [
       [9],
     ]);
+    expect(find.text('draft before tab'), findsOneWidget);
     expect(
       tester
           .widget<TextField>(

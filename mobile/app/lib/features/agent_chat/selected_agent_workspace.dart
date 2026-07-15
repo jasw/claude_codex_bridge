@@ -614,10 +614,27 @@ class _SelectedAgentWorkspaceState extends State<SelectedAgentWorkspace>
       _showSnack('Could not send $label: ${outcome.error}');
       return;
     }
-    setState(() {
+    final queuedMessage = CcbConversationItem.userMessage(
+      id: _chatController.nextLocalMessageId(agent.name),
+      agentName: agent.name,
+      body: body.trim(),
+      state: CcbConversationDeliveryState.sent,
+      sentAt: DateTime.now().toUtc(),
+    );
+    _mutateChatState(() {
+      _chatController.addLocalMessage(agent.name, queuedMessage);
       controller.clear();
+      _localExceptionStatusAgentNames.remove(agent.name);
+      _recentPaneOutputText.remove(agent.name);
       _markAwaitingPaneResponse(agent.name);
+      _chatController.recordTimelineAppendState(
+        agentName: agent.name,
+        changed: true,
+        shouldScroll: true,
+      );
     });
+    widget.onProjectActivity?.call();
+    _scrollTimelineToEnd(agent.name);
     _refreshLatest(agent.name);
   }
 

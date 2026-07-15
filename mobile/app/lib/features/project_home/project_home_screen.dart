@@ -488,7 +488,6 @@ class _ProjectHomeViewState extends State<_ProjectHomeView>
         final view = await _activeRepository
             .getProjectView(_activeProjectId)
             .timeout(projectHomeRuntimeViewLoadTimeout);
-        _markGatewayRequestSucceeded();
         _rememberProjectActivity(view);
         _persistProjectViewSnapshot(view);
         _updateNotificationWatch(view);
@@ -511,7 +510,6 @@ class _ProjectHomeViewState extends State<_ProjectHomeView>
           projectHomeRuntimeViewLoadTimeout,
         ),
       );
-      _markGatewayRequestSucceeded();
       _persistProjectsSnapshot(projects);
       return projects;
     } catch (error) {
@@ -525,7 +523,7 @@ class _ProjectHomeViewState extends State<_ProjectHomeView>
   ) async {
     final adapter = _connectionOutcomeAdapter;
     if (adapter != null) {
-      adapter.failed(GatewayConnectionOperation.read, error);
+      adapter.failed(GatewayConnectionOperation.dataRead, error);
     } else {
       _connectionSupervisor.reportFailure(
         error,
@@ -1672,7 +1670,6 @@ class _ProjectHomeViewState extends State<_ProjectHomeView>
     }
     if (outcome.kind == ProjectHomeViewRefreshOutcomeKind.success) {
       final refreshed = outcome.refreshedView!;
-      _markGatewayRequestSucceeded();
       _persistProjectViewSnapshot(refreshed);
       _updateNotificationWatch(refreshed);
       setState(() {

@@ -335,7 +335,7 @@ void main() {
       expect(bodies.first, String.fromCharCodes([1, 2, 3]));
       expect(reporter.successes, [
         GatewayConnectionOperation.mutation,
-        GatewayConnectionOperation.read,
+        GatewayConnectionOperation.dataRead,
       ]);
     },
   );

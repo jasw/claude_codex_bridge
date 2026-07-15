@@ -89,9 +89,12 @@ void main() {
       isCurrent: () => true,
     );
 
-    adapter.failed(GatewayConnectionOperation.read, TimeoutException('route'));
+    adapter.failed(
+      GatewayConnectionOperation.coreRead,
+      TimeoutException('route'),
+    );
     expect(supervisor.snapshot.state, MobileConnectionState.reconnecting);
-    adapter.succeeded(GatewayConnectionOperation.read);
+    adapter.succeeded(GatewayConnectionOperation.coreRead);
     expect(supervisor.snapshot.state, MobileConnectionState.online);
     adapter.failed(
       GatewayConnectionOperation.mutation,
@@ -102,9 +105,101 @@ void main() {
       isNot(MobileConnectionState.authenticationRequired),
     );
     adapter.failed(
-      GatewayConnectionOperation.read,
+      GatewayConnectionOperation.coreRead,
       GatewayHttpException(Uri(), 401, 'invalid token'),
     );
+    expect(
+      supervisor.snapshot.state,
+      MobileConnectionState.authenticationRequired,
+    );
+    supervisor.dispose();
+  });
+
+  test(
+    'data timeout probes core once without entering global reconnect',
+    () async {
+      final states = <MobileConnectionState>[];
+      final gate = Completer<void>();
+      final repository = _ProbeRepository()..gate = gate;
+      final supervisor = MobileConnectionSupervisor(
+        onChanged: (value) => states.add(value.state),
+      );
+      supervisor.start(
+        profile: _profile(),
+        probe: repository,
+        probeImmediately: false,
+      );
+      final adapter = MobileConnectionOutcomeAdapter(
+        supervisor: supervisor,
+        isCurrent: () => true,
+      );
+
+      adapter.failed(
+        GatewayConnectionOperation.dataRead,
+        TimeoutException('conversation'),
+      );
+      adapter.failed(
+        GatewayConnectionOperation.dataRead,
+        TimeoutException('conversation wrapper'),
+      );
+      await Future<void>.delayed(Duration.zero);
+
+      expect(repository.healthCalls, 1);
+      expect(states, isNot(contains(MobileConnectionState.reconnecting)));
+      gate.complete();
+      await Future<void>.delayed(Duration.zero);
+      expect(supervisor.snapshot.state, MobileConnectionState.online);
+      supervisor.dispose();
+    },
+  );
+
+  test(
+    'data timeout enters reconnect only when the core probe fails',
+    () async {
+      final repository = _ProbeRepository()..fail = true;
+      final supervisor = MobileConnectionSupervisor(
+        onChanged: (_) {},
+        initialDelay: const Duration(hours: 1),
+        maxDelay: const Duration(hours: 1),
+      );
+      supervisor.start(
+        profile: _profile(),
+        probe: repository,
+        probeImmediately: false,
+      );
+      final adapter = MobileConnectionOutcomeAdapter(
+        supervisor: supervisor,
+        isCurrent: () => true,
+      );
+
+      adapter.failed(
+        GatewayConnectionOperation.dataRead,
+        TimeoutException('conversation'),
+      );
+      await Future<void>.delayed(Duration.zero);
+
+      expect(supervisor.snapshot.state, MobileConnectionState.reconnecting);
+      supervisor.dispose();
+    },
+  );
+
+  test('data read 401 still requires authentication', () {
+    final supervisor = MobileConnectionSupervisor(onChanged: (_) {});
+    supervisor.start(
+      profile: _profile(),
+      probe: _ProbeRepository(),
+      probeImmediately: false,
+    );
+    final adapter = MobileConnectionOutcomeAdapter(
+      supervisor: supervisor,
+      isCurrent: () => true,
+    );
+
+    adapter.failed(
+      GatewayConnectionOperation.dataRead,
+      GatewayHttpException(Uri(), 401, 'invalid token'),
+    );
+
     expect(
       supervisor.snapshot.state,
       MobileConnectionState.authenticationRequired,
@@ -119,7 +214,10 @@ void main() {
       supervisor: supervisor,
       isCurrent: () => false,
     );
-    adapter.failed(GatewayConnectionOperation.read, TimeoutException('stale'));
+    adapter.failed(
+      GatewayConnectionOperation.coreRead,
+      TimeoutException('stale'),
+    );
     expect(supervisor.snapshot.state, MobileConnectionState.connecting);
     supervisor.dispose();
   });

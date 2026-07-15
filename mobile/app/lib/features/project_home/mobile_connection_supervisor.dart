@@ -130,6 +130,12 @@ class MobileConnectionSupervisor {
 
   void retryNow() => foregroundResume();
 
+  void verifyCoreAfterDataFailure() {
+    if (_profile == null || _disposed) return;
+    if (_retryTimer != null || _inFlightGeneration != null) return;
+    _probeNow(_generation);
+  }
+
   void stop() {
     _retryTimer?.cancel();
     _retryTimer = null;
@@ -249,8 +255,12 @@ class MobileConnectionOutcomeAdapter
   void succeeded(GatewayConnectionOperation operation) {
     if (!_isCurrent()) return;
     switch (operation) {
-      case GatewayConnectionOperation.read:
+      case GatewayConnectionOperation.coreRead:
         _supervisor.reportSuccess();
+      case GatewayConnectionOperation.dataRead:
+        // A successful content read does not prove that both core authority
+        // routes are healthy, and must not clear a core reconnect state.
+        return;
       case GatewayConnectionOperation.stream:
       case GatewayConnectionOperation.terminal:
         // Optional live-update and terminal transports do not establish that
@@ -265,15 +275,25 @@ class MobileConnectionOutcomeAdapter
   @override
   void failed(GatewayConnectionOperation operation, Object error) {
     if (!_isCurrent()) return;
+    final auth = _authDisposition(error);
+    if (operation == GatewayConnectionOperation.dataRead &&
+        auth == MobileAuthDisposition.none) {
+      // Conversation, view, history, and download timeouts are local failures.
+      // Probe the core routes once to distinguish a slow endpoint from a real
+      // gateway outage without entering a global reconnect loop.
+      _supervisor.verifyCoreAfterDataFailure();
+      return;
+    }
     _supervisor.reportFailure(
       error,
       kind: switch (operation) {
-        GatewayConnectionOperation.read => MobileTransportKind.httpRead,
+        GatewayConnectionOperation.coreRead => MobileTransportKind.httpRead,
+        GatewayConnectionOperation.dataRead => MobileTransportKind.httpRead,
         GatewayConnectionOperation.stream => MobileTransportKind.sse,
         GatewayConnectionOperation.terminal => MobileTransportKind.terminalRead,
         GatewayConnectionOperation.mutation => MobileTransportKind.mutation,
       },
-      auth: _authDisposition(error),
+      auth: auth,
     );
   }
 

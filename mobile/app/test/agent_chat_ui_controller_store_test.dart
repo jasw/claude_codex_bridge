@@ -60,4 +60,78 @@ void main() {
 
     expect(controller.position.pixels, controller.position.maxScrollExtent);
   });
+
+  testWidgets('rapid follow-latest requests coalesce into one smooth settle', (
+    tester,
+  ) async {
+    final store = AgentChatUiControllerStore();
+    addTearDown(store.dispose);
+    final controller = store.timelineScrollController('mobile_probe');
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: SizedBox(
+          height: 120,
+          child: ListView(
+            controller: controller,
+            children: List.generate(
+              24,
+              (index) => const SizedBox(height: 40, child: Text('row')),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+    controller.jumpTo(0);
+
+    for (var index = 0; index < 8; index += 1) {
+      store.scrollTimelineToEnd(
+        'mobile_probe',
+        isActive: (agentName) => agentName == 'mobile_probe',
+      );
+    }
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 1));
+    await tester.pump(agentChatFollowLatestScrollDuration);
+    await tester.pump(const Duration(milliseconds: 1));
+
+    expect(controller.position.pixels, controller.position.maxScrollExtent);
+    expect(controller.position.isScrollingNotifier.value, isFalse);
+  });
+
+  testWidgets('user scroll cancellation wins over queued follow-latest', (
+    tester,
+  ) async {
+    final store = AgentChatUiControllerStore();
+    addTearDown(store.dispose);
+    final controller = store.timelineScrollController('mobile_probe');
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: SizedBox(
+          height: 120,
+          child: ListView(
+            controller: controller,
+            children: List.generate(
+              24,
+              (index) => const SizedBox(height: 40, child: Text('row')),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+    controller.jumpTo(0);
+
+    store.scrollTimelineToEnd(
+      'mobile_probe',
+      isActive: (agentName) => agentName == 'mobile_probe',
+    );
+    store.cancelTimelineAutoFollow('mobile_probe');
+    await tester.pump();
+    await tester.pump(agentChatFollowLatestScrollDuration);
+
+    expect(controller.position.pixels, 0);
+  });
 }
