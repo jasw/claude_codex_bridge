@@ -13,6 +13,9 @@ class TerminalHistoryScrollController extends ScrollController {
       hasClients &&
       position.extentAfter > _latestTolerance;
 
+  bool get isAtLatestOutput =>
+      hasClients && position.extentAfter <= _latestTolerance;
+
   @override
   ScrollPosition createScrollPosition(
     ScrollPhysics physics,
