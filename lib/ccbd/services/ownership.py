@@ -97,6 +97,8 @@ class OwnershipGuard:
         current = self._mount_manager.load_state()
         if current is None:
             return 1
+        if current.project_id != project_id and current.mount_state is MountState.UNMOUNTED:
+            return current.generation + 1
         self._assert_project_id(current, project_id=project_id)
         if self._same_holder(current, pid=pid, socket_path=socket_path):
             return current.generation

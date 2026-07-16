@@ -120,7 +120,7 @@ def test_attach_runtime_updates_active_existing_runtime() -> None:
     assert updated.runtime_generation == 3
     assert updated.queue_depth == 3
     assert updated.socket_path == '/tmp/agent.sock'
-    assert updated.project_id == 'proj-1'
+    assert updated.project_id == 'proj-new'
     assert updated.slot_key == 'agent1'
 
 
@@ -154,6 +154,26 @@ def test_attach_runtime_creates_new_runtime_with_runtime_ref_derived_fields() ->
     assert created.runtime_generation == 1
     assert created.binding_source is RuntimeBindingSource.PROVIDER_SESSION
     assert created.slot_key == 'agent1'
+
+
+def test_attach_runtime_replaces_stale_project_id_on_inactive_existing_runtime() -> None:
+    existing = _runtime(state=AgentState.STOPPED, project_id='old-copied-project')
+    registry = _Registry(existing=existing)
+
+    created = attach_runtime(
+        registry=registry,
+        project_id='proj-current',
+        clock=lambda: '2026-04-06T00:00:00Z',
+        agent_name='agent1',
+        workspace_path='/tmp/ws-current',
+        backend_type='pane-backed',
+        runtime_ref='tmux:%4',
+        session_ref='session-current',
+    )
+
+    assert created is registry.last_upsert
+    assert created.project_id == 'proj-current'
+    assert created.workspace_path == '/tmp/ws-current'
 
 
 def test_attach_runtime_preserves_runtime_generation_when_identity_is_unchanged() -> None:

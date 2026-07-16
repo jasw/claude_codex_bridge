@@ -115,6 +115,11 @@ Out of scope:
   - `.ccb/ccbd/lifecycle.json` defines project lifecycle phase and current desired owner generation
   - `.ccb/ccbd/lease.json` defines liveness for the current `ccbd` generation only
   - socket ownership proves readiness for that current generation
+- An `UNMOUNTED` lease whose `project_id` no longer matches the current anchor
+  is copied/moved-project residue, not live backend authority; startup may
+  supersede it with a fresh generation for the current anchor.
+- A mounted lease with a different `project_id` must still fail closed unless a
+  separate explicit shutdown/cleanup path has first made it unmounted.
 - A second `ccbd` may only replace the current one through explicit takeover rules.
 - Once takeover has replaced the recorded lease holder, the previous daemon must treat that lease as lost authority:
   - heartbeat refresh must not succeed against a replaced holder

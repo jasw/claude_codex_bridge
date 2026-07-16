@@ -464,6 +464,68 @@ def test_ownership_guard_blocks_healthy_lease_and_allows_stale_takeover(tmp_path
     assert stale_guard.verify_or_takeover(project_id=ctx.project_id, pid=222, socket_path=layout.ccbd_socket_path) == 4
 
 
+def test_ownership_guard_allows_unmounted_foreign_lease_takeover(tmp_path: Path) -> None:
+    project_root = tmp_path / 'repo-unmounted-foreign'
+    project_root.mkdir()
+    ctx = bootstrap_project(project_root)
+    layout = PathLayout(project_root)
+
+    manager = MountManager(
+        layout,
+        clock=lambda: '2026-03-18T00:00:00Z',
+        uid_getter=lambda: 1000,
+        boot_id_getter=lambda: 'boot-1',
+    )
+    manager.mark_mounted(
+        project_id='old-copied-project',
+        pid=111,
+        socket_path=layout.ccbd_socket_path,
+        generation=9,
+    )
+    manager.mark_unmounted(expected_pid=111)
+    guard = OwnershipGuard(
+        layout,
+        manager,
+        clock=lambda: '2026-03-18T00:00:05Z',
+        pid_exists=lambda pid: True,
+        socket_probe=lambda path: True,
+        heartbeat_grace_seconds=15,
+    )
+
+    assert guard.verify_or_takeover(project_id=ctx.project_id, pid=222, socket_path=layout.ccbd_socket_path) == 10
+
+
+def test_ownership_guard_blocks_mounted_foreign_lease(tmp_path: Path) -> None:
+    project_root = tmp_path / 'repo-mounted-foreign'
+    project_root.mkdir()
+    ctx = bootstrap_project(project_root)
+    layout = PathLayout(project_root)
+
+    manager = MountManager(
+        layout,
+        clock=lambda: '2026-03-18T00:00:00Z',
+        uid_getter=lambda: 1000,
+        boot_id_getter=lambda: 'boot-1',
+    )
+    manager.mark_mounted(
+        project_id='old-active-project',
+        pid=111,
+        socket_path=layout.ccbd_socket_path,
+        generation=9,
+    )
+    guard = OwnershipGuard(
+        layout,
+        manager,
+        clock=lambda: '2026-03-18T00:00:05Z',
+        pid_exists=lambda pid: True,
+        socket_probe=lambda path: True,
+        heartbeat_grace_seconds=15,
+    )
+
+    with pytest.raises(OwnershipConflictError, match='lease project_id mismatch'):
+        guard.verify_or_takeover(project_id=ctx.project_id, pid=222, socket_path=layout.ccbd_socket_path)
+
+
 def test_ownership_guard_marks_fresh_socket_failure_as_degraded(tmp_path: Path) -> None:
     project_root = tmp_path / 'repo-degraded'
     project_root.mkdir()
