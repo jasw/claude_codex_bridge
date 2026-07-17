@@ -1383,6 +1383,36 @@ def test_cli_only_requires_strict_healthy_mounted_baseline(
     assert expected_reason in summary["abort_reason"]
 
 
+def test_cli_only_accepts_restored_as_a_success_runtime_health(
+    runner,
+    tmp_path: Path,
+) -> None:
+    options = _fixture_options(runner, tmp_path, scenario="cli-only")
+    context = runner.validate_preflight(options, environ=_stub_environ())
+    _write_mounted_round(
+        options.project_root,
+        sequence=1,
+        action="launched",
+        daemon_started=True,
+    )
+    runtime_path = options.project_root / ".ccb" / "agents" / "agent1" / "runtime.json"
+    runtime = json.loads(runtime_path.read_text(encoding="utf-8"))
+    runtime["health"] = "restored"
+    runtime_path.write_text(json.dumps(runtime) + "\n", encoding="utf-8")
+
+    identity = runner._capture_scenario_identity(context, benchmark_id="restored-health")
+    reasons = runner._cli_only_identity_reason_codes(
+        identity,
+        configured_agent_count=1,
+        baseline=None,
+        phase="test",
+    )
+
+    assert identity["runtime"]["healthy_active_runtime_record_count"] == 1
+    assert identity["runtime_slots"][0]["healthy"] is True
+    assert reasons == []
+
+
 def test_cli_only_command_failure_stops_and_preserves_report(runner, tmp_path: Path) -> None:
     options = _fixture_options(
         runner,

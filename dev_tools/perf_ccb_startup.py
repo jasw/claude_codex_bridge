@@ -95,6 +95,7 @@ MIXED_RECOVERY_SUPERVISION_FENCE_S = 120.0
 MIXED_RECOVERY_FAULT_WAIT_S = 5.0
 NEGATIVE_RESIDUAL_TOLERANCE_MS = 0.05
 TIMING_CONTAINMENT_TOLERANCE_MS = 0.01
+SUCCESS_RUNTIME_HEALTHS = frozenset({"healthy", "restored"})
 CLI_REQUIRED_TIMING_KEYS = frozenset(
     {
         "cli_pre_rpc",
@@ -1057,7 +1058,10 @@ def _capture_scenario_identity_once(
             and runtime.get("lifecycle_state") in {"idle", "running", "active"}
             and runtime_pid is not None
         )
-        healthy = bool(isinstance(runtime, Mapping) and runtime.get("health") == "healthy")
+        healthy = bool(
+            isinstance(runtime, Mapping)
+            and runtime.get("health") in SUCCESS_RUNTIME_HEALTHS
+        )
         steady = bool(
             isinstance(runtime, Mapping) and runtime.get("reconcile_state") == "steady"
         )
@@ -1112,7 +1116,7 @@ def _capture_scenario_identity_once(
         if process_identities.get(int(runtime["runtime_pid"]), {}).get("alive") is True
     )
     healthy_active_runtime_count = sum(
-        1 for runtime in active_runtimes if runtime.get("health") == "healthy"
+        1 for runtime in active_runtimes if runtime.get("health") in SUCCESS_RUNTIME_HEALTHS
     )
     steady_active_runtime_count = sum(
         1 for runtime in active_runtimes if runtime.get("reconcile_state") == "steady"
@@ -4560,7 +4564,7 @@ def _validate_warm_reuse_report(
             raise ReportValidationError(
                 f"warm sample agent_results[{index}] spent time in provider preparation"
             )
-        if result.get("health") not in {"healthy", "restored"}:
+        if result.get("health") not in SUCCESS_RUNTIME_HEALTHS:
             raise ReportValidationError(
                 f"warm sample agent_results[{index}].health is not successful"
             )
@@ -4676,7 +4680,7 @@ def _validate_mixed_recovery_report(
         )
         if not target and float(result.get("provider_prepare_ms") or 0.0) != 0.0:
             raise ReportValidationError("mixed recovery peer spent time in provider preparation")
-        if result.get("health") not in {"healthy", "restored"}:
+        if result.get("health") not in SUCCESS_RUNTIME_HEALTHS:
             raise ReportValidationError("mixed recovery result health is not successful")
         for field, expected in (
             ("pane_state", "alive"),
