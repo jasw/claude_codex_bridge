@@ -236,7 +236,8 @@ Rules:
 
 The source-only startup benchmark writes its raw evidence to an explicitly
 owned external test fixture, not into the live project's `.ccb` authority.  A
-round may contain `run.json`, the immutable startup-report snapshot,
+round may contain `run.json`, an immutable startup-report snapshot (or the
+explicitly named unchanged S0 sentinel snapshot),
 `scenario-construction.before.json`, `scenario-construction.ready.json`, the
 current/final `scenario-construction.json`, and `resource-profile.json`; final
 cleanup may additionally produce `cleanup-resource-audit.json`.
@@ -264,9 +265,19 @@ Rules:
   equality uses HMAC digests under a fresh non-exported benchmark key, while
   only aggregate record/live-process counts and sanitized authority state are
   written
-- the implemented scenario constructors are S1 warm attach, S3 deterministic
-  mixed recovery, S4 official full-cold reset, and S5a preflight-pristine cold.
-  S1/S3 prime and S4 publish
+- the implemented scenario constructors are S0 CLI-only hot path, S1 warm
+  attach, S3 deterministic mixed recovery, S4 official full-cold reset, and
+  S5a preflight-pristine cold.  S0 first uses the ordinary cold prime to create
+  one healthy mounted fixture, then freezes daemon, namespace, generation,
+  every configured runtime identity, and the full startup-report file identity.
+  Its measured command is exactly `ccb_test --print-version`: it emits no
+  startup id, consumes no startup process trace, performs no RPC, and must
+  create exactly one command process identity.  Every before/ready/after/final
+  audit must match the one frozen baseline, and even a same-bytes report rewrite
+  fails because inode/ctime/mtime identity is part of the sentinel proof.  The
+  old report is evidence of preserved state only and must never be attributed
+  to the measured command; readiness T1-T6 and supervisor/Agent statistics are
+  explicitly not applicable.  S1/S3 prime and S4 publish
   their `before` phase before invoking official `ccb_test kill`; their ready
   state requires consistent stopped/unmounted authority, a non-attachable
   namespace, zero active runtime records, and a clean bounded full-discovery
@@ -298,10 +309,15 @@ Rules:
   `0700` run directory as a `0600` file and binds its SHA256 from the final
   manifest.  Agent names and PIDs may exist only in that raw external snapshot;
   scenario manifests retain HMAC slot/identity values and aggregate counters
-- each usable resource profile must bind the benchmark coordinates, stdout
-  `startup_run_id`, persisted startup-report `startup_run_id`, and startup
-  report digest; an identity or digest mismatch is measurement-integrity
-  failure rather than a resource zero
+- each usable startup-transaction resource profile must bind the benchmark
+  coordinates, stdout `startup_run_id`, persisted startup-report
+  `startup_run_id`, and startup report digest.  S0 is the sole no-transaction
+  exception: its profile binds benchmark coordinates, profile id, command
+  output hash, frozen authority token, and identical before/after sentinel
+  identity while both startup ids remain absent.  A profile supplied for S0
+  must prove exactly one created process instance.  Any identity, digest, or
+  process-count mismatch is measurement-integrity failure rather than a
+  resource zero
 - for a profiled source startup, `run.json` separately records the correlated
   process trace id and duration map.  If `B` is the sum of the five process
   bootstrap durations, `C` is `cli_total`, and `W` is the foreground command
