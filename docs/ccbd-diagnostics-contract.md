@@ -271,13 +271,18 @@ Rules:
   one healthy mounted fixture, then freezes daemon, namespace, generation,
   every configured runtime identity, and the full startup-report file identity.
   Its measured command is exactly `ccb_test --print-version`: it emits no
-  startup id, consumes no startup process trace, performs no RPC, and must
-  create exactly one command process identity.  Every before/ready/after/final
-  audit must match the one frozen baseline, and even a same-bytes report rewrite
-  fails because inode/ctime/mtime identity is part of the sentinel proof.  The
-  old report is evidence of preserved state only and must never be attributed
-  to the measured command; readiness T1-T6 and supervisor/Agent statistics are
-  explicitly not applicable.  S1/S3 prime and S4 publish
+  startup id, consumes no startup process trace, and performs no RPC.  Its
+  resource sampler must observe exactly one newly created command-process
+  identity across its snapshots.  That count is a sampled lower bound, not an
+  event-complete proof that no process lived entirely between snapshots; the
+  no-subprocess boundary instead rests on the wrapper `exec`, the early version
+  return in the CLI entrypoint, and (on Linux) a separate process-syscall trace.
+  Every before/ready/after/final audit must match the one frozen baseline, and
+  even a same-bytes report rewrite fails because inode/ctime/mtime identity is
+  part of the sentinel proof.  The old report is evidence of preserved state
+  only and must never be attributed to the measured command; readiness T1-T6
+  and supervisor/Agent statistics are explicitly not applicable.  S1/S3 prime
+  and S4 publish
   their `before` phase before invoking official `ccb_test kill`; their ready
   state requires consistent stopped/unmounted authority, a non-attachable
   namespace, zero active runtime records, and a clean bounded full-discovery
@@ -315,9 +320,11 @@ Rules:
   exception: its profile binds benchmark coordinates, profile id, command
   output hash, frozen authority token, and identical before/after sentinel
   identity while both startup ids remain absent.  A profile supplied for S0
-  must prove exactly one created process instance.  Any identity, digest, or
-  process-count mismatch is measurement-integrity failure rather than a
-  resource zero
+  must observe exactly one newly created process identity across sampled
+  snapshots.  This count has the process-sampling lower-bound semantics stated
+  below and cannot by itself exclude a process whose complete lifetime falls
+  between snapshots.  Any identity, digest, or observed-process-count mismatch
+  is measurement-integrity failure rather than a resource zero
 - for a profiled source startup, `run.json` separately records the correlated
   process trace id and duration map.  If `B` is the sum of the five process
   bootstrap durations, `C` is `cli_total`, and `W` is the foreground command

@@ -1549,7 +1549,7 @@ def test_cli_only_resource_profile_correlates_without_startup_run_id(
     assert run["resource_profile"]["quality"]["formal_eligible"] is True
 
 
-def test_cli_only_resource_profile_rejects_more_than_one_created_process(
+def test_cli_only_resource_profile_rejects_more_than_one_observed_created_process(
     runner,
     tmp_path: Path,
 ) -> None:
@@ -1610,7 +1610,10 @@ def test_cli_only_resource_profile_rejects_more_than_one_created_process(
     )
 
     assert summary["status"] == "incomplete"
-    assert "exactly one created process instance" in summary["abort_reason"]
+    assert (
+        "observe exactly one newly created process identity across sampled snapshots"
+        in summary["abort_reason"]
+    )
 
 
 def test_cli_only_command_surface_and_profile_trace_policy(

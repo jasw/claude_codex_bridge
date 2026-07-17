@@ -3,7 +3,8 @@
 
 This harness deliberately owns only measurement and official control-plane
 invocation.  It never deletes ``.ccb`` state, invokes tmux directly, or kills
-processes outside ``ccb_test kill`` for the full-cold scenario.
+processes outside official ``ccb_test kill`` calls used by scenario prime/reset
+and final teardown.
 """
 
 from __future__ import annotations
@@ -3635,7 +3636,8 @@ def _finalize_resource_profile(
             )
             if type(created_count) is not int or created_count != 1:
                 integrity_errors.append(
-                    "cli-only resource profile must prove exactly one created process instance"
+                    "cli-only resource profile must observe exactly one newly created "
+                    "process identity across sampled snapshots"
                 )
     else:
         if not native_run_id:

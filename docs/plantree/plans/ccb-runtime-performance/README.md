@@ -105,8 +105,20 @@ maximum launch concurrency 1 and no supervision recovery, completed in
 `665.070 ms`, and cleaned up.  Follow-up review also excluded unknown slots
 from cleanup protection, bounded the fallback listing, and rejected caller-
 owned launch controls.  Focused tests pass `219/219`.  This remains a
-Linux stub serial smoke; S0/S2/S5b, fresh-per-round S5a, broader fault,
+Linux stub serial smoke; S2/S5b, fresh-per-round S5a, broader fault,
 provider, platform, interactive, and concurrency gates remain open.
+The S0 CLI-only slice is now closed on that Linux stub boundary.  Its exact
+`ccb_test --print-version` command creates no startup transaction or RPC,
+preserves one frozen healthy daemon/namespace/runtime/report baseline, and
+requires the sampler to observe exactly one newly created command-process
+identity.  That observation is a sampling lower bound; the wrapper `exec`, the
+early version return, and one isolated Linux process-syscall trace (zero
+`fork`/`vfork`/`clone`/`clone3`) supply the separate no-subprocess evidence for this
+boundary.  A retained first smoke exposed the harness incorrectly rejecting
+the valid runtime health `restored`; the corrected clean-HEAD `3 + 20` run
+passed `20/20` measured commands, `23/23` resource/report checks, and `24/24`
+S0 manifests with p50/p95 `286.132/298.046 ms` and clean teardown.  This result
+is still `smoke_only` and does not qualify full startup or real Providers.
 Evidence:
 [history/startup-phase0-readiness-attribution-checkpoint-2026-07-17.md](history/startup-phase0-readiness-attribution-checkpoint-2026-07-17.md),
 [history/startup-phase0-instrumentation-ab-checkpoint-2026-07-17.md](history/startup-phase0-instrumentation-ab-checkpoint-2026-07-17.md),
@@ -127,6 +139,9 @@ recorded in
 The retained S3 product failure, topology fix, validator correction, and passing
 serial mixed-recovery artifact are recorded in
 [history/startup-phase0-mixed-recovery-checkpoint-2026-07-17.md](history/startup-phase0-mixed-recovery-checkpoint-2026-07-17.md).
+The S0 boundary, retained health-classification failure, and clean formal-size
+stub evidence are recorded in
+[history/startup-phase0-cli-only-checkpoint-2026-07-17.md](history/startup-phase0-cli-only-checkpoint-2026-07-17.md).
 
 Earlier lifecycle attribution remains relevant:
 

@@ -219,6 +219,27 @@ two-Agent stub 的 S3 serial smoke；S0、S2、S5b、自动逐轮 S5a、更多 f
 Provider、平台和 interactive T5 仍未完成，且尚未开始 concurrency。证据见
 [Phase 0 mixed-recovery checkpoint](../history/startup-phase0-mixed-recovery-checkpoint-2026-07-17.md)。
 
+S0 CLI-only 切片随后完成。正式测量边界冻结为精确的
+`ccb_test --print-version`：wrapper `exec` 后只覆盖 Python/import/早期 CLI
+dispatch，不进入 project phase2、daemon ensure、RPC、namespace 或 Provider。
+普通 cold prime 只用于创建一次健康 mounted baseline；23 个 CLI-only 轮次必须
+无 startup id/trace、复用同一份不可变 report sentinel，并保持 daemon、generation、
+namespace、全部 configured runtime identity 不变。首个外部 smoke 正确暴露 health
+门禁误拒产品成功态 `restored`，现已与 supervision contract 对齐为
+`healthy|restored`，仍拒绝 failed/degraded。clean HEAD 上最终 `3 + 20` 运行达到
+20/20 measured、23/23 resource/report evidence、24/24 S0 manifests、零 failure/
+timeout、cleanup clean；wall p50/p95 为 `286.132/298.046 ms`，低于
+`750/1000 ms` 预算。该结论只关闭 Linux ext4 + two-Agent Codex stub 的 S0，不能
+外推完整启动或 real Provider；Phase 0 仍保持 `smoke_only`。证据见
+[Phase 0 CLI-only checkpoint](../history/startup-phase0-cli-only-checkpoint-2026-07-17.md)。
+
+S0 的进程计数证据按采样下界解释：23/23 profile 都观察到且只观察到一个新建
+command-process identity，但 procfs 周期快照本身不能排除在两个采样点之间完整
+生灭的瞬时进程。无子进程边界由 `ccb_test` 的 `execvpe`、CLI version 分支在
+phase 2 前立即返回的静态调用链，以及一次隔离 Linux `strace -f -e trace=process`
+中零 `fork`/`vfork`/`clone`/`clone3` 的事件证据共同支持；该单次 Linux trace
+不外推为跨平台保证。
+
 ## 4. Startup Scenario Definitions
 
 所有报告必须明确场景，禁止把不同层次的“冷/热”数据混在同一统计中。
@@ -812,6 +833,9 @@ Scenario-construction/S1-S4-S5a checkpoint：
 
 Mixed-recovery/S3 serial checkpoint：
 [history/startup-phase0-mixed-recovery-checkpoint-2026-07-17.md](../history/startup-phase0-mixed-recovery-checkpoint-2026-07-17.md)。
+
+CLI-only/S0 checkpoint：
+[history/startup-phase0-cli-only-checkpoint-2026-07-17.md](../history/startup-phase0-cli-only-checkpoint-2026-07-17.md)。
 
 ## 12. Completion Criteria
 

@@ -147,24 +147,40 @@ Date: 2026-07-17
   `665.070 ms`, prepare counts `1/0`, maximum
   concurrency 1, zero supervision recovery events, and clean teardown.  Evidence:
   [history/startup-phase0-mixed-recovery-checkpoint-2026-07-17.md](history/startup-phase0-mixed-recovery-checkpoint-2026-07-17.md).
+- Closed the S0 CLI-only hot-path slice with an explicit no-startup-transaction
+  contract.  The measured command is exactly `ccb_test --print-version`; it
+  emits no startup id/trace, preserves one frozen daemon/namespace/runtime/
+  report baseline, and observes exactly one newly created command-process
+  identity in every sampled profile.  The count is explicitly a sampling lower
+  bound; wrapper `exec`, early CLI return, and a separate Linux process-syscall
+  trace with zero `fork`/`vfork`/`clone`/`clone3` support the no-subprocess boundary.  A
+  retained smoke exposed and corrected a harness false negative for the product
+  success health `restored`.  The final clean-HEAD `3 + 20` run passed `20/20`
+  measured commands, `23/23` CLI resource/report checks, `24/24` scenario
+  manifests, and clean preservation/teardown at p50/p95
+  `286.132/298.046 ms`, below the S0 budget.  Evidence:
+  [history/startup-phase0-cli-only-checkpoint-2026-07-17.md](history/startup-phase0-cli-only-checkpoint-2026-07-17.md).
 
 ## In Progress
 
 - Complete Phase 0 readiness semantics with a separate interactive T5 lane;
   retain explicit projection/helper/
   process-snapshot zero counters and public redacted identity summaries.
-- Fill S0 and S5b plus automated fresh-per-round S5a artifacts and
+- Fill S5b plus automated fresh-per-round S5a artifacts and
   cross-platform/slow-filesystem coverage before treating Phase 0 as complete;
-  S1/S3/S4/one-use-S5a construction smoke is closed, while S2 remains
+  S0/S1/S3/S4/one-use-S5a construction smoke is closed, while S2 remains
   unavailable without an official daemon-replacement primitive.
 - Extend the proven S3 serial compensation fence across the remaining fault
   matrix before any cold-launch concurrency experiment.
+- Make sampled process-count completeness machine-readable and split the
+  measured-profile resource gate from the all-profile audit.  Current S0 is not
+  blocked because all `23/23` profiles passed, but future consumers must not
+  infer event completeness from `created_process_instance_count` alone.
 
 ## Next
 
-1. Define S0 report-unchanged semantics and automate fresh-per-round S5a plus
-   cache-warm S5b; keep S2 unavailable until an official daemon-replacement
-   primitive exists.
+1. Automate fresh-per-round S5a and add cache/first-update S5b; keep S2
+   unavailable until an official daemon-replacement primitive exists.
 2. Complete the remaining serial fault/compensation cases using the S3 fence
    before evaluating launch concurrency.
 3. Run macOS, WSL ext4, WSL mounted-drive, real Codex primary, and Claude

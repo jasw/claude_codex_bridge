@@ -72,6 +72,16 @@ observed target/peer prepare counts `1/0`, maximum launch concurrency 1, zero
 supervision recovery events, and clean teardown.  This closes only S3 serial
 smoke, not concurrency or the broader fault/provider/platform matrix.  Evidence:
 [history/startup-phase0-mixed-recovery-checkpoint-2026-07-17.md](history/startup-phase0-mixed-recovery-checkpoint-2026-07-17.md).
+The S0 CLI-only hot path is also closed on the Linux Codex-stub fixture.  Its
+`ccb_test --print-version` boundary performs no startup transaction
+or RPC, retains no startup id/trace, and preserves a single frozen daemon,
+generation, namespace, configured-runtime, and report identity.  The retained
+first smoke found a harness-only false negative for successful
+`health=restored`; the corrected clean-HEAD `3 + 20` run passed `20/20`
+measured commands, `23/23` resource/report checks, and `24/24` S0 manifests at
+p50/p95 `286.132/298.046 ms`, with clean preservation and official teardown.
+This closes S0 only; the overall result remains `smoke_only`.  Evidence:
+[history/startup-phase0-cli-only-checkpoint-2026-07-17.md](history/startup-phase0-cli-only-checkpoint-2026-07-17.md).
 
 The implementation sequence, invariants, SLOs, test matrix, and rollback rules
 are recorded in
@@ -83,10 +93,10 @@ are recorded in
   latency lane.
 - Add explicit process-snapshot, projection file/byte, helper-spawn, and zero
   counter fields where the request scope can prove them.
-- Construct S0/S5b and broader serial fault artifacts; automate a fresh fixture
+- Construct S5b and broader serial fault artifacts; automate a fresh fixture
   per S5a round; keep S2 unavailable until an official daemon-replacement
   primitive exists; then run macOS, WSL, slow-filesystem, real Codex, and Claude
-  qualification.  S1/S3/S4/one-use-S5a construction smoke is complete.
+  qualification.  S0/S1/S3/S4/one-use-S5a construction smoke is complete.
 - Extend the now-proven serial S3 launch-attempt fence to the remaining fault
   cases before selecting any bounded Provider-specific concurrency cap.
 
@@ -108,7 +118,7 @@ are recorded in
 
 ## Next Commit Target
 
-Build S0/S5b and the remaining serial fault-compensation matrix, automate fresh
+Build S5b and the remaining serial fault-compensation matrix, automate fresh
 S5a fixtures, and keep S2 explicitly unavailable until an official replacement
 primitive exists; then fill the interactive T5 lane.  Keep bounded
 launch concurrency and foreground-first readiness as separate later patches,
@@ -116,6 +126,21 @@ and keep unrelated dirty PlanTree/mobile work out of any startup commit.
 
 ## Last Verified
 
+- 2026-07-17 S0 CLI-only clean-HEAD formal-size stub run:
+  `phase0-s0-cli-only-formal-clean-20260717-d` on commit `c1cf38df` completed
+  `3 + 20` with zero failures/timeouts.  All `23/23` CLI-only rounds retained
+  one immutable report identity, emitted no startup id, observed exactly one
+  newly created command-process identity in sampled profiles, and had
+  verified/formal/process-I/O resource profiles; all `24/24` S0 manifests
+  passed.  Static `exec`/early-return inspection plus one isolated Linux
+  process-syscall trace observed zero `fork`/`vfork`/`clone`/`clone3`; the
+  sampled count is still recorded only as a lower bound.  Wall p50/p95 was
+  `286.132/298.046 ms`; pre-teardown preservation passed and official cleanup
+  was clean.  Summary/cleanup/final-manifest digests are `1629fc529c46`,
+  `0a4dd08ed35d`, and `3c8c5a0dc261`.  The focused harness is `103 passed` and
+  the expanded resource/source-guard/CLI-management/router matrix is
+  `162 passed`.  Evidence:
+  [history/startup-phase0-cli-only-checkpoint-2026-07-17.md](history/startup-phase0-cli-only-checkpoint-2026-07-17.md).
 - 2026-07-17 S3 serial mixed-recovery: focused topology/restart/harness matrix
   `219 passed in 25.46s`.  Retained AO failed closed after a dead target forced
   namespace rebuild and healthy-peer relaunch; AP proved the product correction

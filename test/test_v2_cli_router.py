@@ -244,6 +244,33 @@ def test_run_cli_entrypoint_prints_start_help_without_phase2() -> None:
     assert stderr.getvalue() == ""
 
 
+def test_run_cli_entrypoint_prints_version_before_dispatch(monkeypatch) -> None:
+    stdout = StringIO()
+    stderr = StringIO()
+
+    def fail_if_dispatched(*_args, **_kwargs):
+        raise AssertionError("--print-version must return before CLI dispatch")
+
+    monkeypatch.setattr(
+        entrypoint_runtime,
+        "maybe_handle_sidebar_click_command",
+        fail_if_dispatched,
+    )
+
+    result = entrypoint_runtime.run_cli_entrypoint(
+        ["--print-version"],
+        version="8.2.1",
+        script_root=Path("/tmp/ccb"),
+        cwd=Path("/tmp/project"),
+        stdout=stdout,
+        stderr=stderr,
+    )
+
+    assert result == 0
+    assert stdout.getvalue() == "v8.2.1\n"
+    assert stderr.getvalue() == ""
+
+
 def test_run_cli_entrypoint_rejects_removed_rich_install() -> None:
     stdout = StringIO()
     stderr = StringIO()
