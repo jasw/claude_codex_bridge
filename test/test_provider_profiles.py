@@ -1532,6 +1532,25 @@ def test_materialize_codex_profile_refreshes_plugin_projection_when_source_chang
     assert not (runtime_home / '.tmp' / 'plugins.sha').exists()
 
 
+def test_materialize_codex_home_projects_current_plugin_layout(tmp_path: Path) -> None:
+    source_home = tmp_path / 'source'
+    target_home = tmp_path / 'target'
+    marketplace_root = source_home / '.tmp' / 'marketplaces'
+    plugin_cache_root = source_home / 'plugins' / 'cache'
+    (marketplace_root / 'demo' / '.agents' / 'plugins').mkdir(parents=True)
+    (plugin_cache_root / 'demo' / 'demo' / '1.0.0' / '.codex-plugin').mkdir(parents=True)
+    (marketplace_root / 'demo' / '.agents' / 'plugins' / 'marketplace.json').write_text('{}\n', encoding='utf-8')
+    (plugin_cache_root / 'demo' / 'demo' / '1.0.0' / '.codex-plugin' / 'plugin.json').write_text(
+        '{}\n',
+        encoding='utf-8',
+    )
+
+    codex_home_config.materialize_codex_home_config(target_home, source_home=source_home)
+
+    assert (target_home / '.tmp' / 'marketplaces').resolve() == marketplace_root.resolve()
+    assert (target_home / 'plugins' / 'cache').resolve() == plugin_cache_root.resolve()
+
+
 def test_materialize_codex_profile_refreshes_plugin_projection_without_sha_marker(tmp_path: Path, monkeypatch) -> None:
     project_root = tmp_path / 'repo'
     source_home = tmp_path / 'system-codex-home'

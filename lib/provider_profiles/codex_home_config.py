@@ -219,6 +219,13 @@ def materialize_codex_home_config(
             project_root=project_root,
             shared_cache_root=shared_cache_root,
         )
+        for relative in (Path('.tmp') / 'marketplaces', Path('plugins') / 'cache'):
+            route_projected_tree(
+                source_home / relative,
+                target_home / relative,
+                label=_CODEX_PLUGIN_PROJECTION_LABEL,
+                allow_unmarked_replace=True,
+            )
     memory_result = _materialize_codex_memory(
         source_home,
         target_home,
