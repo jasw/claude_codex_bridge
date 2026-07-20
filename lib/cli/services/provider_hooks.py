@@ -14,6 +14,7 @@ from provider_backends.claude.launcher_runtime import materialize_claude_home_co
 from provider_backends.codex.launcher_runtime import resolve_codex_home_layout
 from provider_backends.droid.home import materialize_droid_home_config
 from provider_backends.gemini.launcher_runtime.home import materialize_gemini_home_config
+from provider_backends.qwen.home import materialize_qwen_home_config
 from provider_backends.kimi.skills import materialize_kimi_skills
 from provider_backends.mimo.launcher import materialize_mimo_memory_config
 from provider_backends.opencode.launcher import materialize_opencode_memory_config
@@ -247,6 +248,7 @@ def _materialize_provider_home(
         materialize_droid_home_config(
             layout.agent_provider_state_dir(spec.name, 'droid') / 'home',
             profile=resolved_profile,
+            command_policy=command_policy,
         )
         return
     if provider == 'opencode':
@@ -293,6 +295,14 @@ def _materialize_provider_home(
             workspace_path=workspace_path,
             memory_projection_event_path=layout.agent_events_path(spec.name),
             memory_projection_marker_path=Path(runtime_dir) / 'gemini-memory-projection.json',
+            command_policy=command_policy,
+        )
+        return
+    if provider == 'qwen':
+        materialize_qwen_home_config(
+            layout.agent_provider_state_dir(spec.name, 'qwen') / 'home',
+            profile=resolved_profile,
+            command_policy=command_policy,
         )
 
 

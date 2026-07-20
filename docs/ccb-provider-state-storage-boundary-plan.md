@@ -152,7 +152,9 @@ Examples:
   shareable managed startup bundles; their managed targets are per-agent
   writable state
 - Claude source `.claude/plugins/` may be exposed as read-only seed authority
-  through `CLAUDE_CODE_PLUGIN_SEED_DIR`; it is not copied into shared cache
+  through `CLAUDE_CODE_PLUGIN_SEED_DIR`; a new agent may bootstrap one local
+  writable copy with plugin registry paths rebased into that local root before
+  its first interactive process, but the source is not copied into shared cache
 - provider startup projection manifests that must match their payload tree
 
 Rules:
@@ -162,10 +164,11 @@ Rules:
 - generated OpenCode `provider-state/opencode/opencode.json` is
   `PROJECTED_CONFIG`; project `opencode.json` remains user content outside the
   provider-state tree
-- Qwen, Cursor, Copilot, Crush, Kiro, Pi, and Z.ai use shared native CLI provider-state
-  roots with `<provider>_home` and `<provider>_data_dir`; until provider-native
-  config projection is added, their contents are classified as provider-owned
-  session/auth/cache evidence rather than project worktree content
+- Qwen, Cursor, Copilot, Crush, Kiro, Pi, and Z.ai use shared native CLI
+  provider-state roots with `<provider>_home` and `<provider>_data_dir`;
+  Qwen's marker-owned `extensions/` seed is `PROJECTED_CONFIG`, while their
+  remaining contents are provider-owned session/auth/cache evidence rather
+  than project worktree content
 - sharing is allowed only after content-addressed whole-bundle storage and
   atomic replacement are implemented
 - default behavior remains per-agent/per-home storage
@@ -205,8 +208,11 @@ Examples:
 - Claude `.claude/skills/`, `.claude/commands/`, `.claude/CLAUDE.md`
 - Claude `.claude/plugins/` as the agent-local writable plugin root selected by
   `CLAUDE_CODE_PLUGIN_CACHE_DIR`
-- Droid inherited `skills/`
-- Gemini `.gemini/settings.json`, `.gemini/trustedFolders.json`
+- Droid inherited `skills/`, marker-owned local `plugins/`, and only the
+  marker-owned `enabledPlugins` entries merged into managed `settings.json`
+- Gemini `.gemini/settings.json`, `.gemini/trustedFolders.json`, and
+  marker-owned local `.gemini/extensions/`
+- Qwen marker-owned local `extensions/`
 - Kimi inherited and role `skills/` directories under managed provider state
 - OpenCode generated `opencode.json` and generated ask skill instruction files
   under `.ccb/runtime/skills/<agent>/opencode/`

@@ -297,6 +297,23 @@ def test_claude_home_overrides_share_plugin_seed_but_isolate_writable_caches(tmp
     seed_root = source_home / '.claude' / 'plugins'
     seed_root.mkdir(parents=True)
     (seed_root / 'known_marketplaces.json').write_text('{}\n', encoding='utf-8')
+    (seed_root / 'installed_plugins.json').write_text(
+        json.dumps(
+            {
+                'version': 2,
+                'plugins': {
+                    'fixture@marketplace': [
+                        {
+                            'scope': 'user',
+                            'installPath': str(seed_root / 'cache' / 'fixture'),
+                            'version': '1.0.0',
+                        }
+                    ]
+                },
+            }
+        ),
+        encoding='utf-8',
+    )
     (seed_root / 'cache').mkdir()
 
     first = prepare_claude_home_overrides_for_test(
@@ -321,13 +338,45 @@ def test_claude_home_overrides_share_plugin_seed_but_isolate_writable_caches(tmp
     assert not first_plugin_root.is_symlink()
     assert not second_plugin_root.is_symlink()
     assert first_plugin_root != second_plugin_root
-    (first_plugin_root / 'cache').mkdir()
+    first_registry = json.loads(
+        (first_plugin_root / 'installed_plugins.json').read_text(encoding='utf-8')
+    )
+    assert first_registry['plugins']['fixture@marketplace'][0]['installPath'] == str(
+        first_plugin_root / 'cache' / 'fixture'
+    )
+    source_registry = json.loads((seed_root / 'installed_plugins.json').read_text(encoding='utf-8'))
+    assert source_registry['plugins']['fixture@marketplace'][0]['installPath'] == str(
+        seed_root / 'cache' / 'fixture'
+    )
+    assert (second_plugin_root / 'known_marketplaces.json').is_file()
     (first_plugin_root / 'cache' / 'agent1-runtime.json').write_text('{}\n', encoding='utf-8')
     assert not (seed_root / 'cache' / 'agent1-runtime.json').exists()
     assert not (second_plugin_root / 'cache' / 'agent1-runtime.json').exists()
 
 
-def test_claude_home_overrides_ignore_non_seed_plugin_metadata(tmp_path: Path) -> None:
+def test_claude_home_overrides_preserve_existing_writable_plugin_cache(tmp_path: Path) -> None:
+    source_home = tmp_path / 'source-home'
+    seed_root = source_home / '.claude' / 'plugins'
+    seed_root.mkdir(parents=True)
+    (seed_root / 'known_marketplaces.json').write_text('{"source": true}\n', encoding='utf-8')
+    runtime_dir = tmp_path / 'runtime'
+    plugin_root = runtime_dir / 'claude-home' / '.claude' / 'plugins'
+    plugin_root.mkdir(parents=True)
+    local_registry = plugin_root / 'known_marketplaces.json'
+    local_registry.write_text('{"local": true}\n', encoding='utf-8')
+
+    overrides = prepare_claude_home_overrides_for_test(
+        runtime_dir,
+        None,
+        source_home=source_home,
+        refresh_home=False,
+    )
+
+    assert Path(overrides['CLAUDE_CODE_PLUGIN_CACHE_DIR']) == plugin_root
+    assert local_registry.read_text(encoding='utf-8') == '{"local": true}\n'
+
+
+def test_claude_home_overrides_use_empty_seed_for_non_seed_plugin_metadata(tmp_path: Path) -> None:
     source_home = tmp_path / 'source-home'
     plugin_root = source_home / '.claude' / 'plugins'
     plugin_root.mkdir(parents=True)
@@ -340,9 +389,60 @@ def test_claude_home_overrides_ignore_non_seed_plugin_metadata(tmp_path: Path) -
         refresh_home=False,
     )
 
-    assert 'CLAUDE_CODE_PLUGIN_SEED_DIR' not in overrides
-    assert 'CLAUDE_CODE_PLUGIN_CACHE_DIR' not in overrides
-    assert not (tmp_path / 'runtime' / 'claude-home' / '.claude' / 'plugins').exists()
+    empty_seed = Path(overrides['CLAUDE_CODE_PLUGIN_SEED_DIR'])
+    plugin_root = Path(overrides['CLAUDE_CODE_PLUGIN_CACHE_DIR'])
+    assert empty_seed.is_dir()
+    assert not any(empty_seed.iterdir())
+    assert empty_seed != source_home / '.claude' / 'plugins'
+    assert plugin_root.name == 'ccb-empty-plugins'
+    assert (plugin_root / 'cache').is_dir()
+
+
+def test_claude_home_overrides_bootstrap_when_source_seed_appears_later(tmp_path: Path) -> None:
+    source_home = tmp_path / 'source-home'
+    runtime_dir = tmp_path / 'runtime'
+
+    initial = prepare_claude_home_overrides_for_test(
+        runtime_dir,
+        None,
+        source_home=source_home,
+        refresh_home=False,
+    )
+    assert Path(initial['CLAUDE_CODE_PLUGIN_CACHE_DIR']).name == 'ccb-empty-plugins'
+    legacy_normal_root = runtime_dir / 'claude-home' / '.claude' / 'plugins'
+    (legacy_normal_root / 'cache').mkdir(parents=True)
+
+    seed_root = source_home / '.claude' / 'plugins'
+    source_cache = seed_root / 'cache' / 'fixture'
+    source_cache.mkdir(parents=True)
+    (source_cache / 'plugin.json').write_text('{}\n', encoding='utf-8')
+    (seed_root / 'known_marketplaces.json').write_text('{}\n', encoding='utf-8')
+    (seed_root / 'installed_plugins.json').write_text(
+        json.dumps(
+            {
+                'version': 2,
+                'plugins': {
+                    'fixture@marketplace': [
+                        {'scope': 'user', 'installPath': str(source_cache), 'version': '1.0.0'}
+                    ]
+                },
+            }
+        ),
+        encoding='utf-8',
+    )
+
+    updated = prepare_claude_home_overrides_for_test(
+        runtime_dir,
+        None,
+        source_home=source_home,
+        refresh_home=False,
+    )
+    plugin_root = Path(updated['CLAUDE_CODE_PLUGIN_CACHE_DIR'])
+    registry = json.loads((plugin_root / 'installed_plugins.json').read_text(encoding='utf-8'))
+    assert plugin_root.name == 'plugins'
+    assert registry['plugins']['fixture@marketplace'][0]['installPath'] == str(
+        plugin_root / 'cache' / 'fixture'
+    )
 
 
 def test_claude_home_overrides_respect_config_inheritance_and_hard_role_policy(tmp_path: Path) -> None:
@@ -350,6 +450,17 @@ def test_claude_home_overrides_respect_config_inheritance_and_hard_role_policy(t
     plugin_root = source_home / '.claude' / 'plugins'
     plugin_root.mkdir(parents=True)
     (plugin_root / 'known_marketplaces.json').write_text('{}\n', encoding='utf-8')
+    (source_home / '.claude' / 'settings.json').write_text(
+        json.dumps(
+            {
+                'enabledPlugins': {'source-plugin@marketplace': True},
+                'extraKnownMarketplaces': {
+                    'marketplace': {'source': {'source': 'github', 'repo': 'demo/plugins'}},
+                },
+            }
+        ),
+        encoding='utf-8',
+    )
     no_config_profile = ResolvedProviderProfile(
         provider='claude',
         agent_name='agent1',
@@ -385,8 +496,27 @@ def test_claude_home_overrides_respect_config_inheritance_and_hard_role_policy(t
     )
 
     for overrides in (inheritance_disabled, role_restricted):
-        assert 'CLAUDE_CODE_PLUGIN_SEED_DIR' not in overrides
-        assert 'CLAUDE_CODE_PLUGIN_CACHE_DIR' not in overrides
+        seed_root = Path(overrides['CLAUDE_CODE_PLUGIN_SEED_DIR'])
+        plugin_root = Path(overrides['CLAUDE_CODE_PLUGIN_CACHE_DIR'])
+        assert seed_root.is_dir()
+        assert not any(seed_root.iterdir())
+        assert seed_root != source_home / '.claude' / 'plugins'
+        assert plugin_root.name == 'ccb-restricted-plugins'
+        assert (plugin_root / 'cache').is_dir()
+
+    for target_home, profile, command_policy in (
+        (tmp_path / 'managed-no-config', no_config_profile, None),
+        (tmp_path / 'managed-hard-role', None, hard_policy),
+    ):
+        layout = claude_home_runtime.materialize_claude_home_config(
+            target_home,
+            profile=profile,
+            source_home=source_home,
+            command_policy=command_policy,
+        )
+        settings = json.loads(layout.settings_path.read_text(encoding='utf-8'))
+        assert 'enabledPlugins' not in settings
+        assert 'extraKnownMarketplaces' not in settings
 
 
 def _write_codex_plugin_source(
@@ -2642,6 +2772,59 @@ def test_claude_launcher_exports_plugin_seed_before_process_start(monkeypatch, t
     assert start_cmd.index('CLAUDE_CODE_PLUGIN_SEED_DIR=') < start_cmd.rindex('; claude ')
 
 
+def test_claude_launcher_hard_role_overrides_source_and_ambient_plugin_seed(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    runtime_dir = tmp_path / 'runtime'
+    runtime_dir.mkdir(parents=True)
+    source_home = tmp_path / 'source-home'
+    source_seed = source_home / '.claude' / 'plugins'
+    source_seed.mkdir(parents=True)
+    (source_seed / 'known_marketplaces.json').write_text('{}\n', encoding='utf-8')
+    hard_policy = RoleCommandPolicy(
+        role_id='test.hard',
+        path=tmp_path / 'command-surface.toml',
+        mode='deny_all_except',
+        enforcement='required',
+        if_unsupported='fail_mount',
+        generic_shell=False,
+        generic_ccb=False,
+        supported_providers=('claude',),
+        provider_tools=(),
+        allowed_effects=(),
+        forbidden_effects=(),
+        allowed=(),
+    )
+    spec = _spec('reviewer', provider='claude')
+    command = ParsedStartCommand(project=None, agent_names=('reviewer',), restore=False, auto_permission=False)
+    monkeypatch.setenv('CLAUDE_CODE_PLUGIN_SEED_DIR', str(tmp_path / 'ambient-seed'))
+    monkeypatch.setattr(claude_home_runtime, 'current_provider_source_home', lambda: source_home)
+    monkeypatch.setattr(claude_launcher, 'ensure_role_command_policy_supported', lambda **kwargs: hard_policy)
+    monkeypatch.setattr(claude_launcher, 'is_root_user', lambda: False)
+    monkeypatch.setattr(
+        claude_launcher,
+        '_resolve_claude_restore_target',
+        lambda **kwargs: ProviderRestoreTarget(run_cwd=runtime_dir, has_history=False),
+    )
+
+    start_cmd = claude_launcher.build_start_cmd(
+        command,
+        spec,
+        runtime_dir,
+        'claude-hard-role',
+        prepared_state=_claude_prepared_state(runtime_dir),
+    )
+
+    managed_claude = runtime_dir / 'claude-home' / '.claude'
+    empty_seed = managed_claude / 'ccb-empty-plugin-seed'
+    restricted_plugins = managed_claude / 'ccb-restricted-plugins'
+    assert f'CLAUDE_CODE_PLUGIN_SEED_DIR={shlex.quote(str(empty_seed))}' in start_cmd
+    assert f'CLAUDE_CODE_PLUGIN_CACHE_DIR={shlex.quote(str(restricted_plugins))}' in start_cmd
+    assert str(source_seed) not in start_cmd
+    assert str(tmp_path / 'ambient-seed') not in start_cmd
+
+
 def test_claude_launcher_provider_command_template_wraps_command_after_env_prefix(
     monkeypatch,
     tmp_path: Path,
@@ -2820,6 +3003,16 @@ def test_claude_cli_capability_probe_does_not_reuse_prior_help_output(monkeypatc
 
     assert '--settings' in claude_launcher._claude_help_text(('claude',))
     assert '--permission-mode' in claude_launcher._claude_help_text(('claude',))
+
+
+def test_claude_cli_capability_probe_reads_flags_after_pipe_truncation_boundary(monkeypatch) -> None:
+    def write_long_help(args, **kwargs):
+        kwargs['stdout'].write(f'{"x" * 8192}\n--setting-sources <sources>\n')
+        return subprocess.CompletedProcess(args, 0)
+
+    monkeypatch.setattr(claude_launcher.subprocess, 'run', write_long_help)
+
+    assert claude_launcher.claude_cli_supports_flag(['claude'], '--setting-sources') is True
 
 
 def test_claude_launcher_skips_unsupported_optional_flags(monkeypatch, tmp_path: Path) -> None:

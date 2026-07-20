@@ -5,11 +5,13 @@ import os
 from pathlib import Path
 import shutil
 
+from cli.services.role_command_policy import role_command_policy_disables_inherited_assets
 from provider_core.memory_projection import (
     materialize_provider_memory_file,
     memory_projection_result,
     record_memory_projection_event,
 )
+from provider_core.projected_assets import seed_projected_tree
 from provider_core.source_home import current_provider_source_home
 from provider_profiles import provider_api_env_keys
 from storage.atomic import atomic_write_text
@@ -19,6 +21,7 @@ from ..home_layout import GeminiHomeLayout, gemini_layout_for_home, gemini_layou
 from .session_paths import read_session_payload, session_file_for_runtime_dir, state_dir_for_runtime_dir
 
 _GEMINI_LOGIN_AUTH_FILENAMES = ('oauth_creds.json', 'google_accounts.json')
+_GEMINI_EXTENSIONS_PROJECTION_LABEL = 'gemini-inherited-extensions'
 
 
 def resolve_gemini_home_layout(runtime_dir: Path, profile) -> GeminiHomeLayout:
@@ -44,6 +47,7 @@ def prepare_gemini_home_overrides(
     workspace_path: Path | None = None,
     memory_projection_event_path: Path | None = None,
     memory_projection_marker_path: Path | None = None,
+    command_policy=None,
 ) -> dict[str, str]:
     layout = resolve_gemini_home_layout(runtime_dir, profile)
     if refresh_home:
@@ -55,6 +59,7 @@ def prepare_gemini_home_overrides(
             workspace_path=workspace_path,
             memory_projection_event_path=memory_projection_event_path,
             memory_projection_marker_path=memory_projection_marker_path,
+            command_policy=command_policy,
         )
     cache_root = _gemini_shared_cache_root(project_root, runtime_dir)
     return {
@@ -182,6 +187,7 @@ def materialize_gemini_home_config(
     workspace_path: Path | None = None,
     memory_projection_event_path: Path | None = None,
     memory_projection_marker_path: Path | None = None,
+    command_policy=None,
 ) -> GeminiHomeLayout:
     layout = gemini_layout_for_home(target_home)
     _prepare_managed_home(layout)
@@ -196,6 +202,15 @@ def materialize_gemini_home_config(
         _materialize_env_file(source_root, layout, profile=profile)
         _materialize_trusted_folders(source_root, layout)
         _materialize_auth(source_root, layout, profile=profile)
+        seed_projected_tree(
+            source_root / '.gemini' / 'extensions',
+            layout.gemini_dir / 'extensions',
+            enabled=(
+                _inherits_config(profile)
+                and not role_command_policy_disables_inherited_assets(command_policy)
+            ),
+            label=_GEMINI_EXTENSIONS_PROJECTION_LABEL,
+        )
         memory_result = _materialize_gemini_memory(
             source_root,
             layout,

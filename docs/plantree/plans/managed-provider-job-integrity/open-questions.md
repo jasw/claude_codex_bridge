@@ -16,6 +16,6 @@ before production implementation of its owning slice starts.
 4. **R9:** Which exact Codex and Claude native mechanisms qualify as safe
    active-turn correction, and what capability response should providers
    return when only cancel-and-resubmit is safe?
-5. **R11:** For Gemini, Qwen, Copilot, and Droid, which provider-supported
-   mechanism separates immutable extension authority from mutable registry,
-   plugin data, credentials, and cache without copying the whole user home?
+5. **R11:** For Copilot, which entry-level ownership model can project installed
+   plugins and marketplaces from its mixed config without copying or
+   overwriting credentials, sessions, permissions, and local plugin data?

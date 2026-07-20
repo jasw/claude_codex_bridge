@@ -4,19 +4,18 @@ Date: 2026-07-20
 
 ## Status Summary
 
-- Current status: In progress; R1/R2 combined candidate under validation.
+- Current status: In progress; R1/R2 landed and the R11 provider-extension
+  candidate is committed on its qualified branch.
 - Work mode: execute-ready.
 - Review baseline: PR257 is merged; PR258, PR259, PR264, PR265, and PR266 are
   open and reported `UNSTABLE`; Issues 260-263 remain open as of 2026-07-20.
-- Last verified: the R1/R2 implementation candidate is based on current
-  `origin/main` (`5214ce03`); full Python regression produced `5373 passed`,
-  `15 skipped`, and one known non-deterministic CCBD shutdown race. Its isolated
-  rerun passed. External source-runtime Codex/Claude startup, restart, source
-  immutability, and cleanup passed; this account has no usable Claude source
-  plugin seed, so real inherited-plugin loading remains unclaimed. See the
-  [validation record](history/r1-r2-validation-2026-07-20.md).
-- Next target: complete final diff review, commit, push, and open the main-based
-  R1/R2 PR.
+- Last verified: R1/R2 landed as `06e1a46a` through merge `aed27abf`. R11 passed
+  `282` focused tests, `5389` tests with one adjudicated baseline shutdown test
+  excluded, and real clean-home Claude, Gemini, and Droid checks. The external
+  project was cleanly unmounted. See the
+  [R11 validation record](history/r11-provider-extension-validation-2026-07-20.md).
+- Next target: integrate the committed branch after an explicit push/merge
+  instruction.
 
 ## Done
 
@@ -33,13 +32,16 @@ Date: 2026-07-20
   slice topic instead of treating passing contributor tests as acceptance.
 - Registered this cross-cutting plan without changing the authority of the
   existing provider, communication, callback, diagnostics, or storage plans.
+- Landed R1/R2 in PR269 (`06e1a46a`, merge `aed27abf`) with the preserved
+  [validation record](history/r1-r2-validation-2026-07-20.md).
 
 ## In Progress
 
-- **R1 + R2 combined:** replace Codex source/shared writable plugin symlinks
-  with marker-owned atomic local seeds and inject Claude's official read-only
-  seed plus per-agent writable plugin root before process start.
-- Update the Codex, Claude, and provider-storage contracts in the same patch.
+- **R11 provider extension inheritance:** harden Claude's first interactive
+  plugin load, seed Gemini and Qwen extensions locally, and project Droid
+  plugins plus only their enabling settings without copying provider homes.
+- Keep Copilot deferred until its mixed auth/config/plugin state can be split
+  without overwriting credentials, sessions, permissions, or local plugin data.
 - Hold PR258, PR259, PR265, and PR266 from merge until their owning later
   roadmap slices pass the negative cases below.
 
@@ -71,11 +73,7 @@ Date: 2026-07-20
     full Python/Rust/client, clean merged-main, external source-runtime, and
     real Codex/Claude project gates; close only the issues whose complete
     acceptance criteria are demonstrated.
-9. **R11: Remaining provider extension inheritance.** Repair confirmed Gemini,
-   Qwen, Copilot, and Droid gaps in separate provider-specific slices using the
-   [extension audit](topics/provider-extension-inheritance-audit.md). Require
-   official path semantics and a first-session reproduction for each provider.
-10. **R12: Generic projected-asset ownership hardening.** Inventory remaining
+9. **R12: Generic projected-asset ownership hardening.** Inventory remaining
     `allow_unmarked_replace=True` call sites and migrate them to marker-first
     ownership without breaking packaged CCB skill upgrades.
 
@@ -87,6 +85,8 @@ Date: 2026-07-20
   by R6.
 - UI workflow redesign beyond exposing the R7 structured state.
 - Closing Issue262 from ProjectView-only heuristic output.
+- Copilot plugin/config projection until exact entry ownership and secret/session
+  preservation rules are frozen and a real CLI fixture is available.
 
 ## Advancement Gate
 

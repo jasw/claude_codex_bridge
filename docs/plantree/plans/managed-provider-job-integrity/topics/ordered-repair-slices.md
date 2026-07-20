@@ -28,8 +28,7 @@ obtain a current green or explicitly adjudicated gate after revision.
 
 ## R1: Codex Plugin Projection Safety
 
-Status: implementation complete in the combined R1/R2 candidate; validation in
-progress.
+Status: landed as `06e1a46a` through merge `aed27abf`.
 
 Finding:
 
@@ -73,8 +72,8 @@ source-runtime evidence passes.
 
 ## R2: Claude Plugin Seed Support
 
-Status: implementation complete in the combined R1/R2 candidate; real inherited
-plugin evidence remains environment-dependent.
+Status: base seed/cache isolation landed as `06e1a46a`; first-interactive-load
+hardening is included in the active R11 candidate.
 
 Finding:
 
@@ -307,3 +306,40 @@ Required gates:
 
 Release decision: batch only compatible slices. A critical main regression may
 ship earlier as a focused hotfix after its own complete gate.
+
+## R11: Remaining Provider Extension Inheritance
+
+Status: Claude, Gemini, Qwen, and Droid candidate committed on its qualified
+branch; Copilot deferred.
+
+Frozen decision (2026-07-20):
+
+- Claude keeps the official read-only seed plus per-agent writable root, but a
+  new root is bootstrapped locally before the first interactive scan because
+  Claude Code 2.1.206 synchronizes seed marketplaces too late for that session.
+- Gemini and Qwen extension directories are marker-owned local seeds under the
+  already isolated provider home; source missing preserves the last seed and
+  explicit opt-out removes only CCB-owned state.
+- Droid copies only `plugins/`, rebases plugin registry paths into the managed
+  `FACTORY_HOME`, and marker-merges only `enabledPlugins`. It does not copy the
+  whole settings file, sessions, or auth.
+- Hard role policy and config opt-out disable these inherited capabilities.
+- Copilot remains deferred because installed plugins, auth-sensitive config,
+  permissions, sessions, cache, and plugin data do not yet have a frozen
+  entry-level ownership contract.
+
+Required evidence:
+
+- Claude clean-home first pane loads an offline plugin skill without reload or
+  restart, installed plugin paths resolve inside the agent-local cache, and the
+  complete-help capability probe sees flags beyond 8 KiB.
+- Gemini and Droid real CLIs see the managed local extension/plugin state.
+- Qwen source, launcher, two-agent, opt-out, missing-source, and marker tests
+  pass; real runtime qualification stays unclaimed while the CLI is absent.
+- Source trees remain unchanged, managed writable roots are not symlinks, and
+  malformed/foreign ownership data fails closed.
+
+Exit gate: focused regressions pass, any unrelated full-suite failure is
+explicitly adjudicated, the external CCB project is cleanly unmounted,
+contracts and evidence are updated, and Copilot is recorded as an explicit
+defer rather than a silent partial fix.

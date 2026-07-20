@@ -62,7 +62,7 @@ Out of scope:
 ## File Map
 
 - [roadmap.md](roadmap.md): strict repair order and phase state.
-- [implementation-status.md](implementation-status.md): current R1/R2 handoff,
+- [implementation-status.md](implementation-status.md): current R11 handoff,
   evidence, blockers, and next gate.
 - [topics/ordered-repair-slices.md](topics/ordered-repair-slices.md): finding,
   correction boundary, tests, and exit gate for every slice.
@@ -72,7 +72,9 @@ Out of scope:
 - [open-questions.md](open-questions.md): decisions that must be frozen before
   their owning slice starts.
 - [history/r1-r2-validation-2026-07-20.md](history/r1-r2-validation-2026-07-20.md):
-  focused, full-suite, and external real-project evidence for the candidate.
+  focused, full-suite, and external real-project evidence for landed R1/R2.
+- [history/r11-provider-extension-validation-2026-07-20.md](history/r11-provider-extension-validation-2026-07-20.md):
+  automated and real-provider qualification for the unified R11 candidate.
 
 ## Execution Rule
 

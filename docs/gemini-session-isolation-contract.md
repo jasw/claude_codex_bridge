@@ -69,6 +69,10 @@ Inside that home, the managed Gemini state is:
   - only when inherited login auth is projected into the managed home
 - `.ccb/agents/<agent>/provider-state/gemini/home/.gemini/google_accounts.json`
   - only when inherited Google login auth is projected into the managed home
+- `.ccb/agents/<agent>/provider-state/gemini/home/.gemini/extensions/`
+  - an agent-local writable seed of source-home Gemini extensions when config
+    inheritance and inherited assets are enabled
+  - must not be a symlink to the source home or another managed agent
 - `.ccb/agents/<agent>/provider-state/gemini/home/.gemini/GEMINI.md`
   - a CCB-generated memory projection when `inherit_memory = true`
   - not a user-editable source file
@@ -117,6 +121,11 @@ When `ccb` starts a managed Gemini agent:
   hook/trust installation and before launcher command assembly
 - managed `settings.json` projection must treat inherited system settings as the
   baseline and preserve managed runtime sections such as `hooks`
+- when config inheritance and inherited assets are enabled, startup must seed
+  `<source-home>/.gemini/extensions/` into the managed `.gemini/extensions/`
+  directory before process launch; a missing source preserves the last valid
+  local seed, while inheritance opt-out removes only the matching CCB-owned
+  projection
 - managed `settings.json` must set `contextFileName` to `GEMINI.md` when
   managed memory is projected so the current Gemini CLI loads the generated
   project memory file from the managed home
