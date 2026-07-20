@@ -23,10 +23,12 @@ from agents.models import (
 from cli.context import CliContext
 from cli.models import ParsedStartCommand
 from cli.services.provider_binding import AgentBinding
+from cli.services.role_command_policy import RoleCommandPolicy
 import cli.services.runtime_launch as runtime_launch
 from cli.services.runtime_launch_runtime import tmux_panes
 from cli.services.runtime_launch import ensure_agent_runtime
 from provider_backends.claude import launcher as claude_launcher
+import provider_backends.claude.launcher_runtime.home as claude_home_runtime
 from provider_backends.claude.launcher_runtime.home import (
     prepare_claude_home_overrides as prepare_claude_home_overrides_for_test,
 )
@@ -279,6 +281,8 @@ def test_claude_home_overrides_wsl_exports_paths_and_api_env_names(
     assert 'USERPROFILE/p' in wslenv
     assert 'CLAUDE_PROJECTS_ROOT/p' in wslenv
     assert 'CLAUDE_PROJECT_ROOT/p' in wslenv
+    assert 'CLAUDE_CODE_PLUGIN_SEED_DIR/p' in wslenv
+    assert 'CLAUDE_CODE_PLUGIN_CACHE_DIR/p' in wslenv
     assert 'ANTHROPIC_AUTH_TOKEN' in wslenv
     assert 'ANTHROPIC_API_KEY' in wslenv
     assert 'ANTHROPIC_BASE_URL' in wslenv
@@ -286,6 +290,103 @@ def test_claude_home_overrides_wsl_exports_paths_and_api_env_names(
     assert 'ANTHROPIC_API_KEY/p' not in wslenv
     assert 'ANTHROPIC_BASE_URL/p' not in wslenv
     assert wslenv[-1] == 'EXISTING/u'
+
+
+def test_claude_home_overrides_share_plugin_seed_but_isolate_writable_caches(tmp_path: Path) -> None:
+    source_home = tmp_path / 'source-home'
+    seed_root = source_home / '.claude' / 'plugins'
+    seed_root.mkdir(parents=True)
+    (seed_root / 'known_marketplaces.json').write_text('{}\n', encoding='utf-8')
+    (seed_root / 'cache').mkdir()
+
+    first = prepare_claude_home_overrides_for_test(
+        tmp_path / 'runtime-agent1',
+        None,
+        source_home=source_home,
+        refresh_home=False,
+    )
+    second = prepare_claude_home_overrides_for_test(
+        tmp_path / 'runtime-agent2',
+        None,
+        source_home=source_home,
+        refresh_home=False,
+    )
+
+    assert first['CLAUDE_CODE_PLUGIN_SEED_DIR'] == str(seed_root)
+    assert second['CLAUDE_CODE_PLUGIN_SEED_DIR'] == str(seed_root)
+    first_plugin_root = Path(first['CLAUDE_CODE_PLUGIN_CACHE_DIR'])
+    second_plugin_root = Path(second['CLAUDE_CODE_PLUGIN_CACHE_DIR'])
+    assert first_plugin_root.is_dir()
+    assert second_plugin_root.is_dir()
+    assert not first_plugin_root.is_symlink()
+    assert not second_plugin_root.is_symlink()
+    assert first_plugin_root != second_plugin_root
+    (first_plugin_root / 'cache').mkdir()
+    (first_plugin_root / 'cache' / 'agent1-runtime.json').write_text('{}\n', encoding='utf-8')
+    assert not (seed_root / 'cache' / 'agent1-runtime.json').exists()
+    assert not (second_plugin_root / 'cache' / 'agent1-runtime.json').exists()
+
+
+def test_claude_home_overrides_ignore_non_seed_plugin_metadata(tmp_path: Path) -> None:
+    source_home = tmp_path / 'source-home'
+    plugin_root = source_home / '.claude' / 'plugins'
+    plugin_root.mkdir(parents=True)
+    (plugin_root / 'blocklist.json').write_text('{}\n', encoding='utf-8')
+
+    overrides = prepare_claude_home_overrides_for_test(
+        tmp_path / 'runtime',
+        None,
+        source_home=source_home,
+        refresh_home=False,
+    )
+
+    assert 'CLAUDE_CODE_PLUGIN_SEED_DIR' not in overrides
+    assert 'CLAUDE_CODE_PLUGIN_CACHE_DIR' not in overrides
+    assert not (tmp_path / 'runtime' / 'claude-home' / '.claude' / 'plugins').exists()
+
+
+def test_claude_home_overrides_respect_config_inheritance_and_hard_role_policy(tmp_path: Path) -> None:
+    source_home = tmp_path / 'source-home'
+    plugin_root = source_home / '.claude' / 'plugins'
+    plugin_root.mkdir(parents=True)
+    (plugin_root / 'known_marketplaces.json').write_text('{}\n', encoding='utf-8')
+    no_config_profile = ResolvedProviderProfile(
+        provider='claude',
+        agent_name='agent1',
+        inherit_config=False,
+    )
+    hard_policy = RoleCommandPolicy(
+        role_id='test.hard',
+        path=tmp_path / 'command-surface.toml',
+        mode='deny_all_except',
+        enforcement='required',
+        if_unsupported='fail_mount',
+        generic_shell=False,
+        generic_ccb=False,
+        supported_providers=('claude',),
+        provider_tools=(),
+        allowed_effects=(),
+        forbidden_effects=(),
+        allowed=(),
+    )
+
+    inheritance_disabled = prepare_claude_home_overrides_for_test(
+        tmp_path / 'runtime-no-config',
+        no_config_profile,
+        source_home=source_home,
+        refresh_home=False,
+    )
+    role_restricted = prepare_claude_home_overrides_for_test(
+        tmp_path / 'runtime-hard-role',
+        None,
+        source_home=source_home,
+        refresh_home=False,
+        command_policy=hard_policy,
+    )
+
+    for overrides in (inheritance_disabled, role_restricted):
+        assert 'CLAUDE_CODE_PLUGIN_SEED_DIR' not in overrides
+        assert 'CLAUDE_CODE_PLUGIN_CACHE_DIR' not in overrides
 
 
 def _write_codex_plugin_source(
@@ -2506,6 +2607,39 @@ def test_claude_launcher_build_start_cmd_uses_overlay_and_drops_dead_local_user_
         f'claude --setting-sources user,project,local --settings {shlex.quote(json.dumps(settings_payload, ensure_ascii=False))} '
         '--permission-mode bypassPermissions --continue'
     )
+
+
+def test_claude_launcher_exports_plugin_seed_before_process_start(monkeypatch, tmp_path: Path) -> None:
+    runtime_dir = tmp_path / 'runtime'
+    runtime_dir.mkdir(parents=True)
+    source_home = tmp_path / 'source-home'
+    seed_root = source_home / '.claude' / 'plugins'
+    seed_root.mkdir(parents=True)
+    (seed_root / 'known_marketplaces.json').write_text('{}\n', encoding='utf-8')
+    spec = _spec('reviewer', provider='claude')
+    command = ParsedStartCommand(project=None, agent_names=('reviewer',), restore=False, auto_permission=False)
+
+    monkeypatch.setattr(claude_home_runtime, 'current_provider_source_home', lambda: source_home)
+    monkeypatch.setattr(claude_launcher, 'is_root_user', lambda: False)
+    monkeypatch.setattr(
+        claude_launcher,
+        '_resolve_claude_restore_target',
+        lambda **kwargs: ProviderRestoreTarget(run_cwd=runtime_dir, has_history=False),
+    )
+
+    start_cmd = claude_launcher.build_start_cmd(
+        command,
+        spec,
+        runtime_dir,
+        'claude-plugin-seed',
+        prepared_state=_claude_prepared_state(runtime_dir),
+    )
+
+    expected_plugin_root = runtime_dir / 'claude-home' / '.claude' / 'plugins'
+    assert f'CLAUDE_CODE_PLUGIN_SEED_DIR={shlex.quote(str(seed_root))}' in start_cmd
+    assert f'CLAUDE_CODE_PLUGIN_CACHE_DIR={shlex.quote(str(expected_plugin_root))}' in start_cmd
+    assert expected_plugin_root.is_dir()
+    assert start_cmd.index('CLAUDE_CODE_PLUGIN_SEED_DIR=') < start_cmd.rindex('; claude ')
 
 
 def test_claude_launcher_provider_command_template_wraps_command_after_env_prefix(

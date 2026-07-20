@@ -46,6 +46,9 @@ Operational constraint:
 - setting only `CLAUDE_PROJECTS_ROOT` is not sufficient, because Claude also
   reads other state under `HOME`
 
+Claude plugin seed and writable-root environment semantics follow the official
+[Claude Code environment variable reference](https://code.claude.com/docs/en/env-vars).
+
 ## 3. Storage Contract
 
 For a managed Claude agent named `<agent>`:
@@ -80,6 +83,13 @@ Inside that home, the managed Claude state is:
     cache layouts
 - `.ccb/agents/<agent>/provider-state/claude/home/.claude/skills/` when skill inheritance is enabled
 - `.ccb/agents/<agent>/provider-state/claude/home/.claude/commands/` when command inheritance is enabled
+- `.ccb/agents/<agent>/provider-state/claude/home/.claude/plugins/`
+  - the agent-local writable plugin root when a usable source plugin seed is
+    inherited
+  - passed through `CLAUDE_CODE_PLUGIN_CACHE_DIR`; despite the environment
+    variable name, Claude Code treats its value as the plugins root and manages
+    `marketplaces/` and `cache/` below it
+  - must not be a symlink to the source home or another managed agent
 - `.ccb/agents/<agent>/provider-state/claude/home/.claude/CLAUDE.md`
   - a CCB-generated memory projection when `inherit_memory = true`
   - not a user-editable source file
@@ -232,6 +242,24 @@ When `ccb` starts a managed Claude agent:
 - when command inheritance is enabled, startup must route inherited Claude
   `commands/` into the managed home as a CCB projected asset on each managed
   launch
+- when config inheritance and inherited assets are enabled and the source
+  `<source-home>/.claude/plugins/` contains `known_marketplaces.json`, a
+  `marketplaces/` directory, or a `cache/` directory, startup must set
+  `CLAUDE_CODE_PLUGIN_SEED_DIR` to that source plugins root before launching
+  Claude
+- the source plugin seed is shared read-only authority; startup must set
+  `CLAUDE_CODE_PLUGIN_CACHE_DIR` to the current agent's managed
+  `<claude-home>/.claude/plugins/` root so marketplace clones, installed plugin
+  cache, and provider writes remain agent-local
+- a source plugins directory containing only unrelated metadata such as
+  `blocklist.json` is not a usable seed and must not cause plugin environment
+  variables or an empty managed plugin root to be created
+- `inherit_config=false` and a hard role command policy disable plugin seed
+  inheritance; startup must not expose the source plugin seed in those modes
+- two managed Claude agents may reference the same read-only source seed but
+  must receive different writable plugin roots
+- when invoking a Windows Claude executable through WSL, both plugin path
+  variables must be forwarded through `WSLENV` with `/p` path translation
 - when memory inheritance is enabled, startup must refresh the managed
   `.claude/CLAUDE.md` projection on each managed launch so source-home and
   project-memory updates become visible after restart

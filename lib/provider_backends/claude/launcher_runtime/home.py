@@ -59,6 +59,8 @@ _CLAUDE_JSON_MCP_PROJECT_KEYS = (
 _MACOS_KEYCHAIN_CLAUDE_SERVICES = ('Claude Code-credentials', 'Claude Code-custom-oauth', 'Claude Code')
 _CLAUDE_SKILLS_PROJECTION_LABEL = 'claude-inherited-skills'
 _CLAUDE_COMMANDS_PROJECTION_LABEL = 'claude-inherited-commands'
+_CLAUDE_PLUGIN_SEED_ENV = 'CLAUDE_CODE_PLUGIN_SEED_DIR'
+_CLAUDE_PLUGIN_CACHE_ENV = 'CLAUDE_CODE_PLUGIN_CACHE_DIR'
 
 
 def resolve_claude_home_layout(runtime_dir: Path, profile) -> ClaudeHomeLayout:
@@ -78,6 +80,7 @@ def prepare_claude_home_overrides(
     runtime_dir: Path,
     profile,
     *,
+    source_home: Path | None = None,
     refresh_home: bool = True,
     auto_permission: bool = False,
     project_root: Path | None = None,
@@ -88,10 +91,16 @@ def prepare_claude_home_overrides(
     command_policy=None,
 ) -> dict[str, str]:
     layout = resolve_claude_home_layout(runtime_dir, profile)
+    source_root = (
+        Path(source_home).expanduser()
+        if source_home is not None
+        else _system_home_root()
+    )
     if refresh_home:
         materialize_claude_home_config(
             layout.home_root,
             profile=profile,
+            source_home=source_root,
             project_root=project_root,
             agent_name=agent_name,
             workspace_path=workspace_path,
@@ -105,6 +114,14 @@ def prepare_claude_home_overrides(
         'CLAUDE_PROJECTS_ROOT': str(layout.projects_root),
         'CLAUDE_PROJECT_ROOT': str(layout.projects_root),
     }
+    overrides.update(
+        _claude_plugin_environment(
+            source_root,
+            layout,
+            profile=profile,
+            command_policy=command_policy,
+        )
+    )
 
     if "WSL_DISTRO_NAME" in os.environ:
         # We are running inside WSL. The target claude executable might be a Windows binary (via interop).
@@ -114,6 +131,7 @@ def prepare_claude_home_overrides(
         overrides['USERPROFILE'] = str(layout.home_root)
         wslenv_additions = (
             "HOME/p:USERPROFILE/p:CLAUDE_PROJECTS_ROOT/p:CLAUDE_PROJECT_ROOT/p:"
+            "CLAUDE_CODE_PLUGIN_SEED_DIR/p:CLAUDE_CODE_PLUGIN_CACHE_DIR/p:"
             "ANTHROPIC_AUTH_TOKEN:ANTHROPIC_API_KEY:ANTHROPIC_BASE_URL"
         )
         existing_wslenv = os.environ.get("WSLENV", "")
@@ -123,6 +141,42 @@ def prepare_claude_home_overrides(
             overrides['WSLENV'] = wslenv_additions
 
     return overrides
+
+
+def _claude_plugin_environment(
+    source_home: Path,
+    target_layout: ClaudeHomeLayout,
+    *,
+    profile,
+    command_policy,
+) -> dict[str, str]:
+    if (
+        not _inherits_config(profile)
+        or role_command_policy_disables_inherited_assets(command_policy)
+    ):
+        return {}
+    seed_root = Path(source_home).expanduser() / '.claude' / 'plugins'
+    if not _usable_claude_plugin_seed(seed_root):
+        return {}
+    plugin_root = target_layout.claude_dir / 'plugins'
+    try:
+        plugin_root.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        return {}
+    return {
+        _CLAUDE_PLUGIN_SEED_ENV: str(seed_root),
+        _CLAUDE_PLUGIN_CACHE_ENV: str(plugin_root),
+    }
+
+
+def _usable_claude_plugin_seed(seed_root: Path) -> bool:
+    return seed_root.is_dir() and any(
+        (
+            (seed_root / 'known_marketplaces.json').is_file(),
+            (seed_root / 'marketplaces').is_dir(),
+            (seed_root / 'cache').is_dir(),
+        )
+    )
 
 
 def materialize_claude_home_config(

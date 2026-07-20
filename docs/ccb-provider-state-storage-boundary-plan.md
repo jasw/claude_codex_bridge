@@ -148,6 +148,11 @@ a unit.
 Examples:
 
 - Codex `.tmp/plugins/` plus `.tmp/plugins.sha` when present
+- Codex source `.tmp/marketplaces/` and `plugins/cache/` are seed sources, not
+  shareable managed startup bundles; their managed targets are per-agent
+  writable state
+- Claude source `.claude/plugins/` may be exposed as read-only seed authority
+  through `CLAUDE_CODE_PLUGIN_SEED_DIR`; it is not copied into shared cache
 - provider startup projection manifests that must match their payload tree
 
 Rules:
@@ -198,6 +203,8 @@ Examples:
 - Codex inherited `skills/` and `commands/`
 - Claude `.claude/settings.json`
 - Claude `.claude/skills/`, `.claude/commands/`, `.claude/CLAUDE.md`
+- Claude `.claude/plugins/` as the agent-local writable plugin root selected by
+  `CLAUDE_CODE_PLUGIN_CACHE_DIR`
 - Droid inherited `skills/`
 - Gemini `.gemini/settings.json`, `.gemini/trustedFolders.json`
 - Kimi inherited and role `skills/` directories under managed provider state
@@ -588,6 +595,15 @@ May route through projected assets or shared-cache:
   `.ccb/shared-cache/codex/plugin-bundles/<sha>/`, with managed homes pointing
   at that bundle and retaining their local `.tmp/plugins.sha`
 
+Must remain writable and agent-local:
+
+- `.tmp/marketplaces/`
+- `plugins/cache/`
+
+The source versions of those two paths may seed a staged local copy. They must
+not be linked to the source home, shared between agents, or used to justify
+replacement of an unmarked target.
+
 Do not share:
 
 - active sessions
@@ -605,6 +621,7 @@ Must remain agent-isolated:
 - `.claude/session-env/`
 - `.claude/settings.json`
 - `.claude.json`
+- `.claude/plugins/`, including its `marketplaces/` and `cache/` children
 
 Must remain secret and agent-local:
 
@@ -619,8 +636,14 @@ Candidates for shared/rebuildable cache:
   `~/.cache/ccb/projects/<project-id-prefix>/provider-cache/claude/versions`
 - `.local/bin/claude` shim/symlink
 - rebuildable Claude residue under `.cache/claude`, `.npm/_logs`,
-  `.claude/cache`, `.claude/telemetry`, `.claude/paste-cache`, and
-  `.claude/plugins/marketplaces`
+  `.claude/cache`, `.claude/telemetry`, and `.claude/paste-cache`
+
+Claude plugin source authority may be shared only through the provider's
+read-only `CLAUDE_CODE_PLUGIN_SEED_DIR` contract. The misleadingly named
+`CLAUDE_CODE_PLUGIN_CACHE_DIR` points at the full writable plugins root, not its
+`cache/` child, and must resolve to a different managed path for every agent.
+Do not route managed `.claude/plugins/marketplaces` or `.claude/plugins/cache`
+through CCB shared cache without a future provider-supported ownership design.
 
 The Claude-specific implementation details live in
 [docs/claude-binary-cache-dedup-plan.md](/home/bfly/yunwei/ccb_source/docs/claude-binary-cache-dedup-plan.md).
