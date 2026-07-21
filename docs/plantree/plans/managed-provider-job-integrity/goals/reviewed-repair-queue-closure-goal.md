@@ -2,7 +2,7 @@
 
 Date: 2026-07-21
 
-Status: Active
+Status: Complete
 Mode: Strict serial execution
 Plan: [Managed Provider And Job Integrity](../README.md)
 Queue authority: [Ordered repair slices](../topics/ordered-repair-slices.md)
@@ -94,7 +94,7 @@ Allowed states: `waiting`, `ready`, `in_progress`, `blocked`,
 | 7 | R9 active-job correction capability | Issue261 | `verified_commit` (`Repair-Slice: R9`) | Seq 6 verified commit and R4 authority retained |
 | 8 | R12 generic projected-asset ownership hardening | Internal follow-up | `verified_commit` (`a41627a7`, `Repair-Slice: R12`) | Seq 7 verified commit |
 | 9 | R11-C Copilot plugin/config projection | Deferred R11 remainder | `verified_commit` (`Repair-Slice: R11-C`) | Seq 8 verified commit |
-| 10 | R10 integrated qualification and disposition | Entire queue | `ready` | Seq 1-9 verified commits |
+| 10 | R10 integrated qualification and disposition | Entire queue | `verified_commit` (`Repair-Slice: R10`) | Seq 1-9 verified commits |
 
 The table is the execution lock. Update one row at a time in the same commit as
 its implementation. Do not mark a row `verified_commit` before its verification
@@ -234,5 +234,9 @@ entire execution record into context.
 - [x] Closure worktree and branch are named and clean.
 - [x] `origin/main` and all upstream item states are refreshed.
 - [x] Seq 0 commit is present after baseline synchronization.
-- [x] The serial lock has advanced through verified Seq 9; Seq 10 is unlocked
-      and ready but begins only after the R11-C atomic commit is clean.
+- [x] The serial lock advanced through verified Seq 9; clean R11-C commit
+      `6a20a514` unlocked Seq 10.
+- [x] Seq 10 passed the cumulative Python/Rust/Flutter/static gates, current-main
+      CI adjudication, isolated real Codex/Claude qualification, source
+      immutability, and zero-residue cleanup. The current commit is selected by
+      `Repair-Slice: R10`; upstream mutation remains separately gated.

@@ -4,57 +4,59 @@ Date: 2026-07-21
 
 ## Current Phase
 
-R11-C Copilot plugin/config projection is verified for its atomic commit. R12
-is the clean predecessor at `a41627a7f47ecc8827626b9593162676cfccc885`;
-`origin/main` remains `aed27abf8899bd1d3ce72d08bb9133e3980f19ba` and is
-its ancestor. R10 is the next unlocked row after the R11-C commit is clean.
+The strict repair queue is complete through R10. The integrated evidence commit
+is selected by `Repair-Slice: R10`; its clean verified predecessor is R11-C at
+`6a20a5144f90193428ac5b9833e7ddd57d11abc3`. Refreshed `origin/main` remains
+`aed27abf8899bd1d3ce72d08bb9133e3980f19ba` and is an ancestor of the final
+stack.
 
 ## Next Target
 
-Create the single R11-C atomic commit, require a clean worktree, then activate
-R10 integrated qualification against current `main` without publishing or
-mutating upstream items.
+Await explicit user authority for any push, PR update/closure, issue closure,
+merge, publication, or release. The recommended upstream dispositions are
+recorded in the R10 evidence; none has been applied remotely.
 
 ## Last Landed
 
-R11-C is selected by commit subject `feat: inherit Copilot plugins safely` and
-trailer `Repair-Slice: R11-C`. Durable external evidence is at
-`/home/bfly/yunwei/test_ccb2/r11c-copilot-plugin-20260721/r11c-runtime-result.json`.
-The clean predecessor is R12
-`a41627a7f47ecc8827626b9593162676cfccc885`.
+R11-C remains the last code-bearing repair at
+`6a20a5144f90193428ac5b9833e7ddd57d11abc3`. R10 adds only final PlanTree and
+qualification evidence. Its external artifact is
+`/home/bfly/yunwei/test_ccb2/r10-integrated-real-20260721/r10-runtime-result.json`.
 
 ## Active TODO
 
-1. Review and commit the verified R11-C transaction atomically.
-2. Confirm the post-commit worktree is clean and record its exact hash.
-3. Activate R10 and refresh current-main/upstream disposition evidence.
+No production or qualification task remains in this goal. Remote disposition
+and release actions require a new explicit instruction.
 
 ## Blocked By
 
-No current blocker. Real authenticated Copilot prompt execution remains
-unclaimed because this row intentionally used an offline no-login plugin
-fixture; native plugin discovery and isolation are qualified.
+No candidate blocker. PR257 remains merged. PR258, PR259, PR264, PR265, and
+PR266 remain open/unstable at unchanged reviewed heads; Issues260-263 remain
+open because R10 intentionally did not mutate remote state.
 
 ## Last Verified
 
-- The final provider/profile/runtime/storage gate passed `426` tests in
-  `57.63s`; the focused Copilot ownership gate passed `22` tests. Python
-  compilation and `git diff --check` passed.
-- The complete Python run passed `5547` tests with `15` conditional skips and
-  no failures in `648.61s`. R11-C changes no Rust/sidebar/mobile schema or
-  consumer.
-- External candidate project
-  `/home/bfly/yunwei/test_ccb2/r11c-copilot-plugin-20260721` used the candidate
-  source wrapper, fake mounted provider, isolated source home, and offline
-  Copilot CLI `1.0.61` without login. Candidate `doctor` observed the healthy
-  mounted backend and candidate implementation root.
-- Both isolated homes were discovered by native `copilot plugin list`; source
-  SHA256 stayed `8b3e0774...`, and local tree divergence stayed
-  `92f3df48...` across repeat materialization while both ownership markers
-  were relinquished.
-- Candidate `kill` left `unmounted`; socket, daemon, and keeper evidence were
-  absent. R11-C compact evidence:
-  [history/reviewed-repair-queue-evidence.md](history/reviewed-repair-queue-evidence.md#r11-c-copilot-pluginconfig-projection).
+- The union counterexample suite passed `945` tests; the complete Python suite
+  passed `5547` with `15` conditional skips. Provider blackbox passed `21`
+  tests with `57` deselected, and the current-main shutdown race test passed
+  `20/20` repeated candidate runs.
+- Rust passed sidebar `79`, helper `8`, runtime accelerator `10`, and all three
+  format gates. Flutter analyze reported no issues and all `659` tests passed.
+  Six `dart format` changes are unchanged current-main baseline files; the
+  candidate's only other mobile differences are the two intended R7
+  ProjectView model/fixture files covered by that gate.
+- External project
+  `/home/bfly/yunwei/test_ccb2/r10-integrated-real-20260721` used the candidate
+  wrapper and a lab-local Role store. Codex CLI `0.144.6`, model
+  `gpt-5.6-terra`, effort `low`, and Claude CLI `2.1.206`, model
+  `deepseek-v4-pro`, each completed the identical frozen corpus exactly once
+  with reply `R10_REAL_OK`.
+- Candidate tracked SHA256 stayed `157a6c21...`; inherited Codex/Claude
+  extension-source SHA256 stayed `3fed0b5c...`. Live generation 3 was healthy
+  with zero active/pending/replay items, then non-forced `kill` left the
+  project unmounted with no project sockets or processes.
+- Full evidence and final dispositions:
+  [history/reviewed-repair-queue-evidence.md](history/reviewed-repair-queue-evidence.md#r10-integrated-qualification-and-disposition).
 
 Prior R3-R6 evidence remains indexed in
 [history/reviewed-repair-queue-evidence.md](history/reviewed-repair-queue-evidence.md).

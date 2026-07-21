@@ -4,10 +4,10 @@ Date: 2026-07-21
 
 ## Status Summary
 
-- Current status: In progress; R1/R2 landed and the R11 provider-extension
-  candidate is committed on its qualified branch, the strict serial closure
-  goal is active, and R3/R4/R5/R6/R7/R8/R9/R12/R11-C are verified atomic
-  commits selected by repair trailers.
+- Current status: Complete through R10. R1/R2 landed; R11 and every strict
+  serial repair R3/R4/R5/R6/R7/R8/R9/R12/R11-C are verified atomic commits;
+  the integrated qualification/disposition commit is selected by
+  `Repair-Slice: R10`.
 - Work mode: execute-ready.
 - Review baseline: PR257 is merged; PR258, PR259, PR264, PR265, and PR266 are
   open and reported `UNSTABLE`; Issues 260-263 remain open as of 2026-07-21.
@@ -49,9 +49,14 @@ Date: 2026-07-21
   `5547`-test Python suite, and offline native Copilot plugin-discovery check;
   see the
   [R11-C evidence](history/reviewed-repair-queue-evidence.md#r11-c-copilot-pluginconfig-projection).
-- Commit target: R11-C is fully verified and selected by
-  `Repair-Slice: R11-C`. R10 becomes active only after this atomic commit is
-  created and the worktree is clean.
+  R10 then passed the `945`-test union counterexample gate, Rust
+  `79 + 8 + 10`, Flutter `659`, provider blackbox `21`, and real exact-reply
+  Codex/Claude acceptance with unchanged source digests and zero cleanup
+  residue. Current-main macOS/WSL/Ubuntu CI failures and six unchanged Dart
+  format files are explicitly adjudicated in the
+  [R10 evidence](history/reviewed-repair-queue-evidence.md#r10-integrated-qualification-and-disposition).
+- Commit target: the R10 evidence commit closes the local queue. No remote
+  mutation or release is authorized.
 
 ## Done
 
@@ -116,16 +121,15 @@ Date: 2026-07-21
 
 ## In Progress
 
-No production row is active while the verified R11-C transaction is being
-committed. R10 is ready next. PR258, PR259, PR265, and PR266 remain held from
-merge; no upstream item has been mutated.
+None. Current main remains an ancestor of the qualified stack. PR258, PR259,
+PR264, PR265, and PR266 remain held from merge; no upstream item has been
+mutated.
 
 ## Next
 
-1. **R10: Integrated qualification and release decision.** Run focused,
-   full Python/Rust/client, clean current-main, external source-runtime, and
-   real Codex/Claude project gates; prepare evidence-backed upstream
-   dispositions without pushing, merging, closing, publishing, or releasing.
+1. Await explicit authorization before pushing the branch, updating or closing
+   PRs/issues, merging, publishing, or releasing. Use the R10 evidence table as
+   the review/closure checklist.
 
 ## Deferred
 

@@ -5,11 +5,18 @@ Date: 2026-07-21
 These questions do not block recording the roadmap. Each must be resolved
 before production implementation of its owning slice starts.
 
-R11-C has no unresolved question and is verified. R10 disposition questions
-remain gated on the integrated current-main matrix.
+No unresolved question remains for the completed strict repair queue. Remote
+mutation and release are authorization gates, not design questions.
 
 ## Resolved
 
+- **R10:** The integrated matrix accepts the final stack. Current-main CI
+  failures are directly attributable to the tested `origin/main` run and are
+  recorded without hiding them; the candidate passed its complete local,
+  repeated-race, Rust, Flutter, real Codex/Claude, immutability, and cleanup
+  gates. Open contributor PRs should be closed as superseded by the named
+  repair commits after explicit authorization; Issues260-263 should be closed
+  with the matching R8/R9/R7/R4 evidence after integration.
 - **R11-C:**
   [Decision 008](decisions/008-copilot-entry-owned-plugin-seed.md) projects
   only allowlisted `installedPlugins` entries and their exact local installed

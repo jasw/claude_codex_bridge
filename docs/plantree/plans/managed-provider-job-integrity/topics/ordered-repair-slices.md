@@ -346,6 +346,9 @@ implementation; R9 cannot weaken R4 terminal authority or R7 phase authority.
 
 ## R10: Integrated Qualification
 
+Status: verified by the atomic evidence commit selected with
+`Repair-Slice: R10`, after clean R11-C commit `6a20a514`.
+
 Required gates:
 
 - Focused regression suites for every R1-R9 counterexample.
@@ -359,6 +362,16 @@ Required gates:
 
 Release decision: batch only compatible slices. A critical main regression may
 ship earlier as a focused hotfix after its own complete gate.
+
+Verified result: the union counterexample gate passed `945` tests; complete
+Python passed `5547` with `15` skips; provider blackbox passed `21`; Rust
+passed `79 + 8 + 10` plus formatting; Flutter analyze and all `659` tests
+passed. Real Codex `gpt-5.6-terra/low` and Claude `deepseek-v4-pro` each
+completed one identical frozen task with exact reply `R10_REAL_OK`. Candidate
+and inherited extension-source digests were unchanged, live state had no
+active/pending/replay item, and non-forced cleanup left no project process or
+socket. Current-main CI platform failures and the six-file Dart format drift
+are explicitly adjudicated in the durable R10 evidence.
 
 ## R11: Remaining Provider Extension Inheritance
 

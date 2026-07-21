@@ -104,7 +104,7 @@ Out of scope:
   automated and real-provider qualification for the unified R11 candidate.
 - [history/reviewed-repair-queue-evidence.md](history/reviewed-repair-queue-evidence.md):
   compact per-slice commit, counterexample, verification, and unlock evidence
-  for the active strict serial closure goal.
+  for the completed strict serial closure goal.
 
 ## Execution Rule
 

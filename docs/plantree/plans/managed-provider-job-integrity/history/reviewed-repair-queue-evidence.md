@@ -731,3 +731,164 @@ immutability, agent isolation, ownership transfer, and cleanup all passed.
 
 Next unlocked row after this atomic commit: R10 integrated qualification and
 disposition.
+
+## R10: Integrated Qualification And Disposition
+
+Slice: R10 integrated qualification and disposition
+
+Commit selector / hash: commit subject `docs: qualify reviewed repair queue`
+with trailer `Repair-Slice: R10`. The exact hash is intentionally obtained
+only after this evidence-bearing commit is created.
+
+Upstream items: PR257, PR258, PR259, PR264, PR265, PR266, and Issues260-263.
+No pull request, issue, branch, package, or release was mutated by R10.
+
+Baseline: clean R11-C commit
+`6a20a5144f90193428ac5b9833e7ddd57d11abc3` on current `origin/main`
+`aed27abf8899bd1d3ce72d08bb9133e3980f19ba`. The latter remained an ancestor
+after a fresh fetch. PR257 was still merged. PR258, PR259, PR264, PR265, and
+PR266 remained open and `UNSTABLE` at reviewed heads `d119bf18`, `c4bd9427`,
+`1d4d1deb`, `2b79d68b`, and `3e11523c`; Issues260-263 remained open.
+
+### Final Evidence Index
+
+| Row | Atomic commit / integration | Upstream mapping | Durable evidence |
+| :--- | :--- | :--- | :--- |
+| R1/R2 projection safety | `06e1a46a97f94bdf7026347fccfdfe94542a9645`, merged by PR269 as `aed27abf` | Post-PR257 safety repair | [R1/R2 record](r1-r2-validation-2026-07-20.md) |
+| R11 provider extensions | `5c1ff83a` | Deferred provider-extension follow-up | [R11 record](r11-provider-extension-validation-2026-07-20.md) |
+| R3 inbound routing | `40e412653840cf346bb7e7b191f833318a0bf778` | PR264 | [R3](#r3-inbound-completion-routing-documentation) |
+| R4 cancellation | `38645d475ab2283ee88bd11531727d8f2e7319ad` | PR266, Issue263 | [R4](#r4-cancellation-and-callback-terminalization) |
+| R5 Claude activation | `bc31832e8b53030f3cfb1750c3fc4ed8b5267e64` | PR259 | [R5](#r5-claude-queued-prompt-activation) |
+| R6 Kimi resume | `12a67d6265892f07ee58d72ff3fcc15d9f6d611d` | PR258 | [R6](#r6-kimi-exact-session-resume) |
+| R7 execution phases | `56f8dcdad8c2e88a3c7df8d5dc0abcf375e10aa3` | PR265, Issue262 | [R7](#r7-correlated-execution-state-model) |
+| R8 stuck inbound diagnosis | `e937aa99b2586565a33638818867b3f425cba2f2` | Issue260 | [R8](#r8-stuck-inbound-detection) |
+| R9 active correction | `653be92154872e7a706d8b429c739bbd4fec150e` | Issue261 | [R9](#r9-active-job-correction-capability) |
+| R12 generic ownership | `a41627a7f47ecc8827626b9593162676cfccc885` | Internal ownership follow-up | [R12](#r12-generic-projected-asset-ownership-hardening) |
+| R11-C Copilot | `6a20a5144f90193428ac5b9833e7ddd57d11abc3` | Deferred R11 remainder | [R11-C](#r11-c-copilot-pluginconfig-projection) |
+| R10 integration | current commit selected by `Repair-Slice: R10` | Entire queue | This section plus external `r10-runtime-result.json` |
+
+### Cumulative And Client Gates
+
+The final union of all direct counterexample files passed `945` tests in
+`67.20s`. The complete Python suite passed `5547` tests with `15` conditional
+skips and no failure in `648.61s`. The CI provider-blackbox selection passed
+`21` tests with `57` deselected in `137.59s`. The exact current-main shutdown
+heartbeat counterexample then passed `20/20` repeated candidate runs.
+
+Rust formatting passed for sidebar, `ccb-rs-helper`, and the runtime
+accelerator. Their complete test counts were respectively `79`, `8`, and
+`10`. Flutter SDK `3.44.2` / Dart `3.12.2` reported no analyze issue and all
+`659` tests passed. `dart format --output=none --set-exit-if-changed` identified
+these six baseline files:
+
+- `mobile/app/lib/transport/http_gateway_transport.dart`
+- `mobile/app/test/android_release_mlkit_config_test.dart`
+- `mobile/app/test/debug_profile_seed_test.dart`
+- `mobile/app/test/http_gateway_transport_test.dart`
+- `mobile/app/integration_test/server_wide_idle_request_smoke_test.dart`
+- `mobile/app/integration_test/server_wide_live_artifact_smoke_test.dart`
+
+The format command did not modify them, and an exact diff of those six paths
+against `origin/main` was empty. They are therefore current-main format drift,
+not candidate changes, and were not swept into this repair commit. The
+candidate's two intentional R7 mobile differences are the ProjectView model
+and its fixture test; Flutter analyze and all `659` tests cover them. Python
+compilation, pyflakes, `git diff --check`, local Markdown links, Rust format,
+and the staged secret scan passed.
+
+### Current-Main CI Adjudication
+
+The refreshed `origin/main` head itself, not this unpublished candidate, had a
+successful
+[Cross-Platform Compatibility Test run](https://github.com/SeemSeam/claude_codex_bridge/actions/runs/29730742830),
+a failed [Tests run](https://github.com/SeemSeam/claude_codex_bridge/actions/runs/29730742725),
+and a failed
+[CCBD Real Platform Smoke run](https://github.com/SeemSeam/claude_codex_bridge/actions/runs/29730742686).
+The Tests run's Rust helpers, provider blackbox, and macOS install smoke jobs
+passed. Ubuntu Python 3.10/3.11 each failed only
+`test_ccbd_stop_all_does_not_run_post_shutdown_heartbeat` because the expected
+namespace-destroy event was absent; Python 3.12 additionally saw the stopping
+socket reset during an OpenCode degradation test. The 3.11 job completed
+`5215` passing tests before that single failure. All macOS Python versions
+failed in the performance fixture after
+`constructor_process_residue_or_audit_degraded`, plus the process-resource
+profiling assertion. WSL tests reported the same shutdown race with performance
+fixture, `/proc/io`, process-profile, and stopping-socket timing failures.
+
+In the real-platform smoke run, macOS passed. WSL failed the fake-provider
+restart test because restore correctly exposed one recovered item as
+`replay_pending` while the test expected zero immediately. These are direct
+current-main platform results. They are not hidden or relabeled as candidate
+passes; the final candidate instead supplies the complete local suite,
+provider blackbox, exact `20/20` race repeat, unchanged failing performance
+files, and an exact no-diff check for the six baseline Dart-format files.
+
+### External Real-Provider Acceptance
+
+Project `/home/bfly/yunwei/test_ccb2/r10-integrated-real-20260721` used
+`/home/bfly/yunwei/ccb_worktrees/unified-provider-extension-inheritance/ccb_test`,
+explicit `CCB_TEST_ROOTS=/home/bfly/yunwei/test_ccb2`, inherited real provider
+configuration, and project-local empty `roles-store`. Wrapper diagnosis proved
+the project was outside source and inside the explicit allowed test root.
+
+The frozen corpus was identical for both providers: `R10 qualification corpus
+v1. Do not use tools. Reply with exactly R10_REAL_OK and nothing else.` Codex
+CLI `0.144.6`, exact model `gpt-5.6-terra`, reasoning effort `low`, completed
+job `job_4caf590ecb0f`, message `msg_9c5a0c130083`, and attempt
+`att_e53b668ac445` with reply `rep_5403aa8dfa4a` exactly `R10_REAL_OK`. Claude
+CLI `2.1.206`, exact model `deepseek-v4-pro`, completed job
+`job_f418e6fcb6fc`, message `msg_a58c6c304127`, and attempt
+`att_2bdb2b0df23d` with reply `rep_318bc4691ed6` exactly `R10_REAL_OK`. Each
+authoritative trace contained one message, one attempt, one reply, one event,
+and one job with no retry or substitution.
+
+Before cleanup, live generation 3 was `mounted`, `healthy`, and running from
+the candidate implementation root. Active executions, pending items,
+terminal-pending items, restore replay-pending items, and active inbound
+diagnostics were all zero; both mailbox-consistency views were `ok`. The
+candidate tracked-file SHA256 stayed
+`157a6c21b26d07d56334e776a2d1eb6977ccb085998eae12676c256efbb35eb6`
+across the accepted cycle. The combined inherited Codex skills/plugin-cache
+and Claude skills/commands source digest stayed
+`3fed0b5c17be513dcea2ac81575e72363622c3544f429b267008fc06bd781194`.
+
+Candidate `kill` returned `ok`, non-forced, and `unmounted`. Final doctor
+reported unmounted health, dead daemon PID, non-connectable socket, and
+`lease_unmounted`; ccbd/tmux sockets and every process containing the project
+path were absent. Compact artifact:
+`/home/bfly/yunwei/test_ccb2/r10-integrated-real-20260721/r10-runtime-result.json`.
+
+One rejected harness path is retained for audit. The initial external `ask
+all` inherited the live ccb_self `CCB_CALLER_*` binding and therefore targeted
+the source project's 15 configured agents instead of the two-agent test
+project. Those results were excluded. Nine jobs completed, one failed, and the
+five still running were explicitly cancelled; all became terminal and none was
+a chain job. Every accepted external command then cleared
+`CCB_CALLER_ACTOR`, `CCB_CALLER_PROJECT_ID`, `CCB_CALLER_PROJECT_ROOT`, and
+`CCB_CALLER_RUNTIME_DIR`, and two isolated Codex/Claude cycles completed and
+cleaned up. This was a qualification-harness isolation error, not accepted
+provider evidence.
+
+### Proposed Upstream Dispositions
+
+These are final review recommendations, not executed remote actions:
+
+| Item | Proposed disposition | Evidence authority |
+| :--- | :--- | :--- |
+| PR257 | Keep merged; no action. Its safety follow-up is merged through PR269 and the remaining provider work is in R11/R12/R11-C. | `5214ce03`, `aed27abf`, `5c1ff83a`, `a41627a7`, `6a20a514` |
+| PR258 | Close as superseded by the exact owned Kimi session implementation. | R6 `12a67d6265892f07ee58d72ff3fcc15d9f6d611d` |
+| PR259 | Close as superseded by activation-bound Claude queued prompts. | R5 `bc31832e8b53030f3cfb1750c3fc4ed8b5267e64` |
+| PR264 | Close as superseded by the corrected inbound-routing documentation and templates. | R3 `40e412653840cf346bb7e7b191f833318a0bf778` |
+| PR265 | Close as superseded by the shared correlated execution-phase model and clients. | R7 `56f8dcdad8c2e88a3c7df8d5dc0abcf375e10aa3` |
+| PR266 | Close as superseded by first-writer terminal cancellation and callback continuation. | R4 `38645d475ab2283ee88bd11531727d8f2e7319ad` |
+| Issue260 | Close as resolved after integration; diagnosis remains read-only and bounded. | R8 `e937aa99b2586565a33638818867b3f425cba2f2` |
+| Issue261 | Close as resolved with a capability matrix: exact active-turn correction is qualified for managed Codex and explicitly refused for unsupported Claude panes. | R9 `653be92154872e7a706d8b429c739bbd4fec150e` |
+| Issue262 | Close as resolved after ProjectView/queue/CLI/sidebar/mobile integration. | R7 `56f8dcdad8c2e88a3c7df8d5dc0abcf375e10aa3` |
+| Issue263 | Close as resolved after cancellation/callback integration. | R4 `38645d475ab2283ee88bd11531727d8f2e7319ad` |
+
+Remaining risk: this is an unpublished local stack. macOS/WSL current-main CI
+failures remain real upstream baseline work, and future provider CLI protocol
+changes may invalidate exact capability probes. Neither risk authorizes hidden
+retry, provider substitution, source mutation, or remote closure. The strict
+repair goal is locally complete; push, PR/issue mutation, merge, package
+publication, and release remain explicit user-controlled gates.
