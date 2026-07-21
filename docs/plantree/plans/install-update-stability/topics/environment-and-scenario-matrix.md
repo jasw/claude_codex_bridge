@@ -14,6 +14,7 @@ Platform:
 
 Install mode:
 
+- npm package with a manifest-pinned vendored release
 - source/dev checkout
 - official release tarball
 - preview release tarball
@@ -92,6 +93,11 @@ Fresh install:
 
 Managed update:
 
+- npm-managed updates print an exact package-manager command and do not mutate
+  `.ccb-release`; accepting the startup prompt must not relaunch or immediately
+  prompt again.
+- Missing, malformed, stale, or foreign npm provenance never suppresses the
+  normal release/source update path.
 - Unsupported platform fails early.
 - Failed download, extraction, staged installer, or new entrypoint smoke check
   fails the update.

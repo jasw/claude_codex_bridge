@@ -54,17 +54,19 @@
 
 ## 설치 방법
 
-npm으로 설치하거나 업데이트합니다.
+npm이 관리하는 CCB는 npm으로 설치하거나 업데이트합니다.
 
 ```bash
-npm install -g @seemseam/ccb
+npm install -g @seemseam/ccb@latest
 ```
 
-CCB 설치 후에는 내장 updater를 사용합니다.
+GitHub release 패키지 또는 소스 설치에는 CCB의 트랜잭션 updater를 사용합니다.
 
 ```bash
 ccb update
 ```
+
+npm 관리 설치에서 `ccb update`는 동일한 npm 명령만 표시하며 vendored payload를 직접 변경하지 않습니다.
 
 <details>
 <summary><b>GitHub release 패키지와 소스 설치 대체 경로</b></summary>

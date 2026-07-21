@@ -28,6 +28,8 @@ plan defines installation and update resilience.
   role-owned tools.
 - [topics/i18n-output-contract.md](topics/i18n-output-contract.md): Chinese
   and English output contract for installer/update prompts and diagnostics.
+- [decisions/001-npm-owns-vendored-payload.md](decisions/001-npm-owns-vendored-payload.md):
+  npm remains the sole mutation authority for npm-packaged CCB payloads.
 - [topics/validation-runbook.md](topics/validation-runbook.md): automated and
   real-environment validation commands before release.
 - [history/v729-rolepack-update-failure-2026-06-04.md](history/v729-rolepack-update-failure-2026-06-04.md):
@@ -45,7 +47,8 @@ plan defines installation and update resilience.
 In scope:
 
 - `install.sh install` and `install.sh uninstall`.
-- Managed `ccb update` on Linux, macOS, and WSL.
+- Managed `ccb update` on Linux, macOS, and WSL, including package-manager
+  delegation for npm installs.
 - Release tarball extraction and staged installer handoff.
 - Source/dev install behavior where global wrappers point at a live checkout.
 - Python selection, managed venv, entrypoint smoke checks, root/sudo profile
@@ -74,6 +77,8 @@ Out of scope:
   required install mode.
 - Post-update provisioning must run with the newly installed `ccb` code, not
   the old updater process, once the staged installer has completed.
+- An npm wrapper owns its vendored payload version. `ccb update` must not
+  replace that payload behind the outer package manifest.
 - Already-current dependencies and Role Packs must be reported as checked or
   current, not reinstalled.
 - Legacy installed state must be canonicalized before provisioning. New writes

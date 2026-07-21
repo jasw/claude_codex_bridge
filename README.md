@@ -54,20 +54,22 @@
 
 ## How to Install
 
-Install or update with npm:
+Install or update an npm-managed CCB with npm:
 
 ```bash
-npm install -g @seemseam/ccb
+npm install -g @seemseam/ccb@latest
 ```
 
-After CCB is installed, use CCB's updater:
+For GitHub release-package or source installs, use CCB's transactional updater:
 
 ```bash
 ccb update
 ```
 
-To roll back, use the same transactional updater with an older released version,
-for example `ccb update 8.1.3`. CCB rejects a same-version artifact whose build
+On an npm-managed install, `ccb update` prints the equivalent npm command and
+does not modify npm's vendored payload in place. To roll back a release-package
+install, use the transactional updater with an older released version, for
+example `ccb update 8.1.3`. CCB rejects a same-version artifact whose build
 identity differs from the installed build, and restores the prior local prefix
 if the update transaction fails. If restoration itself cannot complete, CCB
 retains and reports the external recovery backup path.

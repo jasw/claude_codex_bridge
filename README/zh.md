@@ -54,17 +54,19 @@
 
 ## 如何安装
 
-推荐使用 npm 安装或更新：
+通过 npm 管理的 CCB 应继续使用 npm 安装或更新：
 
 ```bash
-npm install -g @seemseam/ccb
+npm install -g @seemseam/ccb@latest
 ```
 
-安装完成后，后续更新直接使用 CCB 自带 updater：
+通过 GitHub release 包或源码安装时，使用 CCB 自带的事务 updater：
 
 ```bash
 ccb update
 ```
+
+在 npm 管理的安装中，`ccb update` 只会显示等价的 npm 命令，不会原地修改 npm vendored payload。
 
 <details>
 <summary><b>GitHub release 包和源码安装兜底</b></summary>

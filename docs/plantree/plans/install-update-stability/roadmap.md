@@ -37,6 +37,12 @@ Date: 2026-06-04
   `CODEX_BIN_DIR` is outside the same temporary prefix or temporary HOME,
   preventing release smoke installs from rewriting the user's real stable
   `ccb` wrapper by accident.
+- npm runners now attest package ownership to the vendored Python process.
+  Ordinary `ccb update` and startup update acceptance validate that
+  provenance, print the exact `npm install -g @seemseam/ccb@<target>` action,
+  and leave the vendored release untouched. The runner retains strict equality
+  between the package manifest and payload `VERSION`, so the next invocation
+  neither downgrades nor repeats an immediate startup/relaunch loop.
 
 ## In Progress
 

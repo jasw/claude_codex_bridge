@@ -54,17 +54,19 @@
 
 ## Как установить
 
-Установите или обновите через npm:
+Устанавливайте или обновляйте управляемую npm установку через npm:
 
 ```bash
-npm install -g @seemseam/ccb
+npm install -g @seemseam/ccb@latest
 ```
 
-После установки CCB используйте встроенный updater:
+Для установки из GitHub release или исходников используйте транзакционный updater CCB:
 
 ```bash
 ccb update
 ```
+
+В установке под управлением npm команда `ccb update` выводит эквивалентную npm-команду и не изменяет vendored payload.
 
 <details>
 <summary><b>GitHub release package и установка из исходников как fallback</b></summary>

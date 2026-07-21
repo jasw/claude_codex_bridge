@@ -54,17 +54,19 @@
 
 ## Installation
 
-Installieren oder aktualisieren Sie mit npm:
+Installieren oder aktualisieren Sie eine von npm verwaltete CCB-Installation mit npm:
 
 ```bash
-npm install -g @seemseam/ccb
+npm install -g @seemseam/ccb@latest
 ```
 
-Nach der Installation verwenden Sie den CCB updater:
+Für GitHub-release- oder Source-Installationen verwenden Sie den transaktionalen CCB updater:
 
 ```bash
 ccb update
 ```
+
+Bei einer von npm verwalteten Installation zeigt `ccb update` den entsprechenden npm-Befehl an und ändert das eingebettete Payload nicht.
 
 <details>
 <summary><b>GitHub-release-Pakete und Source-Install als Fallback</b></summary>

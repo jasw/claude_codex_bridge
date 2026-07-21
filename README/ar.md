@@ -54,17 +54,19 @@
 
 ## طريقة التثبيت
 
-ثبّت أو حدّث باستخدام npm:
+ثبّت أو حدّث نسخة CCB التي يديرها npm باستخدام npm:
 
 ```bash
-npm install -g @seemseam/ccb
+npm install -g @seemseam/ccb@latest
 ```
 
-بعد تثبيت CCB استخدم updater المدمج:
+للتثبيت من GitHub release أو المصدر استخدم updater المعاملاتي في CCB:
 
 ```bash
 ccb update
 ```
+
+في التثبيت الذي يديره npm يعرض `ccb update` أمر npm المكافئ ولا يعدّل payload المضمّن.
 
 <details>
 <summary><b>حزم GitHub release وخيار التثبيت من المصدر</b></summary>

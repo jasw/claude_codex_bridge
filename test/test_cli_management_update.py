@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import shutil
 import tarfile
 from pathlib import Path
@@ -21,6 +22,24 @@ class _TtyOutput(StringIO):
 class _PipeOutput(StringIO):
     def isatty(self) -> bool:
         return False
+
+
+def _npm_managed_release(monkeypatch, tmp_path: Path, *, version: str = "8.2.1") -> Path:
+    package_root = tmp_path / "npm-package"
+    script_root = package_root / ".ccb-release" / "ccb-linux-x86_64"
+    script_root.mkdir(parents=True)
+    (script_root / "install.sh").write_text("#!/usr/bin/env bash\n", encoding="utf-8")
+    (script_root / "VERSION").write_text(f"{version}\n", encoding="utf-8")
+    (script_root / "ccb").write_text("#!/usr/bin/env bash\n", encoding="utf-8")
+    (package_root / "package.json").write_text(
+        json.dumps({"name": "@seemseam/ccb", "version": version}),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CCB_INSTALL_KIND", "npm")
+    monkeypatch.setenv("CCB_NPM_PACKAGE_NAME", "@seemseam/ccb")
+    monkeypatch.setenv("CCB_NPM_PACKAGE_ROOT", str(package_root))
+    monkeypatch.setenv("CCB_NPM_PACKAGE_VERSION", version)
+    return script_root
 
 
 def _clear_post_update_env(monkeypatch) -> None:
@@ -60,6 +79,50 @@ def test_cmd_update_defaults_to_latest_release(monkeypatch, tmp_path: Path) -> N
     assert captured["tmp_base"] == tmp_base
     assert captured["install_dir"] == install_dir
     assert captured["target_version"] == "5.3.0"
+
+
+def test_cmd_update_delegates_npm_managed_install_without_mutating_payload(monkeypatch, tmp_path: Path, capsys) -> None:
+    script_root = _npm_managed_release(monkeypatch, tmp_path, version="8.2.1")
+    before = (script_root / "VERSION").read_bytes()
+    monkeypatch.setattr(update_runtime.platform, "system", lambda: "Linux")
+    monkeypatch.setattr(
+        update_runtime,
+        "_update_via_tarball",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("npm payload must not update in place")),
+    )
+    monkeypatch.setattr(
+        update_runtime,
+        "get_available_versions",
+        lambda: (_ for _ in ()).throw(AssertionError("latest npm update should delegate without a release lookup")),
+    )
+
+    code = update_runtime.cmd_update(SimpleNamespace(target=None), script_root=script_root)
+
+    assert code == 0
+    assert (script_root / "VERSION").read_bytes() == before
+    output = capsys.readouterr().out
+    assert "managed by npm" in output
+    assert "npm install -g @seemseam/ccb@latest" in output
+    assert "Updating to" not in output
+
+
+def test_cmd_update_resolves_explicit_version_before_npm_delegation(monkeypatch, tmp_path: Path, capsys) -> None:
+    script_root = _npm_managed_release(monkeypatch, tmp_path)
+    monkeypatch.setattr(update_runtime.platform, "system", lambda: "Linux")
+    monkeypatch.setattr(update_runtime, "get_available_versions", lambda: ["8.1.3", "8.2.1", "8.3.0"])
+
+    code = update_runtime.cmd_update(SimpleNamespace(target="8.1"), script_root=script_root)
+
+    assert code == 0
+    assert "npm install -g @seemseam/ccb@8.1.3" in capsys.readouterr().out
+
+
+def test_npm_provenance_rejects_payload_outside_attested_package(monkeypatch, tmp_path: Path) -> None:
+    _npm_managed_release(monkeypatch, tmp_path)
+    foreign_root = tmp_path / "foreign-release"
+    foreign_root.mkdir()
+
+    assert install_runtime.npm_install_provenance(script_root=foreign_root) is None
 
 
 def test_cmd_update_errors_when_latest_release_cannot_be_resolved(monkeypatch, tmp_path: Path) -> None:

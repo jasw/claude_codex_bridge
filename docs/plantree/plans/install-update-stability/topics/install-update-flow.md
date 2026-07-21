@@ -32,7 +32,24 @@ post-install checks unless the user explicitly forces them as required.
 
 ## Managed Update
 
-Managed update is owned by Python `ccb update`.
+Managed update is routed by Python `ccb update`, but mutation authority depends
+on install provenance.
+
+For an npm install, the outer `@seemseam/ccb` package owns the vendored release:
+
+1. The npm runner passes the package name, root, and manifest version to the
+   Python child on every invocation.
+2. Python accepts npm provenance only when the outer `package.json` matches and
+   the executing release is below that package's `.ccb-release` directory.
+3. `ccb update` prints `npm install -g @seemseam/ccb@<target>` and does not
+   download, extract, install, or relaunch a vendored payload.
+4. Startup update acceptance prints the same command and defers the current
+   prompt window without reporting a successful in-place update.
+5. The npm runner continues requiring exact equality between the manifest
+   version and vendored `VERSION`; equality is safe because only npm mutates
+   that payload.
+
+For release-package and source/dev installs, the transactional tarball path is:
 
 Required flow:
 
@@ -96,6 +113,12 @@ The v7.2.9 incident showed that old updater code can continue after installing
 new files and try to update a legacy `ccb.archi` source that no longer exists.
 Moving post-update provisioning into the new installed entrypoint prevents this
 class of old-code/new-layout mismatch.
+
+Issue 268 exposed a separate ownership collision: in-place tarball update of an
+npm-vendored release changed only its inner `VERSION`; the next npm invocation
+then correctly restored the manifest-pinned payload. Package provenance and
+npm delegation remove that competing writer rather than weakening the runner's
+version check.
 
 The 2026-06-15 stable-entrypoint audit found a separate drift class: a
 temporary release simulation prefix under `/tmp/ccb-v7.2.1-install-smoke` was

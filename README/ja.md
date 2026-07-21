@@ -54,17 +54,19 @@
 
 ## インストール方法
 
-npm でのインストールまたは更新を推奨します。
+npm 管理の CCB は npm でインストールまたは更新します。
 
 ```bash
-npm install -g @seemseam/ccb
+npm install -g @seemseam/ccb@latest
 ```
 
-インストール後は CCB の updater を使います。
+GitHub release パッケージまたはソースからのインストールでは、CCB のトランザクション updater を使います。
 
 ```bash
 ccb update
 ```
+
+npm 管理のインストールでは、`ccb update` は同等の npm コマンドを表示するだけで、vendored payload を直接変更しません。
 
 <details>
 <summary><b>GitHub release パッケージとソースインストールのフォールバック</b></summary>

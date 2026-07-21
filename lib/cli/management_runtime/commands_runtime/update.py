@@ -20,6 +20,8 @@ from rolepacks.sources import role_catalog_status
 from ..install import (
     download_tarball,
     is_source_repo_root,
+    npm_install_provenance,
+    npm_update_command,
     pick_temp_base_dir,
     resolve_managed_install_dir,
     run_staged_unix_installer,
@@ -56,6 +58,12 @@ def cmd_update(args, *, script_root: Path) -> int:
     target_version = _resolve_target_version(args)
     if target_version is False:
         return 1
+    npm_provenance = npm_install_provenance(script_root=script_root)
+    if npm_provenance is not None:
+        command = npm_update_command(target_version if isinstance(target_version, str) else None)
+        print("ℹ️  This CCB installation is managed by npm; its vendored release cannot update itself in place.")
+        print(f"   Run: {command}")
+        return 0
 
     current_install_root = script_root if source_repo_install else install_dir
     old_info = get_version_info(current_install_root)

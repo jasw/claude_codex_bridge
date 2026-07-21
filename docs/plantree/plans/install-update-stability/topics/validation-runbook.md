@@ -12,6 +12,8 @@ pytest -q \
   test/test_install_root_confirmation.py \
   test/test_install_script_sidebar.py \
   test/test_cli_management_update.py \
+  test/test_cli_startup_update.py \
+  test/test_npm_runner.py \
   test/test_rolepacks.py \
   test/test_source_runtime_guard.py \
   test/test_build_linux_release_script.py
@@ -36,6 +38,11 @@ Covered by targeted tests:
 - inherited `ccb-config` Codex and Claude skill docs use canonical
   `agentroles.archi` examples and mention `ccb.archi` only as a legacy input
   alias
+- npm runner provenance overrides inherited stale marker values
+- npm-managed explicit updates leave the vendored payload byte-identical
+- npm-managed startup acceptance prints the exact target command, does not
+  call the tarball updater or relaunch, and respects the defer window on the
+  next invocation
 
 Remaining tests to add:
 
