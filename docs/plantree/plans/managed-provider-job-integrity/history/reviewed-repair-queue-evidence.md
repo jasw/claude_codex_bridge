@@ -170,3 +170,93 @@ The unrelated restart-replay fake-runtime timing miss remains a test-harness
 flakiness signal; its exact isolated pass is recorded rather than hidden.
 
 Next unlocked row: R6 Kimi exact-session resume.
+
+## R6: Kimi Exact-Session Resume
+
+Slice: R6 Kimi exact-session resume
+
+Commit selector / hash: commit subject `fix: resume exact Kimi sessions` with
+trailer `Repair-Slice: R6`
+
+Upstream item: PR258 remained open at unchanged reviewed head `d119bf18` and
+reported `UNSTABLE` during the 2026-07-21 preflight.
+
+Baseline: R5 commit `bc31832e8b53030f3cfb1750c3fc4ed8b5267e64` on
+`origin/main` `aed27abf`. Kimi 1.47.0 exposed exact `--session`/`--resume` and
+workdir-global `--continue`; an isolated fresh-share probe reproduced
+`--continue` exiting 2 with `No previous session found`.
+
+Counterexample: the three preserved R6 behavior tests failed before production
+changes because exact restart selection was absent, explicit-session
+precedence had no recorded state, and the session payload did not retain a
+native binding. The first live candidate then exposed a deeper restart-path
+counterexample: `ccb restart kimi1` reused the original fresh `start_cmd`, the
+visible Kimi pane opened a different native UUID, and the CCB record still
+claimed the old binding. That external project was stopped cleanly before the
+restart-command preparation repair.
+
+Frozen authority: [Decision 003](../decisions/003-kimi-exact-session-ownership.md)
+binds a native Kimi session only after the target agent's exact CCB request is
+observed in that session. First launch never guesses `--continue`; restart
+validates project, agent, workdir, share root, exact non-symlinked native
+layout, persisted command template, and current long-option capability before
+selecting the owned ID. Invalid or unsupported authority clears only the
+carried binding and starts fresh. Explicit user session controls win.
+
+Implementation: Kimi launch payloads now record the share root, a single
+exact-session command-template insertion point, capability command parts,
+explicit-control state, and only a validated native binding. Native-log polling
+records the observed UUID/path against the matching CCB launch record and
+rejects stale executions. Manual and dead-pane restart materialize only the
+validated exact selector; missing, malformed, mismatched, symlinked, drifted,
+or unsupported authority rewrites the control record to a documented fresh
+state without deleting provider data. The CCB pane-launch ID is never treated
+as a Kimi session ID.
+
+Focused tests: Kimi session/launcher behavior passed `45` tests. The broader
+Kimi/native/restart gate passed `120` tests. Expanded launch, completion,
+runtime binding, health, registry, and restart integration passed `193` tests.
+Python compilation, Pyflakes, and `git diff --check` passed.
+
+Full/client tests: the complete Python remainder passed `5455` tests with `2`
+skipped and `2` deselected in `936.97s`. The independently deselected
+`restart_replay_pass` fake-runtime case passed alone (`1 passed` in `31.92s`).
+The other deselection is the lifecycle-stopping socket race already reproduced
+on frozen `origin/main`. No Rust, Flutter, sidebar, mobile, or serialized client
+schema changed in R6.
+
+Real project evidence: external opened project
+`/home/bfly/yunwei/test_ccb2/r6-kimi-exact-runtime2-20260721-9hlXai` used Kimi
+CLI 1.47.0, displayed model `kimi-for-coding`, and two agents in one in-place
+workdir. Both first-launch records were `fresh_no_binding` with no implicit
+session selector. Jobs `job_3c43dfe74b89` and `job_46bb9eb26703` produced
+distinct observed native UUIDs `cdd2735e-4adc-4e7a-baa7-0e76b66ac9de` and
+`d22e3fa2-3331-42b2-b23a-f55c8a78034b`. CCB-controlled restart commands and
+visible Kimi pane headers selected those same respective UUIDs. Continuation
+prompts did not contain the hidden tokens; jobs `job_130ed2ccd6d3` and
+`job_f11970359882` returned only `ALPHA_7A21` and `BETA_9B34`, proving both
+continuity and no cross-agent resume. After a clean stop, the exact final
+candidate remounted both original UUIDs with one selector per command; jobs
+`job_f48cde3fddc9` and `job_4f357e3e3a31` again returned `ALPHA_7A21` and
+`BETA_9B34`. Compact artifact: `r6-runtime-result.json` in that external
+project. The acceptance operator did not directly inspect Kimi credentials or
+native conversation content; CCB's existing completion reader necessarily
+consumed the target workdir's native turn log.
+
+Source immutability: candidate binary-diff SHA256 remained
+`52131e6a195b59ea29c34b4c73459961fdf51080b0c35a0c33e59ea0e0c9e65b`
+before and after the mounted run; the untracked-set SHA256 remained
+`96bae5616cba9544958ce825a89cff6729cce1a993f4278241e0d105daa928b2`.
+
+Cleanup: candidate `ccb_test kill` returned `kill_status: ok` and left the
+project `unmounted`. The ccbd and tmux sockets were absent, and recorded keeper
+PID 4063913 no longer existed. The earlier counterexample project was also
+cleanly unmounted.
+
+Remaining risk: exact restart depends on the configured Kimi executable
+continuing to expose a stable long selector and the documented share/session
+layout. Capability or layout drift fails fresh rather than guessing. Explicit
+user session controls can intentionally choose broader native behavior. Kimi
+still does not support restoration of an interrupted in-flight CCB job.
+
+Next unlocked row: R7 correlated execution-state model.

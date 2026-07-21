@@ -12,7 +12,9 @@ Date: 2026-06-13
   in commit `fce17c3`. Kimi receipt/diagnostics hardening has landed in source
   with Kimi-only guarded behavior. AGY delivery stability hardening has landed
   in source with ready-gated prompt delivery, pane fallback, and coalesced
-  request diagnostics.
+  request diagnostics. Kimi restart now uses observation-bound per-agent native
+  session ownership and capability-confirmed exact selection rather than
+  workdir-global `--continue`.
 - Last verified: focused native completion tests, provider catalog tests,
   Kimi/OpenCode skill projection tests, and a real MiMo CCB ask passed after
   switching CCB MiMo execution to `mimo run --pure --format json`; full
@@ -54,6 +56,9 @@ Date: 2026-06-13
   - Kimi prompt delivery is deferred until the TUI input area is visible, so
     asks submitted immediately after start/restart are not lost before Kimi is
     ready.
+  - A per-agent CCB session record owns a native Kimi session only after its
+    exact request anchor is observed; managed restart validates and selects
+    that exact id, while invalid authority starts fresh.
 - Validated source runtime with a stub-backed smoke project:
   - `config validate` accepted `kimi1:kimi, deep1:deepseek`.
   - `ccb_test -s` launched both providers through tmux.

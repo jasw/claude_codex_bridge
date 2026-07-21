@@ -1,6 +1,6 @@
 # Native CLI Providers Implementation Status
 
-Date: 2026-06-13
+Date: 2026-07-21
 
 ## Current Phase
 
@@ -21,6 +21,14 @@ is explicitly Kimi-only: it does not change default provider behavior for Codex,
 Claude, Gemini, OpenCode, DeepSeek, MiMo, AGY, or next-wave native CLI
 providers. Topic:
 [topics/kimi-receipt-and-diagnostics-hardening.md](topics/kimi-receipt-and-diagnostics-hardening.md).
+
+Kimi exact-session restart hardening has also landed in the active source
+candidate. First launch remains fresh. The completion reader binds a native
+session to the per-agent CCB record only after observing that agent's exact
+request anchor; manual/dead-pane restart then capability-checks and selects
+only that id through a persisted command-template insertion point. Invalid or
+unsupported bindings fail fresh without deleting provider state. This remains
+separate from in-flight job resume support.
 
 AGY delivery stability hardening has landed in source after a real
 `main -> frontend_engineer:agy` empty-reply investigation. AGY now defers prompt
@@ -47,6 +55,13 @@ Explicit `startup_args = ["--fullscreen"]` now suppresses CCB's injected
 
 ## Last Landed
 
+- Kimi exact-session restart now binds native identity only from an observed
+  per-agent request anchor, persists one restart-command insertion point, and
+  fails fresh when binding or capability validation fails. Real Kimi 1.47.0
+  same-workdir agents resumed distinct native UUIDs and returned only their
+  own hidden prior tokens after CCB-controlled restart. Focused/integration
+  gates passed `45`, `120`, and `193` tests; the full Python remainder passed
+  `5455` tests with `2` skips and `2` explicit baseline deselections.
 - Fixed Issue #255 without changing the shared native CLI launcher: Grok
   selects a prebuilt fullscreen launch configuration only when its explicit
   startup arguments contain `--fullscreen`.

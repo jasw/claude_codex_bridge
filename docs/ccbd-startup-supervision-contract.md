@@ -320,6 +320,25 @@ Managed provider startup mutation rules:
     command assembly
 - provider bootstrap config needed for managed launches must live under `.ccb/agents/<agent>/provider-state/<provider>/` or an explicit validated provider-profile runtime home
 - managed OpenCode startup writes `.ccb/agents/<agent>/provider-state/opencode/opencode.json` as a generated `OPENCODE_CONFIG` file; it reads and merges project `opencode.json` without modifying that project file, uses project-relative memory instructions through `.ccb/runtime/memory/<agent>.md`, uses project-relative inherited ask skill instructions through `.ccb/runtime/skills/<agent>/opencode/ask.md`, disables OpenCode autoupdate for managed panes so startup and job delivery cannot be blocked by an interactive update prompt, and injects `--continue` only when the effective restore policy is not fresh and the configured command does not already contain an explicit OpenCode session selector
+- managed Kimi startup must not infer conversation authority from work-directory
+  recency or inject `--continue`: `.kimi-<agent>-session` owns a native Kimi
+  session only after that agent's exact `CCB_REQ_ID` is observed in the native
+  `wire.jsonl`; the record stores the native session id/path, normalized work
+  directory, Kimi share root, and observation time separately from
+  `ccb_session_id`
+- managed Kimi pane restart and dead-pane recovery must validate the current
+  project, agent, work directory, share root, exact native layout, and current
+  CLI exact-session capability before materializing `--session <owned-id>` (or
+  the capability-confirmed stable long equivalent) at the single persisted
+  command-template insertion point; first launch, reset, missing/malformed/
+  mismatched/symlinked authority, storage drift, a missing command template,
+  or an unsupported CLI starts fresh and clears the carried native binding
+  without deleting provider-owned data
+- explicit user Kimi session-control arguments remain authoritative and must
+  not receive a second automatic selector; Kimi's provider manifest
+  `supports_resume=false` continues to describe interrupted in-flight CCB job
+  restoration and does not prohibit exact provider-conversation continuity
+  between managed pane launches
 - managed MiMo startup writes `.ccb/agents/<agent>/provider-state/mimo/mimocode.json` as a generated `MIMOCODE_CONFIG` file, uses per-agent `MIMOCODE_HOME` under `.ccb/agents/<agent>/provider-state/mimo/home`, uses project-relative memory instructions through `.ccb/runtime/memory/<agent>.md`, uses project-relative inherited ask skill instructions through `.ccb/runtime/skills/<agent>/mimo/ask.md`, and disables MiMo autoupdate/analysis in managed panes
 - managed Qwen, Cursor, Copilot, Crush, Grok, Kiro, Pi, and Z.ai startup uses the shared native CLI launcher shape: provider state under `.ccb/agents/<agent>/provider-state/<provider>/`, session payloads that record `<provider>_state_dir`, `<provider>_home`, and `<provider>_data_dir`, and start-command overrides through `QWEN_START_CMD`, `CURSOR_START_CMD`, `COPILOT_START_CMD`, `CRUSH_START_CMD`, `GROK_START_CMD`, `KIRO_START_CMD`, `PI_START_CMD`, and `ZAI_START_CMD`; managed Grok startup may project system `.grok/auth.json` and `.grok/config.toml` into the agent-scoped Grok home when inheritance is enabled, while Grok sessions and runtime output remain under the managed home; Grok asks use provider-native headless output and must tolerate both streaming JSON events and aggregated JSON output, with optional model/effort overrides from session data or `CCB_GROK_MODEL` / `CCB_GROK_EFFORT`; Grok success requires a provider-native terminal event such as streaming `type=end` with `stopReason=EndTurn` or the documented compatible native turn-end shape, and a zero process exit without native terminal evidence must close as `incomplete/grok_native_terminal_missing`, never as completed; `CCB_REQ_ID` remains request-attribution metadata, while model-printed `CCB_DONE`, CCB turn-end text, process exit, and the normalized internal `TURN_BOUNDARY` item are not Grok completion authority
 - managed Grok visible startup defaults to `--minimal`; when agent

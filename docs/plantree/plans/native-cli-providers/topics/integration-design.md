@@ -67,6 +67,31 @@ Next-wave runtime should split visible pane startup from ask execution:
   upgraded to modern backend shape before registration:
   `manifest.py`, `launcher.py`, `execution.py`, and tests.
 
+## Kimi Restart Session Authority
+
+Kimi conversation continuity is agent-scoped even when multiple Kimi agents
+share one in-place work directory. A fresh managed pane receives neither
+`--continue` nor an invented native session id. Once the completion reader
+observes that agent's exact `CCB_REQ_ID` in a native `wire.jsonl`, it persists
+the native session id/path, normalized work directory, Kimi share root, and
+observation time in `.kimi-<agent>-session`. The CCB pane-launch id remains a
+separate control-plane identity and is never passed to Kimi.
+
+Each launch also persists a command template containing one CCB-owned
+exact-session insertion point plus the configured Kimi capability command.
+Manual restart and dead-pane recovery validate the agent/project/workdir/share
+binding, exact non-symlinked native layout, and current long-option capability
+before materializing `--session <owned-id>`. Missing, malformed, mismatched,
+storage-drifted, or unsupported authority fails fresh and clears only the
+carried binding; it does not inspect credentials or delete provider data.
+Explicit user `--session`, `--resume`, `--continue`, and known versioned short
+controls take precedence and never receive a second automatic selector.
+
+This restart behavior is distinct from the Kimi manifest's
+`supports_resume=false`: the manifest describes recovery of an interrupted CCB
+job, while exact-session selection preserves the provider conversation between
+managed pane launches.
+
 ## Completion Strategy
 
 The current strategy uses provider-native session/event stores or structured

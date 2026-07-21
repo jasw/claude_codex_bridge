@@ -101,6 +101,9 @@ In scope:
   providers.
 - Kimi-specific receipt hardening, no-captured-reply diagnostics, trace
   visibility, and execution-resume metadata clarification.
+- Kimi provider-conversation continuity through observation-bound per-agent
+  native session ownership and exact-session restart, without workdir-global
+  `--continue` inference.
 - Z.ai CLI (`zai`) provider registration using the shared native CLI subprocess
   path and `zai --prompt` headless execution.
 - Grok Build CLI (`grok`) provider registration using the shared native CLI

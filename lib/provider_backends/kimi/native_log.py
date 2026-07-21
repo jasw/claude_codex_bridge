@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 import hashlib
 import json
@@ -29,11 +30,16 @@ def observe_kimi_turn(
     req_id: str,
     *,
     home_candidates: Iterable[Path] | None = None,
+    share_candidates: Iterable[Path] | None = None,
 ) -> KimiTurnObservation | None:
     if not req_id:
         return None
     observations: list[KimiTurnObservation] = []
-    for wire_path in _wire_paths(work_dir, home_candidates=home_candidates):
+    for wire_path in _wire_paths(
+        work_dir,
+        home_candidates=home_candidates,
+        share_candidates=share_candidates,
+    ):
         observed = _observe_wire_file(wire_path, req_id=req_id)
         if observed is not None:
             observations.append(observed)
@@ -50,28 +56,62 @@ def kimi_project_hash(work_dir: Path) -> str:
     return hashlib.md5(normalized.encode("utf-8", "surrogateescape")).hexdigest()
 
 
-def kimi_sessions_root(work_dir: Path, *, home: Path | None = None) -> Path:
-    base = _kimi_home(home)
+def kimi_share_dir(*, environ: Mapping[str, object] | None = None) -> Path:
+    source = os.environ if environ is None else environ
+    explicit = str(source.get("KIMI_SHARE_DIR") or "").strip()
+    if explicit:
+        return Path(explicit).expanduser()
+    home = str(source.get("HOME") or "").strip()
+    if home:
+        return Path(home).expanduser() / ".kimi"
+    return current_provider_source_home() / ".kimi"
+
+
+def kimi_sessions_root(
+    work_dir: Path,
+    *,
+    home: Path | None = None,
+    share_dir: Path | None = None,
+) -> Path:
+    base = Path(share_dir).expanduser() if share_dir is not None else _kimi_home(home)
     return base / "sessions" / kimi_project_hash(work_dir)
 
 
-def _wire_paths(work_dir: Path, *, home_candidates: Iterable[Path] | None) -> list[Path]:
+def _wire_paths(
+    work_dir: Path,
+    *,
+    home_candidates: Iterable[Path] | None,
+    share_candidates: Iterable[Path] | None,
+) -> list[Path]:
     paths: list[Path] = []
     seen: set[Path] = set()
+    explicit_share_roots = share_candidates is not None
+    share_roots = [Path(item).expanduser() for item in (share_candidates or ())]
+    if not explicit_share_roots:
+        share_roots.append(kimi_share_dir())
+    for share_root in share_roots:
+        root = kimi_sessions_root(work_dir, share_dir=share_root)
+        _append_wire_paths(root, paths=paths, seen=seen)
+    if explicit_share_roots:
+        return sorted(paths, key=_path_mtime)
     for home in _candidate_homes(home_candidates):
         root = kimi_sessions_root(work_dir, home=home)
-        if not root.is_dir():
-            continue
-        for path in root.glob("*/wire.jsonl"):
-            try:
-                resolved = path.resolve(strict=False)
-            except Exception:
-                resolved = path
-            if resolved in seen:
-                continue
-            seen.add(resolved)
-            paths.append(path)
+        _append_wire_paths(root, paths=paths, seen=seen)
     return sorted(paths, key=_path_mtime)
+
+
+def _append_wire_paths(root: Path, *, paths: list[Path], seen: set[Path]) -> None:
+    if not root.is_dir():
+        return
+    for path in root.glob("*/wire.jsonl"):
+        try:
+            resolved = path.resolve(strict=False)
+        except Exception:
+            resolved = path
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        paths.append(path)
 
 
 def _candidate_homes(home_candidates: Iterable[Path] | None) -> list[Path]:
@@ -384,6 +424,7 @@ def _path_mtime(path: Path) -> float:
 __all__ = [
     "KimiTurnObservation",
     "kimi_project_hash",
+    "kimi_share_dir",
     "kimi_sessions_root",
     "observe_kimi_turn",
 ]

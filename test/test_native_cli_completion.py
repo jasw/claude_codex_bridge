@@ -132,6 +132,48 @@ def test_kimi_observes_wire_turn_end_and_poll_emits_boundary(monkeypatch, tmp_pa
     ]
 
 
+def test_kimi_explicit_share_observation_does_not_scan_default_home(monkeypatch, tmp_path: Path) -> None:
+    default_home = tmp_path / "default-home"
+    explicit_share = tmp_path / "explicit-share"
+    work_dir = tmp_path / "project"
+    work_dir.mkdir()
+    monkeypatch.setenv("HOME", str(default_home))
+
+    def _turn(reply: str) -> list[dict[str, object]]:
+        return [
+            {
+                "timestamp": "2026-06-13T00:00:01Z",
+                "message": {
+                    "type": "TurnBegin",
+                    "payload": {"user_input": [{"type": "text", "text": "CCB_REQ_ID: job_native123"}]},
+                },
+            },
+            {"timestamp": "2026-06-13T00:00:02Z", "message": {"type": "ContentPart", "payload": {"text": reply}}},
+            {"timestamp": "2026-06-13T00:00:03Z", "message": {"type": "TurnEnd", "payload": {}}},
+        ]
+
+    _write_jsonl(
+        kimi_sessions_root(work_dir, home=default_home) / "default-session" / "wire.jsonl",
+        _turn("wrong default reply"),
+    )
+    explicit_wire = (
+        kimi_sessions_root(work_dir, share_dir=explicit_share)
+        / "explicit-session"
+        / "wire.jsonl"
+    )
+    _write_jsonl(explicit_wire, _turn("right explicit reply"))
+
+    observed = observe_kimi_turn(
+        work_dir,
+        "job_native123",
+        share_candidates=(explicit_share,),
+    )
+
+    assert observed is not None
+    assert observed.session_path == str(explicit_wire)
+    assert observed.reply == "right explicit reply"
+
+
 def test_kimi_prompt_includes_context_pointer_when_session_has_projection() -> None:
     session = type("Session", (), {"data": {"kimi_context_path": "/tmp/CCB_KIMI_CONTEXT.md"}})()
 

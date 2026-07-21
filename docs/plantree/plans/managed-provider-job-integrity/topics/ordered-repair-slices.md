@@ -213,6 +213,8 @@ run, and cumulative/full regression gates.
 
 ## R6: Kimi Exact-Session Resume
 
+Status: verified by the atomic commit selected by `Repair-Slice: R6`.
+
 Finding:
 
 - PR258 adds `--continue` whenever generic `restore` is true, including an
@@ -229,6 +231,18 @@ Correction boundary:
 - Prefer stable long options and capability-aware parsing; recognize explicit
   user session/resume flags without adding a conflicting flag.
 
+Frozen decision (2026-07-21):
+
+- The agent-specific `.kimi-<agent>-session` record owns a native ID only
+  after that agent's exact CCB request is observed in the native wire log.
+- Managed restart emits only capability-confirmed `--session <owned-id>`;
+  workdir-global `--continue`, newest-directory selection, and CCB launch IDs
+  are never automatic resume authority.
+- First launch, reset, invalid/missing binding, storage drift, and unsupported
+  exact-session capability start fresh and clear carried binding without
+  deleting provider data. Explicit user session controls win.
+- See [Decision 003](../decisions/003-kimi-exact-session-ownership.md).
+
 Required evidence:
 
 - Empty first launch, normal restart, clear/reset, and explicit session flags.
@@ -236,8 +250,10 @@ Required evidence:
 - Missing/corrupt prior session fails clearly or starts fresh according to a
   documented decision, without silent fallback to another session.
 
-Exit gate: rewrite PR258 around exact ownership and repeat the established real
-Kimi source-runtime matrix.
+Exit gate: satisfied by replacing PR258's workdir-global continuation with
+observation-bound per-agent ownership, capability-confirmed exact restart,
+fail-fresh invalid authority, preserved counterexamples, and a real
+same-workdir two-agent Kimi run.
 
 ## R7: Correlated Execution-State Model
 
