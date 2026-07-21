@@ -1645,7 +1645,7 @@ install_bin_links() {
     local target_path="$target_root/$path"
     if ! install_entrypoint_executable "$target_path" "$BIN_DIR/$name"; then
       case "$path" in
-        bin/build-ccb-agent-sidebar|bin/ccb-agent-sidebar)
+        bin/build-ccb-agent-sidebar|bin/ccb-agent-sidebar|bin/ccbm)
           ;;
         *)
           return 1
