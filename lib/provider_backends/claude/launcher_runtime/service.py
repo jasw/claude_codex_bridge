@@ -89,7 +89,10 @@ def build_start_cmd(
     if command.auto_permission:
         cmd_parts.extend(['--permission-mode', 'bypassPermissions'])
     if restore_target.has_history:
-        cmd_parts.append('--continue')
+        if restore_target.resume_args:
+            cmd_parts.extend(restore_target.resume_args)
+        else:
+            cmd_parts.append('--continue')
     cmd_parts.extend(spec.startup_args)
 
     cmd = ' '.join(shlex.quote(str(part)) for part in cmd_parts)

@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from pathlib import Path
+import re
+import shlex
 from typing import Callable
 
 from provider_core.tmux_ownership import (
@@ -72,7 +75,8 @@ def respawn_existing_pane(
     if not ownership.is_owned and not can_reclaim_project_slot_pane(session, backend, str(pane_id)):
         return ownership_error_text(ownership, pane_id=str(pane_id))
     try:
-        persist_crash_log(session, backend, str(pane_id))
+        crash_log = persist_crash_log(session, backend, str(pane_id))
+        start_cmd = upgraded_claude_resume_cmd(session, crash_log, start_cmd)
         respawn(str(pane_id), cmd=start_cmd, cwd=session.work_dir, remain_on_exit=True)
         if not backend.is_alive(str(pane_id)):
             return 'respawn did not revive pane'
@@ -86,6 +90,138 @@ def respawn_existing_pane(
         return None
     except Exception as exc:
         return f'{exc}'
+
+
+_CLAUDE_RESUME_ID_RE = re.compile(
+    r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$',
+    re.IGNORECASE,
+)
+
+
+def upgraded_claude_resume_cmd(session, crash_log: Path | None, start_cmd: str) -> str:
+    resume_id = claude_resume_id_from_log(crash_log)
+    if not resume_id:
+        return start_cmd
+    upgraded = replace_provider_restore_args(start_cmd, resume_id)
+    if upgraded == start_cmd:
+        return start_cmd
+    persist_upgraded_claude_resume_cmd(session, upgraded, resume_id)
+    return upgraded
+
+
+def claude_resume_id_from_log(crash_log: Path | None) -> str | None:
+    if crash_log is None:
+        return None
+    try:
+        lines = crash_log.read_text(encoding='utf-8', errors='replace').splitlines()
+    except Exception:
+        return None
+    for index in range(len(lines) - 1, -1, -1):
+        line = lines[index].strip()
+        if 'claude' not in line or '--resume' not in line:
+            continue
+        previous = previous_non_empty_line(lines, index)
+        if previous != 'Resume this session with:':
+            continue
+        parts = safe_split(line)
+        if not parts or parts[0] != 'claude':
+            continue
+        if not valid_resume_invocation(parts):
+            continue
+        return resume_id_from_parts(parts)
+    return None
+
+
+def previous_non_empty_line(lines: list[str], index: int) -> str:
+    for previous_index in range(index - 1, -1, -1):
+        line = lines[previous_index].strip()
+        if line:
+            return line
+    return ''
+
+
+def replace_provider_restore_args(start_cmd: str, resume_id: str) -> str:
+    raw = str(start_cmd or '').strip()
+    if not raw:
+        return shlex.join(['claude', '--resume', resume_id])
+    prefix, sep, tail = raw.rpartition(';')
+    if sep:
+        tail_parts = safe_split(tail.strip())
+        if tail_parts[:1] == ['claude']:
+            return f'{prefix}; {shlex.join(replace_claude_restore_args(tail_parts, resume_id))}'
+        return raw
+    parts = safe_split(raw)
+    if parts[:1] == ['claude']:
+        return shlex.join(replace_claude_restore_args(parts, resume_id))
+    return raw
+
+
+def valid_resume_invocation(parts: list[str]) -> bool:
+    try:
+        index = parts.index('--resume')
+    except ValueError:
+        return False
+    if index + 1 >= len(parts):
+        return False
+    return bool(_CLAUDE_RESUME_ID_RE.match(parts[index + 1]))
+
+
+def replace_claude_restore_args(parts: list[str], resume_id: str) -> list[str]:
+    out: list[str] = []
+    index = 0
+    replaced = False
+    while index < len(parts):
+        part = parts[index]
+        if part == '--continue':
+            if not replaced:
+                out.extend(['--resume', resume_id])
+                replaced = True
+            index += 1
+            continue
+        if part == '--resume':
+            if not replaced:
+                out.extend(['--resume', resume_id])
+                replaced = True
+            index += 2 if index + 1 < len(parts) else 1
+            continue
+        out.append(part)
+        index += 1
+    if not replaced:
+        out.extend(['--resume', resume_id])
+    return out
+
+
+def persist_upgraded_claude_resume_cmd(session, start_cmd: str, resume_id: str) -> None:
+    data = getattr(session, 'data', None)
+    if not isinstance(data, dict):
+        return
+    data['start_cmd'] = start_cmd
+    data['claude_start_cmd'] = start_cmd
+    data['claude_session_id'] = resume_id
+    writer = getattr(session, '_write_back', None)
+    if callable(writer):
+        try:
+            writer()
+        except Exception:
+            pass
+
+
+def resume_id_from_parts(parts: list[str]) -> str | None:
+    try:
+        index = parts.index('--resume')
+    except ValueError:
+        return None
+    if index + 1 >= len(parts):
+        return None
+    candidate = parts[index + 1]
+    return candidate if _CLAUDE_RESUME_ID_RE.match(candidate) else None
+
+
+def safe_split(value: str) -> list[str]:
+    try:
+        return shlex.split(str(value or '').strip())
+    except Exception:
+        return []
 
 
 def can_reclaim_project_slot_pane(session, backend: object, pane_id: str) -> bool:

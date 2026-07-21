@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 import time
 from typing import Callable
 
@@ -40,17 +41,18 @@ def activate_rebound_pane(
     attach_pane_log_fn(session, backend, pane_id)
 
 
-def persist_crash_log(session, backend: object, pane_id: str) -> None:
+def persist_crash_log(session, backend: object, pane_id: str) -> Path | None:
     saver = getattr(backend, 'save_crash_log', None)
     if not callable(saver):
-        return
+        return None
     try:
         runtime = session.runtime_dir
         runtime.mkdir(parents=True, exist_ok=True)
         crash_log = runtime / f'pane-crash-{int(time.time())}.log'
         saver(pane_id, str(crash_log), lines=1000)
+        return crash_log
     except Exception:
-        pass
+        return None
 
 
 def pane_exists(backend: object, pane_id: str) -> bool:

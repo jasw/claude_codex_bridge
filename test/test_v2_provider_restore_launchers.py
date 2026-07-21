@@ -10,6 +10,7 @@ import pytest
 from agents.models import AgentSpec, PermissionMode, QueuePolicy, RestoreMode, RuntimeMode, WorkspaceMode
 from cli.models import ParsedStartCommand
 from provider_backends.codex.launcher_runtime import session_paths as codex_session_paths
+from provider_backends.runtime_restore import ProviderRestoreTarget
 from provider_backends.claude import launcher as claude_launcher
 from provider_backends.claude.launcher_runtime.history import ClaudeHistoryLocator
 from provider_backends.claude.launcher_runtime import session_paths as claude_session_paths
@@ -82,6 +83,7 @@ def test_claude_restore_prefers_project_session_work_dir(monkeypatch, tmp_path: 
 
     assert target.has_history is True
     assert target.run_cwd == workspace_path
+    assert target.resume_args == ('--resume', session_id)
 
 
 def test_claude_restore_uses_runtime_managed_home_for_fresh_agent(monkeypatch, tmp_path: Path) -> None:
@@ -109,6 +111,7 @@ def test_claude_restore_uses_runtime_managed_home_for_fresh_agent(monkeypatch, t
 
     assert target.has_history is True
     assert target.run_cwd == workspace_path
+    assert target.resume_args == ('--resume', session_id)
 
 
 def test_gemini_restore_prefers_project_session_work_dir(monkeypatch, tmp_path: Path) -> None:
@@ -192,6 +195,34 @@ def test_claude_build_start_cmd_skips_continue_without_history(monkeypatch, tmp_
     )
 
     assert '--continue' not in cmd
+
+
+def test_claude_build_start_cmd_uses_exact_resume_args(monkeypatch, tmp_path: Path) -> None:
+    runtime_dir = tmp_path / 'repo' / '.ccb' / 'agents' / 'reviewer' / 'provider-runtime' / 'claude'
+    runtime_dir.mkdir(parents=True)
+    session_id = '12345678-1234-1234-1234-123456789abc'
+
+    monkeypatch.setattr(
+        claude_launcher,
+        '_resolve_claude_restore_target',
+        lambda **kwargs: ProviderRestoreTarget(
+            run_cwd=runtime_dir,
+            has_history=True,
+            resume_args=('--resume', session_id),
+        ),
+    )
+
+    cmd = claude_launcher.build_start_cmd(
+        ParsedStartCommand(project=None, agent_names=('reviewer',), restore=True, auto_permission=True),
+        _spec('reviewer', 'claude'),
+        runtime_dir,
+        'launch-1',
+        prepared_state=_prepared(runtime_dir),
+    )
+
+    assert '--continue' not in cmd
+    assert f'--resume {session_id}' in cmd
+    assert '--permission-mode bypassPermissions' in cmd
 
 
 def test_gemini_build_start_cmd_skips_resume_without_history(tmp_path: Path) -> None:

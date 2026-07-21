@@ -1,0 +1,381 @@
+#!/usr/bin/env bash
+# ccbm - mount CCB, wait for agent panes to become idle, then attach to tmux.
+set -u
+
+usage() {
+  cat <<'USAGE'
+Usage: ccbm [-n|--new] [-h|--help]
+       ccbm status
+
+Run from inside a CCB project directory (anywhere under a `.ccb/` tree).
+
+Default mode mounts the project, waits until all configured agents reach
+state=idle, then attaches to the tmux session showing the agent panes.
+
+`-n`/`--new` mounts as usual, then sends `/new` (or `/clear`) to each
+configured provider so agents start fresh instead of resuming their previous
+conversation. Session history on disk is untouched.
+
+`ccbm status` is read-only. It prints the resolved project root, configured
+agents, ccbd state, tmux socket, and current pane bindings.
+
+Behavior - escalating attempts; each one is non-destructive of session history
+unless explicitly authorised:
+  1. plain `ccb`                                - no-op if already mounted
+  2. soft reset (kills ccbd + sockets, keeps everything else)
+  3. medium reset (drops derived state: .ccb/ccbd/{lease,snapshots,*.jsonl,...},
+                   agents/*/runtime.json, and stale provider-runtime pid/fifos.
+                   PRESERVES agents/*/provider-state/ - conversation history.)
+  4. STOPS. Hard reset (wipe all of .ccb/ except ccb.config) requires
+     explicit CCBM_ALLOW_HARD_RESET=1 ccbm
+
+Environment overrides:
+  CCBM_DEADLINE_S=N         per-attempt mount deadline (default 120)
+  CCBM_NO_ATTACH=1          skip the tmux attach at the end
+  CCBM_ALLOW_HARD_RESET=1   permit destructive .ccb/ rebuild (loses history)
+USAGE
+}
+
+MODE="mount"
+NEW_SESSION=""
+for arg in "$@"; do
+  case "$arg" in
+    -h|--help) usage; exit 0 ;;
+    -n|--new) NEW_SESSION=1 ;;
+    status) MODE="status" ;;
+    *)
+      echo "ccbm: unknown argument: $arg" >&2
+      usage >&2
+      exit 2
+      ;;
+  esac
+done
+
+resolve_path() {
+  local path="$1"
+  local dir target
+  while [ -L "$path" ]; do
+    dir=$(cd -P "$(dirname "$path")" >/dev/null 2>&1 && pwd -P)
+    target=$(readlink "$path")
+    case "$target" in
+      /*) path="$target" ;;
+      *)  path="$dir/$target" ;;
+    esac
+  done
+  dir=$(cd -P "$(dirname "$path")" >/dev/null 2>&1 && pwd -P)
+  printf '%s/%s\n' "$dir" "$(basename "$path")"
+}
+
+# Resolve through symlinks so a source/dev install can verify all wrapper
+# commands point at the same checkout. Split-brain wrappers are dangerous:
+# an old `ask` can decide the mounted ccbd is incompatible and stop all panes.
+SCRIPT_PATH=$(resolve_path "${BASH_SOURCE[0]}")
+SCRIPT_DIR=$(cd "$(dirname "$SCRIPT_PATH")" && pwd -P)
+CCBM_SOURCE_ROOT=$(cd "$SCRIPT_DIR/.." && pwd -P)
+EXPECTED_CCB="$CCBM_SOURCE_ROOT/ccb"
+EXPECTED_ASK="$CCBM_SOURCE_ROOT/bin/ask"
+EXPECTED_CCBM="$CCBM_SOURCE_ROOT/bin/ccbm"
+
+resolve_command_path() {
+  local name="$1"
+  local path
+  path=$(command -v "$name" 2>/dev/null || true)
+  [ -n "$path" ] || return 1
+  resolve_path "$path"
+}
+
+toolchain_status_line() {
+  local name="$1" expected="$2" actual status
+  actual=$(resolve_command_path "$name" || true)
+  if [ -z "$actual" ]; then
+    status="missing"
+  elif [ "$actual" = "$expected" ]; then
+    status="ok"
+  else
+    status="skew"
+  fi
+  echo "toolchain: $name status=$status path=${actual:-missing} expected=$expected"
+}
+
+show_toolchain_status() {
+  echo "--- ccb toolchain ---"
+  toolchain_status_line ccb "$EXPECTED_CCB"
+  toolchain_status_line ask "$EXPECTED_ASK"
+  toolchain_status_line ccbm "$EXPECTED_CCBM"
+}
+
+require_safe_toolchain() {
+  local failed=0 name expected actual
+  for name in ccb ask; do
+    case "$name" in
+      ccb) expected="$EXPECTED_CCB" ;;
+      ask) expected="$EXPECTED_ASK" ;;
+    esac
+    actual=$(resolve_command_path "$name" || true)
+    if [ -z "$actual" ]; then
+      echo "ccbm: WARN: $name not found on PATH; continuing because mount does not invoke it directly" >&2
+      continue
+    fi
+    if [ "$actual" != "$expected" ]; then
+      echo "ccbm: ERROR: $name resolves to a different CCB checkout" >&2
+      echo "  actual:   $actual" >&2
+      echo "  expected: $expected" >&2
+      failed=1
+    fi
+  done
+  if (( failed != 0 )); then
+    echo "ccbm: refusing to mount with split-brain CCB tooling; fix PATH/symlinks first" >&2
+    exit 2
+  fi
+}
+
+# Walk up from cwd to find the nearest .ccb/ directory.
+find_project_root() {
+  local d="$PWD"
+  while [ "$d" != "/" ]; do
+    if [ -d "$d/.ccb" ]; then
+      printf '%s' "$d"
+      return 0
+    fi
+    d=$(dirname "$d")
+  done
+  return 1
+}
+
+PROJECT_ROOT=$(find_project_root || true)
+if [ -z "$PROJECT_ROOT" ]; then
+  echo "ccbm: no .ccb/ directory found from $PWD upward - not a CCB project" >&2
+  exit 1
+fi
+if [ ! -f "$PROJECT_ROOT/.ccb/ccb.config" ]; then
+  echo "ccbm: $PROJECT_ROOT/.ccb/ccb.config missing - initialise the project first" >&2
+  exit 1
+fi
+cd "$PROJECT_ROOT"
+
+DEADLINE_S="${CCBM_DEADLINE_S:-120}"
+NO_ATTACH="${CCBM_NO_ATTACH:-}"
+SOCK_PATH="$PROJECT_ROOT/.ccb/ccbd/tmux.sock"
+
+show_status() {
+  echo "project_root: $PROJECT_ROOT"
+  echo "ccb_config: $(tr '\n' ' ' < "$PROJECT_ROOT/.ccb/ccb.config" | sed 's/[[:space:]]*$//')"
+  echo "tmux_socket: $SOCK_PATH"
+  echo "tmux_socket_exists: $([ -S "$SOCK_PATH" ] && echo yes || echo no)"
+  show_toolchain_status
+  echo "--- ccb ps ---"
+  ccb ps 2>&1 || true
+  echo "--- tmux panes ---"
+  if [ -S "$SOCK_PATH" ]; then
+    tmux -S "$SOCK_PATH" list-panes -a -F 'pane=#{pane_id} session=#{session_name} window=#{window_name} cwd=#{pane_current_path} title=#{pane_title}' 2>&1 || true
+  else
+    echo "(tmux socket missing)"
+  fi
+}
+
+if [ "$MODE" = "status" ]; then
+  show_status
+  exit 0
+fi
+
+require_safe_toolchain
+
+force_reset() {
+  local kind="${1:-soft}"
+  echo "ccbm: forcing $kind reset..."
+  ccb kill -f >/dev/null 2>&1 || true
+  pkill -9 -f "ccbd/main.py --project $PROJECT_ROOT" 2>/dev/null
+  pkill -9 -f "keeper_main.py --project $PROJECT_ROOT" 2>/dev/null
+  tmux -S "$SOCK_PATH" kill-server 2>/dev/null || true
+  case "$kind" in
+    hard)
+      # Nuke .ccb/ entirely (loses session history). Preserve only ccb.config.
+      local config_text
+      config_text=$(cat "$PROJECT_ROOT/.ccb/ccb.config" 2>/dev/null || true)
+      rm -rf "$PROJECT_ROOT/.ccb"
+      mkdir -p "$PROJECT_ROOT/.ccb"
+      [ -n "$config_text" ] && printf '%s' "$config_text" > "$PROJECT_ROOT/.ccb/ccb.config"
+      ;;
+    medium)
+      # Drop derived runtime+ccbd snapshot state so supervisor rebuilds bindings.
+      # PRESERVES provider-state/ (claude/codex/gemini conversation history) and ccb.config.
+      if [ -d "$PROJECT_ROOT/.ccb/agents" ]; then
+        # runtime.json files (derived state pointing at maybe-dead panes)
+        find "$PROJECT_ROOT/.ccb/agents" -mindepth 2 -maxdepth 2 -name runtime.json -delete 2>/dev/null || true
+        # provider-runtime cruft (stale pid files, fifos that point at dead processes).
+        # Conversation history is in provider-state/, NOT here, so this is safe.
+        find "$PROJECT_ROOT/.ccb/agents" -path '*/provider-runtime/*/bridge.pid' -delete 2>/dev/null || true
+        find "$PROJECT_ROOT/.ccb/agents" -path '*/provider-runtime/*/input.fifo' -delete 2>/dev/null || true
+        find "$PROJECT_ROOT/.ccb/agents" -path '*/provider-runtime/*/output.fifo' -delete 2>/dev/null || true
+      fi
+      # Provider session pointer files (.ccb/.<agent>-<provider>-session) carry
+      # stale pane_id values that don't survive a daemon restart. Wipe them so
+      # the supervisor reconstructs them with fresh pane bindings on next mount.
+      # NOTE: these files just hold "how to launch X pointed at provider-state/";
+      # the actual conversation history is in provider-state/, untouched here.
+      find "$PROJECT_ROOT/.ccb" -maxdepth 1 -name '.*-*-session' -type f -delete 2>/dev/null || true
+      if [ -d "$PROJECT_ROOT/.ccb/ccbd" ]; then
+        rm -rf "$PROJECT_ROOT/.ccb/ccbd"/{snapshots,executions,attempts,leases,messages,replies} 2>/dev/null
+        rm -f "$PROJECT_ROOT/.ccb/ccbd"/{ccbd.sock,tmux.sock,keeper.lock,startup.lock,lease.json,lifecycle.json,state.json,start-policy.json,startup-report.json,shutdown-report.json,restore-report.json,keeper.json} 2>/dev/null
+        rm -f "$PROJECT_ROOT/.ccb/ccbd"/*.jsonl 2>/dev/null
+      fi
+      ;;
+    soft|*)
+      rm -f "$PROJECT_ROOT/.ccb/ccbd/ccbd.sock" \
+            "$PROJECT_ROOT/.ccb/ccbd/keeper.lock" \
+            "$PROJECT_ROOT/.ccb/ccbd/startup.lock" 2>/dev/null
+      ;;
+  esac
+  sleep 1
+}
+
+mount_and_wait() {
+  local deadline=$1
+  local ps_out total idle
+  ps_out=$(ccb ps 2>&1 || true)
+  total=$(echo "$ps_out" | grep -c "^agent: name=")
+  idle=$( echo "$ps_out" | grep "^agent: " | grep -c "state=idle")
+  if echo "$ps_out" | grep -q "^ccbd_state: mounted$" && (( total > 0 )) && (( idle == total )); then
+    echo "ready in 0s - $total agents idle"
+    return 0
+  fi
+
+  # Background ccb but capture its output so we can show it on hard failure.
+  local mount_log
+  mount_log=$(mktemp -t ccbm-mount.XXXXXX)
+  ( ccb >"$mount_log" 2>&1 ) &
+  local start=$SECONDS
+  while (( SECONDS - start < deadline )); do
+    ps_out=$(ccb ps 2>&1)
+    total=$(echo "$ps_out" | grep -c "^agent: name=")
+    idle=$( echo "$ps_out" | grep "^agent: " | grep -c "state=idle")
+    if (( total > 0 )) && (( idle == total )); then
+      echo "ready in $((SECONDS - start))s - $total agents idle"
+      rm -f "$mount_log"
+      return 0
+    fi
+    sleep 2
+  done
+  echo "ccbm: mount timed out after ${deadline}s. ccb stdout/stderr:"
+  cat "$mount_log" 2>/dev/null | sed 's/^/  | /'
+  rm -f "$mount_log"
+  return 1
+}
+
+# Resolve session name from project_id (CCB convention: ccb-<basename>-<id[:8]>).
+# Fall back to first ccb-* session on the project's tmux socket.
+resolve_session() {
+  local project_id base session
+  project_id=$(ccb ps 2>&1 | awk -F': ' '$1=="project_id"{print $2; exit}')
+  base=$(basename "$PROJECT_ROOT")
+  if [ -n "$project_id" ]; then
+    session="ccb-${base}-${project_id:0:8}"
+    if tmux -S "$SOCK_PATH" has-session -t "$session" 2>/dev/null; then
+      printf '%s' "$session"
+      return 0
+    fi
+  fi
+  # Fallback: first session on the socket starting with ccb-
+  tmux -S "$SOCK_PATH" list-sessions -F '#{session_name}' 2>/dev/null \
+    | grep "^ccb-" | head -1
+}
+
+# Reset command that starts a fresh session for a given provider CLI.
+reset_cmd_for() {
+  case "$1" in
+    codex|opencode|droid) echo "/new" ;;
+    *) echo "/clear" ;;  # claude, gemini: /clear discards context, saves history
+  esac
+}
+
+# Send the reset command to each bound provider pane so agents start fresh
+# instead of resuming. Reads pane bindings straight from `ccb ps` and drives
+# the tmux socket directly - autonew's registry lookup is unreliable here.
+# On-disk conversation history is preserved.
+start_new_sessions() {
+  local provider pane cmd
+  ccb ps 2>&1 | awk '
+    /^agent: / { for (i=1;i<=NF;i++) if ($i ~ /^provider=/) { split($i,a,"="); prov=a[2] } }
+    /^binding: / { for (i=1;i<=NF;i++) if ($i ~ /^pane=/) { split($i,a,"="); print prov, a[2] } }
+  ' | while read -r provider pane; do
+    [ -n "$pane" ] || continue
+    cmd=$(reset_cmd_for "$provider")
+    if tmux -S "$SOCK_PATH" send-keys -t "$pane" "$cmd" Enter 2>/dev/null; then
+      echo "ccbm: sent $cmd to $provider ($pane)"
+    else
+      echo "ccbm: WARN: failed to send $cmd to $provider ($pane)" >&2
+    fi
+  done
+}
+
+attach_to_session() {
+  local session
+  session=$(resolve_session)
+  if [ -z "$session" ]; then
+    echo "ccbm: no ccb-* tmux session found on $SOCK_PATH" >&2
+    return 1
+  fi
+  # Refuse to nest tmux clients across different sockets. switch-client
+  # operates on the target socket's server, not the caller's tmux.
+  if [ -n "${TMUX:-}" ]; then
+    echo "ccbm: agents are mounted but you're already inside tmux."
+    echo "      can't auto-attach across sockets safely. To view the panes:"
+    echo "        detach (Ctrl-b d) then run from a plain shell:"
+    echo "          tmux -S $SOCK_PATH attach -t $session"
+    echo "      Or use:  CCBM_NO_ATTACH=1 ccbm  to skip attach next time."
+    return 0
+  fi
+  echo "attaching to $session..."
+  exec tmux -S "$SOCK_PATH" attach -t "$session" \; select-window -t "${session}:ccb"
+}
+
+# 1st attempt: plain `ccb`, no-op if already healthy.
+mount_and_wait "$DEADLINE_S"
+RC=$?
+
+# 2nd attempt: soft reset (kill ccbd, clean sockets). Preserves all state.
+if (( RC != 0 )); then
+  ccb ps 2>&1 | grep "^agent: " || true
+  force_reset soft
+  echo "ccbm: retrying mount..."
+  mount_and_wait "$DEADLINE_S"
+  RC=$?
+fi
+
+# 3rd attempt: medium reset - drops derived runtime/lifecycle state but
+# PRESERVES .ccb/agents/*/provider-state/ (claude/codex/gemini conversation history).
+if (( RC != 0 )); then
+  ccb ps 2>&1 | grep "^agent: " || true
+  force_reset medium
+  echo "ccbm: retrying mount after medium reset (session history preserved)..."
+  mount_and_wait "$DEADLINE_S"
+  RC=$?
+fi
+
+# 4th attempt: hard reset - DESTRUCTIVE. Only with explicit opt-in.
+if (( RC != 0 )); then
+  if [ "${CCBM_ALLOW_HARD_RESET:-}" = "1" ]; then
+    echo "ccbm: WARNING - hard reset wipes .ccb/ (loses agent session history)"
+    force_reset hard
+    echo "ccbm: retrying mount with hard reset..."
+    mount_and_wait "$DEADLINE_S"
+    RC=$?
+  else
+    echo "ccbm: medium reset didn't recover. Hard reset would WIPE session history."
+    echo "ccbm: re-run with: CCBM_ALLOW_HARD_RESET=1 ccbm"
+    ccb ps 2>&1 | grep "^agent: "
+    exit 1
+  fi
+fi
+
+if (( RC != 0 )); then
+  echo "ccbm: mount failed even after hard reset"
+  ccb ps 2>&1 | grep "^agent: "
+  exit 1
+fi
+
+# Show final agent state then attach (or exit).
+ccb ps 2>&1 | grep "^agent: "
+[ -n "$NEW_SESSION" ] && start_new_sessions
+[ -n "$NO_ATTACH" ] && exit 0
+attach_to_session
