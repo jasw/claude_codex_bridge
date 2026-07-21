@@ -16,6 +16,7 @@ PROVIDER_SESSION_FILENAMES = {
     'deepseek': '.deepseek-session',
     'mimo': '.mimo-session',
     'qwen': '.qwen-session',
+    'qoder': '.qoder-session',
     'cursor': '.cursor-session',
     'copilot': '.copilot-session',
     'crush': '.crush-session',

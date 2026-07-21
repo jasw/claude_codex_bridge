@@ -11,6 +11,7 @@ OPTIONAL_PROVIDER_NAMES = (
     "deepseek",
     "mimo",
     "qwen",
+    "qoder",
     "cursor",
     "copilot",
     "crush",
@@ -39,6 +40,7 @@ def build_builtin_backends(*, include_optional: bool = True) -> list[ProviderBac
     from provider_backends.opencode import build_backend as build_opencode_backend
     from provider_backends.pi import build_backend as build_pi_backend
     from provider_backends.omp import build_backend as build_omp_backend
+    from provider_backends.qoder import build_backend as build_qoder_backend
     from provider_backends.qwen import build_backend as build_qwen_backend
     from provider_backends.zai import build_backend as build_zai_backend
 
@@ -56,6 +58,7 @@ def build_builtin_backends(*, include_optional: bool = True) -> list[ProviderBac
             build_deepseek_backend(),
             build_mimo_backend(),
             build_qwen_backend(),
+            build_qoder_backend(),
             build_cursor_backend(),
             build_copilot_backend(),
             build_crush_backend(),

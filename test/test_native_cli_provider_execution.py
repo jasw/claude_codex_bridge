@@ -22,7 +22,7 @@ from provider_core.registry import build_default_backend_registry
 from provider_execution.base import ProviderRuntimeContext, ProviderSubmission
 
 
-PROVIDERS = ("qwen", "cursor", "copilot", "crush", "kiro", "pi", "omp", "zai")
+PROVIDERS = ("qwen", "qoder", "cursor", "copilot", "crush", "kiro", "pi", "omp", "zai")
 STRUCTURED_PROVIDERS = ("qwen", "cursor", "copilot", "pi", "omp")
 
 

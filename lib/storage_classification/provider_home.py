@@ -20,7 +20,7 @@ _GEMINI_PROJECTED_NAMES = {'settings.json', 'trustedFolders.json'}
 _CODEX_PROJECTED_NAMES = {'config.toml'}
 _OPENCODE_PROJECTED_NAMES = {'opencode.json'}
 _MIMO_PROJECTED_NAMES = {'mimocode.json'}
-_NATIVE_CLI_PROVIDERS = {'qwen', 'cursor', 'copilot', 'crush', 'grok', 'kiro', 'pi', 'omp', 'zai'}
+_NATIVE_CLI_PROVIDERS = {'qwen', 'qoder', 'cursor', 'copilot', 'crush', 'grok', 'kiro', 'pi', 'omp', 'zai'}
 _NATIVE_CLI_PROJECTED_ROOTS = {'inherited-skills', 'role-skills', 'overlay-skills'}
 _NATIVE_CLI_CACHE_ROOTS = {'.cache', '.npm', '.tmp', 'cache', 'node_modules', 'tmp'}
 _NATIVE_CLI_SESSION_ROOTS = {
@@ -30,6 +30,7 @@ _NATIVE_CLI_SESSION_ROOTS = {
     '.kiro',
     '.local',
     '.pi',
+    '.qoder',
     '.qwen',
     'data',
     'logs',
