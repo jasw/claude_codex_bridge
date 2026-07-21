@@ -4,32 +4,46 @@ Date: 2026-07-21
 
 ## Current Phase
 
-R11 provider-extension candidate committed and serial closure goal activated
-on branch
-`fix/unified-provider-extension-inheritance`, based on `origin/main` at
-`aed27abf` (merged PR269).
+R3 inbound completion routing documentation is verified on the serial closure
+branch. No repair slice is currently `in_progress`; R4 is the next eligible
+row.
 
 ## Next Target
 
-Activate R3 and freeze its documentation-only behavior and acceptance gate.
+Resolve R4's callback-cancellation disposition, then reproduce its preserved
+chain-child counterexample before changing cancellation code.
 
 ## Last Landed
 
-R1/R2 landed as `06e1a46a` through merge `aed27abf`.
+R3 verified commit selector: `Repair-Slice: R3` (`docs: correct inbound
+completion routing`).
 
 ## Active TODO
 
-1. Change Seq 1 / R3 to `in_progress`; keep every later row locked.
-2. Reproduce PR264's wording counterexamples in static tests.
-3. Correct only the inbound completion routing documentation and templates.
+1. Refresh the baseline and confirm PR266 / Issue263 remain unchanged.
+2. Resolve the R4 open question without weakening callback or parent
+   terminalization.
+3. Freeze R4's exact state authority, counterexamples, and acceptance commands.
 
 ## Blocked By
 
-Nothing blocks Claude, Gemini, or Droid qualification. Qwen is source-qualified
-only because this host has no Qwen executable. Copilot remains deferred because
-its plugin metadata shares config authority with auth/session-sensitive state.
+No current blocker. Copilot still requires its later queue row to freeze an
+authoritative entry-level ownership schema and offline/no-login fixture; that
+work is pending, not skipped.
 
 ## Last Verified
+
+- R3 baseline reproduction: `4 failed, 14 passed` before documentation changes.
+- R3 focused static/materialization gate: `18 passed`.
+- R11 cumulative provider-profile, hook, and launcher gate: `282 passed`.
+- Changed Python files compiled; `git diff --check` passed.
+- Full/client and real-provider runs were not required because R3 changes only
+  projected instructions, generated runtime-memory text, static assertions,
+  and the user guide. No runtime project was opened.
+- R3 evidence:
+  [history/reviewed-repair-queue-evidence.md](history/reviewed-repair-queue-evidence.md#r3-inbound-completion-routing-documentation).
+
+Prior R11 evidence remains:
 
 - Focused provider-profile, hook, and launcher files: `282 passed`.
 - Full Python suite reached `4181 passed`, `15 skipped` before the unchanged

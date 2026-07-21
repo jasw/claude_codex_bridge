@@ -82,10 +82,10 @@ All conditions are mandatory:
 Allowed states: `waiting`, `ready`, `in_progress`, `blocked`,
 `verified_commit`, `integrated`.
 
-| Seq | Slice | Upstream items | Initial state | Unlock condition |
+| Seq | Slice | Upstream items | Current state | Unlock condition |
 | :--- | :--- | :--- | :--- | :--- |
 | 0 | R11 completed provider extension candidate | PR257 follow-up | `verified_commit` (`5c1ff83a`) | Goal file accepted and baseline refreshed |
-| 1 | R3 inbound completion routing documentation | PR264 | `ready` | Seq 0 clean and recorded |
+| 1 | R3 inbound completion routing documentation | PR264 | `verified_commit` (`Repair-Slice: R3`) | Seq 0 clean and recorded |
 | 2 | R4 cancellation and callback terminalization | PR266, Issue263 | `waiting` | Seq 1 verified commit |
 | 3 | R5 Claude queued-prompt activation | PR259 | `waiting` | Seq 2 verified commit |
 | 4 | R6 Kimi exact-session resume | PR258 | `waiting` | Seq 3 verified commit |
@@ -234,5 +234,5 @@ entire execution record into context.
 - [x] Closure worktree and branch are named and clean.
 - [x] `origin/main` and all upstream item states are refreshed.
 - [x] Seq 0 commit is present after baseline synchronization.
-- [ ] Seq 1 is changed from `ready` to `in_progress`; all later rows remain
+- [x] Seq 1 is changed from `ready` to `in_progress`; all later rows remain
       locked.

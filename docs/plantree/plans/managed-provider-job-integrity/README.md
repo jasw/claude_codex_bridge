@@ -78,6 +78,9 @@ Out of scope:
   focused, full-suite, and external real-project evidence for landed R1/R2.
 - [history/r11-provider-extension-validation-2026-07-20.md](history/r11-provider-extension-validation-2026-07-20.md):
   automated and real-provider qualification for the unified R11 candidate.
+- [history/reviewed-repair-queue-evidence.md](history/reviewed-repair-queue-evidence.md):
+  compact per-slice commit, counterexample, verification, and unlock evidence
+  for the active strict serial closure goal.
 
 ## Execution Rule
 

@@ -5,8 +5,8 @@ Date: 2026-07-21
 ## Status Summary
 
 - Current status: In progress; R1/R2 landed and the R11 provider-extension
-  candidate is committed on its qualified branch. The strict serial closure
-  goal is active.
+  candidate is committed on its qualified branch, the strict serial closure
+  goal is active, and R3 is a verified atomic commit.
 - Work mode: execute-ready.
 - Review baseline: PR257 is merged; PR258, PR259, PR264, PR265, and PR266 are
   open and reported `UNSTABLE`; Issues 260-263 remain open as of 2026-07-21.
@@ -15,8 +15,12 @@ Date: 2026-07-21
   excluded, and real clean-home Claude, Gemini, and Droid checks. The external
   project was cleanly unmounted. See the
   [R11 validation record](history/r11-provider-extension-validation-2026-07-20.md).
-- Next target: activate R3, freeze its documentation-only acceptance boundary,
-  and keep every later row locked.
+  R3 then passed `18` focused static/materialization tests and the cumulative
+  `282` R11 provider-projection tests; see the
+  [queue evidence](history/reviewed-repair-queue-evidence.md#r3-inbound-completion-routing-documentation).
+- Next target: resolve R4's callback-cancellation disposition and reproduce
+  the chain-child terminalization counterexample. Every later row remains
+  locked.
 
 ## Done
 
@@ -35,48 +39,49 @@ Date: 2026-07-21
   existing provider, communication, callback, diagnostics, or storage plans.
 - Landed R1/R2 in PR269 (`06e1a46a`, merge `aed27abf`) with the preserved
   [validation record](history/r1-r2-validation-2026-07-20.md).
+- Qualified the R11 provider-extension candidate as local commit `5c1ff83a`.
+- Activated the serial closure goal in `0d145aa3` after refreshing `origin/main`,
+  all reviewed PR heads, and Issues260-263.
+- Verified R3 as the atomic commit selected by `Repair-Slice: R3`: registered
+  agent results retain existing lineage, direct CLI callers use control
+  output, and non-hot-reloading provider sessions adopt rematerialized memory
+  only after restart or a new session.
 
 ## In Progress
 
-- **R11 provider extension inheritance:** harden Claude's first interactive
-  plugin load, seed Gemini and Qwen extensions locally, and project Droid
-  plugins plus only their enabling settings without copying provider homes.
-- Keep Copilot deferred until its mixed auth/config/plugin state can be split
-  without overwriting credentials, sessions, permissions, or local plugin data.
-- Hold PR258, PR259, PR265, and PR266 from merge until their owning later
-  roadmap slices pass the negative cases below.
+No repair slice is currently `in_progress`. R4 is the only next eligible row;
+PR258, PR259, PR265, and PR266 remain held from merge.
 
 ## Next
 
-1. **R3: Inbound completion routing documentation.** Correct PR264 wording so
-   rematerialization is followed by provider restart/new session when required,
-   distinguish registered-agent callers from direct CLI callers, then land the
-   documentation-only slice.
-2. **R4: Cancellation and callback terminalization.** Revise PR266 so ordinary
+1. **R4: Cancellation and callback terminalization.** Revise PR266 so ordinary
    empty cancellation does not occupy the mailbox and cancelling a chain child
    resolves its callback edge immediately without waiting for daemon restart.
-3. **R5: Claude queued-prompt activation.** Replace PR259's enqueue-time
+2. **R5: Claude queued-prompt activation.** Replace PR259's enqueue-time
    synthetic anchor with explicit queued, activated, and anchored phases; prove
    old-turn output cannot complete the new job.
-4. **R6: Kimi exact-session resume.** Replace PR258's default `--continue`
+3. **R6: Kimi exact-session resume.** Replace PR258's default `--continue`
    behavior with CCB-owned exact session identity, fresh first launch, version
    tolerant flags, and same-workdir multi-agent isolation.
-5. **R7: Correlated execution-state model.** Redesign PR265 around an agreed
+4. **R7: Correlated execution-state model.** Redesign PR265 around an agreed
    phase vocabulary, contradictory-evidence `unknown`, attempt/inbound/lease/
    provider correlation, and structured queue, CLI, sidebar, and mobile output.
-6. **R8: Stuck inbound detection.** Implement Issue260 on top of R7 using
+5. **R8: Stuck inbound detection.** Implement Issue260 on top of R7 using
    correlated running-job, active-attempt, provider-idle, and missing-terminal
    evidence. Ship diagnostics first; keep automatic recovery disabled.
-7. **R9: Active-job correction capability.** Design Issue261 only after R4 and
+6. **R9: Active-job correction capability.** Design Issue261 only after R4 and
    R7 establish terminal and phase authority. Target the exact job, preserve
    lineage, define provider capability/refusal, and cover completion races.
-8. **R10: Integrated qualification and release decision.** Run focused,
-    full Python/Rust/client, clean merged-main, external source-runtime, and
-    real Codex/Claude project gates; close only the issues whose complete
-    acceptance criteria are demonstrated.
-9. **R12: Generic projected-asset ownership hardening.** Inventory remaining
-    `allow_unmarked_replace=True` call sites and migrate them to marker-first
-    ownership without breaking packaged CCB skill upgrades.
+7. **R12: Generic projected-asset ownership hardening.** Inventory remaining
+   `allow_unmarked_replace=True` call sites and migrate them to marker-first
+   ownership without breaking packaged CCB skill upgrades.
+8. **R11-C: Copilot plugin/config projection.** Freeze an entry-level ownership
+   schema and offline/no-login fixture, then project only owned plugin metadata
+   while preserving credentials, sessions, permissions, cache, and local data.
+9. **R10: Integrated qualification and release decision.** Run focused,
+   full Python/Rust/client, clean current-main, external source-runtime, and
+   real Codex/Claude project gates; prepare evidence-backed upstream
+   dispositions without pushing, merging, closing, publishing, or releasing.
 
 ## Deferred
 
@@ -86,8 +91,6 @@ Date: 2026-07-21
   by R6.
 - UI workflow redesign beyond exposing the R7 structured state.
 - Closing Issue262 from ProjectView-only heuristic output.
-- Copilot plugin/config projection until exact entry ownership and secret/session
-  preservation rules are frozen and a real CLI fixture is available.
 
 ## Advancement Gate
 
