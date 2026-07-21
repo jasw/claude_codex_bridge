@@ -308,6 +308,35 @@ def test_materialize_kimi_skills_projects_skill_overlays(tmp_path: Path) -> None
     assert not (overlay_dir / "unrelated").exists()
 
 
+def test_materialize_kimi_skills_preserves_unmarked_packaged_target(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    packaged = tmp_path / 'packaged-kimi-skills'
+    (packaged / 'ask').mkdir(parents=True)
+    (packaged / 'ask' / 'SKILL.md').write_text('packaged\n', encoding='utf-8')
+    state_dir = tmp_path / 'provider-state' / 'kimi'
+    inherited_dir = state_dir / 'inherited-skills'
+    (inherited_dir / 'user-skill').mkdir(parents=True)
+    (inherited_dir / 'user-skill' / 'SKILL.md').write_text('user\n', encoding='utf-8')
+    monkeypatch.setattr(
+        'provider_core.inherited_skills.packaged_inherited_skills_dir',
+        lambda provider: packaged,
+    )
+
+    active_dirs = materialize_kimi_skills(
+        project_root=None,
+        agent_name='agent1',
+        state_dir=state_dir,
+        profile=ProviderProfileSpec(inherit_skills=True),
+    )
+
+    assert inherited_dir not in active_dirs
+    assert (inherited_dir / 'user-skill' / 'SKILL.md').read_text(encoding='utf-8') == 'user\n'
+    assert not (inherited_dir / 'ask').exists()
+    assert not Path(f'{inherited_dir}.ccb-projection.json').exists()
+
+
 def test_deepseek_start_cmd_defaults_to_deepcode_and_keeps_startup_args(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.delenv("DEEPSEEK_START_CMD", raising=False)
     command = ParsedStartCommand(project=None, agent_names=("deep_agent",), restore=True, auto_permission=True)

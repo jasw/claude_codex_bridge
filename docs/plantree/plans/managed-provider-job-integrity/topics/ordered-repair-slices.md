@@ -396,3 +396,56 @@ Exit gate: focused regressions pass, any unrelated full-suite failure is
 explicitly adjudicated, the external CCB project is cleanly unmounted,
 contracts and evidence are updated, and Copilot is recorded as an explicit
 defer rather than a silent partial fix.
+
+## R12: Generic Projected-Asset Ownership Hardening
+
+Status: verified by the atomic commit selected with `Repair-Slice: R12`.
+
+Finding:
+
+- Packaged inherited skills, Claude skills/commands, and Droid skills still
+  enabled `allow_unmarked_replace=True`.
+- The shared replacement predicate treated any same-name marker file as
+  ownership proof and could replace an unmarked content-identical directory.
+
+Frozen decision:
+
+- [Decision 007](../decisions/007-marker-first-projected-asset-ownership.md)
+  requires a valid local schema-v1 `ccb_projected_asset` marker with exact
+  label, non-empty source, and recognized mode.
+- The only markerless migration writes a marker beside an exact current-source
+  symlink without replacing it.
+- Unmarked directories and foreign/malformed/symlinked markers are always
+  preserved. The compatibility flag grants no replacement or cleanup
+  authority.
+
+Required evidence:
+
+- Generic different/identical directory, foreign symlink, exact symlink,
+  marker-write failure, marker schema, valid refresh, source-missing, and
+  disabled cleanup tests.
+- Consumer regressions for packaged Kimi skills, Claude skills/commands, Droid
+  skills, RolePack and per-skill projections, and existing marker-first seeds.
+- External candidate materialization with fake source homes, unchanged source
+  hashes, no provider login, clean unmount, and no source-worktree mutation.
+
+Exit gate: every production `allow_unmarked_replace=True` call is removed,
+generic replacement is marker-first, focused/full/external gates pass, and R12
+lands as one atomic commit before R11-C starts.
+
+Verified evidence:
+
+- The final generic/provider/RolePack/storage gate passed `399` tests in
+  `5.88s`; the complete Python suite passed `5536` tests with `2` skipped in
+  `1067.43s`. Compilation and `git diff --check` passed.
+- External candidate project
+  `/home/bfly/yunwei/test_ccb2/r12-projected-assets-20260721` used the source
+  wrapper and fake provider without login. Candidate `doctor` observed a
+  healthy mounted backend from the candidate implementation root.
+- Claude, Droid, and packaged Kimi counterexamples preserved unmarked user
+  assets; Kimi omitted the conflicting root. Exact legacy symlink adoption
+  retained its inode, valid owned refresh/cleanup passed, and all fake-source
+  hashes were unchanged.
+- Candidate `kill` returned the project to `unmounted`; daemon, keeper, and
+  socket evidence were absent. Compact evidence is `r12-runtime-result.json`
+  in the external project.

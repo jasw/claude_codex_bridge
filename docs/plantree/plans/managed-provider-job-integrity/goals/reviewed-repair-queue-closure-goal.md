@@ -92,8 +92,8 @@ Allowed states: `waiting`, `ready`, `in_progress`, `blocked`,
 | 5 | R7 correlated execution-state model | PR265, Issue262 | `verified_commit` (`Repair-Slice: R7`) | Seq 4 verified commit |
 | 6 | R8 stuck inbound detection | Issue260 | `verified_commit` (`e937aa99`, `Repair-Slice: R8`) | Seq 5 verified commit |
 | 7 | R9 active-job correction capability | Issue261 | `verified_commit` (`Repair-Slice: R9`) | Seq 6 verified commit and R4 authority retained |
-| 8 | R12 generic projected-asset ownership hardening | Internal follow-up | `ready` | Seq 7 verified commit |
-| 9 | R11-C Copilot plugin/config projection | Deferred R11 remainder | `waiting` | Seq 8 ownership inventory and contract available |
+| 8 | R12 generic projected-asset ownership hardening | Internal follow-up | `verified_commit` (`Repair-Slice: R12`) | Seq 7 verified commit |
+| 9 | R11-C Copilot plugin/config projection | Deferred R11 remainder | `ready` | Seq 8 verified commit |
 | 10 | R10 integrated qualification and disposition | Entire queue | `waiting` | Seq 1-9 verified commits |
 
 The table is the execution lock. Update one row at a time in the same commit as
@@ -181,7 +181,7 @@ that authority.
 | 5 | [R7](../topics/ordered-repair-slices.md#r7-correlated-execution-state-model) | `unknown` plus correlated identities are shared by every required consumer |
 | 6 | [R8](../topics/ordered-repair-slices.md#r8-stuck-inbound-detection) | Diagnosis-only real idle-prompt evidence; no automatic mutation or recovery |
 | 7 | [R9](../topics/ordered-repair-slices.md#r9-active-job-correction-capability) | Exact-job capability/refusal and race outcomes fail closed |
-| 8 | [R12](../roadmap.md#next) | Every retained unmarked replacement has explicit ownership proof |
+| 8 | [R12](../topics/ordered-repair-slices.md#r12-generic-projected-asset-ownership-hardening) | Every retained unmarked replacement has explicit ownership proof |
 | 9 | [R11 remainder](../topics/ordered-repair-slices.md#r11-remaining-provider-extension-inheritance) | Copilot entry ownership preserves credentials, sessions, permissions, cache, and local plugin data |
 | 10 | [R10](../topics/ordered-repair-slices.md#r10-integrated-qualification) | Current-main cumulative suites, real Codex/Claude, source immutability, and zero residue pass |
 
@@ -234,5 +234,5 @@ entire execution record into context.
 - [x] Closure worktree and branch are named and clean.
 - [x] `origin/main` and all upstream item states are refreshed.
 - [x] Seq 0 commit is present after baseline synchronization.
-- [x] The serial lock has advanced through verified Seq 7; Seq 8 is the only
-      ready row and Seq 9-10 remain locked.
+- [x] The serial lock has advanced through verified Seq 8; Seq 9 is the only
+      ready row and Seq 10 remains locked.

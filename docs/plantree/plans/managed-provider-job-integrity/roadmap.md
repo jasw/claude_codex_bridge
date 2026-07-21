@@ -97,24 +97,25 @@ Date: 2026-07-21
   bound expected turn through its shared app-server, unsupported panes refuse,
   ambiguous transport remains pending, and existing terminal/cancel authority
   wins without creating a new job, attempt, mailbox item, or callback.
+- Verified R12 as the atomic commit selected by `Repair-Slice: R12`: valid
+  same-label marker proof is required for projected-tree replacement and
+  cleanup; unmarked/foreign targets are preserved, and only an exact-source
+  legacy symlink may be adopted in place.
 
 ## Ready
 
-R12 generic projected-asset ownership hardening is the next serial row. R9 is
-verified by the current atomic commit selector; `origin/main` remains
-`aed27abf`. R12 must inventory remaining unmarked replacement sites and freeze
-explicit ownership proof before any production change. PR258, PR259, PR265,
-and PR266 remain held from merge.
+R11-C Copilot plugin/config projection is the only ready row. R12 is verified
+by the current atomic commit selector; `origin/main` remains `aed27abf`.
+R11-C must freeze an entry-level ownership schema and offline/no-login fixture
+before any production change. PR258, PR259, PR265, and PR266 remain held from
+merge.
 
 ## Next
 
-1. **R12: Generic projected-asset ownership hardening.** Inventory remaining
-   `allow_unmarked_replace=True` call sites and migrate them to marker-first
-   ownership without breaking packaged CCB skill upgrades.
-2. **R11-C: Copilot plugin/config projection.** Freeze an entry-level ownership
+1. **R11-C: Copilot plugin/config projection.** Freeze an entry-level ownership
    schema and offline/no-login fixture, then project only owned plugin metadata
    while preserving credentials, sessions, permissions, cache, and local data.
-3. **R10: Integrated qualification and release decision.** Run focused,
+2. **R10: Integrated qualification and release decision.** Run focused,
    full Python/Rust/client, clean current-main, external source-runtime, and
    real Codex/Claude project gates; prepare evidence-backed upstream
    dispositions without pushing, merging, closing, publishing, or releasing.

@@ -47,8 +47,13 @@ the source appears or remove it when inheritance is disabled/source is absent.
 This is the same ownership-policy smell, but it is not silently broadened into
 R1/R2 because those paths have different compatibility and migration contracts.
 
-Create a later ownership-hardening slice that inventories every call site,
-adds marker-first migration tests, and removes the flag provider by provider.
+R12 owns that later slice. Its inventory covers packaged Kimi skills, Claude
+skills/commands, and Droid skills; Decision 007 removes the bypass, validates
+the generic marker schema, permits only exact-source legacy symlink adoption,
+and preserves every ordinary unmarked directory and foreign marker.
+
+R12 is verified by the atomic commit selected with `Repair-Slice: R12`; all
+remaining production `allow_unmarked_replace=True` call sites are removed.
 
 ## Ordered Follow-Up
 

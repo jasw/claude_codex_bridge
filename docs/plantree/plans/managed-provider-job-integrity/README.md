@@ -92,6 +92,9 @@ Out of scope:
 - [decisions/006-exact-active-job-followup.md](decisions/006-exact-active-job-followup.md):
   R9 exact-job follow-up states, restart ordering, provider capability matrix,
   and native expected-turn requirement.
+- [decisions/007-marker-first-projected-asset-ownership.md](decisions/007-marker-first-projected-asset-ownership.md):
+  R12 valid-marker proof, bounded exact-symlink migration, and fail-closed
+  handling of unmarked and foreign projected assets.
 - [history/r1-r2-validation-2026-07-20.md](history/r1-r2-validation-2026-07-20.md):
   focused, full-suite, and external real-project evidence for landed R1/R2.
 - [history/r11-provider-extension-validation-2026-07-20.md](history/r11-provider-extension-validation-2026-07-20.md):

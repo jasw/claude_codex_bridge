@@ -232,6 +232,16 @@ Provider sessions, auth, memory files, provider-runtime FIFO/completion
 artifacts, `.claude/projects/`, and `.gemini/tmp/` must not be routed through
 shared-cache.
 
+Projected-tree replacement and cleanup require a valid local regular-file
+marker with schema version 1, record type `ccb_projected_asset`, the exact
+consumer label, a non-empty source, and a recognized projection mode. An
+unmarked directory remains user-owned even when its content matches the
+current source. A foreign, malformed, wrong-label, or symlinked marker blocks
+projection and cleanup. The only markerless migration may write a marker next
+to an existing symlink that already resolves exactly to the current source;
+it must not replace that symlink. The compatibility
+`allow_unmarked_replace` keyword grants no ownership authority.
+
 ### 3.7 Secret
 
 Secret material must not be exported in diagnostics and must not be moved to a
@@ -605,7 +615,8 @@ May route through projected assets or shared-cache:
 - inherited `skills/` and `commands/`; startup should prefer symlinks to the
   source home and fall back to marked copies
 - Kimi inherited skill roots; startup routes them as projected assets and passes
-  them with `--skills-dir`
+  them with `--skills-dir`; an unmarked conflicting managed-state directory is
+  preserved and omitted from the active managed roots
 - `.tmp/plugins/`; the real bundle may live under
   `.ccb/shared-cache/codex/plugin-bundles/<sha>/`, with managed homes pointing
   at that bundle and retaining their local `.tmp/plugins.sha`

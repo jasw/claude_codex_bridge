@@ -1314,7 +1314,7 @@ def _sync_tree(source: Path, target: Path) -> None:
 
 
 def _route_inherited_tree(source: Path, target: Path, *, enabled: bool, label: str) -> None:
-    route_projected_tree(source, target, enabled=enabled, label=label, allow_unmarked_replace=True)
+    route_projected_tree(source, target, enabled=enabled, label=label)
 
 
 def _system_home_root() -> Path:

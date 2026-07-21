@@ -3117,6 +3117,34 @@ def test_materialize_claude_home_config_projects_inherited_skills_and_commands(t
     assert (layout.claude_dir / 'commands.ccb-projection.json').is_file()
 
 
+def test_materialize_claude_home_config_preserves_unmarked_skills_and_commands(tmp_path: Path) -> None:
+    source_home = tmp_path / 'system-home'
+    target_home = tmp_path / 'managed-home'
+    source_claude_dir = source_home / '.claude'
+    target_claude_dir = target_home / '.claude'
+    (source_claude_dir / 'skills' / 'source-skill').mkdir(parents=True)
+    (source_claude_dir / 'commands').mkdir(parents=True)
+    (source_claude_dir / 'skills' / 'source-skill' / 'SKILL.md').write_text('source\n', encoding='utf-8')
+    (source_claude_dir / 'commands' / 'source.md').write_text('source\n', encoding='utf-8')
+    (target_claude_dir / 'skills' / 'user-skill').mkdir(parents=True)
+    (target_claude_dir / 'commands').mkdir(parents=True)
+    (target_claude_dir / 'skills' / 'user-skill' / 'SKILL.md').write_text('user\n', encoding='utf-8')
+    (target_claude_dir / 'commands' / 'user.md').write_text('user\n', encoding='utf-8')
+
+    layout = materialize_claude_home_config(
+        target_home,
+        profile=ProviderProfileSpec(inherit_memory=False),
+        source_home=source_home,
+    )
+
+    assert (layout.claude_dir / 'skills' / 'user-skill' / 'SKILL.md').read_text(encoding='utf-8') == 'user\n'
+    assert (layout.claude_dir / 'commands' / 'user.md').read_text(encoding='utf-8') == 'user\n'
+    assert not (layout.claude_dir / 'skills' / 'source-skill').exists()
+    assert not (layout.claude_dir / 'commands' / 'source.md').exists()
+    assert not (layout.claude_dir / 'skills.ccb-projection.json').exists()
+    assert not (layout.claude_dir / 'commands.ccb-projection.json').exists()
+
+
 def test_materialize_claude_home_config_merges_profile_mcp_server_overrides(tmp_path: Path) -> None:
     source_home = tmp_path / 'system-home'
     target_home = tmp_path / 'managed-home'
@@ -3239,6 +3267,21 @@ def test_materialize_droid_home_config_projects_inherited_skills(tmp_path: Path)
     assert (target_home / 'sessions').is_dir()
     assert (target_home / 'skills' / 'ask' / 'SKILL.md').read_text(encoding='utf-8') == 'ask skill\n'
     assert (target_home / 'skills.ccb-projection.json').is_file()
+
+
+def test_materialize_droid_home_config_preserves_unmarked_inherited_skills(tmp_path: Path) -> None:
+    source_home = tmp_path / 'system-factory-home'
+    target_home = tmp_path / 'managed-factory-home'
+    (source_home / 'skills' / 'source-skill').mkdir(parents=True)
+    (source_home / 'skills' / 'source-skill' / 'SKILL.md').write_text('source\n', encoding='utf-8')
+    (target_home / 'skills' / 'user-skill').mkdir(parents=True)
+    (target_home / 'skills' / 'user-skill' / 'SKILL.md').write_text('user\n', encoding='utf-8')
+
+    materialize_droid_home_config(target_home, source_home=source_home)
+
+    assert (target_home / 'skills' / 'user-skill' / 'SKILL.md').read_text(encoding='utf-8') == 'user\n'
+    assert not (target_home / 'skills' / 'source-skill').exists()
+    assert not (target_home / 'skills.ccb-projection.json').exists()
 
 
 def test_materialize_droid_home_config_seeds_agent_local_plugins_and_rebases_registry_paths(

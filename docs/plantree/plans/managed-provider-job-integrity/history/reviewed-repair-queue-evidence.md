@@ -564,3 +564,84 @@ unsupported until it exposes an equivalent atomic exact-turn primitive.
 
 Next unlocked row after this atomic commit: R12 generic projected-asset
 ownership hardening.
+
+## R12: Generic Projected-Asset Ownership Hardening
+
+Slice: R12 generic projected-asset ownership hardening
+
+Commit selector / hash: commit subject `fix: require projected asset
+ownership` with trailer `Repair-Slice: R12`
+
+Upstream item: internal follow-up from the completed provider-extension audit.
+No pull request or issue was mutated. R11-C Copilot projection remained
+deferred until this shared ownership predicate was verified.
+
+Baseline: R9 commit `653be92154872e7a706d8b429c739bbd4fec150e` on
+`origin/main` `aed27abf`. The three remaining production bypasses were packaged
+inherited skills (currently consumed by Kimi), Claude skills/commands, and
+Droid skills. The shared predicate accepted any marker file and could replace
+an unmarked content-identical directory.
+
+Counterexamples: preserved tests cover unmarked different and identical
+directories, foreign symlinks, exact-source legacy symlinks, foreign,
+malformed, wrong-schema, wrong-label, wrong-mode, empty-source, and symlinked
+markers, target-absent marker conflicts, marker-write rollback, disabled and
+source-missing cleanup, and valid owned refresh. Provider regressions prove
+unmarked Claude skills/commands, Droid skills, and packaged Kimi skills remain
+user-owned; Kimi does not activate the conflicting packaged root.
+
+Frozen authority:
+[Decision 007](../decisions/007-marker-first-projected-asset-ownership.md)
+requires a local regular schema-v1 `ccb_projected_asset` marker with the exact
+consumer label, non-empty source, and recognized mode. Only a markerless
+symlink already resolving exactly to the current source may be adopted, and
+its inode is retained. Foreign markers block even when the target is absent.
+The compatibility `allow_unmarked_replace` keyword grants no replacement or
+cleanup authority.
+
+Implementation: the shared router validates marker ownership before any
+mutation, removes only valid same-label owned targets, and rolls back only a
+candidate created by the current call when marker creation fails. Exact-source
+legacy symlinks receive a marker in place. All remaining production
+`allow_unmarked_replace=True` calls were removed from packaged inherited
+skills, Claude, and Droid. Storage, Claude isolation, Kimi integration, and
+developer contracts now state the same marker-first rule.
+
+Focused/full tests: the final generic/provider/RolePack/storage gate passed
+`399` tests in `5.88s`. The complete Python suite passed `5536` tests with `2`
+skipped and no deselections in `1067.43s`. Python compilation and
+`git diff --check` passed. R12 changes no Rust/sidebar/mobile schema or
+consumer, so client suites remain part of cumulative R10 rather than being
+claimed here.
+
+External candidate evidence: project
+`/home/bfly/yunwei/test_ccb2/r12-projected-assets-20260721` used
+`/home/bfly/yunwei/ccb_worktrees/unified-provider-extension-inheritance/ccb_test`,
+an isolated source home, and the source-test fake provider; no provider login
+or credential access occurred. Config validation passed. The interactive
+start could not attach because the calling terminal lacked clear-screen
+support, but candidate `doctor` proved the already-started backend was
+`mounted`, `healthy`, socket-connectable, and running from the candidate
+implementation root.
+
+External materialization: isolated Claude and Droid source homes plus the
+candidate packaged Kimi source exercised the production consumers. Unmarked
+user targets were preserved, packaged source entries were not copied into
+them, Kimi omitted its conflicting managed root, exact legacy symlink adoption
+retained the symlink inode, and valid owned refresh/cleanup passed. Claude,
+Droid, and Kimi source SHA256 values were identical before and after. Compact
+artifact: `r12-runtime-result.json` in the external project.
+
+Cleanup: candidate `ccb_test kill` returned `kill_status: ok` and
+`state: unmounted`. The ccbd socket was absent, recorded daemon PID `2915851`
+and keeper PID `2915798` were absent, and post-cleanup doctor reported
+`ccbd_state: unmounted`, `ccbd_health: unmounted`, and a destroyed namespace.
+
+Remaining risk: a valid same-label marker is explicit local ownership
+authority; consumers must therefore keep labels stable and must not create
+such markers for user-owned targets. The compatibility keyword remains in the
+Python signature for callers but is deliberately inert and may be removed in
+a later API cleanup.
+
+Next unlocked row after this atomic commit: R11-C Copilot plugin/config
+projection.

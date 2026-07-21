@@ -162,7 +162,10 @@ Current behavior:
   and passes it to Kimi with `--skills-dir`. Because Kimi treats any
   `--skills-dir` as replacement for default discovery, CCB first passes
   existing default Kimi project/user skill directories, then appends managed
-  inherited and role skill roots.
+  inherited and role skill roots. CCB appends the packaged inherited root only
+  when it created/owns that projection or adopted an exact source symlink; an
+  unmarked directory or foreign marker is preserved and is not claimed as the
+  packaged root.
 - OpenCode does not expose a stable `--skills-dir` equivalent in the observed
   CLI help. CCB writes `.ccb/runtime/skills/<agent>/opencode/ask.md` and appends
   that path to generated `opencode.json.instructions` alongside the memory
