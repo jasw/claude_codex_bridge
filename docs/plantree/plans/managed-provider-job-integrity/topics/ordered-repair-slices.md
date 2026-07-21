@@ -148,6 +148,10 @@ Correction boundary:
 
 - Route cancellation through the same idempotent terminal callback authority
   as normal completion, or explicitly terminalize the edge in that authority.
+- A cancelled chain child creates exactly one parent continuation with
+  structured `cancelled` status and any preserved partial output; the parent
+  remains responsible for the original caller's terminal result. See
+  [Decision 001](../decisions/001-cancelled-chain-child-continuation.md).
 - Preserve partial provider output as normal reply content.
 - Define trace/ProjectView visibility for consumed-from-birth control notices.
 

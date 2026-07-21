@@ -842,6 +842,10 @@ that child reply inside the same turn.
   normal `TASK_REPLY` to the parent agent
 - when the child logical message reaches a terminal reply, CCB submits a normal
   `callback_continuation` `TASK_REQUEST` back to the parent agent
+- cancelled is a valid terminal child result: CCB submits exactly one parent
+  continuation with the child identity, `cancelled` status, and any partial
+  output instead of leaving the edge pending or converting cancellation into
+  a callback failure
 - the continuation uses the original caller as `from_actor`, preserving the
   normal final reply routing path
 
@@ -868,6 +872,21 @@ caller, callback target, child reply id/status, continuation job/message, and
 state. Dispatcher maintenance must repair the crash window where the child
 reply was recorded and the continuation was not yet submitted. Repair is
 idempotent: an edge with an existing continuation job is not submitted again.
+Normal completion and cancellation serialize through the same chain transition
+lock and callback edge authority. The first persisted terminal job wins a
+completion/cancel race; a losing cancellation must not rewrite the completion
+snapshot, attempt, reply, or edge. Internal stale-job recovery with
+`record_reply=False` does not create a cancelled continuation because its retry
+remains responsible for the existing message lineage. Cancelling the parent
+itself before delegation completes terminalizes its outgoing edge as
+`chain_parent_cancelled`; a later child result cannot reopen that edge or
+create a continuation for the cancelled parent.
+
+For a non-chain cancelled job, an empty result with no reply artifact is a
+durable `ReplyRecord` plus a consumed-from-birth `completion_notice`. It is
+visible in trace but does not increment the registered caller's mailbox depth
+or create a provider reply-delivery turn. Partial text and artifact-backed
+cancel results retain normal exactly-once `TASK_REPLY` delivery.
 
 Callback edge state is also the backend safety boundary for nested delegation.
 Edges must carry a timeout deadline, and dispatcher maintenance must transition

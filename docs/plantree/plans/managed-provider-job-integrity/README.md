@@ -74,6 +74,9 @@ Out of scope:
   reviewed PR/issue before integrated qualification.
 - [open-questions.md](open-questions.md): decisions that must be frozen before
   their owning slice starts.
+- [decisions/001-cancelled-chain-child-continuation.md](decisions/001-cancelled-chain-child-continuation.md):
+  R4 policy for cancelled child results, parent continuation, control notices,
+  and terminal races.
 - [history/r1-r2-validation-2026-07-20.md](history/r1-r2-validation-2026-07-20.md):
   focused, full-suite, and external real-project evidence for landed R1/R2.
 - [history/r11-provider-extension-validation-2026-07-20.md](history/r11-provider-extension-validation-2026-07-20.md):

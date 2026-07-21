@@ -4,26 +4,26 @@ Date: 2026-07-21
 
 ## Current Phase
 
-R3 inbound completion routing documentation is verified on the serial closure
-branch. No repair slice is currently `in_progress`; R4 is the next eligible
+R4 cancellation and callback terminalization is verified on the serial closure
+branch. No repair slice is currently `in_progress`; R5 is the next eligible
 row.
 
 ## Next Target
 
-Resolve R4's callback-cancellation disposition, then reproduce its preserved
-chain-child counterexample before changing cancellation code.
+Freeze R5's queued-prompt activation authority, then reproduce the preserved
+old-turn replay before changing Claude completion code.
 
 ## Last Landed
 
-R3 verified commit selector: `Repair-Slice: R3` (`docs: correct inbound
-completion routing`).
+R4 verified commit selector: `Repair-Slice: R4` (`fix: terminalize cancelled
+callback chains`).
 
 ## Active TODO
 
-1. Refresh the baseline and confirm PR266 / Issue263 remain unchanged.
-2. Resolve the R4 open question without weakening callback or parent
-   terminalization.
-3. Freeze R4's exact state authority, counterexamples, and acceptance commands.
+1. Refresh the baseline and confirm PR259 remains unchanged.
+2. Resolve R5's activation/correlation authority before implementation.
+3. Freeze old-turn, FIFO, subagent, restart, and session-rotation acceptance
+   commands.
 
 ## Blocked By
 
@@ -33,15 +33,23 @@ work is pending, not skipped.
 
 ## Last Verified
 
-- R3 baseline reproduction: `4 failed, 14 passed` before documentation changes.
-- R3 focused static/materialization gate: `18 passed`.
-- R11 cumulative provider-profile, hook, and launcher gate: `282 passed`.
-- Changed Python files compiled; `git diff --check` passed.
-- Full/client and real-provider runs were not required because R3 changes only
-  projected instructions, generated runtime-memory text, static assertions,
-  and the user guide. No runtime project was opened.
-- R3 evidence:
-  [history/reviewed-repair-queue-evidence.md](history/reviewed-repair-queue-evidence.md#r3-inbound-completion-routing-documentation).
+- R4 preserved counterexample gate: `5 failed, 1 passed` before the runtime
+  repair.
+- R4 dispatcher integration: `83 passed`; ProjectView: `82 passed`; cumulative
+  R11/R3 gate: `300 passed`.
+- Complete Python remainder: `5261 passed`, `2 skipped`, `1 deselected`. The
+  sole deselection was the lifecycle-stopping socket race reproduced at the
+  same line on current `origin/main`.
+- External fake-provider project
+  `/home/bfly/yunwei/test_ccb2/r4-cancel-runtime-20260721-fkyoH9` proved a
+  cancelled chain child reached one `done` callback edge and parent
+  continuation without restart, while an empty ordinary cancel kept caller
+  depth and pending replies at zero.
+- Candidate diff and untracked-set hashes were identical before and after the
+  external run. Candidate `ccb_test kill` left the project `unmounted`; both
+  sockets and the recorded keeper/daemon PIDs were absent.
+- R4 evidence:
+  [history/reviewed-repair-queue-evidence.md](history/reviewed-repair-queue-evidence.md#r4-cancellation-and-callback-terminalization).
 
 Prior R11 evidence remains:
 

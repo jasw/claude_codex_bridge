@@ -252,12 +252,21 @@ ask retry 有一个细节：如果旧 job 已经看到 provider anchor 或已经
   \item 从 dispatcher queued/active state 移除。
   \item 调用 execution service cancel。
   \item 构造 cancelled completion decision。
-  \item 写 completion snapshot 和 terminal event。
-  \item 记录 message-bureau terminal state。
+  \item 在 chain transition lock 内重新检查 terminal winner，再写 completion
+        snapshot 和 terminal event。
+  \item 通过与 normal completion 相同的 callback authority 记录
+        message-bureau terminal state。
   \item 解析 reply-delivery terminal state。
 \end{enumerate}
 
 取消不是简单从队列删除。它必须把执行层和通信层都推进到一致终态，否则 trace、inbox、queue 和 watch 会互相矛盾。
+如果 chain child 被取消，CCB 会把 structured cancelled result 作为唯一的
+continuation 送回 parent，由 parent 完成 original task；不会等待 dispatcher
+restart 修复 pending edge。普通任务的 empty cancel 记录为从创建起已 consumed
+的 \src{completion_notice}，因此 trace 可见但不增加 caller mailbox depth。
+有 partial output 或 reply artifact 时仍使用普通 exactly-once reply delivery。
+completion 与 cancel 并发时，先写入的 terminal job 胜出，另一方不得覆盖
+snapshot、attempt、reply 或 callback edge。
 
 \section{artifact 和 reply delivery}
 

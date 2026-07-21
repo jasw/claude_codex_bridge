@@ -359,6 +359,29 @@ def delegated_terminal_job(job, edge: CallbackEdgeRecord):
     )
 
 
+def terminalize_cancelled_parent_edge(
+    dispatcher,
+    edge: CallbackEdgeRecord,
+    *,
+    parent_job,
+    updated_at: str,
+) -> CallbackEdgeRecord:
+    latest = dispatcher._message_bureau.callback_edge(edge.edge_id) or edge
+    if latest.state in _TERMINAL_CALLBACK_STATES:
+        return latest
+    return dispatcher._message_bureau.update_callback_edge(
+        latest,
+        state=CallbackEdgeState.FAILED,
+        updated_at=updated_at,
+        diagnostics={
+            **dict(latest.diagnostics or {}),
+            'failure_reason': 'chain_parent_cancelled',
+            'parent_cancelled': True,
+            'cancelled_parent_job_id': parent_job.job_id,
+        },
+    )
+
+
 def persist_delegated_terminal_job(dispatcher, job, edge: CallbackEdgeRecord, *, finished_at: str):
     delegated = delegated_terminal_job(job, edge)
     append_job(dispatcher, delegated)
@@ -790,6 +813,7 @@ __all__ = [
     'request_callback_route',
     'sweep_callback_timeouts',
     'submit_callback_continuation',
+    'terminalize_cancelled_parent_edge',
     'validate_nested_ask_request',
     'validate_callback_request',
 ]

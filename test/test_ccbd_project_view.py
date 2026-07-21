@@ -2285,6 +2285,39 @@ def test_project_view_terminal_comms_do_not_mark_agent_failed(tmp_path: Path) ->
     assert view['comms'][0]['status'] == 'cancelled'
 
 
+def test_project_view_empty_cancel_notice_keeps_caller_idle_and_zero_depth(tmp_path: Path) -> None:
+    project_root = tmp_path / 'repo-empty-cancel-project-view'
+    project_root.mkdir()
+    layout = PathLayout(project_root)
+    project_id = compute_project_id(project_root)
+    config = _config()
+    registry = AgentRegistry(layout, config)
+    for agent_name in config.agents:
+        registry.upsert(_runtime(agent_name, project_id=project_id))
+    dispatcher = JobDispatcher(layout, config, registry, clock=lambda: NOW)
+    job_id = _submit(dispatcher, project_id, sender='agent2', target='agent1', body='cancel without output')
+    dispatcher.tick()
+
+    dispatcher.cancel(job_id)
+
+    view = _project_view_service(
+        project_root=project_root,
+        project_id=project_id,
+        layout=layout,
+        config=config,
+        registry=registry,
+        dispatcher=dispatcher,
+    ).build_response()['view']
+    caller = next(agent for agent in view['agents'] if agent['name'] == 'agent2')
+    assert caller['queue_depth'] == 0
+    assert caller['activity_state'] == 'idle'
+    assert caller['activity_reason'] != 'reply_delivery'
+    trace = dispatcher.trace(job_id)
+    assert trace['replies'][0]['notice'] is True
+    assert trace['replies'][0]['notice_kind'] == 'cancelled'
+    assert any(event['event_type'] == 'completion_notice' for event in trace['events'])
+
+
 def test_project_view_marks_callback_parent_waiting_for_child(tmp_path: Path) -> None:
     project_root = tmp_path / 'repo-callback-waiting-agent'
     project_root.mkdir()

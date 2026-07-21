@@ -162,6 +162,14 @@ ccb cancel job_xxx
 \end{lstlisting}
 
 取消会把 job 推进到 cancelled terminal state。它不会删除 trace lineage。
+如果取消时没有 partial output 或 reply artifact，registered agent caller 会
+在 trace 中看到已 consumed 的 completion notice，但 mailbox depth 不会增加，
+也不会启动一个空的 reply-delivery turn。已有 partial output 时仍按普通 reply
+投递一次。
+
+取消 result-chain child 会触发一次带 \src{cancelled} status 的 parent
+continuation；parent 使用这个结果完成 original task，不需要重启 ccbd 修复
+callback edge。
 
 \section{推荐排障流程}
 
