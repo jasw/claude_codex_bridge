@@ -344,3 +344,109 @@ diagnostic phase only. R8 must add bounded observation without turning phase
 projection into automatic restart, resend, cancellation, or terminalization.
 
 Next unlocked row: R8 stuck inbound detection.
+
+## R8: Stuck Inbound Detection
+
+Slice: R8 stuck inbound detection
+
+Commit selector / hash: commit subject `feat: diagnose orphaned active
+inbounds` with trailer `Repair-Slice: R8`
+
+Upstream item: Issue260 remained open and unchanged since 2026-07-18 during
+the 2026-07-21 preflight. Its requested first step was a non-destructive
+diagnostic; automatic cancel, retry, restart, resend, lease release, and
+terminalization remained out of scope.
+
+Baseline: R7 commit `56f8dcdad8c2e88a3c7df8d5dc0abcf375e10aa3` on
+`origin/main` `aed27abf`. A single exact idle-pane capture previously promoted
+the active job directly to `orphaned`, so terminal publication lag could be
+misdiagnosed as a recoverable stuck job.
+
+Counterexample: the preserved exact-idle integration fixture failed before
+production changes because its first capture immediately returned
+`blocked/orphaned`. The corrected fixture proves first observation and cache
+hits stay `provider_idle_pending_terminal`, the same exact identity becomes
+`orphaned` only after the fixed window, and job/attempt/inbound/mailbox/lease/
+completion/runtime records remain unchanged. Progress or terminal evidence,
+missing evidence, job disappearance, signature change, binding rotation, and
+service restart reset the in-memory observation. Existing fixtures retain
+wrong attempt/inbound/mailbox/lease, queued prompt, stale/wrong pane, active
+reasoning/tool, and fresh-idle guards.
+
+Frozen authority:
+[Decision 005](../decisions/005-bounded-orphaned-inbound-diagnosis.md) requires
+the already eligible running Claude job to present the same exact active
+lineage and current pane/session/workspace/generations twice at least 30
+seconds apart. Missing or changing facts fail closed. The diagnostic is
+service-local, read-only, and carries
+`recommended_action=explicit_comms_recover` with `automatic_action=none`;
+explicit recovery remains a separate authority-revalidating operator action.
+
+Implementation: ProjectView owns a bounded in-memory tracker keyed by exact
+lineage and runtime signature. It retains R7's
+`provider_idle_pending_terminal` phase until confirmation, then emits
+`orphaned_active_inbound` with exact ids, state, provider evidence, observation
+window, and manual recovery target. Tracker state resets on evidence loss or
+rotation and is pruned when a job leaves the projection; cached responses do
+not advance it. Maintenance preserves the same envelope in concern evidence,
+trace merges it only for matching resolved jobs, doctor reuses its existing
+daemon client to list current envelopes, CLI renderers preserve the fields,
+and the Rust sidebar deserializes and displays the optional condition without
+triggering action. Diagnostics and sidebar contracts document the same
+no-mutation boundary.
+
+Focused tests: the final ProjectView, execution-phase, maintenance, trace,
+doctor, CLI, service-graph, recovery, and message-bureau gate passed `308`
+tests in `5.07s`. Python compilation and `git diff --check` passed. Rust
+formatting passed and all `79` sidebar tests passed.
+
+Full tests: the complete Python run passed `5340` tests with `2` skipped and
+`2` deselected in `975.68s`. The isolated `restart_replay_pass` fake-runtime
+scenario passed (`1 passed in 32.69s`); the other deselection is the previously
+adjudicated lifecycle-stopping socket race.
+
+Real project evidence: external opened project
+`/home/bfly/yunwei/test_ccb2/r8-orphaned-inbound-runtime-20260721-B1KYSq`
+used the candidate wrapper, inherited real provider state, Claude Code
+`2.1.206`, binary `/home/bfly/.local/share/claude/versions/2.1.206`, displayed
+model `DeepSeek-V4-pro`, and a lab-local roles store. A controlled 600-second
+daemon poll interval left completion publication unconsumed after the real
+provider visibly returned idle with reply `R8_PROVIDER_RETURNED_IDLE`; an
+early poll while `sleep 30` was active had already persisted the exact request
+anchor as non-terminal. Job `job_79a0203ed50d`, attempt
+`att_5ba2dddff7f3`, inbound `iev_6450d24d1514`, mailbox active id, acquired
+lease, completion anchor, runtime binding, and idle pane identity joined
+exactly. The first ProjectView observation stayed
+`provider_idle_pending_terminal` and non-recoverable. The unchanged second
+observation emitted `orphaned_active_inbound` after `59.035s`; trace and doctor
+rendered the same ids, required `30.0s` window, manual recommendation, and
+`automatic_action=none`.
+
+No-mutation evidence: SHA256 values for job ledger, runtime, attempts,
+execution state, lease, inbox, mailbox, messages, absent reply ledger, and
+completion snapshot were identical before and after ProjectView, trace, and
+doctor observations. No recovery was invoked. Compact artifact:
+`r8-runtime-result.json` in the external project. A preceding external run at
+`/home/bfly/yunwei/test_ccb2/r8-orphaned-inbound-runtime-20260721-qnWCLY`
+hit the terminal race before confirmation; R8 returned `terminal/hook_stop`
+with zero diagnostics, providing a live false-positive guard.
+
+Source immutability: candidate tracked-diff SHA256 remained
+`0b0761de30bfbed7596d811c71fdece1119fe49e7ed8a7b477c9766b57ce8a42`
+before and after the mounted run; the untracked-set SHA256 remained
+`714033875d04261b29db4bf8e0d6232b4082d5bbd277b2e060e70347a891d0b4`.
+
+Cleanup: candidate `ccb_test kill` returned the accepted project to
+`unmounted`; ccbd and tmux sockets were absent, recorded keeper PID 3685371
+and daemon PID 3685374 were absent, and no process retained the project path.
+The two earlier observation/terminal-race projects were also cleanly
+unmounted.
+
+Remaining risk: the exact-idle predicate is intentionally Claude-only until
+another provider supplies an equivalent native proof. Observation progress is
+lost on daemon/service restart, so diagnosis may be delayed but cannot inherit
+stale suspicion. The feature recommends explicit recovery but does not make
+that action safe without its existing invocation-time authority checks.
+
+Next unlocked row after this atomic commit: R9 active-job correction
+capability.

@@ -196,6 +196,23 @@ def render_doctor(payload: Mapping[str, object]) -> tuple[str, ...]:
         lines.append(f'runtime_warning: {warning}')
     for error in ccbd.get('diagnostic_errors') or ():
         lines.append(f'ccbd_diagnostic_error: {error}')
+    diagnostics = payload.get('active_inbound_diagnostics') or ()
+    lines.append(f'active_inbound_diagnostic_count: {len(diagnostics)}')
+    for diagnostic in diagnostics:
+        if not isinstance(diagnostic, Mapping):
+            continue
+        lines.append(
+            'active_inbound_diagnostic: '
+            f'condition={diagnostic.get("condition_kind")} '
+            f'reason={diagnostic.get("reason")} '
+            f'job={diagnostic.get("job_id")} '
+            f'inbound={diagnostic.get("inbound_event_id")} '
+            f'lease={diagnostic.get("lease_state")} '
+            f'observed_for_s={diagnostic.get("observed_for_s")} '
+            f'required_s={diagnostic.get("required_observation_s")} '
+            f'recommended_action={diagnostic.get("recommended_action")} '
+            f'automatic_action={diagnostic.get("automatic_action")}'
+        )
     for agent in payload['agents']:
         lines.append(
             f'agent: name={agent["agent_name"]} health={agent["health"]} provider={agent["provider"]} completion={agent["completion_family"]}'

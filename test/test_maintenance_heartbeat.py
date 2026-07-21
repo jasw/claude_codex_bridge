@@ -175,6 +175,17 @@ def test_maintenance_classifier_keeps_active_ccb_job_healthy() -> None:
 
 
 def test_maintenance_classifier_prefers_correlated_orphan_reason() -> None:
+    diagnostic = {
+        'condition_kind': 'orphaned_active_inbound',
+        'reason': 'provider_idle_without_terminal',
+        'job_id': 'job_orphaned',
+        'inbound_event_id': 'iev_orphaned',
+        'lease_state': 'acquired',
+        'observed_for_s': 30.0,
+        'required_observation_s': 30.0,
+        'recommended_action': 'explicit_comms_recover',
+        'automatic_action': 'none',
+    }
     evaluation = evaluate_project_view(
         _project_view_payload(
             agent_state='pending',
@@ -189,6 +200,7 @@ def test_maintenance_classifier_prefers_correlated_orphan_reason() -> None:
                     'status': 'running',
                     'execution_phase': 'orphaned',
                     'execution_phase_reason': 'provider_idle_without_terminal',
+                    'active_inbound_diagnostic': diagnostic,
                 },
             ),
         )
@@ -196,9 +208,12 @@ def test_maintenance_classifier_prefers_correlated_orphan_reason() -> None:
 
     assert evaluation.health == 'concern'
     assert evaluation.summary['concern_comms_count'] == 1
+    assert evaluation.summary['orphaned_active_inbound_count'] == 1
     assert any(
         item.get('reason') == 'provider_idle_without_terminal'
         and item.get('execution_phase') == 'orphaned'
+        and item.get('condition_kind') == 'orphaned_active_inbound'
+        and item.get('active_inbound_diagnostic') == diagnostic
         for item in evaluation.evidence
     )
 

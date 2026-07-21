@@ -711,6 +711,7 @@ Schema rules:
 - `comms.execution_phase` is an optional correlated projection and is one of `queued`, `injecting`, `executing`, `provider_idle_pending_terminal`, `reply_queued`, `reply_delivering`, `orphaned`, `terminal`, or `unknown`.
 - when `execution_phase` is present, the sidebar prefers it for Comms status text and color; older producers may omit it, so the client falls back to `status_label`, `business_status`, and `status` in that order.
 - `execution_phase_reason` is a stable diagnostic reason, and `execution_evidence` contains the compact job/attempt/inbound/mailbox/lease/completion/provider/reply identity facts used by `ccbd`; the sidebar must not rederive a phase from those facts.
+- `active_inbound_diagnostic` is an optional bounded R8 envelope for `orphaned_active_inbound`. The sidebar deserializes its condition, reason, exact ids, observation window, manual recommendation, and `automatic_action=none`; it displays `condition:reason` and does not extend the observation window.
 - `unknown` is the required fail-closed phase for missing, stale, contradictory, or non-exact identity evidence. `orphaned` is diagnostic and must not make the sidebar trigger automatic cancel, retry, restart, resend, or terminalization.
 - the sidebar colors only the preferred compact phase or legacy status label: active execution is green, pending/delivery phases are yellow, terminal is blue, orphaned is red, and unknown is gray.
 - normal terminal rows hide routine `short_reason` values such as `hook_stop` or `task_complete`; abnormal rows keep their short reason.
@@ -799,6 +800,7 @@ Recommended optional fields for Phase 1:
 - `comms[].execution_phase`
 - `comms[].execution_phase_reason`
 - `comms[].execution_evidence`
+- `comms[].active_inbound_diagnostic`
 
 Rules:
 
@@ -1972,8 +1974,8 @@ Current implementation notes:
 - `tools/ccb-agent-sidebar` is an independent Rust crate, not a root Cargo workspace.
 - The binary parses `--ccbd-socket`, `--project-root`, and `--pane-window`.
 - The client sends ccbd RPC requests using the existing newline-delimited JSON protocol and reads `project_view`.
-- The model layer deserializes the Phase 1 ProjectView window, agent, and Comms rows, including compact job id/reason, display status, correlated execution phase, reply-delivery, and body-preview fields when present.
-- The TUI renders the window/agent tree plus compact two-line Comms panel. It preserves `activity_symbol`/`activity_color` supplied by ProjectView, prefers optional correlated execution phases for compact Comms text/color, and falls back to legacy status fields when the phase is absent.
+- The model layer deserializes the Phase 1 ProjectView window, agent, and Comms rows, including compact job id/reason, display status, correlated execution phase, bounded active-inbound diagnostic, reply-delivery, and body-preview fields when present.
+- The TUI renders the window/agent tree plus compact two-line Comms panel. It preserves `activity_symbol`/`activity_color` supplied by ProjectView, prefers optional correlated execution phases for compact Comms text/color, displays a bounded active-inbound `condition:reason`, and falls back to legacy status fields when the phase is absent.
 - Keyboard navigation supports `j`/`k`/arrows, deliberate `r` pane restart,
   `Ctrl-L` refresh, `Enter` focus through ccbd RPC, `Tab`
   return-to-current-window focus through ccbd RPC, and `q`/`Esc` exit for

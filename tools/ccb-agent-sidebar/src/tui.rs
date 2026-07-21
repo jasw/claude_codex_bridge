@@ -1841,7 +1841,8 @@ fn compact_comms_detail_line(item: &CommsItem, width: usize) -> Line<'static> {
 
 fn compact_comms_detail(item: &CommsItem) -> String {
     let preview = item.body_preview.trim();
-    let reason = comms_reason(item).unwrap_or("").trim();
+    let reason = comms_reason(item).unwrap_or_default();
+    let reason = reason.trim();
     match (preview.is_empty(), reason.is_empty()) {
         (true, true) => String::new(),
         (false, true) => preview.to_string(),
@@ -1915,9 +1916,19 @@ fn truncate_comms_preview(value: &str, width: usize) -> String {
     format!("{head}...")
 }
 
-fn comms_reason(item: &CommsItem) -> Option<&str> {
+fn comms_reason(item: &CommsItem) -> Option<String> {
     if comms_is_normal_terminal(item) {
         return None;
+    }
+    if let Some(diagnostic) = item.active_inbound_diagnostic.as_ref() {
+        let condition = diagnostic.condition_kind.trim();
+        let reason = diagnostic.reason.trim();
+        if !condition.is_empty() && !reason.is_empty() {
+            return Some(format!("{condition}:{reason}"));
+        }
+        if !condition.is_empty() {
+            return Some(condition.to_string());
+        }
     }
     item.execution_phase_reason
         .as_deref()
@@ -1935,6 +1946,7 @@ fn comms_reason(item: &CommsItem) -> Option<&str> {
                 .map(str::trim)
                 .filter(|value| !value.is_empty())
         })
+        .map(str::to_string)
 }
 
 fn comms_is_normal_terminal(item: &CommsItem) -> bool {
@@ -2764,6 +2776,35 @@ mod tests {
             ..item
         };
         assert!(comms_line_text(&legacy).contains("agent2 > agent1 err"));
+    }
+
+    #[test]
+    fn comms_reason_prefers_orphaned_active_inbound_envelope() {
+        let item = crate::model::CommsItem {
+            execution_phase: "orphaned".into(),
+            execution_phase_reason: Some("provider_idle_without_terminal".into()),
+            active_inbound_diagnostic: Some(crate::model::ActiveInboundDiagnostic {
+                condition_kind: "orphaned_active_inbound".into(),
+                reason: "provider_idle_without_terminal".into(),
+                recommended_action: "explicit_comms_recover".into(),
+                automatic_action: "none".into(),
+                ..Default::default()
+            }),
+            recoverable: true,
+            ..Default::default()
+        };
+
+        assert_eq!(
+            comms_reason(&item).as_deref(),
+            Some("orphaned_active_inbound:provider_idle_without_terminal")
+        );
+        assert!(item.recoverable);
+        assert_eq!(
+            item.active_inbound_diagnostic
+                .as_ref()
+                .map(|diagnostic| diagnostic.automatic_action.as_str()),
+            Some("none")
+        );
     }
 
     #[test]

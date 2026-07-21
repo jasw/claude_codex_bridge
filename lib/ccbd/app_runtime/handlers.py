@@ -53,7 +53,13 @@ def register_handlers(app) -> None:
         _graph_request(graph_source, build_watch_handler(dispatcher, health_monitor=health_monitor)),
     )
     app.socket_server.register_handler('queue', _graph_request(graph_source, build_queue_handler(dispatcher)))
-    app.socket_server.register_handler('trace', _graph_request(graph_source, build_trace_handler(dispatcher)))
+    app.socket_server.register_handler(
+        'trace',
+        _graph_request(
+            graph_source,
+            build_trace_handler(dispatcher, project_view_service=project_view_service),
+        ),
+    )
     app.socket_server.register_handler('resubmit', _graph_request(graph_source, build_resubmit_handler(dispatcher)))
     app.socket_server.register_handler('retry', _graph_request(graph_source, build_retry_handler(dispatcher)))
     app.socket_server.register_handler(

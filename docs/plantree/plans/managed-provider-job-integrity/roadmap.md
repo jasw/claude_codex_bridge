@@ -6,7 +6,7 @@ Date: 2026-07-21
 
 - Current status: In progress; R1/R2 landed and the R11 provider-extension
   candidate is committed on its qualified branch, the strict serial closure
-  goal is active, and R3/R4/R5/R6/R7 are verified atomic commits.
+  goal is active, and R3/R4/R5/R6/R7/R8 are verified atomic commits.
 - Work mode: execute-ready.
 - Review baseline: PR257 is merged; PR258, PR259, PR264, PR265, and PR266 are
   open and reported `UNSTABLE`; Issues 260-263 remain open as of 2026-07-21.
@@ -33,8 +33,14 @@ Date: 2026-07-21
   run whose exact ProjectView lineage was `executing` while queue failed closed
   without provider-native identity. See the
   [R7 evidence](history/reviewed-repair-queue-evidence.md#r7-correlated-execution-state-model).
-- Next target: R8 stuck inbound detection. It is unlocked but remains waiting
-  for its preflight and frozen bounded-observation decision.
+  R8 then passed the `308`-test focused gate, Rust `79`, the complete
+  `5340`-test Python remainder, and a real idle-pane Claude run in which the
+  first exact observation remained pending-terminal and the unchanged bounded
+  observation emitted a read-only `orphaned_active_inbound` envelope. See the
+  [R8 evidence](history/reviewed-repair-queue-evidence.md#r8-stuck-inbound-detection).
+- Commit target: R8 is fully verified and selected by `Repair-Slice: R8`. R9
+  remains waiting until this atomic commit is created and the worktree is
+  clean.
 
 ## Done
 
@@ -77,29 +83,31 @@ Date: 2026-07-21
   fail-closed resolver supplies an additive nine-phase vocabulary to
   ProjectView, queue, CLI, Rust sidebar, and mobile consumers without changing
   mailbox or terminal authority or triggering recovery.
+- Verified R8 as the atomic commit selected by `Repair-Slice: R8`: only an
+  unchanged exact Claude idle lineage surviving the second 30-second
+  observation becomes `orphaned_active_inbound`; the same envelope reaches
+  ProjectView, maintenance, trace, doctor/CLI, and sidebar with explicit
+  manual action and no diagnostic-read mutation.
 
 ## In Progress
 
-No later repair slice has started. R8 is the next unlocked row and remains
-waiting for its own preflight and frozen diagnosis contract. PR258, PR259,
-PR265, and PR266 remain held from merge; Issue262 remains open for final
-evidence-backed disposition.
+No later row is in progress inside the R8 transaction. `origin/main` remains
+`aed27abf`, Issue260 remains open for final disposition, and Decision 005 is
+implemented and verified. R9 is the next unlocked row after the R8 commit;
+PR258, PR259, PR265, and PR266 remain held from merge.
 
 ## Next
 
-1. **R8: Stuck inbound detection.** Implement Issue260 on top of R7 using
-   correlated running-job, active-attempt, provider-idle, and missing-terminal
-   evidence. Ship diagnostics first; keep automatic recovery disabled.
-2. **R9: Active-job correction capability.** Design Issue261 only after R4 and
+1. **R9: Active-job correction capability.** Design Issue261 only after R4 and
    R7 establish terminal and phase authority. Target the exact job, preserve
    lineage, define provider capability/refusal, and cover completion races.
-3. **R12: Generic projected-asset ownership hardening.** Inventory remaining
+2. **R12: Generic projected-asset ownership hardening.** Inventory remaining
    `allow_unmarked_replace=True` call sites and migrate them to marker-first
    ownership without breaking packaged CCB skill upgrades.
-4. **R11-C: Copilot plugin/config projection.** Freeze an entry-level ownership
+3. **R11-C: Copilot plugin/config projection.** Freeze an entry-level ownership
    schema and offline/no-login fixture, then project only owned plugin metadata
    while preserving credentials, sessions, permissions, cache, and local data.
-5. **R10: Integrated qualification and release decision.** Run focused,
+4. **R10: Integrated qualification and release decision.** Run focused,
    full Python/Rust/client, clean current-main, external source-runtime, and
    real Codex/Claude project gates; prepare evidence-backed upstream
    dispositions without pushing, merging, closing, publishing, or releasing.

@@ -294,6 +294,8 @@ remains held and Issue262 remains open for the final disposition gate.
 
 ## R8: Stuck Inbound Detection
 
+Status: verified atomic commit selected by `Repair-Slice: R8`.
+
 Finding: Issue260 describes a running inbound job that remains mailbox head
 after the provider has returned to an idle prompt without terminal evidence.
 
@@ -302,6 +304,8 @@ Correction boundary:
 - Build only on R7 correlated identities and phase authority.
 - Require running job, active matching inbound/lease, provider-idle evidence,
   and absent terminal evidence over a bounded observation interval.
+- Apply the exact observation and reset policy frozen in
+  [Decision 005](../decisions/005-bounded-orphaned-inbound-diagnosis.md).
 - Emit diagnostic suspicion first; do not auto-restart, resend, or complete.
 
 Required evidence:
@@ -310,8 +314,13 @@ Required evidence:
   queued prompt, stale pane snapshot, session rotation, and terminal race.
 - Doctor, ProjectView, trace, CLI, and sidebar expose the same reason/evidence.
 
-Exit gate: Issue260 can close only after an external real-provider idle-prompt
-reproduction is diagnosed without mutating the job.
+Exit gate: satisfied. External real-Claude project
+`/home/bfly/yunwei/test_ccb2/r8-orphaned-inbound-runtime-20260721-B1KYSq`
+diagnosed the same exact idle lineage only after the bounded window. Job,
+attempt, inbound, mailbox, lease, completion, reply, and runtime authority
+hashes did not change during ProjectView, trace, or doctor observations; no
+automatic recovery ran. A separate live terminal race returned terminal with
+zero diagnostics. Issue260 remains open for the final disposition gate.
 
 ## R9: Active-Job Correction Capability
 

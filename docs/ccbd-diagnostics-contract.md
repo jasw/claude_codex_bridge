@@ -620,6 +620,29 @@ automatically cancelling, retrying, restarting, resending, or terminalizing the
 job. Older producers may omit the fields, and CLI, Rust sidebar, and mobile
 clients must fall back to existing mailbox/job/business status fields.
 
+R8 narrows `orphaned` for the Issue260 active-inbound condition. An exact
+Claude idle prompt after the bound request first produces
+`provider_idle_pending_terminal`; it becomes `orphaned` only when the same
+job/attempt/inbound/mailbox/lease/completion anchor and current provider
+session/reference, pane, workspace, and runtime generations are observed idle
+again after at least 30 seconds. Job progress, terminal evidence, active
+provider work, missing or changed lineage, pane/session/generation rotation,
+and ProjectView service restart reset the in-memory observation. The earlier
+job-age threshold only makes the first observation eligible, and cached
+ProjectView responses do not advance the window.
+
+A confirmed Comms row adds `active_inbound_diagnostic` with condition
+`orphaned_active_inbound`, exact job/attempt/inbound/mailbox/lease/provider
+evidence, job age and last progress, observation start/elapsed/required
+seconds, `recommended_action=explicit_comms_recover`, an exact recover target,
+and `automatic_action=none`. Maintenance concern evidence preserves the same
+record; trace merges it only for jobs in the resolved lineage; doctor lists
+the current records; CLI and sidebar consumers render them without rederiving
+the condition. Reading any of these surfaces must not call recovery or mutate
+job, attempt, inbound, mailbox, lease, completion, reply, or provider runtime
+authority. Explicit `comms recover` remains a separate operator action that
+revalidates authority when invoked.
+
 ### 3.6 Doctor Read Path
 
 `ccb doctor` is the best-effort project diagnostics read path.

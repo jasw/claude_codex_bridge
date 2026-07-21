@@ -90,8 +90,8 @@ Allowed states: `waiting`, `ready`, `in_progress`, `blocked`,
 | 3 | R5 Claude queued-prompt activation | PR259 | `verified_commit` (`Repair-Slice: R5`) | Seq 2 verified commit |
 | 4 | R6 Kimi exact-session resume | PR258 | `verified_commit` (`Repair-Slice: R6`) | Seq 3 verified commit |
 | 5 | R7 correlated execution-state model | PR265, Issue262 | `verified_commit` (`Repair-Slice: R7`) | Seq 4 verified commit |
-| 6 | R8 stuck inbound detection | Issue260 | `waiting` | Seq 5 verified commit |
-| 7 | R9 active-job correction capability | Issue261 | `waiting` | Seq 6 verified commit and R4 authority retained |
+| 6 | R8 stuck inbound detection | Issue260 | `verified_commit` (`Repair-Slice: R8`) | Seq 5 verified commit |
+| 7 | R9 active-job correction capability | Issue261 | `waiting` (unlocked after current commit) | Seq 6 verified commit and R4 authority retained |
 | 8 | R12 generic projected-asset ownership hardening | Internal follow-up | `waiting` | Seq 7 verified commit |
 | 9 | R11-C Copilot plugin/config projection | Deferred R11 remainder | `waiting` | Seq 8 ownership inventory and contract available |
 | 10 | R10 integrated qualification and disposition | Entire queue | `waiting` | Seq 1-9 verified commits |

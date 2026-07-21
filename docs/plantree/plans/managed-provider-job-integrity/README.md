@@ -86,6 +86,9 @@ Out of scope:
 - [decisions/004-correlated-execution-phase-schema.md](decisions/004-correlated-execution-phase-schema.md):
   R7 additive phase vocabulary, exact identity joins, fail-closed precedence,
   and client fallback policy.
+- [decisions/005-bounded-orphaned-inbound-diagnosis.md](decisions/005-bounded-orphaned-inbound-diagnosis.md):
+  R8 continuous exact-idle observation, reset rules, diagnostic envelope, and
+  no-automatic-action policy.
 - [history/r1-r2-validation-2026-07-20.md](history/r1-r2-validation-2026-07-20.md):
   focused, full-suite, and external real-project evidence for landed R1/R2.
 - [history/r11-provider-extension-validation-2026-07-20.md](history/r11-provider-extension-validation-2026-07-20.md):
