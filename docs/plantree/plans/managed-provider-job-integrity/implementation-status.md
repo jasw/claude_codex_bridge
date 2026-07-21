@@ -4,55 +4,57 @@ Date: 2026-07-21
 
 ## Current Phase
 
-R12 generic projected-asset ownership hardening is fully verified in the
-atomic commit selected by `Repair-Slice: R12`. R9 is the clean predecessor at
-`653be92154872e7a706d8b429c739bbd4fec150e`; `origin/main` remains
-`aed27abf8899bd1d3ce72d08bb9133e3980f19ba` and is its ancestor. R11-C is the
-next serial row and is ready only after this commit leaves a clean worktree.
+R11-C Copilot plugin/config projection is verified for its atomic commit. R12
+is the clean predecessor at `a41627a7f47ecc8827626b9593162676cfccc885`;
+`origin/main` remains `aed27abf8899bd1d3ce72d08bb9133e3980f19ba` and is
+its ancestor. R10 is the next unlocked row after the R11-C commit is clean.
 
 ## Next Target
 
-Start R11-C by freezing Copilot entry-level ownership and an offline/no-login
-fixture before projecting any plugin or config data.
+Create the single R11-C atomic commit, require a clean worktree, then activate
+R10 integrated qualification against current `main` without publishing or
+mutating upstream items.
 
 ## Last Landed
 
-R12 is selected by commit subject `fix: require projected asset ownership` and
-trailer `Repair-Slice: R12`. Durable external evidence is at
-`/home/bfly/yunwei/test_ccb2/r12-projected-assets-20260721/r12-runtime-result.json`.
-The clean predecessor is R9
-`653be92154872e7a706d8b429c739bbd4fec150e`.
+R11-C is selected by commit subject `feat: inherit Copilot plugins safely` and
+trailer `Repair-Slice: R11-C`. Durable external evidence is at
+`/home/bfly/yunwei/test_ccb2/r11c-copilot-plugin-20260721/r11c-runtime-result.json`.
+The clean predecessor is R12
+`a41627a7f47ecc8827626b9593162676cfccc885`.
 
 ## Active TODO
 
-1. Commit R12 as one atomic slice and require a clean worktree.
-2. Activate only R11-C; keep R10 locked.
-3. Freeze Copilot ownership, negative cases, and offline acceptance before
-   production edits.
+1. Review and commit the verified R11-C transaction atomically.
+2. Confirm the post-commit worktree is clean and record its exact hash.
+3. Activate R10 and refresh current-main/upstream disposition evidence.
 
 ## Blocked By
 
-No current blocker. Copilot still requires its later queue row to freeze an
-authoritative entry-level ownership schema and offline/no-login fixture; that
-work is pending, not skipped.
+No current blocker. Real authenticated Copilot prompt execution remains
+unclaimed because this row intentionally used an offline no-login plugin
+fixture; native plugin discovery and isolation are qualified.
 
 ## Last Verified
 
-- The final generic/provider/RolePack/storage gate passed `399` tests in
-  `5.88s`; compilation and `git diff --check` passed.
-- The complete Python run passed `5536` tests with `2` skipped and no
-  deselections in `1067.43s`. R12 changes no Rust/sidebar/mobile schema or
+- The final provider/profile/runtime/storage gate passed `426` tests in
+  `57.63s`; the focused Copilot ownership gate passed `22` tests. Python
+  compilation and `git diff --check` passed.
+- The complete Python run passed `5547` tests with `15` conditional skips and
+  no failures in `648.61s`. R11-C changes no Rust/sidebar/mobile schema or
   consumer.
 - External candidate project
-  `/home/bfly/yunwei/test_ccb2/r12-projected-assets-20260721` used the source
-  wrapper and a fake provider without login. Candidate `doctor` observed the
-  healthy mounted backend and candidate implementation root.
-- Claude, Droid, and Kimi unmarked targets remained byte-for-byte user-owned;
-  Kimi omitted the conflicting root, exact legacy symlink adoption preserved
-  the inode, and every fake-source hash was unchanged.
-- Candidate `kill` returned `unmounted`; socket, daemon, and keeper evidence
-  were absent. R12 compact evidence:
-  [history/reviewed-repair-queue-evidence.md](history/reviewed-repair-queue-evidence.md#r12-generic-projected-asset-ownership-hardening).
+  `/home/bfly/yunwei/test_ccb2/r11c-copilot-plugin-20260721` used the candidate
+  source wrapper, fake mounted provider, isolated source home, and offline
+  Copilot CLI `1.0.61` without login. Candidate `doctor` observed the healthy
+  mounted backend and candidate implementation root.
+- Both isolated homes were discovered by native `copilot plugin list`; source
+  SHA256 stayed `8b3e0774...`, and local tree divergence stayed
+  `92f3df48...` across repeat materialization while both ownership markers
+  were relinquished.
+- Candidate `kill` left `unmounted`; socket, daemon, and keeper evidence were
+  absent. R11-C compact evidence:
+  [history/reviewed-repair-queue-evidence.md](history/reviewed-repair-queue-evidence.md#r11-c-copilot-pluginconfig-projection).
 
 Prior R3-R6 evidence remains indexed in
 [history/reviewed-repair-queue-evidence.md](history/reviewed-repair-queue-evidence.md).

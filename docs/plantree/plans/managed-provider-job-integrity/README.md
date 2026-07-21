@@ -95,6 +95,9 @@ Out of scope:
 - [decisions/007-marker-first-projected-asset-ownership.md](decisions/007-marker-first-projected-asset-ownership.md):
   R12 valid-marker proof, bounded exact-symlink migration, and fail-closed
   handling of unmarked and foreign projected assets.
+- [decisions/008-copilot-entry-owned-plugin-seed.md](decisions/008-copilot-entry-owned-plugin-seed.md):
+  R11-C allowlisted installed-plugin metadata, per-entry local tree ownership,
+  cache isolation, and preservation of auth/session/permission/plugin data.
 - [history/r1-r2-validation-2026-07-20.md](history/r1-r2-validation-2026-07-20.md):
   focused, full-suite, and external real-project evidence for landed R1/R2.
 - [history/r11-provider-extension-validation-2026-07-20.md](history/r11-provider-extension-validation-2026-07-20.md):

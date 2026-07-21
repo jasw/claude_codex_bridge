@@ -16,6 +16,8 @@ from provider_backends.grok.execution import (
     build_headless_execution_adapter,
     observe_grok_output,
 )
+from provider_backends.copilot.execution import _build_env as build_copilot_env
+from provider_backends.native_cli_support import NativeCliExecutionRequest
 from provider_backends.zai.execution import observe_zai_output
 from provider_core.pathing import session_filename_for_agent
 from provider_core.registry import build_default_backend_registry
@@ -111,6 +113,32 @@ def _run_to_terminal(adapter, submission: ProviderSubmission):
                 return result, emitted
         time.sleep(0.02)
     raise AssertionError("provider adapter did not terminalize")
+
+
+def test_copilot_headless_execution_uses_agent_local_home_and_cache(tmp_path: Path) -> None:
+    work_dir = tmp_path / 'repo-copilot-env'
+    state_dir = work_dir / '.ccb' / 'agents' / 'copilot1' / 'provider-state' / 'copilot'
+    request = NativeCliExecutionRequest(
+        provider='copilot',
+        job=_job('copilot', work_dir),
+        work_dir=work_dir,
+        session_data={
+            'copilot_state_dir': str(state_dir),
+            'copilot_home': str(state_dir / 'home'),
+            'copilot_data_dir': str(state_dir / 'data'),
+        },
+        prompt='test prompt',
+        request_anchor='anchor',
+    )
+
+    env = build_copilot_env(request)
+
+    assert env == {
+        'COPILOT_HOME': str(state_dir / 'home'),
+        'COPILOT_CACHE_HOME': str(state_dir / 'data' / 'cache'),
+    }
+    assert (state_dir / 'home').is_dir()
+    assert (state_dir / 'data' / 'cache').is_dir()
 
 
 @pytest.mark.parametrize("provider", PROVIDERS)

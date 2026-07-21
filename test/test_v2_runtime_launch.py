@@ -2077,6 +2077,8 @@ def test_native_cli_launcher_builds_provider_state_payload(
     assert payload[f'{provider}_session_id'] == 'sess-native'
     if home_env:
         assert f'{home_env}={shlex.quote(str(state_dir / "home"))}' in start_cmd
+    if provider == 'copilot':
+        assert f'COPILOT_CACHE_HOME={shlex.quote(str(state_dir / "data" / "cache"))}' in start_cmd
     visible_cmd = start_cmd.rsplit('; ', 1)[-1]
     visible_parts = shlex.split(visible_cmd)
     if provider == 'crush':

@@ -178,8 +178,16 @@ Current behavior:
 - Pi should prefer native skills/resources if CCB later projects richer ask
   guidance; first landing keeps prompt wrapping and isolates Pi global/session
   state with `PI_CODING_AGENT_DIR` and `PI_CODING_AGENT_SESSION_DIR`.
-- Copilot should project inherited ask guidance through `--plugin-dir`, using
-  plugin metadata compatible with Copilot's local plugin discovery.
+- Copilot startup inherits already-installed user plugins through the native
+  `config.json.installedPlugins` surface: CCB allowlists plugin metadata,
+  rebases `cache_path`, and copies each validated source tree into the
+  agent-local `COPILOT_HOME`. Aggregate and per-tree markers permit refresh or
+  cleanup only while both metadata and tree content remain unchanged; local
+  divergence transfers ownership to the user. CCB does not copy auth,
+  settings, permissions, sessions, plugin data, MCP secrets, or marketplace
+  cache, and routes the latter to agent-local `COPILOT_CACHE_HOME`. Packaged
+  ask guidance continues to use prompt wrapping until a separate CCB-owned
+  Copilot plugin is explicitly designed.
 - Cursor should project inherited ask guidance through repeatable
   `--plugin-dir` if the installed bundle accepts the same local plugin shape;
   otherwise use prompt wrapping in the first slice.

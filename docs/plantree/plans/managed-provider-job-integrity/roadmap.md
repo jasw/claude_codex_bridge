@@ -6,7 +6,8 @@ Date: 2026-07-21
 
 - Current status: In progress; R1/R2 landed and the R11 provider-extension
   candidate is committed on its qualified branch, the strict serial closure
-  goal is active, and R3/R4/R5/R6/R7/R8/R9 are verified atomic commits.
+  goal is active, and R3/R4/R5/R6/R7/R8/R9/R12/R11-C are verified atomic
+  commits selected by repair trailers.
 - Work mode: execute-ready.
 - Review baseline: PR257 is merged; PR258, PR259, PR264, PR265, and PR266 are
   open and reported `UNSTABLE`; Issues 260-263 remain open as of 2026-07-21.
@@ -43,8 +44,14 @@ Date: 2026-07-21
   `turn/steer` corrected one active job while Claude refused without pane
   injection; see the
   [R9 evidence](history/reviewed-repair-queue-evidence.md#r9-active-job-correction-capability).
-- Commit target: R9 is fully verified and selected by `Repair-Slice: R9`. R12
-  is ready only after this atomic commit is created and the worktree is clean.
+  R12 then passed its `399`-test focused gate and complete `5536`-test Python
+  suite. R11-C passed its `426`-test cumulative focused gate, complete
+  `5547`-test Python suite, and offline native Copilot plugin-discovery check;
+  see the
+  [R11-C evidence](history/reviewed-repair-queue-evidence.md#r11-c-copilot-pluginconfig-projection).
+- Commit target: R11-C is fully verified and selected by
+  `Repair-Slice: R11-C`. R10 becomes active only after this atomic commit is
+  created and the worktree is clean.
 
 ## Done
 
@@ -101,21 +108,21 @@ Date: 2026-07-21
   same-label marker proof is required for projected-tree replacement and
   cleanup; unmarked/foreign targets are preserved, and only an exact-source
   legacy symlink may be adopted in place.
+- Verified R11-C as the atomic commit selected by `Repair-Slice: R11-C`:
+  Copilot projects only allowlisted installed-plugin metadata and exact local
+  trees, uses content-checked entry ownership, isolates cache, preserves every
+  auth/session/permission/plugin-data boundary, and relinquishes locally
+  diverged state.
 
-## Ready
+## In Progress
 
-R11-C Copilot plugin/config projection is the only ready row. R12 is verified
-by the current atomic commit selector; `origin/main` remains `aed27abf`.
-R11-C must freeze an entry-level ownership schema and offline/no-login fixture
-before any production change. PR258, PR259, PR265, and PR266 remain held from
-merge.
+No production row is active while the verified R11-C transaction is being
+committed. R10 is ready next. PR258, PR259, PR265, and PR266 remain held from
+merge; no upstream item has been mutated.
 
 ## Next
 
-1. **R11-C: Copilot plugin/config projection.** Freeze an entry-level ownership
-   schema and offline/no-login fixture, then project only owned plugin metadata
-   while preserving credentials, sessions, permissions, cache, and local data.
-2. **R10: Integrated qualification and release decision.** Run focused,
+1. **R10: Integrated qualification and release decision.** Run focused,
    full Python/Rust/client, clean current-main, external source-runtime, and
    real Codex/Claude project gates; prepare evidence-backed upstream
    dispositions without pushing, merging, closing, publishing, or releasing.

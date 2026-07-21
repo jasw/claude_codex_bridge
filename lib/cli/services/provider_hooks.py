@@ -12,6 +12,7 @@ from provider_core.source_home import current_provider_source_home
 from provider_backends.claude.launcher_runtime.binary_cache import route_claude_binary_cache
 from provider_backends.claude.launcher_runtime import materialize_claude_home_config, resolve_claude_home_layout
 from provider_backends.codex.launcher_runtime import resolve_codex_home_layout
+from provider_backends.copilot.home import materialize_copilot_home_config
 from provider_backends.droid.home import materialize_droid_home_config
 from provider_backends.gemini.launcher_runtime.home import materialize_gemini_home_config
 from provider_backends.qwen.home import materialize_qwen_home_config
@@ -247,6 +248,13 @@ def _materialize_provider_home(
     if provider == 'droid':
         materialize_droid_home_config(
             layout.agent_provider_state_dir(spec.name, 'droid') / 'home',
+            profile=resolved_profile,
+            command_policy=command_policy,
+        )
+        return
+    if provider == 'copilot':
+        materialize_copilot_home_config(
+            layout.agent_provider_state_dir(spec.name, 'copilot') / 'home',
             profile=resolved_profile,
             command_policy=command_policy,
         )

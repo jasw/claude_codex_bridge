@@ -92,9 +92,9 @@ Allowed states: `waiting`, `ready`, `in_progress`, `blocked`,
 | 5 | R7 correlated execution-state model | PR265, Issue262 | `verified_commit` (`Repair-Slice: R7`) | Seq 4 verified commit |
 | 6 | R8 stuck inbound detection | Issue260 | `verified_commit` (`e937aa99`, `Repair-Slice: R8`) | Seq 5 verified commit |
 | 7 | R9 active-job correction capability | Issue261 | `verified_commit` (`Repair-Slice: R9`) | Seq 6 verified commit and R4 authority retained |
-| 8 | R12 generic projected-asset ownership hardening | Internal follow-up | `verified_commit` (`Repair-Slice: R12`) | Seq 7 verified commit |
-| 9 | R11-C Copilot plugin/config projection | Deferred R11 remainder | `ready` | Seq 8 verified commit |
-| 10 | R10 integrated qualification and disposition | Entire queue | `waiting` | Seq 1-9 verified commits |
+| 8 | R12 generic projected-asset ownership hardening | Internal follow-up | `verified_commit` (`a41627a7`, `Repair-Slice: R12`) | Seq 7 verified commit |
+| 9 | R11-C Copilot plugin/config projection | Deferred R11 remainder | `verified_commit` (`Repair-Slice: R11-C`) | Seq 8 verified commit |
+| 10 | R10 integrated qualification and disposition | Entire queue | `ready` | Seq 1-9 verified commits |
 
 The table is the execution lock. Update one row at a time in the same commit as
 its implementation. Do not mark a row `verified_commit` before its verification
@@ -234,5 +234,5 @@ entire execution record into context.
 - [x] Closure worktree and branch are named and clean.
 - [x] `origin/main` and all upstream item states are refreshed.
 - [x] Seq 0 commit is present after baseline synchronization.
-- [x] The serial lock has advanced through verified Seq 8; Seq 9 is the only
-      ready row and Seq 10 remains locked.
+- [x] The serial lock has advanced through verified Seq 9; Seq 10 is unlocked
+      and ready but begins only after the R11-C atomic commit is clean.

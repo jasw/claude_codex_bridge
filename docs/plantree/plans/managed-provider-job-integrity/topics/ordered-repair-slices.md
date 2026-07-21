@@ -397,6 +397,38 @@ explicitly adjudicated, the external CCB project is cleanly unmounted,
 contracts and evidence are updated, and Copilot is recorded as an explicit
 defer rather than a silent partial fix.
 
+### R11-C: Copilot Plugin/Config Projection
+
+Status: verified by the atomic commit selected with `Repair-Slice: R11-C`.
+
+Frozen decision:
+
+- [Decision 008](../decisions/008-copilot-entry-owned-plugin-seed.md) permits
+  only allowlisted `config.json.installedPlugins` entries and their exact
+  installed trees; aggregate and per-tree markers prove ownership.
+- Metadata conflicts and local divergence preserve target state and omit or
+  relinquish that entry. Missing/malformed source preserves the last good
+  projection; explicit opt-out removes only unchanged marker-owned entries.
+- Auth/application fields, settings, permissions, sessions, command history,
+  plugin data, marketplace cache, and MCP secret/OAuth state are never copied,
+  merged, deleted, or claimed. Managed cache is agent-local.
+
+Required evidence:
+
+- Marketplace/direct, two-agent, refresh/removal/opt-out, missing/malformed,
+  conflict/divergence/deletion, escape/symlink, marker, rollback, storage, hard
+  role, launcher/headless cache, and source-immutability tests.
+- External source wrapper plus offline Copilot CLI `1.0.61` synthetic plugin
+  discovery without login, exact source/divergence hashes, and clean unmount.
+
+Exit gate: Copilot installed plugin discovery works from the isolated managed
+home, no forbidden source or target state changes, focused/full/external gates
+pass, and R11-C lands as one atomic commit before R10 starts. Satisfied by the
+`22`-test focused ownership gate, `426`-test cumulative provider gate, complete
+`5547`-test Python suite, and external offline Copilot CLI `1.0.61` discovery
+from two isolated homes. Source and repeated local-divergence hashes remained
+unchanged; candidate cleanup left the project unmounted.
+
 ## R12: Generic Projected-Asset Ownership Hardening
 
 Status: verified by the atomic commit selected with `Repair-Slice: R12`.

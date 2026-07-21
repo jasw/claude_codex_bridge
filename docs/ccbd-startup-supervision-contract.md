@@ -357,6 +357,15 @@ Managed provider startup mutation rules:
   restoration and does not prohibit exact provider-conversation continuity
   between managed pane launches
 - managed MiMo startup writes `.ccb/agents/<agent>/provider-state/mimo/mimocode.json` as a generated `MIMOCODE_CONFIG` file, uses per-agent `MIMOCODE_HOME` under `.ccb/agents/<agent>/provider-state/mimo/home`, uses project-relative memory instructions through `.ccb/runtime/memory/<agent>.md`, uses project-relative inherited ask skill instructions through `.ccb/runtime/skills/<agent>/mimo/ask.md`, and disables MiMo autoupdate/analysis in managed panes
+- managed Copilot preparation reads only validated source
+  `config.json.installedPlugins` entries, rebases their `cache_path` values,
+  and transactionally seeds exact agent-local plugin trees under
+  `.ccb/agents/<agent>/provider-state/copilot/home/installed-plugins/`; it must
+  preserve authentication, settings, permissions, sessions, plugin data, MCP
+  state, unowned conflicts, and locally diverged metadata or tree content;
+  interactive and headless launches both use that agent-local `COPILOT_HOME`
+  and set `COPILOT_CACHE_HOME` to the agent-local
+  `.ccb/agents/<agent>/provider-state/copilot/data/cache/`
 - managed Qwen, Cursor, Copilot, Crush, Grok, Kiro, Pi, and Z.ai startup uses the shared native CLI launcher shape: provider state under `.ccb/agents/<agent>/provider-state/<provider>/`, session payloads that record `<provider>_state_dir`, `<provider>_home`, and `<provider>_data_dir`, and start-command overrides through `QWEN_START_CMD`, `CURSOR_START_CMD`, `COPILOT_START_CMD`, `CRUSH_START_CMD`, `GROK_START_CMD`, `KIRO_START_CMD`, `PI_START_CMD`, and `ZAI_START_CMD`; managed Grok startup may project system `.grok/auth.json` and `.grok/config.toml` into the agent-scoped Grok home when inheritance is enabled, while Grok sessions and runtime output remain under the managed home; Grok asks use provider-native headless output and must tolerate both streaming JSON events and aggregated JSON output, with optional model/effort overrides from session data or `CCB_GROK_MODEL` / `CCB_GROK_EFFORT`; Grok success requires a provider-native terminal event such as streaming `type=end` with `stopReason=EndTurn` or the documented compatible native turn-end shape, and a zero process exit without native terminal evidence must close as `incomplete/grok_native_terminal_missing`, never as completed; `CCB_REQ_ID` remains request-attribution metadata, while model-printed `CCB_DONE`, CCB turn-end text, process exit, and the normalized internal `TURN_BOUNDARY` item are not Grok completion authority
 - managed Grok visible startup defaults to `--minimal`; when agent
   `startup_args` explicitly contains `--fullscreen`, CCB suppresses only that

@@ -645,3 +645,89 @@ a later API cleanup.
 
 Next unlocked row after this atomic commit: R11-C Copilot plugin/config
 projection.
+
+## R11-C: Copilot Plugin/Config Projection
+
+Slice: R11-C Copilot plugin/config projection
+
+Commit selector / hash: commit subject `feat: inherit Copilot plugins safely`
+with trailer `Repair-Slice: R11-C`
+
+Upstream item: deferred R11 remainder after merged PR257. No pull request or
+issue was mutated.
+
+Baseline: R12 commit `a41627a7f47ecc8827626b9593162676cfccc885` on
+`origin/main` `aed27abf`. Current GitHub Copilot CLI documentation and the
+offline Copilot CLI `1.0.61` fixture established that automatically managed
+`config.json` mixes `installedPlugins` with authentication/application state,
+while installed files, permissions, sessions, plugin data, MCP state, and
+marketplace cache have separate ownership.
+
+Counterexamples: tests preserve source/target authentication and application
+fields, settings, permissions, sessions, plugin data, unmarked target trees,
+foreign/malformed/symlinked markers, metadata and tree-content divergence,
+local metadata deletion, missing/malformed source, malformed target entries,
+path escape, root/nested symlinks, transaction failure, explicit profile and
+hard-role opt-out, source removal, direct installs, and two-agent isolation.
+The external fixture initially retained its old absolute `cache_path`; the
+candidate correctly failed closed with no target files until the path was
+rebased inside the current source root.
+
+Frozen authority:
+[Decision 008](../decisions/008-copilot-entry-owned-plugin-seed.md) permits
+only validated, allowlisted `config.json.installedPlugins` metadata and the
+exact corresponding installed tree. Stable identity, aggregate ownership,
+per-tree marker ownership, and the last-installed content fingerprint govern
+refresh/removal. Metadata deletion creates a persistent opt-out tombstone;
+metadata or tree divergence transfers ownership. Missing/malformed source
+preserves the last good state, while an explicit empty source list removes
+only unchanged owned entries.
+
+Implementation: `prepare_provider_workspace` invokes the Copilot materializer
+before launch. It validates marketplace/direct layouts and plugin manifests,
+rejects escaping or symlink-bearing input, rebases `cache_path`, copies local
+writable trees, and transactionally commits config, aggregate marker, tree
+markers, and trees with rollback. It never projects auth, settings,
+permissions, sessions, plugin data, MCP state, or cache. Interactive and
+headless launch paths both set agent-local `COPILOT_HOME` and
+`COPILOT_CACHE_HOME`; storage classification treats mixed `config.json` as
+secret, installed plugin projection as projected config, plugin data as
+session state, and `data/cache/` as rebuildable cache.
+
+Focused/full tests: the final Copilot ownership gate passed `22` tests in
+`0.23s`. The cumulative projected-asset/provider-profile/source-home/native-
+CLI/runtime/storage gate passed `426` tests in `57.63s`. The complete Python
+suite passed `5547` tests with `15` conditional skips and no failures in
+`648.61s`. Python compilation and `git diff --check` passed. R11-C changes no
+Rust/sidebar/mobile schema or consumer, so those suites remain part of R10.
+
+External candidate evidence: project
+`/home/bfly/yunwei/test_ccb2/r11c-copilot-plugin-20260721` used the candidate
+source wrapper, isolated `HOME`/`CCB_SOURCE_HOME`, and a fake mounted provider;
+no provider login or credential access occurred. Config validation passed and
+candidate `doctor` proved a healthy mounted backend running from the candidate
+implementation root. The offline binary identified itself as GitHub Copilot
+CLI `1.0.61` and native `copilot plugin list` discovered
+`ccb-fixture-plugin@ccb-fixture-marketplace (v1.0.0)` from both isolated homes.
+Each config pointed only to its own local installed tree.
+
+Source immutability and local ownership: the complete source-home fingerprint
+was `8b3e07748423f91078a8234a240f047cdbc6037d0a0c253a58fe8fb25f741e9a`
+before and after. After agent1 locally changed the projected skill, repeat
+materialization preserved plugin-tree fingerprint
+`92f3df48181aa04963cb97e57fc33377f6ced79c70baa047adde5c60b9ca5451`
+and removed both aggregate and tree ownership markers; native plugin discovery
+still succeeded. Compact artifact: `r11c-runtime-result.json` in the external
+project.
+
+Cleanup: candidate `ccb_test kill` left `ccbd_state: unmounted` and
+`ccbd_health: unmounted`; the project socket was absent and recorded daemon
+PID `3805869` plus keeper PID `3805866` were dead.
+
+Remaining risk: real authenticated prompt execution remains unclaimed because
+no authorized Copilot login was used. This does not weaken the qualified
+plugin/config projection boundary: native offline discovery, source
+immutability, agent isolation, ownership transfer, and cleanup all passed.
+
+Next unlocked row after this atomic commit: R10 integrated qualification and
+disposition.

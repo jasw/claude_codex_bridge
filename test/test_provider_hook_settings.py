@@ -1155,6 +1155,68 @@ def test_prepare_provider_workspace_materializes_qwen_extensions_from_account_ho
     assert not target_extensions.is_symlink()
 
 
+def test_prepare_provider_workspace_materializes_copilot_installed_plugins(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    project_root = tmp_path / 'repo'
+    workspace = project_root / 'workspace'
+    system_home = tmp_path / 'system-home'
+    copilot_home = system_home / '.copilot'
+    source_plugin = copilot_home / 'installed-plugins' / 'fixture-marketplace' / 'fixture-plugin'
+    source_plugin.mkdir(parents=True)
+    (source_plugin / 'plugin.json').write_text(
+        '{"name":"fixture-plugin","version":"1.0.0"}\n',
+        encoding='utf-8',
+    )
+    (source_plugin / 'skill.md').write_text('source plugin\n', encoding='utf-8')
+    (copilot_home / 'config.json').write_text(
+        '// User settings belong in settings.json.\n'
+        '// This file is managed automatically.\n'
+        + json.dumps(
+            {
+                'installedPlugins': [
+                    {
+                        'name': 'fixture-plugin',
+                        'marketplace': 'fixture-marketplace',
+                        'version': '1.0.0',
+                        'installed_at': '2026-07-21T00:00:00Z',
+                        'enabled': True,
+                        'cache_path': str(source_plugin),
+                    }
+                ],
+                'loggedInUsers': [{'login': 'must-not-copy'}],
+            },
+            indent=2,
+        )
+        + '\n',
+        encoding='utf-8',
+    )
+    monkeypatch.setenv('HOME', str(system_home))
+    monkeypatch.delenv('CCB_SOURCE_HOME', raising=False)
+    monkeypatch.delenv('COPILOT_HOME', raising=False)
+
+    layout = PathLayout(project_root)
+    prepare_provider_workspace(
+        layout=layout,
+        spec=_spec('agent1', provider='copilot'),
+        workspace_path=workspace,
+        completion_dir=layout.agent_provider_runtime_dir('agent1', 'copilot') / 'completion',
+        agent_name='agent1',
+        refresh_profile=True,
+    )
+
+    target_home = layout.agent_provider_state_dir('agent1', 'copilot') / 'home'
+    target_plugin = target_home / 'installed-plugins' / 'fixture-marketplace' / 'fixture-plugin'
+    config_text = (target_home / 'config.json').read_text(encoding='utf-8')
+    payload = json.loads(config_text[config_text.index('{'):])
+    assert 'loggedInUsers' not in payload
+    assert payload['installedPlugins'][0]['cache_path'] == str(target_plugin)
+    assert (target_plugin / 'skill.md').read_text(encoding='utf-8') == 'source plugin\n'
+    assert (target_home / '.ccb-installed-plugins-projection.json').is_file()
+    assert Path(f'{target_plugin}.ccb-projection.json').is_file()
+
+
 def test_prepare_provider_workspace_materializes_mimo_memory_config(tmp_path: Path) -> None:
     project_root = tmp_path / 'repo'
     workspace = project_root

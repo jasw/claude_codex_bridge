@@ -5,12 +5,18 @@ Date: 2026-07-21
 These questions do not block recording the roadmap. Each must be resolved
 before production implementation of its owning slice starts.
 
-1. **R11:** For Copilot, which entry-level ownership model can project installed
-   plugins and marketplaces from its mixed config without copying or
-   overwriting credentials, sessions, permissions, and local plugin data?
+R11-C has no unresolved question and is verified. R10 disposition questions
+remain gated on the integrated current-main matrix.
 
 ## Resolved
 
+- **R11-C:**
+  [Decision 008](decisions/008-copilot-entry-owned-plugin-seed.md) projects
+  only allowlisted `installedPlugins` entries and their exact local installed
+  trees, with per-entry ownership, rollback, cache isolation, and no auth,
+  settings, permission, session, marketplace-cache, or plugin-data copy. The
+  offline Copilot CLI fixture discovered both agent-local copies, and local
+  tree divergence transferred ownership without source mutation.
 - **R12:**
   [Decision 007](decisions/007-marker-first-projected-asset-ownership.md)
   requires a valid same-label schema-v1 CCB marker for replacement or cleanup.

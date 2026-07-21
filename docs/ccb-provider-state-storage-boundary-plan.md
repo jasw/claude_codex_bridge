@@ -175,9 +175,10 @@ Rules:
   provider-state tree
 - Qwen, Cursor, Copilot, Crush, Kiro, Pi, and Z.ai use shared native CLI
   provider-state roots with `<provider>_home` and `<provider>_data_dir`;
-  Qwen's marker-owned `extensions/` seed is `PROJECTED_CONFIG`, while their
-  remaining contents are provider-owned session/auth/cache evidence rather
-  than project worktree content
+  Qwen's marker-owned `extensions/` seed and Copilot's marker-owned
+  `config.json.installedPlugins` entries plus installed plugin trees are
+  `PROJECTED_CONFIG`, while their remaining contents are provider-owned
+  session/auth/cache evidence rather than project worktree content
 - sharing is allowed only after content-addressed whole-bundle storage and
   atomic replacement are implemented
 - default behavior remains per-agent/per-home storage
@@ -195,6 +196,8 @@ Examples:
 - Gemini `.cache/node-gyp/`
 - Gemini `.cache/vscode-ripgrep/`
 - provider package manager caches that do not include session/auth state
+- Copilot's agent-local `<provider-state>/copilot/data/cache/` selected by
+  `COPILOT_CACHE_HOME`
 
 This class is the primary target for storage optimization. Rebuildable cache
 records must include enough metadata for safe decisions, such as
@@ -222,6 +225,9 @@ Examples:
 - Gemini `.gemini/settings.json`, `.gemini/trustedFolders.json`, and
   marker-owned local `.gemini/extensions/`
 - Qwen marker-owned local `extensions/`
+- Copilot's allowlisted `config.json.installedPlugins` metadata, aggregate
+  ownership marker, per-tree markers, and agent-local `installed-plugins/`
+  copies
 - Kimi inherited and role `skills/` directories under managed provider state
 - OpenCode generated `opencode.json` and generated ask skill instruction files
   under `.ccb/runtime/skills/<agent>/opencode/`
@@ -265,6 +271,9 @@ Examples:
 - macOS Keychain-derived Claude credentials
 - macOS Claude `Library/Keychains` fallback symlink
 - `.env` files containing provider credentials
+- Copilot `config.json`, because installed-plugin metadata shares that file
+  with authentication and application state, plus Copilot `mcp-secrets/` and
+  `mcp-oauth-config/`
 
 Secrets may still live inside managed provider homes, but storage tooling must
 handle them through explicit allow/deny classifications.
@@ -366,6 +375,11 @@ Rules:
   inheritance is enabled. This is credential/config projection only; Grok
   sessions, active-session state, logs, and runtime output remain agent-scoped
   under the managed home.
+- Managed Copilot extracts only validated `installedPlugins` entries from the
+  source `config.json`, rebases each accepted `cache_path`, and copies the exact
+  corresponding source tree into the agent-local `installed-plugins/` root.
+  Authentication, settings, permissions, sessions, plugin data, MCP secrets,
+  and marketplace cache remain outside projection authority.
 - `.ccb/provider-profiles/` must not silently become a long-lived runtime home
   unless the user explicitly configures that path as an external provider home.
 - `.ccb/shared-cache/` contains only rebuildable cache and never conversation
@@ -773,6 +787,9 @@ Required unit tests:
   `SECRET` as the primary storage class
 - classify Gemini npm/node-gyp cache as rebuildable cache
 - classify Gemini `.gemini/tmp/` as session
+- classify Copilot `config.json` as secret mixed state, installed plugin
+  metadata/trees as projected config, plugin data as session state, and
+  `data/cache/` as rebuildable cache
 - classify provider auth files as secret
 - provider profile default path does not become runtime home
 - explicit Codex provider profile home remains allowed and visible as explicit
@@ -872,6 +889,11 @@ Implemented:
   `false`; when a WSL drvfs anchor is not relocated, `shared_cache_root` is
   `null` rather than an unsafe project-mounted path.
 - Provider auth/OAuth files classify as `SECRET`, not `PROJECTED_CONFIG`.
+- Copilot `config.json` classifies as `SECRET` because it mixes authentication
+  and application state. Its CCB-owned installed plugin trees and markers
+  classify as `PROJECTED_CONFIG`, `plugin-data/` remains session state, and the
+  agent-local `data/cache/` selected by `COPILOT_CACHE_HOME` classifies as
+  `REBUILDABLE_CACHE`.
 - Codex `.tmp/plugins/` plus `.tmp/plugins.sha` classify as
   `STARTUP_AUTHORITY_BUNDLE`, not rebuildable cache.
 - Codex `.ccb-session-namespace.json` and Gemini `.gemini/tmp/` classify as

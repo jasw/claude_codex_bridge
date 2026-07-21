@@ -260,6 +260,12 @@ def test_storage_classification_keeps_provider_authority_and_cache_separate(tmp_
     _write(qwen_state / 'home' / '.cache' / 'compiled-provider-file')
     _write(cursor_state / 'inherited-skills' / 'ask' / 'SKILL.md', '# ask\n')
     _write(copilot_state / 'home' / '.config' / 'copilot' / 'session.json', '{}\n')
+    _write(copilot_state / 'home' / 'config.json', '{}\n')
+    _write(copilot_state / 'home' / '.ccb-installed-plugins-projection.json', '{}\n')
+    _write(copilot_state / 'home' / 'installed-plugins' / 'fixture-marketplace' / 'fixture-plugin' / 'plugin.json', '{}\n')
+    _write(copilot_state / 'home' / 'plugin-data' / 'fixture-marketplace' / 'fixture-plugin' / 'state.json', '{}\n')
+    _write(copilot_state / 'home' / 'mcp-secrets' / 'fixture.json', '{}\n')
+    _write(copilot_state / 'data' / 'cache' / 'marketplace.json', '{}\n')
     _write(crush_state / 'data' / 'crush.db', 'db\n')
     _write(kiro_state / 'home' / 'logs' / 'chat.log', 'log\n')
     _write(pi_state / 'home' / '.pi' / 'agent' / 'settings.json', '{}\n')
@@ -355,6 +361,14 @@ def test_storage_classification_keeps_provider_authority_and_cache_separate(tmp_
     assert records['agents/agent8/provider-state/cursor/inherited-skills/ask/SKILL.md']['storage_class'] == 'projected_config'
     assert records['agents/agent9/provider-state/copilot/home/.config/copilot/session.json']['storage_class'] == 'session'
     assert records['agents/agent9/provider-state/copilot/home/.config/copilot/session.json']['reason'] == 'native_cli_provider_state'
+    assert records['agents/agent9/provider-state/copilot/home/config.json']['storage_class'] == 'secret'
+    assert records['agents/agent9/provider-state/copilot/home/config.json']['reason'] == 'copilot_mixed_auth_application_state'
+    assert records['agents/agent9/provider-state/copilot/home/.ccb-installed-plugins-projection.json']['storage_class'] == 'projected_config'
+    assert records['agents/agent9/provider-state/copilot/home/installed-plugins/fixture-marketplace/fixture-plugin/plugin.json']['storage_class'] == 'projected_config'
+    assert records['agents/agent9/provider-state/copilot/home/plugin-data/fixture-marketplace/fixture-plugin/state.json']['storage_class'] == 'session'
+    assert records['agents/agent9/provider-state/copilot/home/mcp-secrets/fixture.json']['storage_class'] == 'secret'
+    assert records['agents/agent9/provider-state/copilot/data/cache/marketplace.json']['storage_class'] == 'rebuildable_cache'
+    assert records['agents/agent9/provider-state/copilot/data/cache/marketplace.json']['reason'] == 'copilot_agent_local_cache'
     assert records['agents/agent10/provider-state/crush/data/crush.db']['storage_class'] == 'session'
     assert records['agents/agent10/provider-state/crush/data/crush.db']['reason'] == 'native_cli_provider_state'
     assert records['agents/agent11/provider-state/kiro/home/logs/chat.log']['storage_class'] == 'session'
