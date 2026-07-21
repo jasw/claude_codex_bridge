@@ -701,6 +701,31 @@ facts and requires activation in the new top-level session. Pane dispatch,
 elapsed time, apparent FIFO order, or an idle prompt may not substitute for
 exact queued-command identity.
 
+### 10.4 Kimi
+
+Kimi native completion must support both observed provider layouts without
+weakening per-launch storage authority:
+
+- legacy `.kimi/sessions/<md5(workdir)>/<session>/wire.jsonl`
+- current `.kimi-code/sessions/wd_<basename>_<sha256-prefix>/<session>/agents/<agent>/wire.jsonl`
+
+The launcher records both exact state roots and the completion reader scans
+only those roots. A request binds first to a `CCB_REQ_ID` header at the start
+of the submitted prompt; legacy fallback uses an exact token boundary and must
+not match request-id prefixes or later mentions in another agent's prompt.
+
+`TurnEnd` and successful terminal `step.end` reasons are primary turn
+boundaries. A subsequent user turn may close a reply-bearing prior turn when
+the provider omitted an explicit boundary. Unknown, cancelled, interrupted,
+error, and tool-use finish reasons are not successful completion authority.
+Once a native log owns the request anchor, pane text is rescue evidence only
+and may not replace an incomplete native observation.
+
+Observed native session paths remain agent-scoped restart authority. Both
+layouts must validate the exact non-symlinked root, project directory, session
+id, and wire path before exact-session restart; mismatched or missing roots
+fail fresh rather than falling back to a workdir-global session.
+
 ## 11. Placement In Code
 
 ### 11.1 Completion Manifest Layer
@@ -792,7 +817,18 @@ Add tests for:
 - session-boundary and hook evidence merge correctly
 - timeout closure works when hook never arrives
 
-### 12.4 Cross-Provider Reliability
+### 12.4 Kimi
+
+Add tests for:
+
+- both native wire layouts and session-id extraction
+- exact request headers, prefix collisions, and cross-agent mentions
+- successful versus cancelled/error/tool-use `step.end` reasons
+- next-turn closure when an explicit boundary is absent
+- native in-progress evidence preventing completed pane override
+- exact-session persistence, root drift, and symlink rejection for both layouts
+
+### 12.5 Cross-Provider Reliability
 
 Add execution-layer tests for:
 

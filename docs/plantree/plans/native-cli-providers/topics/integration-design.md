@@ -73,9 +73,10 @@ Kimi conversation continuity is agent-scoped even when multiple Kimi agents
 share one in-place work directory. A fresh managed pane receives neither
 `--continue` nor an invented native session id. Once the completion reader
 observes that agent's exact `CCB_REQ_ID` in a native `wire.jsonl`, it persists
-the native session id/path, normalized work directory, Kimi share root, and
-observation time in `.kimi-<agent>-session`. The CCB pane-launch id remains a
-separate control-plane identity and is never passed to Kimi.
+the native session id/path, normalized work directory, legacy Kimi share root,
+current `.kimi-code` state root, storage layout, and observation time in
+`.kimi-<agent>-session`. The CCB pane-launch id remains a separate
+control-plane identity and is never passed to Kimi.
 
 Each launch also persists a command template containing one CCB-owned
 exact-session insertion point plus the configured Kimi capability command.
@@ -100,9 +101,12 @@ result streams:
 1. Send a wrapped prompt to the managed provider pane.
 2. The prompt contains `CCB_REQ_ID: <job_id>`.
 3. Do not ask Kimi, DeepSeek/DeepCode, or AGY to print `CCB_DONE`.
-4. Kimi polls `wire.jsonl`, binds the turn by `CCB_REQ_ID`, emits
-   `ASSISTANT_FINAL` from `ContentPart`, and emits `TURN_BOUNDARY` on
-   native `TurnEnd`.
+4. Kimi polls both owned legacy `.kimi` and current `.kimi-code` `wire.jsonl`
+   layouts, binds the turn by an exact leading `CCB_REQ_ID` header, emits
+   `ASSISTANT_FINAL` from native text parts, and emits `TURN_BOUNDARY` on
+   `TurnEnd`, successful terminal `step.end`, or a reply-bearing next-turn
+   boundary. Once native evidence owns the anchor, pane scraping cannot
+   override an in-progress native reply.
 5. DeepSeek polls DeepCode `sessions-index.json` and session jsonl, binds the
    user message by `CCB_REQ_ID`, emits `ASSISTANT_FINAL` from assistant
    messages, and emits `TURN_BOUNDARY` on native `status=completed`.

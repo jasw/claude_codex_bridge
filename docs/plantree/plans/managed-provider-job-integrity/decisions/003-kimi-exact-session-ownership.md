@@ -19,14 +19,24 @@ Kimi's `supports_resume=false` manifest field continues to describe in-flight
 CCB execution restore; R6 concerns provider conversation continuity between
 managed pane launches.
 
+Kimi deployments also expose a second native layout under
+`.kimi-code/sessions/wd_<basename>_<sha256-prefix>/<session>/agents/<agent>/wire.jsonl`.
+It carries the same observed-session authority but has a distinct state root
+and deeper agent-owned wire path.
+
 ## Decision
 
 The per-agent `.kimi-<agent>-session` record owns a native Kimi session only
 after the Kimi completion reader observes that agent's exact outer
 `CCB_REQ_ID` in the native session's `wire.jsonl`. The binding stores the native
-session ID, exact wire path, normalized work directory, Kimi share root, and
-observation time. CCB never infers ownership from work-directory recency,
-directory ordering, pane text, or the CCB launch ID.
+session ID, exact wire path, normalized work directory, legacy Kimi share root,
+current `.kimi-code` state root, storage layout, and observation time. CCB
+never infers ownership from work-directory recency, directory ordering, pane
+text, or the CCB launch ID.
+
+The launcher records both state roots used for observation. A restart validates
+the recorded layout and all non-symlinked path components before selecting the
+observed native session.
 
 On a normal managed restart, CCB validates that the persisted record still
 matches the current project, agent, normalized work directory, share root, and

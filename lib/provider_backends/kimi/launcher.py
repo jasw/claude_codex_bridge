@@ -16,7 +16,7 @@ from provider_core.caller_env import (
 from provider_core.contracts import ProviderRuntimeLauncher
 from provider_core.pathing import session_filename_for_agent
 from provider_core.runtime_shared import apply_provider_command_template, provider_start_parts
-from provider_backends.kimi.native_log import kimi_share_dir
+from provider_backends.kimi.native_log import kimi_code_home, kimi_share_dir
 from provider_backends.kimi.session import (
     KIMI_RESTART_SESSION_MARKER,
     render_restart_command,
@@ -71,7 +71,11 @@ def prepare_launch_context(
     share_dir = kimi_share_dir(environ=merged_env)
     if not share_dir.is_absolute():
         share_dir = Path(os.path.abspath(str(run_cwd / share_dir)))
+    code_home = kimi_code_home(environ=merged_env)
+    if not code_home.is_absolute():
+        code_home = Path(os.path.abspath(str(run_cwd / code_home)))
     payload["kimi_share_dir"] = str(share_dir)
+    payload["kimi_code_home"] = str(code_home)
     payload["kimi_capability_path"] = str(merged_env.get("PATH") or "")
     session_file = context.paths.ccb_dir / session_filename_for_agent("kimi", spec.name)
     payload.update(
@@ -81,6 +85,7 @@ def prepare_launch_context(
             project_id=context.project.project_id,
             work_dir=run_cwd,
             share_dir=share_dir,
+            code_home=code_home,
         )
     )
     if payload.get("kimi_resume_status") == "exact_session_ready":
@@ -178,6 +183,7 @@ def build_session_payload(
         "start_dir": str(context.project.project_root),
         "start_cmd": start_cmd,
         "kimi_share_dir": str(prepared.get("kimi_share_dir") or ""),
+        "kimi_code_home": str(prepared.get("kimi_code_home") or ""),
         "kimi_resume_status": str(prepared.get("kimi_resume_status") or "fresh_no_binding"),
         "kimi_explicit_session_control": bool(prepared.get("kimi_explicit_session_control")),
         "kimi_restart_start_cmd_template": str(prepared.get("kimi_restart_start_cmd_template") or ""),

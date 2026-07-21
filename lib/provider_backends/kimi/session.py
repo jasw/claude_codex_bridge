@@ -20,7 +20,7 @@ from provider_core.contracts import ProviderSessionBinding
 from provider_sessions.files import safe_write_session
 from project.identity import normalize_work_dir
 
-from .native_log import kimi_project_hash
+from .native_log import kimi_code_project_dirname, kimi_project_hash
 
 
 _SESSION_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
@@ -31,6 +31,7 @@ _NATIVE_BINDING_KEYS = (
     "kimi_session_work_dir_norm",
     "kimi_session_bound_at",
     "kimi_session_binding_source",
+    "kimi_session_store",
 )
 
 
@@ -47,6 +48,10 @@ class KimiProjectSession(PaneLogProjectSessionBase):
     @property
     def kimi_share_dir(self) -> str:
         return str(self.data.get("kimi_share_dir") or "").strip()
+
+    @property
+    def kimi_code_home(self) -> str:
+        return str(self.data.get("kimi_code_home") or "").strip()
 
     @property
     def start_cmd(self) -> str:
@@ -92,6 +97,7 @@ def resume_binding_for_launch(
     project_id: str,
     work_dir: Path,
     share_dir: Path,
+    code_home: Path | None = None,
 ) -> dict[str, object]:
     if not session_file.is_file():
         return {"kimi_resume_status": "fresh_no_binding"}
@@ -113,11 +119,19 @@ def resume_binding_for_launch(
         return {"kimi_resume_status": "fresh_no_observed_native_session"}
     if _resolved_path(Path(recorded_share)) != _resolved_path(share_dir):
         return {"kimi_resume_status": "fresh_share_dir_changed"}
+    recorded_store = str(data.get("kimi_session_store") or "legacy").strip()
+    recorded_code_home = str(data.get("kimi_code_home") or "").strip()
+    if recorded_store == "kimi_code":
+        if not code_home or not recorded_code_home:
+            return {"kimi_resume_status": "fresh_code_home_missing"}
+        if _resolved_path(Path(recorded_code_home)) != _resolved_path(code_home):
+            return {"kimi_resume_status": "fresh_code_home_changed"}
     valid, reason = validate_native_session_binding(
         session_id=session_id,
         session_path=Path(session_path),
         work_dir=work_dir,
         share_dir=share_dir,
+        code_home=code_home,
     )
     if not valid:
         return {"kimi_resume_status": f"fresh_{reason}"}
@@ -140,6 +154,7 @@ def persist_native_session_binding(
     native_session_id: str,
     native_session_path: Path,
     observed_at: str,
+    code_home: Path | None = None,
 ) -> tuple[bool, str | None]:
     data = read_session_json(session_file)
     if not data:
@@ -159,9 +174,17 @@ def persist_native_session_binding(
         session_path=native_session_path,
         work_dir=work_dir,
         share_dir=share_dir,
+        code_home=code_home,
     )
     if not valid:
         return False, reason
+    session_store = _native_session_store(
+        session_id=native_session_id,
+        session_path=native_session_path,
+        work_dir=work_dir,
+        share_dir=share_dir,
+        code_home=code_home,
+    )
     data.update(
         {
             "kimi_session_id": native_session_id,
@@ -170,9 +193,12 @@ def persist_native_session_binding(
             "kimi_share_dir": str(share_dir),
             "kimi_session_bound_at": str(observed_at or ""),
             "kimi_session_binding_source": "native_req_id_observation",
+            "kimi_session_store": session_store or "legacy",
             "kimi_resume_status": "exact_session_bound",
         }
     )
+    if code_home is not None:
+        data["kimi_code_home"] = str(code_home)
     ok, error = safe_write_session(session_file, json.dumps(data, ensure_ascii=False, indent=2) + "\n")
     return ok, error
 
@@ -183,35 +209,80 @@ def validate_native_session_binding(
     session_path: Path,
     work_dir: Path,
     share_dir: Path,
+    code_home: Path | None = None,
 ) -> tuple[bool, str]:
     normalized_id = str(session_id or "").strip()
     if not _SESSION_ID_RE.fullmatch(normalized_id):
         return False, "native_session_id_invalid"
-    expected = (
-        Path(share_dir).expanduser()
-        / "sessions"
-        / kimi_project_hash(work_dir)
-        / normalized_id
-        / "wire.jsonl"
-    )
     candidate = Path(session_path).expanduser()
     if candidate.is_symlink() or candidate.parent.is_symlink():
         return False, "native_session_path_symlinked"
-    managed_components = (
-        expected.parent.parent.parent,
-        expected.parent.parent,
-        expected.parent,
-        expected,
+    session_store = _native_session_store(
+        session_id=normalized_id,
+        session_path=candidate,
+        work_dir=work_dir,
+        share_dir=share_dir,
+        code_home=code_home,
     )
-    if any(component.is_symlink() for component in managed_components):
-        return False, "native_session_path_symlinked"
-    if _lexical_absolute_path(candidate) != _lexical_absolute_path(expected):
+    if session_store is None:
         return False, "native_session_path_mismatch"
-    if _resolved_path(candidate) != _resolved_path(expected):
+    managed_root = (
+        Path(share_dir).expanduser()
+        if session_store == "legacy"
+        else Path(code_home).expanduser()
+    )
+    try:
+        relative_parts = candidate.absolute().relative_to(managed_root.absolute()).parts
+    except ValueError:
+        return False, "native_session_path_mismatch"
+    components = [managed_root]
+    for part in relative_parts:
+        components.append(components[-1] / part)
+    if any(component.is_symlink() for component in components):
+        return False, "native_session_path_symlinked"
+    if _resolved_path(candidate) != _resolved_path(components[-1]):
         return False, "native_session_path_mismatch"
     if not candidate.is_file():
         return False, "native_session_missing"
     return True, ""
+
+
+def _native_session_store(
+    *,
+    session_id: str,
+    session_path: Path,
+    work_dir: Path,
+    share_dir: Path,
+    code_home: Path | None,
+) -> str | None:
+    legacy_expected = (
+        Path(share_dir).expanduser()
+        / "sessions"
+        / kimi_project_hash(work_dir)
+        / session_id
+        / "wire.jsonl"
+    )
+    candidate = _lexical_absolute_path(Path(session_path).expanduser())
+    if candidate == _lexical_absolute_path(legacy_expected):
+        return "legacy"
+    if code_home is None:
+        return None
+    code_session_root = (
+        Path(code_home).expanduser()
+        / "sessions"
+        / kimi_code_project_dirname(work_dir)
+        / session_id
+        / "agents"
+    )
+    try:
+        relative = Path(candidate).relative_to(Path(_lexical_absolute_path(code_session_root)))
+    except ValueError:
+        return None
+    if len(relative.parts) != 2 or relative.parts[1] != "wire.jsonl":
+        return None
+    if not _SESSION_ID_RE.fullmatch(relative.parts[0]):
+        return None
+    return "kimi_code"
 
 
 def prepare_restart_start_cmd(session: KimiProjectSession) -> str:
@@ -234,6 +305,11 @@ def prepare_restart_start_cmd(session: KimiProjectSession) -> str:
         project_id=str(data.get("ccb_project_id") or ""),
         work_dir=Path(session.work_dir),
         share_dir=Path(share_dir_text),
+        code_home=(
+            Path(str(data.get("kimi_code_home") or ""))
+            if str(data.get("kimi_code_home") or "").strip()
+            else None
+        ),
     )
     if binding.get("kimi_resume_status") != "exact_session_ready":
         _persist_fresh_restart(

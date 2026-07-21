@@ -13,7 +13,12 @@ from provider_backends.kimi.launcher import (
     _resolve_exact_resume_flag,
     prepare_launch_context,
 )
-from provider_backends.kimi.native_log import KimiTurnObservation, kimi_project_hash, kimi_share_dir
+from provider_backends.kimi.native_log import (
+    KimiTurnObservation,
+    kimi_code_project_dirname,
+    kimi_project_hash,
+    kimi_share_dir,
+)
 from provider_backends.kimi.session import (
     KIMI_RESTART_SESSION_MARKER,
     KimiProjectSession,
@@ -56,6 +61,21 @@ def _ccb_session_file(
 
 def _native_wire(share_dir: Path, work_dir: Path, session_id: str) -> Path:
     path = share_dir / "sessions" / kimi_project_hash(work_dir) / session_id / "wire.jsonl"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("{}\n", encoding="utf-8")
+    return path
+
+
+def _kimi_code_wire(code_home: Path, work_dir: Path, session_id: str, agent_id: str) -> Path:
+    path = (
+        code_home
+        / "sessions"
+        / kimi_code_project_dirname(work_dir)
+        / session_id
+        / "agents"
+        / agent_id
+        / "wire.jsonl"
+    )
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("{}\n", encoding="utf-8")
     return path
@@ -119,6 +139,97 @@ def test_observed_native_session_becomes_exact_resume_authority(tmp_path: Path) 
         "kimi_resume_session_bound_at": NOW,
         "kimi_resume_binding_source": "native_req_id_observation",
     }
+
+
+def test_kimi_code_observation_becomes_exact_resume_authority(tmp_path: Path) -> None:
+    work_dir = tmp_path / "repo"
+    work_dir.mkdir()
+    share_dir = tmp_path / ".kimi"
+    code_home = tmp_path / ".kimi-code"
+    session_file = _ccb_session_file(
+        tmp_path,
+        agent_name="kimi1",
+        work_dir=work_dir,
+        ccb_session_id="ccb-launch-1",
+    )
+    wire = _kimi_code_wire(code_home, work_dir, "native-code-one", "main")
+
+    ok, error = persist_native_session_binding(
+        session_file,
+        expected_ccb_session_id="ccb-launch-1",
+        agent_name="kimi1",
+        work_dir=work_dir,
+        share_dir=share_dir,
+        code_home=code_home,
+        native_session_id="native-code-one",
+        native_session_path=wire,
+        observed_at=NOW,
+    )
+    binding = resume_binding_for_launch(
+        session_file,
+        agent_name="kimi1",
+        project_id="project-1",
+        work_dir=work_dir,
+        share_dir=share_dir,
+        code_home=code_home,
+    )
+
+    assert ok is True, error
+    assert binding["kimi_resume_status"] == "exact_session_ready"
+    assert binding["kimi_resume_session_id"] == "native-code-one"
+    persisted = json.loads(session_file.read_text(encoding="utf-8"))
+    assert persisted["kimi_session_store"] == "kimi_code"
+    assert persisted["kimi_code_home"] == str(code_home)
+
+
+def test_kimi_code_binding_rejects_other_code_home_and_symlink(tmp_path: Path) -> None:
+    work_dir = tmp_path / "repo"
+    work_dir.mkdir()
+    share_dir = tmp_path / ".kimi"
+    code_home = tmp_path / ".kimi-code"
+    session_file = _ccb_session_file(
+        tmp_path,
+        agent_name="kimi1",
+        work_dir=work_dir,
+        ccb_session_id="ccb-launch-1",
+    )
+    wire = _kimi_code_wire(code_home, work_dir, "native-code-one", "main")
+    ok, error = persist_native_session_binding(
+        session_file,
+        expected_ccb_session_id="ccb-launch-1",
+        agent_name="kimi1",
+        work_dir=work_dir,
+        share_dir=share_dir,
+        code_home=code_home,
+        native_session_id="native-code-one",
+        native_session_path=wire,
+        observed_at=NOW,
+    )
+    assert ok is True, error
+
+    changed = resume_binding_for_launch(
+        session_file,
+        agent_name="kimi1",
+        project_id="project-1",
+        work_dir=work_dir,
+        share_dir=share_dir,
+        code_home=tmp_path / "other-code-home",
+    )
+    assert changed == {"kimi_resume_status": "fresh_code_home_changed"}
+
+    target = tmp_path / "wire-target.jsonl"
+    target.write_text("{}\n", encoding="utf-8")
+    wire.unlink()
+    wire.symlink_to(target)
+    symlinked = resume_binding_for_launch(
+        session_file,
+        agent_name="kimi1",
+        project_id="project-1",
+        work_dir=work_dir,
+        share_dir=share_dir,
+        code_home=code_home,
+    )
+    assert symlinked == {"kimi_resume_status": "fresh_native_session_path_symlinked"}
 
 
 def test_same_workdir_agents_keep_distinct_owned_session_ids(tmp_path: Path) -> None:
