@@ -12,6 +12,7 @@ from .lifecycle import resubmit_message, retry_attempt
 from .records import append_event, append_job, rebuild_dispatcher_state
 from .routing import build_watch_payload, resolve_targets, resolve_watch_target, validate_sender, validate_targets_available
 from .runtime_state import sync_runtime
+from .active_followups import followups_for_trace, trace_active_followups
 
 
 class DispatcherFacadeMixin:
@@ -31,7 +32,14 @@ class DispatcherFacadeMixin:
         return payload
 
     def trace(self, target: str) -> dict:
-        return self._message_bureau_control.trace(target)
+        direct = trace_active_followups(self, target)
+        if direct is not None:
+            return direct
+        result = dict(self._message_bureau_control.trace(target))
+        followups = followups_for_trace(self, result)
+        if followups:
+            result['active_followups'] = followups
+        return result
 
     def resubmit(self, message_id: str) -> dict:
         return resubmit_message(self, message_id)

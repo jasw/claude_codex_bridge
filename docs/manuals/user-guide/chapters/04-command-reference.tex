@@ -88,12 +88,13 @@ ccb ack <agent_name> [inbound_event_id]
 
 ack 只确认 inbox head。它支持 task reply，或者已经 terminal 的 task request。如果指定的 event 不是 head，会被拒绝。已经安排 automatic reply delivery 的 reply 也不能手动 ack。
 
-\section{retry、resubmit、cancel}
+\section{followup、retry、resubmit、cancel}
 
 \begin{longtable}{p{0.28\linewidth}p{0.62\linewidth}}
 \toprule
 命令 & 作用 \\
 \midrule
+\cmd{ccb followup <active_job_id> --message <correction>} & 仅在 provider 能证明 exact active turn 时，把 correction 注入指定 running job；只有 \src{injected} 成功。 \\
 \cmd{ccb retry <job_id|attempt_id>} & 在原 message lineage 下追加 retry attempt。要求目标 attempt 已 terminal、不是 completed、且是最新 attempt。 \\
 \cmd{ccb resubmit <message_id>} & 从旧 message 创建新的 message/submission/jobs。 \\
 \cmd{ccb cancel <job_id>} & 取消 queued 或 active job，并写入 cancelled terminal state。 \\
@@ -103,6 +104,7 @@ ack 只确认 inbox head。它支持 task reply，或者已经 terminal 的 task
 简单判断：
 
 \begin{itemize}
+  \item 修正仍在运行且 provider 支持 exact active-turn injection 的任务，使用 \cmd{followup}；\src{accepted} 表示 durable pending，\src{rejected}、\src{too_late}、\src{terminal} 都不是成功，只有 \src{injected} 成功。
   \item provider/API 临时失败，优先 \cmd{retry}。
   \item 想重新发整条请求，使用 \cmd{resubmit}。
   \item 任务不应继续，使用 \cmd{cancel}。

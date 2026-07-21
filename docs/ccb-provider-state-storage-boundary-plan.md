@@ -134,10 +134,19 @@ Examples:
 - `<runtime_state_root>/runtime/memory/<agent>.md`
 - `project_root/.ccb/runtime/memory/<agent>.md` provider compatibility bridge
 - bridge pids, FIFOs, runtime logs, session switch records
+- managed Codex app-server socket, pid, remote-attachment marker, stdout, and
+  stderr artifacts under the agent's provider-runtime directory
+- a managed Codex app-server socket whose preferred path is unsafe may use the
+  shared runtime-socket root with a provider-runtime-derived hashed name; it
+  remains runtime-ephemeral and its exact effective path is recorded by the
+  agent-local remote marker
 - project sockets and heartbeat artifacts
 
 Cleanup must only remove this class during explicit stop/reset/kill flows or
-after ownership checks prove the process generation is dead.
+after ownership checks prove the process generation is dead. Explicit project
+stop/kill removes the exact managed Codex app-server socket, pid, and remote
+marker after terminating the owned processes, including when the bridge could
+not finish its own graceful cleanup.
 
 ### 3.4 Startup Authority Bundle
 

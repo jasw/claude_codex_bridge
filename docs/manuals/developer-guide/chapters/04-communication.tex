@@ -211,6 +211,28 @@ submission
 
 用户手册应建议：只要手里有任意 \src{job_id}、\src{message_id} 或 \src{reply_id}，先用 \cmd{trace} 重建上下文，再决定 retry、resubmit、ack 还是 doctor。
 
+\section{active-job followup}
+
+\cmd{followup <job_id> --message <correction>} 是 dispatcher control operation，
+不是普通通信提交。dispatcher 在 chain-transition lock 内重新读取指定 job，要求
+它仍是 target slot 的 exact running job，再向 execution adapter 查询显式
+capability。能力缺失时必须返回 \src{rejected}，已经 terminal 时返回
+\src{too_late}，provider 已观测终态或 cancel/completion 赢得竞态时返回
+\src{terminal}；不得改为 pane-wide send-keys、普通 queued job、hidden retry 或
+另一 provider。
+
+能力通过后，dispatcher 先追加 \src{accepted} durable outbox 记录，再调用
+adapter 注入。daemon restart 只重放仍为 \src{accepted} 的记录，并复用
+\src{followup_id} 作为 provider idempotency key。Codex adapter 使用共享 managed
+app-server 的 \src{turn/steer}，同时提交 \src{threadId}、
+\src{expectedTurnId} 和 \src{clientUserMessageId}；任何 active-turn precondition
+失败都由终态赢得。execution poll、followup injection、cancel 和 finish 对 active
+submission 的提交转换由同一个 execution lock 串行化；slow poll 在锁外运行，
+若 injection 或 terminal transition 已更换 active submission，其迟到结果必须
+丢弃。remote TUI 分支还必须写入与 socket path 匹配的 owned marker；只有 socket
+而没有 marker 的 local fallback 不具备此 capability。dispatcher terminalization
+仍由既有 chain-transition authority 决定。
+
 \section{result chain}
 
 result chain 不是同步等待。chain mode 由 \src{route_options["mode"] == "chain"} 表示，核心实现位于 \src{lib/ccbd/services/dispatcher_runtime/callbacks.py} 和 \src{lib/message_bureau/callback_edges.py}。

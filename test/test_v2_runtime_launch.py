@@ -41,6 +41,7 @@ from provider_backends.opencode import launcher as opencode_launcher
 from provider_backends.agy import launcher as agy_launcher
 from provider_backends.runtime_restore import ProviderRestoreTarget
 from provider_backends.codex.launcher_runtime.command import prepare_codex_home_overrides as prepare_codex_home_overrides_for_test
+from provider_backends.codex.start_cmd_runtime.parsing import extract_resume_session_id
 from provider_core.registry import build_default_runtime_launcher_map
 import provider_profiles.codex_home_config as codex_home_config
 from provider_profiles import load_resolved_provider_profile
@@ -1004,7 +1005,7 @@ def test_ensure_agent_runtime_rewrites_session_file_without_losing_existing_code
     assert payload['codex_session_root'] == str(existing_root)
     assert payload['codex_session_id'] == 'existing-session-id'
     assert payload['codex_session_path'] == str(existing_log)
-    assert payload['codex_start_cmd'].endswith('resume existing-session-id')
+    assert extract_resume_session_id(payload['codex_start_cmd']) == 'existing-session-id'
 
 
 def test_binding_runtime_alive_uses_tmux_socket_and_active_pane(monkeypatch) -> None:
@@ -1106,10 +1107,10 @@ def test_ensure_agent_runtime_resumes_named_codex_session_by_agent_name(monkeypa
     assert result.launched is True
     assert result.binding is not None
     assert result.binding.runtime_ref == 'tmux:%52'
-    assert str(tmux_state['cmd']).endswith('resume agent1-session-id')
+    assert extract_resume_session_id(tmux_state['cmd']) == 'agent1-session-id'
     assert 'agent2-session-id' not in str(tmux_state['cmd'])
     payload = json.loads((project_root / '.ccb' / '.codex-agent1-session').read_text(encoding='utf-8'))
-    assert payload['codex_start_cmd'].endswith('resume agent1-session-id')
+    assert extract_resume_session_id(payload['codex_start_cmd']) == 'agent1-session-id'
 
 
 def test_ensure_agent_runtime_launches_named_gemini_session(monkeypatch, tmp_path: Path) -> None:
@@ -2584,7 +2585,7 @@ def test_codex_launcher_build_start_cmd_uses_agent_scoped_resume_session(monkeyp
 
     cmd = codex_launcher.build_start_cmd(command, spec, runtime_dir, 'sess-restore', prepared_state=prepared)
 
-    assert cmd.endswith('resume agent1-session-id')
+    assert extract_resume_session_id(cmd) == 'agent1-session-id'
     assert 'agent2-session-id' not in cmd
 
 
@@ -2652,7 +2653,7 @@ def test_codex_launcher_build_start_cmd_respects_agent_restore_fresh(monkeypatch
 
     cmd = _codex_start_cmd(command, spec, runtime_dir, 'sess-fresh')
 
-    assert ' resume ' not in f' {cmd} '
+    assert extract_resume_session_id(cmd) is None
 
 
 def test_codex_launcher_build_start_cmd_reads_resume_cmd_from_agent_scoped_session_file(tmp_path: Path) -> None:
@@ -2678,7 +2679,7 @@ def test_codex_launcher_build_start_cmd_reads_resume_cmd_from_agent_scoped_sessi
 
     cmd = _codex_start_cmd(command, spec, runtime_dir, 'sess-restore')
 
-    assert cmd.endswith('resume codex-session-id')
+    assert extract_resume_session_id(cmd) == 'codex-session-id'
 
 
 def test_claude_launcher_build_start_cmd_uses_overlay_and_drops_dead_local_user_proxy(monkeypatch, tmp_path: Path) -> None:
@@ -3531,7 +3532,7 @@ def test_codex_launcher_build_start_cmd_resumes_when_memory_projection_changed(
 
     cmd = _codex_start_cmd(command, spec, runtime_dir, 'sess-memory-change')
 
-    assert cmd.endswith('resume legacy-session-id')
+    assert extract_resume_session_id(cmd) == 'legacy-session-id'
     data = json.loads(session_file.read_text(encoding='utf-8'))
     assert data['codex_session_id'] == 'legacy-session-id'
     assert data['codex_session_path'] == str(old_log)

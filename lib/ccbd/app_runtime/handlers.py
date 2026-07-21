@@ -8,6 +8,7 @@ from ccbd.handlers import (
     build_cancel_handler,
     build_comms_recover_handler,
     build_get_handler,
+    build_followup_handler,
     build_inbox_handler,
     build_mailbox_head_handler,
     build_ping_handler,
@@ -44,6 +45,7 @@ def register_handlers(app) -> None:
     ping_graph = _GraphPingDependencies(graph_source)
 
     app.socket_server.register_handler('submit', _graph_request(graph_source, build_submit_handler(dispatcher)))
+    app.socket_server.register_handler('followup', _graph_request(graph_source, build_followup_handler(dispatcher)))
     app.socket_server.register_handler(
         'get',
         _graph_request(graph_source, build_get_handler(dispatcher, health_monitor=health_monitor)),

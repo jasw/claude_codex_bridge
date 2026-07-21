@@ -62,7 +62,9 @@ def test_shell_ask_skill_templates_use_short_ask_command() -> None:
         assert 'Do not use `ask`, `--chain`, or' in text
         assert 'continuation completion upstream' in text
         assert '`--silence` is not an active-job correction channel.' in text
-        assert 'Cancel and resubmit an' in text
+        assert '`ccb followup <active_job_id> --message "<correction>"`' in text
+        assert 'only `injected` is success' in text
+        assert 'cancel and resubmit the complete' in text
         assert 'A `completed` CCB job means provider execution ended normally' in text
         assert 'command ask "$TARGET"' in text
         assert 'command ask --chain --artifact-reply "$TARGET"' in text
@@ -113,7 +115,9 @@ def test_powershell_ask_skill_template_uses_short_ask_command() -> None:
     assert 'Do not use `ask`, `--chain`, or' in text
     assert 'continuation completion upstream' in text
     assert '`--silence` is not an active-job correction channel.' in text
-    assert 'Cancel and resubmit an' in text
+    assert '`ccb followup <active_job_id> --message "<correction>"`' in text
+    assert 'only `injected` is success' in text
+    assert 'cancel and resubmit the complete' in text
     assert 'A `completed` CCB job means provider execution ended normally' in text
     assert '@("--chain", "--artifact-reply", "$TARGET")' in text
     legacy_chain_flag = '--' + 'call' + 'back'

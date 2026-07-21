@@ -450,3 +450,117 @@ that action safe without its existing invocation-time authority checks.
 
 Next unlocked row after this atomic commit: R9 active-job correction
 capability.
+
+## R9: Active-Job Correction Capability
+
+Slice: R9 active-job correction capability
+
+Commit selector / hash: commit subject `feat: steer exact active jobs` with
+trailer `Repair-Slice: R9`
+
+Upstream item: Issue261 remained open during the 2026-07-21 preflight. PR264
+documents explicit cancel/resubmit but does not provide exact active-turn
+steering, so it was not treated as an implementation of this issue.
+
+Baseline: R8 commit `e937aa99b2586565a33638818867b3f425cba2f2` on
+`origin/main` `aed27abf`. Existing pane transport addressed an agent surface,
+not an exact job/turn, and could neither atomically reject a stale turn nor
+prove that accepted input belonged to the currently bound job.
+
+Counterexample: wrong/stale/non-running jobs, a starting submission, queued
+siblings, stale expected turns, completion and cancellation races, service
+restart, duplicate follow-up ids, ambiguous WebSocket delivery, unsupported
+providers, and local-fallback Codex all fail closed in preserved tests. An
+initial real Codex launch additionally reproduced `path must be shorter than
+SUN_LEN`: the overlong project-local app-server socket forced local fallback
+and correctly advertised no remote capability. The corrected placement uses
+the bounded shared runtime-socket root and a hash of the full provider runtime
+directory.
+
+Frozen authority:
+[Decision 006](../decisions/006-exact-active-job-followup.md) defines
+`ccb followup <active_job_id> --message ...`, append-only accepted outbox
+ordering, native follow-up idempotency, explicit accepted/injected/rejected/
+too-late/terminal outcomes, and the existing job terminal authority. Only a
+visible managed Codex TUI sharing the slot-owned app-server qualifies, and
+only `turn/steer` with the exact `threadId`, `expectedTurnId`, and
+`clientUserMessageId` may inject. Claude panes, legacy/local Codex, and
+unadvertised providers refuse; pane input, cancel/resubmit, retry, or provider
+substitution are not implicit fallbacks.
+
+Implementation: the CLI/socket/dispatcher path writes one globally stable FIFO
+outbox keyed by follow-up id and never creates a job, attempt, mailbox item, or
+callback. Restart replay stops at ambiguous accepted delivery so later entries
+cannot overtake. Execution state commits and injection are serialized while
+slow provider polling/startup stays outside the lock and stale results are
+discarded by exact identity. Managed Codex supervises a slot-owned app-server,
+attaches the visible TUI with `--remote unix://...`, speaks the local RFC6455
+WebSocket protocol, and requires a matching runtime-owned remote marker. Long
+socket paths use a deterministic short placement. Project stop repeats exact
+socket/pid/marker cleanup after process termination so a forcibly terminated
+bridge cannot leave false capability evidence. Trace joins follow-up lineage
+but redacts correction text from all public/terminal records; only the durable
+accepted row retains it for replay.
+
+Focused tests: final exact-job, FIFO, restart, ambiguity, race, CLI, trace,
+managed app-server, capability-marker, short-socket, execution-lock, and
+stop-flow gates all passed. The late marker/outbox gate passed `243` tests, the
+short-socket/runtime gate passed `164`, and the final stop/kill/follow-up gate
+passed `41` tests in `4.64s`. Python compilation and `git diff --check` passed.
+
+Full/client tests: the final complete Python run passed `5518` tests with `2`
+skipped and no deselections in `1043.10s`. R9 changes no Rust/sidebar/mobile
+schema or consumer, so those client suites are deferred to cumulative R10
+rather than claimed here.
+
+Real project evidence: external opened project
+`/home/bfly/yunwei/test_ccb2/r9-active-followup-real-20260721` used the
+candidate wrapper, inherited real provider state, and a lab-local roles store.
+Codex CLI `0.144.6`, model `gpt-5.6-terra`, effort `low`, bound exact job
+`job_861c7eecd75f`, attempt `att_5cedce6c4c2c`, thread
+`019f8439-498a-70a2-8fcb-98e729c424c8`, and turn
+`019f843d-e252-7591-9656-2072d81bf287`. Follow-up
+`fup_460885d08eee` persisted `accepted` then became `injected` through
+`codex_app_server_turn_steer` with identical expected/provider turn refs. The
+same single job and attempt completed with reply exactly `R9_CORRECTED`.
+Terminal follow-ups returned `too_late/job_already_completed`; the native
+session remained 27 lines at SHA256
+`c5d9be310d2149d386503179c80bf41a78225bc8fc0d45cfa895a61ff6309f63`,
+and neither late text entered it. Public trace omitted correction request text
+while retaining the final reply and full job/message/attempt lineage.
+
+The same project ran Claude CLI `2.1.206`, model `deepseek-v4-pro`, on active
+job `job_4b8805deeddc` and attempt `att_87dea91fc645`. Follow-up
+`fup_4843000d78e4` returned
+`rejected/claude_tui_missing_atomic_active_turn_precondition` with no pane
+fallback. The correction text appeared in neither provider session nor pane;
+the original single job/attempt completed with reply exactly `CLAUDE_DONE`.
+Compact artifact: `r9-runtime-result.json` in the external project. Durable
+raw follow-up lineage remains in `.ccb/ccbd/active-followups.jsonl` there.
+
+Source immutability: the main real job run retained complete candidate digest
+`4805bd4b89316d8b94fb1146d21af73d83c70260d3d86ba43b5e5500833b11d0`
+before and after. That run exposed the stop-path marker residue, which was
+fixed and retested. On the final code, a fresh real managed app-server start
+and stop retained complete digest
+`52e6d46bdc2e8bbc899b260a9a965a0c3c306cfe4d09bf2b41fbb0d86c220475`
+before and after.
+
+Cleanup: the first accepted injection run cleanly stopped every recorded
+process and socket but exposed one stale `app-server.remote` marker; that run
+was not accepted as final cleanup evidence. After the stop-path fix, repeated
+real starts produced the 59-byte owned socket
+`/run/user/1000/ccb-runtime/app-server-ae002bb6e6eefd01.sock` and matching
+marker. Candidate `ccb_test kill` returned `kill_status: ok`, left the project
+`unmounted`, and removed ccbd/tmux/app-server sockets, app-server pid, remote
+marker, keeper/daemon/provider processes, and panes.
+
+Remaining risk: Codex CLI app-server protocol or `--remote` capability may
+change in a later native release; the executable/version capability probe,
+WebSocket readiness, marker match, and exact expected-turn precondition then
+fail closed. Transport ambiguity intentionally leaves the durable accepted
+row pending instead of claiming rejection or retrying. Claude remains
+unsupported until it exposes an equivalent atomic exact-turn primitive.
+
+Next unlocked row after this atomic commit: R12 generic projected-asset
+ownership hardening.

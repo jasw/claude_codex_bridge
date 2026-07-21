@@ -48,9 +48,26 @@ result-chain continuation 也遵循同一原则：parent agent 在 continuation 
 确实需要 child 结果才能完成当前任务的场景；\cmd{--silence} 表示成功结果不需
 返回，它不是向 active job 发送 correction 的通道。
 
-当前版本没有 active-job follow-up。执行中的任务需要修正范围时，先取消旧
-job，再用修正后的完整请求重新提交。不要把 correction 作为普通新任务排在同
-一 agent 的 active job 后面。
+执行中的任务需要修正范围时，可以使用：
+
+\begin{lstlisting}
+ccb followup <active_job_id> --message "corrected scope"
+\end{lstlisting}
+
+该命令只寻址指定的 running job 和其已经绑定的 exact provider turn，不创建
+新的 job、attempt、mailbox item 或 callback edge。只有 \src{injected} 表示
+provider 已接受注入；\src{accepted} 表示 durable outbox 仍在等待确定结果，
+调用方不得把它误当成功或另发 duplicate correction。\src{rejected} 表示
+provider/transport 不具备原子能力，
+\src{too_late} 表示 job 已经 terminal，\src{terminal} 表示请求与 completion
+或 cancel 竞态并由终态胜出。后三种结果均应保留原结果，不得退化为 pane 文本
+注入、隐藏 retry 或 provider substitution；需要继续时，取消仍可取消的旧 job，
+再提交修正后的完整任务。不要把 correction 作为普通新任务排在同一 agent 的
+active job 后面。
+
+当前 Codex 仅在 managed TUI 与同一个 agent-scoped app-server 会话相连、并且
+CCB 已绑定 thread id 与 active turn id 时支持该能力。legacy/local Codex pane、
+Claude pane 和其他没有 exact native primitive 的 provider 会明确拒绝。
 
 job 的 \src{completed} 只表示 provider execution 正常结束。它不等同于用户
 或 reviewer 已完成业务验收；业务完成度仍应根据 final 内容、产物和验证证据判

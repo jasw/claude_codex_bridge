@@ -453,6 +453,17 @@ The poller may still synthesize one terminal decision, but the authority read pa
 
 Codex does not need to be forced into the Gemini/Claude hook model.
 
+Native active-turn steering is input transport, not completion authority. When
+the visible managed TUI shares an agent-scoped app-server, CCB may use
+`turn/steer` with the already bound thread id and an `expectedTurnId`
+precondition. Successful steering keeps the same job and immutable top-level
+turn binding; it does not synthesize completion, reset reliability timers by
+itself, or authorize another turn's assistant/terminal events. A terminal
+precondition failure must yield to the existing completion/cancel authority.
+Capability additionally requires the runtime-owned remote marker written only
+by the TUI's `--remote` branch; a live app-server beside a local-fallback TUI
+does not qualify.
+
 Its design should remain:
 
 - primary authority = protocol/session log

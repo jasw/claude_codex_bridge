@@ -99,6 +99,7 @@ def print_start_help(*, file=None) -> None:
 
             Core commands:
               ccb ask <agent> [from <sender>] <message>
+              ccb followup <job_id> --message <text>
               ccb doctor
 
             Diagnostics-only control-plane status:
@@ -222,6 +223,14 @@ _COMMAND_HELP = {
 
         Advanced lineage view:
           ccb trace <id>   Show the full job/message/reply lineage for one id.
+    """,
+    "followup": """
+        usage: ccb followup <job_id> --message <text>
+
+        Exact active-job correction:
+          Targets one running job and its exact provider turn.
+          Unsupported or stale provider transports fail closed and do not
+          create a queued job, send pane keys, substitute providers, or retry.
     """,
     "theme": """
         usage: ccb theme [dark|light|+|-|solarized|tokyo|gruvbox|rose-pine]

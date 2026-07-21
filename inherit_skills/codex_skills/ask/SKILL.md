@@ -55,8 +55,11 @@ Before every ask, decide:
   directly with the final result. Do not use `ask`, `--chain`, or
   `--silence` to send that final result to the original caller; CCB routes the
   continuation completion upstream.
-- `--silence` is not an active-job correction channel. Cancel and resubmit an
-  executing task when its scope must change.
+- `--silence` is not an active-job correction channel. Use
+  `ccb followup <active_job_id> --message "<correction>"` only when the target
+  provider supports exact active-turn injection; only `injected` is success.
+  On `rejected`, `too_late`, or `terminal`, cancel and resubmit the complete
+  corrected task instead of queueing a correction as ordinary work.
 - A `completed` CCB job means provider execution ended normally; it does not by
   itself prove business acceptance.
 - `ask get`, `pend`, `watch`, and `ping` are diagnostics-only commands for

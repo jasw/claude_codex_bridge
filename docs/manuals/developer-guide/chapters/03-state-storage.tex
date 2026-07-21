@@ -35,6 +35,14 @@ provider runtime 证据 & provider state、session file、pane id、pid & 说明
 
 dispatcher 记录 job 的生命周期。一次提交会生成 \src{JobRecord} 和 \src{JobEvent}。job store 用于 \cmd{get}、\cmd{watch}、completion polling、cancel、retry 和 trace 的 job summary。dispatcher state 同时保留每个 target slot 的 queue 和 active job。
 
+exact active-job follow-up 使用独立的 append-only
+\src{.ccb/ccbd/active-followups.jsonl}。同一个 \src{followup_id} 的最新记录定义
+其 \src{accepted}、\src{injected}、\src{rejected}、\src{too_late} 或
+\src{terminal} 状态；\src{accepted} 是可在 daemon restart 后按 FIFO 重放的
+durable outbox。它不创建 \src{JobRecord}、message-bureau attempt 或 mailbox
+event。operator output 和 trace 不回显 correction message，但持久记录保留消息
+以完成崩溃窗口重放。
+
 需要注意的是，dispatcher state 是执行队列，不等同于 mailbox queue。dispatcher queue 关心某个 agent 何时可以启动下一个 job；mailbox queue 关心 inbound event、reply head、ack 和用户可见通信顺序。
 
 \section{message bureau 存储}

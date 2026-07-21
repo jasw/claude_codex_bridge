@@ -122,6 +122,4 @@ def _cancel_receipt(terminal) -> CancelReceipt:
         status=JobStatus.CANCELLED,
         cancelled_at=terminal.updated_at,
     )
-
-
 __all__ = ['cancel_job', 'cancel_with_decision']

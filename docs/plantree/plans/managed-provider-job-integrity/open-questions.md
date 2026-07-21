@@ -5,9 +5,16 @@ Date: 2026-07-21
 These questions do not block recording the roadmap. Each must be resolved
 before production implementation of its owning slice starts.
 
-1. **R9:** Which exact Codex and Claude native mechanisms qualify as safe
-   active-turn correction, and what capability response should providers
-   return when only cancel-and-resubmit is safe?
-2. **R11:** For Copilot, which entry-level ownership model can project installed
+1. **R11:** For Copilot, which entry-level ownership model can project installed
    plugins and marketplaces from its mixed config without copying or
    overwriting credentials, sessions, permissions, and local plugin data?
+
+## Resolved
+
+- **R9:** [Decision 006](decisions/006-exact-active-job-followup.md) qualifies
+  only a provider primitive that atomically checks the exact active turn and
+  accepts a durable idempotency identity. Managed Codex supports it when its
+  visible TUI shares CCB's app-server and `turn/steer` uses
+  `expectedTurnId`; legacy/local Codex panes and current Claude panes refuse
+  explicitly. Pane dispatch, queued-command evidence, cancel-and-resubmit,
+  provider substitution, and hidden retries do not qualify.

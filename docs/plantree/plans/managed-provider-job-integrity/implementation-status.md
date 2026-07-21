@@ -4,63 +4,65 @@ Date: 2026-07-21
 
 ## Current Phase
 
-R8 stuck inbound detection has completed implementation and verification. This
-atomic commit is selected by `Repair-Slice: R8`; no later row is marked active
-until the commit exists and the worktree is clean.
+R9 active-job correction capability is fully verified in the atomic commit
+selected by `Repair-Slice: R9`. R8 remains the clean predecessor at
+`e937aa99b2586565a33638818867b3f425cba2f2`; `origin/main` remains
+`aed27abf8899bd1d3ce72d08bb9133e3980f19ba` and is its ancestor. R12 is the
+next serial row and is ready only after this commit leaves a clean worktree.
 
 ## Next Target
 
-After the R8 commit is created and verified clean, refresh the R9 upstream and
-baseline, then freeze exact-job active-turn correction capability and refusal
-semantics before production edits.
+Start R12 by inventorying every remaining `allow_unmarked_replace=True` call
+site, freezing generic projected-asset ownership proof, and preserving foreign
+or user-owned state before changing replacement behavior.
 
 ## Last Landed
 
-R8 is selected by `Repair-Slice: R8`, with durable external evidence at
-`/home/bfly/yunwei/test_ccb2/r8-orphaned-inbound-runtime-20260721-B1KYSq/r8-runtime-result.json`.
-The immediately preceding verified commit is R7 `56f8dcda`
-(`Repair-Slice: R7`, `feat: expose correlated execution phases`).
+R9 is selected by commit subject `feat: steer exact active jobs` and trailer
+`Repair-Slice: R9`. Durable external evidence is at
+`/home/bfly/yunwei/test_ccb2/r9-active-followup-real-20260721/r9-runtime-result.json`.
+The clean predecessor is R8 `e937aa99b2586565a33638818867b3f425cba2f2`.
 
 ## Active TODO
 
-1. Create the atomic R8 commit with its required selector and upstream trailer.
-2. Verify the committed worktree is clean and record the exact hash at the R9
-   preflight boundary.
-3. Keep R9 waiting until that commit exists; do not infer provider correction
-   support before its owning decision is frozen.
+1. Load the R12 ownership inventory and contracts without starting R11-C.
+2. Reproduce unmarked replacement risk and freeze marker-first proof for each
+   retained generic replacement.
+3. Complete R12 focused/full/real gates and its own atomic commit before
+   unlocking Copilot.
 
 ## Blocked By
 
-No current blocker. R9's provider-native correction capability is an open
-question owned by the next row, not permission to start it inside R8. Copilot
-still requires its later queue row to freeze an authoritative entry-level
-ownership schema and offline/no-login fixture; that work is pending, not
-skipped.
+No current blocker. Copilot still requires its later queue row to freeze an
+authoritative entry-level ownership schema and offline/no-login fixture; that
+work is pending, not skipped.
 
 ## Last Verified
 
-- R8's focused ProjectView, maintenance, trace, doctor, CLI, recovery, and
-  service-graph gate passed `308` tests. Python compilation, static diff
-  checks, Rust formatting, and all `79` Rust sidebar tests passed.
-- The complete Python run passed `5340` tests with `2` skipped and `2`
-  deselected in `975.68s`. The isolated `restart_replay_pass` scenario passed
-  in `32.69s`; the other deselection is the adjudicated baseline lifecycle-
-  stopping socket race.
-- External real-Claude project
-  `/home/bfly/yunwei/test_ccb2/r8-orphaned-inbound-runtime-20260721-B1KYSq`
-  observed the exact non-terminal active lineage at a real idle prompt. Its
-  first observation stayed `provider_idle_pending_terminal`; the unchanged
-  second observation emitted `orphaned_active_inbound` with manual recovery
-  recommendation and `automatic_action=none`. Trace and doctor rendered the
-  same envelope.
-- Job, runtime, attempt, execution, lease, inbox, mailbox, message, reply, and
-  completion authority hashes were identical across the diagnostic reads.
-  Candidate source hashes also matched before/after. Candidate `ccb_test kill`
-  left the project unmounted with sockets and recorded processes absent.
-- A separate external terminal-race run transitioned from pending-terminal to
-  `terminal/hook_stop` before confirmation and emitted zero diagnostics.
-- R8 compact evidence:
-  [history/reviewed-repair-queue-evidence.md](history/reviewed-repair-queue-evidence.md#r8-stuck-inbound-detection).
+- Exact-job, restart replay, FIFO, ambiguity, terminal/cancel race, CLI, trace,
+  managed app-server, short-socket, and stop-flow gates passed, including the
+  final `41`-test cleanup/follow-up gate. Python compilation and
+  `git diff --check` passed.
+- The final complete Python run passed `5518` tests with `2` skipped and no
+  deselections in `1043.10s`. No Rust/sidebar/mobile schema or consumer changed
+  in R9.
+- In the external real-provider project, Codex `0.144.6` model
+  `gpt-5.6-terra` steered exact job `job_861c7eecd75f` and bound turn
+  `019f843d-e252-7591-9656-2072d81bf287` through `turn/steer`; the same single
+  job/attempt completed with reply `R9_CORRECTED`. A terminal follow-up returned
+  `too_late` and left the provider session hash and line count unchanged.
+- Claude `2.1.206` model `deepseek-v4-pro` explicitly rejected correction of
+  active job `job_4b8805deeddc` with
+  `claude_tui_missing_atomic_active_turn_precondition`; the correction appeared
+  in neither its provider session nor pane, and the original job completed
+  `CLAUDE_DONE`.
+- An overlong Codex app-server socket first reproduced `SUN_LEN` and local
+  fallback. The bounded socket fix used a 59-byte owned path. Final project
+  stop/kill removed its socket, pid, and remote marker even after forced bridge
+  termination; the project was unmounted and the complete candidate digest
+  remained `52e6d46bdc2e8bbc899b260a9a965a0c3c306cfe4d09bf2b41fbb0d86c220475`.
+- R9 compact evidence:
+  [history/reviewed-repair-queue-evidence.md](history/reviewed-repair-queue-evidence.md#r9-active-job-correction-capability).
 
 Prior R3-R6 evidence remains indexed in
 [history/reviewed-repair-queue-evidence.md](history/reviewed-repair-queue-evidence.md).

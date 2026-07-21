@@ -12,6 +12,7 @@ from cli.models import (
     ParsedConfigValidateCommand,
     ParsedDoctorCommand,
     ParsedFrontdeskCommand,
+    ParsedFollowupCommand,
     ParsedInboxCommand,
     ParsedKillCommand,
     ParsedLayoutCommand,
@@ -45,6 +46,20 @@ def parse_cancel(tokens: list[str], *, project: str | None, error_type) -> Parse
     if len(tokens) != 1:
         raise error_type('cancel requires <job_id>')
     return ParsedCancelCommand(project=project, job_id=tokens[0])
+
+
+def parse_followup(tokens: list[str], *, project: str | None, error_type) -> ParsedFollowupCommand:
+    parser = argparse.ArgumentParser(prog='ccb followup', add_help=False)
+    parser.add_argument('job_id')
+    parser.add_argument('--message', required=True)
+    namespace = parse_args(parser, tokens, error_message='invalid followup command', error_type=error_type)
+    job_id = str(namespace.job_id or '').strip()
+    message = str(namespace.message or '').strip()
+    if not job_id:
+        raise error_type('followup requires <job_id>')
+    if not message:
+        raise error_type('followup requires a non-empty --message')
+    return ParsedFollowupCommand(project=project, job_id=job_id, message=message)
 
 
 def parse_clear(tokens: list[str], *, project: str | None, error_type) -> ParsedClearCommand:
@@ -1107,6 +1122,7 @@ __all__ = [
     'parse_ack',
     'parse_agent',
     'parse_cancel',
+    'parse_followup',
     'parse_clear',
     'parse_cleanup',
     'parse_config',

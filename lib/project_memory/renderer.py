@@ -19,7 +19,7 @@ EOF
 - Finish an inbound CCB task in its current turn. If the original caller is a registered CCB agent, CCB routes that turn's terminal result through the existing lineage; do not open a new `ask` to report completion to the original caller.
 - Direct CLI submitters read terminal results from control output such as `watch` or `trace`.
 - During a CCB result-chain continuation, answer directly with the final result; do not use `ask`, `--chain`, or `--silence` to send that final result to the original caller.
-- `--silence` is not an active-job correction channel. If an executing task needs a scope correction, cancel and resubmit it.
+- `--silence` is not an active-job correction channel. Use `ccb followup <active_job_id> --message "<correction>"` only when the target provider advertises exact active-turn support; only `injected` is success. For `rejected`, `too_late`, or `terminal`, cancel and resubmit the complete corrected task instead of queueing a correction as ordinary work.
 - A `completed` CCB job means provider execution ended normally; it does not by itself prove business acceptance.
 """
 

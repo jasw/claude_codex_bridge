@@ -62,8 +62,8 @@ Out of scope:
 ## File Map
 
 - [roadmap.md](roadmap.md): strict repair order and phase state.
-- [implementation-status.md](implementation-status.md): current R11 handoff,
-  evidence, blockers, and next gate.
+- [implementation-status.md](implementation-status.md): current serial-row
+  handoff, evidence, blockers, and next gate.
 - [topics/ordered-repair-slices.md](topics/ordered-repair-slices.md): finding,
   correction boundary, tests, and exit gate for every slice.
 - [topics/provider-extension-inheritance-audit.md](topics/provider-extension-inheritance-audit.md):
@@ -89,6 +89,9 @@ Out of scope:
 - [decisions/005-bounded-orphaned-inbound-diagnosis.md](decisions/005-bounded-orphaned-inbound-diagnosis.md):
   R8 continuous exact-idle observation, reset rules, diagnostic envelope, and
   no-automatic-action policy.
+- [decisions/006-exact-active-job-followup.md](decisions/006-exact-active-job-followup.md):
+  R9 exact-job follow-up states, restart ordering, provider capability matrix,
+  and native expected-turn requirement.
 - [history/r1-r2-validation-2026-07-20.md](history/r1-r2-validation-2026-07-20.md):
   focused, full-suite, and external real-project evidence for landed R1/R2.
 - [history/r11-provider-extension-validation-2026-07-20.md](history/r11-provider-extension-validation-2026-07-20.md):

@@ -221,6 +221,23 @@ Rules:
   - helper manifests and runtime records may define ownership for cleanup and restart purposes
   - runtime authority and helper ownership must be written from the same agent-authority update path; later outer-layer field patching must not leave helper ownership on an older daemon/runtime generation
   - helper pids, detached parents, or process names alone are evidence only
+  - a managed Codex app-server used by the visible TUI is a child of the
+    slot-owned Codex bridge process group; its socket and pid live only in that
+    agent's provider-runtime directory
+  - Codex startup may attach the TUI with `--remote` only after the owned Unix
+    socket is ready; otherwise the TUI falls back to its ordinary local mode and
+    exact active-turn follow-up remains unavailable
+  - the remote branch writes an owned marker containing the exact socket path;
+    capability requires that marker plus a live WebSocket, and the local
+    fallback branch must leave no marker
+  - an overlong or unsupported preferred app-server socket path uses the
+    existing runtime-socket placement policy with a hash of the full agent
+    provider-runtime directory; cleanup owns that exact effective socket
+  - app-server startup failure, bridge shutdown, and project stop/kill must
+    terminate the exact child and remove the owned socket/pid/marker; the
+    project stop path repeats this cleanup after process termination so a
+    forced bridge exit cannot leave false capability evidence; neither a stale
+    socket nor a helper pid advertises follow-up capability
 - configured-agent provider session files are agent-scoped by `.ccb/ccb.config` logical agent name
 - provider-base session files such as `.codex-session` or `.claude-session` are legacy or unscoped evidence only:
   - they must not be reinterpreted as a configured agent's identity

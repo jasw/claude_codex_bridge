@@ -6,7 +6,7 @@ Date: 2026-07-21
 
 - Current status: In progress; R1/R2 landed and the R11 provider-extension
   candidate is committed on its qualified branch, the strict serial closure
-  goal is active, and R3/R4/R5/R6/R7/R8 are verified atomic commits.
+  goal is active, and R3/R4/R5/R6/R7/R8/R9 are verified atomic commits.
 - Work mode: execute-ready.
 - Review baseline: PR257 is merged; PR258, PR259, PR264, PR265, and PR266 are
   open and reported `UNSTABLE`; Issues 260-263 remain open as of 2026-07-21.
@@ -38,9 +38,13 @@ Date: 2026-07-21
   first exact observation remained pending-terminal and the unchanged bounded
   observation emitted a read-only `orphaned_active_inbound` envelope. See the
   [R8 evidence](history/reviewed-repair-queue-evidence.md#r8-stuck-inbound-detection).
-- Commit target: R8 is fully verified and selected by `Repair-Slice: R8`. R9
-  remains waiting until this atomic commit is created and the worktree is
-  clean.
+  R9 then passed exact-job/restart/race/CLI/app-server gates, the final complete
+  `5518`-test Python suite, and real Codex/Claude qualification. Exact Codex
+  `turn/steer` corrected one active job while Claude refused without pane
+  injection; see the
+  [R9 evidence](history/reviewed-repair-queue-evidence.md#r9-active-job-correction-capability).
+- Commit target: R9 is fully verified and selected by `Repair-Slice: R9`. R12
+  is ready only after this atomic commit is created and the worktree is clean.
 
 ## Done
 
@@ -88,26 +92,29 @@ Date: 2026-07-21
   observation becomes `orphaned_active_inbound`; the same envelope reaches
   ProjectView, maintenance, trace, doctor/CLI, and sidebar with explicit
   manual action and no diagnostic-read mutation.
+- Verified R9 as the atomic commit selected by `Repair-Slice: R9`: one durable
+  FIFO outbox targets an exact running job; managed Codex may steer only the
+  bound expected turn through its shared app-server, unsupported panes refuse,
+  ambiguous transport remains pending, and existing terminal/cancel authority
+  wins without creating a new job, attempt, mailbox item, or callback.
 
-## In Progress
+## Ready
 
-No later row is in progress inside the R8 transaction. `origin/main` remains
-`aed27abf`, Issue260 remains open for final disposition, and Decision 005 is
-implemented and verified. R9 is the next unlocked row after the R8 commit;
-PR258, PR259, PR265, and PR266 remain held from merge.
+R12 generic projected-asset ownership hardening is the next serial row. R9 is
+verified by the current atomic commit selector; `origin/main` remains
+`aed27abf`. R12 must inventory remaining unmarked replacement sites and freeze
+explicit ownership proof before any production change. PR258, PR259, PR265,
+and PR266 remain held from merge.
 
 ## Next
 
-1. **R9: Active-job correction capability.** Design Issue261 only after R4 and
-   R7 establish terminal and phase authority. Target the exact job, preserve
-   lineage, define provider capability/refusal, and cover completion races.
-2. **R12: Generic projected-asset ownership hardening.** Inventory remaining
+1. **R12: Generic projected-asset ownership hardening.** Inventory remaining
    `allow_unmarked_replace=True` call sites and migrate them to marker-first
    ownership without breaking packaged CCB skill upgrades.
-3. **R11-C: Copilot plugin/config projection.** Freeze an entry-level ownership
+2. **R11-C: Copilot plugin/config projection.** Freeze an entry-level ownership
    schema and offline/no-login fixture, then project only owned plugin metadata
    while preserving credentials, sessions, permissions, cache, and local data.
-4. **R10: Integrated qualification and release decision.** Run focused,
+3. **R10: Integrated qualification and release decision.** Run focused,
    full Python/Rust/client, clean current-main, external source-runtime, and
    real Codex/Claude project gates; prepare evidence-backed upstream
    dispositions without pushing, merging, closing, publishing, or releasing.

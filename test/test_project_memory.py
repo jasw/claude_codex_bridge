@@ -301,7 +301,9 @@ def test_materialize_runtime_memory_bundle_writes_generated_bundle(tmp_path: Pat
     assert 'During a CCB result-chain continuation, answer directly with the final result' in text
     assert 'do not use `ask`, `--chain`, or `--silence`' in text
     assert '`--silence` is not an active-job correction channel' in text
-    assert 'cancel and resubmit it' in text
+    assert '`ccb followup <active_job_id> --message "<correction>"`' in text
+    assert 'only `injected` is success' in text
+    assert 'cancel and resubmit the complete corrected task' in text
     assert 'A `completed` CCB job means provider execution ended normally' in text
     assert '## CCB Shared Project Memory' in text
     assert 'shared ask rules' in text
