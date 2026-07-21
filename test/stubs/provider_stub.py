@@ -1201,6 +1201,8 @@ def _native_cli_prompt(provider: str, argv: list[str]) -> str | None:
         return _mimo_run_prompt(argv)
     if provider == "qwen" and "--bare" in argv:
         return _last_positional(argv, options_with_values={"--output-format", "--session-id", "--model"})
+    if provider == "qoder" and "--bare" in argv:
+        return _last_positional(argv, options_with_values={"--output-format", "--session-id", "--model"})
     if provider == "cursor" and "--print" in argv:
         return _last_positional(argv, options_with_values={"--output-format", "--workspace", "--model"})
     if provider == "copilot" and "-p" in argv:
@@ -1607,6 +1609,7 @@ def main(argv: list[str]) -> int:
         "copilot",
         "codebuddy",
         "qwen",
+        "qoder",
         "cursor",
         "crush",
         "grok",
@@ -1638,7 +1641,7 @@ def main(argv: list[str]) -> int:
 
     if provider == "mimo" and _mimo_run_prompt(provider_arguments) is not None:
         return _handle_mimo_run_cli(provider_arguments, delay_s)
-    if provider in {"qwen", "cursor", "copilot", "crush", "grok", "kiro", "pi", "omp", "zai"} and _native_cli_prompt(provider, provider_arguments) is not None:
+    if provider in {"qwen", "qoder", "cursor", "copilot", "crush", "grok", "kiro", "pi", "omp", "zai"} and _native_cli_prompt(provider, provider_arguments) is not None:
         return _handle_native_cli_run(provider, provider_arguments, delay_s)
 
     # Provider-specific initialization.
