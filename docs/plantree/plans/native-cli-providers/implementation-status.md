@@ -172,9 +172,16 @@ Explicit `startup_args = ["--fullscreen"]` now suppresses CCB's injected
 ## Blocked By
 
 None for design. Real provider API execution may require user-owned
-Kimi/DeepSeek/MiMo/Qwen/Copilot/Cursor/Kiro/Crush/Pi/Z.ai credentials; CCB integration
+Kimi/DeepSeek/MiMo/Qwen/Qoder/Copilot/Cursor/Kiro/Crush/Pi/Z.ai credentials; CCB integration
 can still be validated with provider command templates, installed CLI
 help/version checks, and source-backed parser tests.
+
+Qoder `1.1.2` help/version and a credential-free real stream probe passed on
+2026-07-22. The probe confirmed UUID-only `--session-id`, documented `-p`,
+`--output-format stream-json`, `-w`, `--config-dir`, permission modes, and the
+missing-login error envelope. CCB now parses that envelope fail-closed and
+keeps visible/headless config state under the same agent-local root. A real
+authenticated answer is not claimed.
 
 Kimi hardening source work is unblocked. Remaining Kimi prompt-mode and auth
 diagnostic ideas stay deferred/open until real usage needs them.

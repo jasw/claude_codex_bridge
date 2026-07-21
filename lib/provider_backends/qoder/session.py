@@ -1,9 +1,4 @@
-"""
-Qoder project session management.
-
-Simplified session binding for Qoder CLI — no JSONL session binding,
-pane-log based communication only.
-"""
+"""Qoder visible-session binding and agent-local config authority."""
 from __future__ import annotations
 
 from pathlib import Path

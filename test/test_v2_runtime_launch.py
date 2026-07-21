@@ -1999,6 +1999,7 @@ def test_provider_start_parts_fall_back_to_default_binary(monkeypatch: pytest.Mo
     monkeypatch.delenv('KIMI_START_CMD', raising=False)
     monkeypatch.delenv('DEEPSEEK_START_CMD', raising=False)
     monkeypatch.delenv('QWEN_START_CMD', raising=False)
+    monkeypatch.delenv('QODER_START_CMD', raising=False)
     monkeypatch.delenv('CURSOR_START_CMD', raising=False)
     monkeypatch.delenv('COPILOT_START_CMD', raising=False)
     monkeypatch.delenv('CRUSH_START_CMD', raising=False)
@@ -2014,6 +2015,7 @@ def test_provider_start_parts_fall_back_to_default_binary(monkeypatch: pytest.Mo
     assert runtime_launch._provider_start_parts('kimi') == ['kimi']
     assert runtime_launch._provider_start_parts('deepseek') == ['deepcode']
     assert runtime_launch._provider_start_parts('qwen') == ['qwen']
+    assert runtime_launch._provider_start_parts('qoder') == ['qodercli']
     assert runtime_launch._provider_start_parts('cursor') == ['agent']
     assert runtime_launch._provider_start_parts('copilot') == ['copilot']
     assert runtime_launch._provider_start_parts('crush') == ['crush']
@@ -2027,6 +2029,7 @@ def test_provider_start_parts_fall_back_to_default_binary(monkeypatch: pytest.Mo
     ('provider', 'default_executable', 'home_env'),
     [
         ('qwen', 'qwen', 'QWEN_HOME'),
+        ('qoder', 'qodercli', None),
         ('cursor', 'agent', 'HOME'),
         ('copilot', 'copilot', 'COPILOT_HOME'),
         ('crush', 'crush', None),
@@ -2083,6 +2086,17 @@ def test_native_cli_launcher_builds_provider_state_payload(
     visible_parts = shlex.split(visible_cmd)
     if provider == 'crush':
         assert visible_parts == [default_executable, '--data-dir', str(state_dir / 'data'), '--demo']
+    elif provider == 'qoder':
+        assert visible_parts == [
+            default_executable,
+            '--config-dir',
+            str(state_dir / 'home'),
+            '--demo',
+        ]
+        assert payload['qoder_config_dir'] == str(state_dir / 'home')
+        assert payload['qoder_auto_permission_enabled'] is False
+        assert payload['qoder_headless_permission_mode'] == 'dont_ask'
+        assert 'QODER_HOME=' not in start_cmd
     elif provider == 'grok':
         assert visible_parts == [
             default_executable,
@@ -2117,6 +2131,60 @@ def test_native_cli_launcher_builds_provider_state_payload(
         ]
     else:
         assert visible_parts == [default_executable, '--demo']
+
+
+def test_qoder_launcher_respects_explicit_config_and_permission_options(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.delenv('QODER_START_CMD', raising=False)
+    project_root = tmp_path / 'repo-qoder-explicit-options'
+    (project_root / '.ccb').mkdir(parents=True)
+    command = ParsedStartCommand(
+        project=None,
+        agent_names=('qoder1',),
+        restore=True,
+        auto_permission=True,
+    )
+    ctx = _context(project_root, command)
+    spec = _spec(
+        'qoder1',
+        provider='qoder',
+        startup_args=('--config-dir', 'custom-qoder', '--permission-mode', 'plan'),
+    )
+    plan = WorkspacePlanner().plan(spec, ctx.project)
+    plan.workspace_path.mkdir(parents=True, exist_ok=True)
+    runtime_dir = ctx.paths.agent_provider_runtime_dir('qoder1', 'qoder')
+    launcher = build_default_runtime_launcher_map(include_optional=True)['qoder']
+
+    prepared = launcher.prepare_launch_context(ctx, spec, plan, runtime_dir, {})
+    start_cmd = launcher.build_start_cmd(
+        command,
+        spec,
+        runtime_dir,
+        'sess-qoder-explicit',
+        prepared_state=prepared,
+    )
+    payload = launcher.build_session_payload(
+        ctx,
+        spec,
+        plan,
+        runtime_dir,
+        plan.workspace_path,
+        '%42',
+        'CCB-qoder1',
+        start_cmd,
+        'sess-qoder-explicit',
+        prepared,
+    )
+    parts = shlex.split(start_cmd.rsplit('; ', 1)[-1])
+
+    assert parts.count('--config-dir') == 1
+    assert parts.count('--permission-mode') == 1
+    assert parts[parts.index('--permission-mode') + 1] == 'plan'
+    assert payload['qoder_config_dir'] == str(plan.workspace_path / 'custom-qoder')
+    assert payload['qoder_auto_permission_enabled'] is True
+    assert payload['qoder_headless_permission_mode'] == 'plan'
 
 
 def test_grok_launcher_fullscreen_startup_arg_overrides_default_minimal(

@@ -14,11 +14,17 @@ Date: 2026-06-13
   in source with ready-gated prompt delivery, pane fallback, and coalesced
   request diagnostics. Kimi restart now uses observation-bound per-agent native
   session ownership and capability-confirmed exact selection rather than
-  workdir-global `--continue`.
+  workdir-global `--continue`. Qoder's merged provider registration is now
+  corrected to use documented print/config arguments, UUID session identity,
+  agent-local config state, and provider-specific stream terminalization.
 - Last verified: focused native completion tests, provider catalog tests,
   Kimi/OpenCode skill projection tests, and a real MiMo CCB ask passed after
   switching CCB MiMo execution to `mimo run --pure --format json`; full
   pytest release gate passed with `2613 passed, 2 skipped`.
+- Qoder correction verification on 2026-07-22 used real `qodercli 1.1.2`
+  help/version and credential-free stream output plus focused launcher,
+  execution, catalog, registry, and storage tests. Authenticated completion
+  remains a release-qualification gate rather than an inferred pass.
 - Next target: review and release readiness for the next native CLI provider
   wave after source-runtime and real CLI version smoke passed for Qwen Code,
   Cursor Agent, GitHub Copilot CLI, Charm Crush, Kiro CLI, and Pi. Talk1's

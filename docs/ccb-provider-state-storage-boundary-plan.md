@@ -714,6 +714,31 @@ Candidates for shared/rebuildable cache:
 These routes must not change `HOME`, `GEMINI_CLI_HOME`, `GEMINI_ROOT`, auth, or
 session identity.
 
+### 6.4 Qoder
+
+Qoder must use its documented `--config-dir` option to bind the visible TUI and
+per-job print subprocess to the same agent-local provider-state root. The
+unsupported `QODER_HOME` assumption is not an isolation boundary.
+
+Must remain agent-isolated:
+
+- the exact `--config-dir` root
+- `.auth/`, logs, sessions, settings, installation identity, and security state
+- deterministic per-job native session UUIDs
+
+Must remain secret and agent-local:
+
+- all `.auth/` descendants
+- any future credential or token records introduced under the config root
+
+Candidates for rebuildable cache:
+
+- `.cache/` descendants such as endpoint and DNS caches
+
+An explicit user-provided `--config-dir` overrides CCB's managed root and must
+be preserved without adding a second option. CCB diagnostics may report that
+external path but must not copy, classify, clean, or inspect its credentials.
+
 ## 7. WSL And macOS Requirements
 
 WSL:

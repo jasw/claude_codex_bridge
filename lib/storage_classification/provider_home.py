@@ -94,6 +94,17 @@ def classify_provider_home(
         return _classify_droid_home(path, relative_path, remainder, size=size, provider=provider, agent=agent, root_kind=root_kind)
     if provider == 'copilot':
         return _classify_copilot_home(path, relative_path, remainder, size=size, provider=provider, agent=agent, root_kind=root_kind)
+    if provider == 'qoder' and remainder[0] == '.auth':
+        return _entry(
+            path,
+            relative_path,
+            StorageClass.SECRET,
+            size,
+            provider=provider,
+            agent=agent,
+            reason='qoder_auth_state',
+            root_kind=root_kind,
+        )
     if provider in _NATIVE_CLI_PROVIDERS:
         return _classify_native_cli_home(path, relative_path, remainder, size=size, provider=provider, agent=agent, root_kind=root_kind)
     return _entry(path, relative_path, StorageClass.UNKNOWN, size, provider=provider, agent=agent, root_kind=root_kind)

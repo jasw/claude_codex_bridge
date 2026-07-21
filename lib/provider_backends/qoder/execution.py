@@ -1,13 +1,21 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
+import uuid
+from typing import Any
 
 from provider_backends.native_cli_support import (
     NativeCliExecutionConfig,
     NativeCliExecutionRequest,
+    NativeCliObservation,
     NativeCliSubprocessAdapter,
 )
 from provider_core.runtime_shared import provider_start_parts
+
+
+_NORMAL_STOP_REASONS = {"completed", "end_turn", "stop", "stop_sequence", "success"}
+_PERMISSION_OPTIONS = {"--dangerously-skip-permissions", "--permission-mode", "--yolo"}
 
 
 def build_execution_adapter() -> NativeCliSubprocessAdapter:
@@ -16,7 +24,7 @@ def build_execution_adapter() -> NativeCliSubprocessAdapter:
             provider="qoder",
             session_filename=".qoder-session",
             command_builder=_build_command,
-            env_builder=_build_env,
+            observer=observe_qoder_output,
             output_kind="jsonl",
             mode="qoder_run",
             start_failed_reason="qoder_run_start_failed",
@@ -25,35 +33,168 @@ def build_execution_adapter() -> NativeCliSubprocessAdapter:
             run_error_reason="qoder_run_error",
             complete_reason="qoder_run_stop",
             process_exit_complete_reason="qoder_run_exit",
+            missing_terminal_reason="qoder_native_terminal_missing",
             timeout_reason="qoder_run_timeout",
+            terminal_on_process_exit=False,
         )
     )
 
 
 def _build_command(request: NativeCliExecutionRequest) -> list[str]:
-    return [
-        *provider_start_parts("qoder"),
-        "--bare",
-        "--output-format",
-        "stream-json",
-        "--session-id",
-        request.job.job_id,
-        request.prompt,
-    ]
+    base = provider_start_parts("qoder")
+    command = [*base]
+    if not _has_option(base, "--config-dir"):
+        command.extend(["--config-dir", str(_qoder_config_dir(request))])
+    if not any(_has_option(base, option) for option in _PERMISSION_OPTIONS):
+        permission_mode = str(
+            request.session_data.get("qoder_headless_permission_mode") or "dont_ask"
+        ).strip()
+        if permission_mode not in {
+            "accept_edits",
+            "auto",
+            "bypass_permissions",
+            "default",
+            "dont_ask",
+            "plan",
+        }:
+            permission_mode = "dont_ask"
+        command.extend(["--permission-mode", permission_mode])
+    command.extend(
+        [
+            "-w",
+            str(request.work_dir),
+            "-p",
+            "--output-format",
+            "stream-json",
+            "--session-id",
+            _qoder_session_id_for_job(request.job.job_id),
+            request.prompt,
+        ]
+    )
+    return command
 
 
-def _build_env(request: NativeCliExecutionRequest) -> dict[str, str]:
-    qoder_home = _state_path(request, "qoder_home", fallback="home")
-    qoder_home.mkdir(parents=True, exist_ok=True)
-    return {"QODER_HOME": str(qoder_home)}
-
-
-def _state_path(request: NativeCliExecutionRequest, key: str, *, fallback: str) -> Path:
-    raw = str(request.session_data.get(key) or "").strip()
+def _qoder_config_dir(request: NativeCliExecutionRequest) -> Path:
+    raw = str(
+        request.session_data.get("qoder_config_dir")
+        or request.session_data.get("qoder_home")
+        or ""
+    ).strip()
     if raw:
-        return Path(raw).expanduser()
-    state_dir = Path(str(request.session_data.get("qoder_state_dir") or request.work_dir / ".ccb" / "qoder")).expanduser()
-    return state_dir / fallback
+        path = Path(raw).expanduser()
+    else:
+        state_dir = Path(
+            str(
+                request.session_data.get("qoder_state_dir")
+                or request.work_dir / ".ccb" / "qoder"
+            )
+        ).expanduser()
+        path = state_dir / "home"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
 
 
-__all__ = ["build_execution_adapter"]
+def _qoder_session_id_for_job(job_id: str) -> str:
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"ccb:qoder:{job_id}"))
+
+
+def observe_qoder_output(path: Path) -> NativeCliObservation:
+    if not path or not path.is_file():
+        return NativeCliObservation()
+    try:
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError as exc:
+        return NativeCliObservation(error=f"read_stdout_failed:{exc}")
+
+    assistant_text = ""
+    result_text = ""
+    finished = False
+    finish_reason = ""
+    turn_ref: str | None = None
+    error = ""
+    intermediate = False
+
+    for line in lines:
+        try:
+            event = json.loads(line)
+        except (json.JSONDecodeError, TypeError):
+            continue
+        if not isinstance(event, dict):
+            continue
+        event_type = str(event.get("type") or "").strip().lower()
+        turn_ref = turn_ref or _text_value(event.get("session_id"))
+
+        if event_type == "system":
+            intermediate = True
+            continue
+        if event_type == "assistant":
+            event_error = _text_value(event.get("error"))
+            text = _message_text(event.get("message"))
+            if event_error:
+                error = text or event_error
+                continue
+            if text:
+                assistant_text = text
+            continue
+        if event_type != "result":
+            continue
+
+        finished = True
+        native_reason = _text_value(event.get("stop_reason")) or _text_value(
+            event.get("subtype")
+        )
+        if bool(event.get("is_error")):
+            error = _text_value(event.get("result")) or native_reason or "qoder_result_error"
+            continue
+        result_text = _text_value(event.get("result"))
+        normalized_reason = native_reason.strip().lower().replace("-", "_")
+        finish_reason = (
+            "completed" if normalized_reason in _NORMAL_STOP_REASONS else normalized_reason
+        )
+        if not finish_reason:
+            finish_reason = "completed"
+
+    return NativeCliObservation(
+        text=result_text or assistant_text,
+        finished=finished,
+        finish_reason=finish_reason,
+        turn_ref=turn_ref,
+        error=error,
+        intermediate=intermediate,
+    )
+
+
+def _message_text(value: object) -> str:
+    if not isinstance(value, dict):
+        return ""
+    return _content_text(value.get("content"))
+
+
+def _content_text(value: object) -> str:
+    if isinstance(value, str):
+        return value
+    if isinstance(value, list):
+        return "".join(_content_text(item) for item in value)
+    if not isinstance(value, dict):
+        return ""
+    if str(value.get("type") or "").strip().lower() in {"text", "output_text"}:
+        return _text_value(value.get("text"))
+    for key in ("text", "content", "message"):
+        text = _content_text(value.get(key))
+        if text:
+            return text
+    return ""
+
+
+def _text_value(value: Any) -> str:
+    return value.strip() if isinstance(value, str) else ""
+
+
+def _has_option(parts: list[str], option: str) -> bool:
+    return any(part == option or part.startswith(f"{option}=") for part in parts)
+
+
+__all__ = [
+    "build_execution_adapter",
+    "observe_qoder_output",
+]

@@ -123,9 +123,13 @@ result streams:
    `step_finish` with `part.reason=stop`.
 8. Qwen asks parse `stream-json` or JSON output and terminalize from
    result/final assistant envelopes.
-9. Cursor asks parse `agent --print --output-format stream-json` envelopes and
+9. Qoder asks use documented print mode, an agent-local `--config-dir`, and a
+   deterministic UUID session id. Only a non-error native `result` envelope
+   with a normal stop reason completes the job; auth/error envelopes and a
+   clean exit without `result` fail closed.
+10. Cursor asks parse `agent --print --output-format stream-json` envelopes and
    terminalize from final result/completion events.
-10. Copilot asks parse `--output-format json` JSONL in prompt mode and
+11. Copilot asks parse `--output-format json` JSONL in prompt mode and
    terminalize from the final prompt-mode result event.
 11. Crush asks collect stdout from `crush run --quiet` and trust process exit;
    source evidence shows `crush run` itself exits only after a matching

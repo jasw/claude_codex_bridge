@@ -220,6 +220,30 @@ CCB direction:
 - Consider a visible pane later using `--json-file` dual output, but do not
   make that the first completion authority.
 
+## Qoder CLI
+
+- Official package: `@qoder-ai/qodercli`; isolated npm metadata and install on
+  2026-07-22 resolved version `1.1.2`, binary `qodercli`, Node `>=20`.
+- Official print-mode contract uses `-p` / `--print` with
+  `--output-format text|json|stream-json`; `-w` selects the workspace,
+  `--config-dir` selects the user-level config root, and `--permission-mode`
+  controls headless authorization.
+- Real `qodercli 1.1.2 --help` also exposes `--session-id`, but a direct probe
+  proved it accepts UUIDs only. A CCB `job_*` identifier is rejected before
+  execution, so CCB derives a deterministic UUIDv5 from each job id.
+- A credential-free real print probe emitted `system/init`, an assistant error,
+  and `result` with `is_error=true` for missing login. CCB uses a Qoder-specific
+  stream observer so this becomes a failed native run rather than a successful
+  reply containing the login error.
+- Both visible and headless launches use the same exact agent-local
+  `--config-dir`. CCB does not depend on undocumented `QODER_HOME` behavior.
+  Users may authenticate through the visible managed pane or provide the
+  documented `QODER_PERSONAL_ACCESS_TOKEN`; CCB does not acquire or inspect it.
+- Official references:
+  [Using CLI](https://docs.qoder.com/en/cli/using-cli),
+  [Quick Start](https://docs.qoder.com/en/cli/quick-start), and
+  [Permissions](https://docs.qoder.com/en/cli/permissions).
+
 ## GitHub Copilot CLI
 
 Observed upstream/local lab:

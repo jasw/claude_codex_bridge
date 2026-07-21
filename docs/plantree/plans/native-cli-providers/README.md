@@ -11,9 +11,10 @@ coding CLIs:
 - `deepseek`: DeepSeek-oriented Deep Code CLI, command `deepcode`.
 - `mimo`: Xiaomi MiMo Code CLI, command `mimo`.
 
-Next-wave research also covers five requested CLIs:
+Next-wave research also covers additional requested CLIs:
 
 - `qwen`: Qwen Code CLI, command `qwen`.
+- `qoder`: Qoder CLI, command `qodercli`.
 - `copilot`: GitHub Copilot CLI, command `copilot`.
 - `cursor`: Cursor Agent CLI, command `agent`.
 - `kiro`: Kiro CLI, command `kiro-cli`.
@@ -72,13 +73,13 @@ override the shipped contracts.
 In scope:
 
 - Provider keys `kimi`, `deepseek`, and `mimo`.
-- Next-wave provider keys `qwen`, `copilot`, `cursor`, `kiro`, `crush`,
+- Next-wave provider keys `qwen`, `qoder`, `copilot`, `cursor`, `kiro`, `crush`,
   `pi`, and `grok`, plus Z.ai CLI provider key `zai`.
 - Default executables `kimi`, `deepcode`, and `mimo`.
-- Default next-wave executables `qwen`, `copilot`, `agent`, `kiro-cli`,
+- Default next-wave executables `qwen`, `qodercli`, `copilot`, `agent`, `kiro-cli`,
   `crush`, `pi`, `grok`, and `zai`.
 - `KIMI_START_CMD`, `DEEPSEEK_START_CMD`, and `MIMO_START_CMD` overrides.
-- Next-wave command overrides `QWEN_START_CMD`, `COPILOT_START_CMD`,
+- Next-wave command overrides `QWEN_START_CMD`, `QODER_START_CMD`, `COPILOT_START_CMD`,
   `CURSOR_START_CMD`, `KIRO_START_CMD`, `CRUSH_START_CMD`,
   `GROK_START_CMD`, and `PI_START_CMD`; Z.ai uses `ZAI_START_CMD`.
 - Managed tmux pane startup using the existing simple tmux runtime path.

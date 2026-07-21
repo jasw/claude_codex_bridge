@@ -726,6 +726,20 @@ layouts must validate the exact non-symlinked root, project directory, session
 id, and wire path before exact-session restart; mismatched or missing roots
 fail fresh rather than falling back to a workdir-global session.
 
+### 10.5 Qoder
+
+Qoder jobs use the documented print-mode stream contract with an exact
+agent-local `--config-dir`, `-w <workspace>`, `-p`,
+`--output-format stream-json`, and a deterministic UUID `--session-id`. CCB job
+ids must not be passed directly because Qoder rejects non-UUID session ids.
+
+Completion authority is a Qoder `result` envelope with `is_error=false` and a
+normal stop reason. Assistant envelopes may provide the latest reply text but
+do not terminalize by themselves. `is_error=true`, assistant error fields,
+authentication failures, non-normal result reasons, nonzero exit, and a clean
+process exit without a result envelope all fail or remain incomplete; they may
+not be returned as successful assistant text.
+
 ## 11. Placement In Code
 
 ### 11.1 Completion Manifest Layer
@@ -828,7 +842,17 @@ Add tests for:
 - native in-progress evidence preventing completed pane override
 - exact-session persistence, root drift, and symlink rejection for both layouts
 
-### 12.5 Cross-Provider Reliability
+### 12.5 Qoder
+
+Add tests for:
+
+- documented print/config/workspace arguments and UUID-only session identity
+- result/assistant de-duplication and successful result terminalization
+- authentication and `is_error=true` envelopes
+- clean exit without a result envelope
+- visible/headless config-root consistency and explicit user overrides
+
+### 12.6 Cross-Provider Reliability
 
 Add execution-layer tests for:
 

@@ -181,6 +181,35 @@ def test_provider_home_classifier_preserves_secret_precedence_and_unknowns(tmp_p
     assert unknown.provider == 'unknownai'
 
 
+def test_qoder_config_auth_root_is_secret_and_cache_is_rebuildable(tmp_path: Path) -> None:
+    provider_home = tmp_path / 'repo' / '.ccb' / 'agents' / 'qoder1' / 'provider-state' / 'qoder' / 'home'
+    auth_path = provider_home / '.auth' / 'session.json'
+    cache_path = provider_home / '.cache' / 'endpoint-cache.json'
+
+    auth = classify_provider_home(
+        auth_path,
+        'agents/qoder1/provider-state/qoder/home/.auth/session.json',
+        'qoder',
+        'qoder1',
+        ('.auth', 'session.json'),
+        size=2,
+        root_kind='project',
+    )
+    cache = classify_provider_home(
+        cache_path,
+        'agents/qoder1/provider-state/qoder/home/.cache/endpoint-cache.json',
+        'qoder',
+        'qoder1',
+        ('.cache', 'endpoint-cache.json'),
+        size=2,
+        root_kind='project',
+    )
+
+    assert auth.storage_class.value == 'secret'
+    assert auth.reason == 'qoder_auth_state'
+    assert cache.storage_class.value == 'rebuildable_cache'
+
+
 def test_storage_classification_keeps_provider_authority_and_cache_separate(tmp_path: Path) -> None:
     project_root = tmp_path / 'repo'
     ccb = project_root / '.ccb'

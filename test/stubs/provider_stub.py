@@ -1201,8 +1201,18 @@ def _native_cli_prompt(provider: str, argv: list[str]) -> str | None:
         return _mimo_run_prompt(argv)
     if provider == "qwen" and "--bare" in argv:
         return _last_positional(argv, options_with_values={"--output-format", "--session-id", "--model"})
-    if provider == "qoder" and "--bare" in argv:
-        return _last_positional(argv, options_with_values={"--output-format", "--session-id", "--model"})
+    if provider == "qoder" and "-p" in argv:
+        return _last_positional(
+            argv,
+            options_with_values={
+                "--config-dir",
+                "--output-format",
+                "--permission-mode",
+                "--session-id",
+                "--model",
+                "-w",
+            },
+        )
     if provider == "cursor" and "--print" in argv:
         return _last_positional(argv, options_with_values={"--output-format", "--workspace", "--model"})
     if provider == "copilot" and "-p" in argv:
@@ -1375,6 +1385,52 @@ def _handle_native_cli_run(provider: str, argv: list[str], delay_s: float) -> in
                     "stopReason": "Cancelled" if mode == "cancelled" else "EndTurn",
                     "sessionId": f"ses-grok-{req_id}",
                     "requestId": f"req-grok-{req_id}",
+                },
+                ensure_ascii=True,
+            ),
+            flush=True,
+        )
+        return 0
+    if provider == "qoder":
+        session_id = f"11111111-1111-5111-8111-{abs(hash(req_id)) % 10**12:012d}"
+        print(
+            json.dumps(
+                {
+                    "type": "system",
+                    "subtype": "init",
+                    "session_id": session_id,
+                    "permissionMode": "dontAsk",
+                },
+                ensure_ascii=True,
+            ),
+            flush=True,
+        )
+        if reply:
+            print(
+                json.dumps(
+                    {
+                        "type": "assistant",
+                        "message": {
+                            "role": "assistant",
+                            "content": [{"type": "text", "text": reply}],
+                        },
+                        "session_id": session_id,
+                    },
+                    ensure_ascii=True,
+                ),
+                flush=True,
+            )
+        if mode == "no_terminal":
+            return 0
+        print(
+            json.dumps(
+                {
+                    "type": "result",
+                    "subtype": "success",
+                    "is_error": False,
+                    "result": reply,
+                    "stop_reason": "end_turn",
+                    "session_id": session_id,
                 },
                 ensure_ascii=True,
             ),
