@@ -77,6 +77,9 @@ Out of scope:
 - [decisions/001-cancelled-chain-child-continuation.md](decisions/001-cancelled-chain-child-continuation.md):
   R4 policy for cancelled child results, parent continuation, control notices,
   and terminal races.
+- [decisions/002-claude-queued-prompt-activation.md](decisions/002-claude-queued-prompt-activation.md):
+  R5 policy separating enqueue, dequeue observation, exact prompt activation,
+  and request anchoring.
 - [history/r1-r2-validation-2026-07-20.md](history/r1-r2-validation-2026-07-20.md):
   focused, full-suite, and external real-project evidence for landed R1/R2.
 - [history/r11-provider-extension-validation-2026-07-20.md](history/r11-provider-extension-validation-2026-07-20.md):

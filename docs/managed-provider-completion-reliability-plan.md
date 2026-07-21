@@ -672,6 +672,24 @@ Required:
 
 Claude-specific session-boundary logic may still provide stronger observed completion than Gemini, but must no longer rely on hook exactness alone.
 
+Claude queued prompt delivery has a separate activation boundary. A
+`queue-operation/enqueue` carrying the exact outer request anchor proves only
+that Claude accepted the command into its queue. A content-free
+`queue-operation/dequeue` is uncorrelated diagnostic evidence. The queued job
+becomes active only when Claude replays the exact prompt as
+`attachment/queued_command.prompt`; a normal top-level user prompt remains the
+idle-REPL activation path. `anchor_seen` may be emitted only after one of those
+exact activation records, except for the explicit `no_wrap` contract.
+
+Until activation, assistant text and UUIDs, tool-only and subagent events,
+system turn boundaries and API errors, hook artifacts, and pane-idle recovery
+must not contribute completion evidence to the queued job. Enqueue, dequeue
+observation, activation, and anchoring must persist independently with the
+reader cursor across daemon restart. Session rotation clears those correlated
+facts and requires activation in the new top-level session. Pane dispatch,
+elapsed time, apparent FIFO order, or an idle prompt may not substitute for
+exact queued-command identity.
+
 ## 11. Placement In Code
 
 ### 11.1 Completion Manifest Layer

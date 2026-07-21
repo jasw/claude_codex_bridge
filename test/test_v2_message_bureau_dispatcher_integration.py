@@ -3883,13 +3883,13 @@ def test_job_heartbeat_terminalizes_after_three_internal_no_progress_intervals_w
     assert heartbeat_path.exists() is False
 
 
-def test_dispatcher_delivers_failed_reply_to_sender_when_claude_hits_pre_anchor_api_error(
+def test_dispatcher_delivers_failed_reply_to_sender_when_claude_hits_anchored_api_error(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
     from provider_execution import claude as claude_adapter_module
 
-    project_root = tmp_path / 'repo-claude-pre-anchor-api-error'
+    project_root = tmp_path / 'repo-claude-anchored-api-error'
     ctx = _bootstrap_test_project(project_root)
     layout = PathLayout(project_root)
     config = _provider_config('codex', 'claude', 'gemini')
@@ -3917,6 +3917,11 @@ def test_dispatcher_delivers_failed_reply_to_sender_when_claude_hits_pre_anchor_
         def __init__(self, *args, **kwargs) -> None:
             del args, kwargs
             self._events = [
+                {
+                    'role': 'user',
+                    'text': f'CCB_REQ_ID: {job_id}',
+                    'entry_type': 'user',
+                },
                 {
                     'role': 'system',
                     'text': '',

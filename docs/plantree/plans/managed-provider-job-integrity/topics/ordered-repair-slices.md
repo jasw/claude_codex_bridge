@@ -169,6 +169,8 @@ trace, and external source-runtime tests.
 
 ## R5: Claude Queued-Prompt Activation
 
+Status: verified by the atomic commit selected by `Repair-Slice: R5`.
+
 Finding:
 
 - PR259 treats `queue-operation/enqueue` as a synthetic user anchor.
@@ -178,20 +180,36 @@ Finding:
 
 Correction boundary:
 
-- Represent `enqueued`, `activated/dequeued`, and `anchored` separately.
+- Represent `enqueued`, dequeue observation, `activated`, and `anchored`
+  separately.
 - Do not accept assistant content or terminal evidence for the new job until
   activation is correlated to that prompt.
 - Fence pre-anchor assistant UUID and subagent events from the new turn.
 
+Frozen decision (2026-07-21):
+
+- Enqueue proves delivery only. A bare dequeue has no prompt identity and is
+  diagnostic only.
+- A normal top-level user record or exact
+  `attachment/queued_command.prompt` carrying the current outer request ID is
+  activation authority. Tool-result, meta, and subagent user records are not.
+- Pane dispatch never synthesizes activation or `ANCHOR_SEEN`. Pre-activation
+  assistant, tool, subagent, system, hook, API-error, and idle-pane evidence is
+  fenced.
+- Queue lifecycle state survives daemon restart with the reader cursor and is
+  cleared by top-level session rotation. See
+  [Decision 002](../decisions/002-claude-queued-prompt-activation.md).
+
 Required evidence:
 
 - Old busy turn plus one queued prompt.
-- Multiple queued prompts with FIFO activation.
+- Multiple queued prompts with exact and non-matching activation replay.
 - Tool-only old turn, subagent records, restart/catch-up, and session rotation.
 - No old assistant content or terminal event enters the new reply.
 
-Exit gate: replace, rather than incrementally patch, PR259's enqueue-time
-anchor model.
+Exit gate: satisfied by replacing PR259's enqueue-time anchor model with exact
+activation correlation, preserved counterexamples, a real busy-pane Claude
+run, and cumulative/full regression gates.
 
 ## R6: Kimi Exact-Session Resume
 

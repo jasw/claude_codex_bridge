@@ -6,7 +6,7 @@ Date: 2026-07-21
 
 - Current status: In progress; R1/R2 landed and the R11 provider-extension
   candidate is committed on its qualified branch, the strict serial closure
-  goal is active, and R3/R4 are verified atomic commits.
+  goal is active, and R3/R4/R5 are verified atomic commits.
 - Work mode: execute-ready.
 - Review baseline: PR257 is merged; PR258, PR259, PR264, PR265, and PR266 are
   open and reported `UNSTABLE`; Issues 260-263 remain open as of 2026-07-21.
@@ -20,8 +20,13 @@ Date: 2026-07-21
   complete Python remainder (`5261 passed`, `2 skipped`, one adjudicated
   baseline race deselected); see the
   [queue evidence](history/reviewed-repair-queue-evidence.md#r4-cancellation-and-callback-terminalization).
-- Next target: freeze R5's queued-prompt activation authority and reproduce
-  the cross-turn replay. Every later row remains locked.
+  R5 then passed `98` Claude tests, the `555`-test cumulative gate, and the
+  complete `5269`-test Python remainder, and a real busy-pane Claude run
+  returned only the exactly activated queued job. See the
+  [R5 evidence](history/reviewed-repair-queue-evidence.md#r5-claude-queued-prompt-activation).
+- Next target: freeze R6's exact Kimi session-ownership authority and preserve
+  its first-launch and same-workdir counterexamples. Every later row remains
+  locked.
 
 ## Done
 
@@ -52,36 +57,37 @@ Date: 2026-07-21
   ordinary cancellations remain visible consumed control notices, partial
   replies stay deliverable, and the first terminal writer wins cancellation
   races.
+- Verified R5 as the atomic commit selected by `Repair-Slice: R5`: enqueue and
+  bare dequeue remain non-activating, exact queued-command replay or a normal
+  top-level user prompt emits the anchor, and old-turn output cannot complete
+  the queued job.
 
 ## In Progress
 
-No repair slice is currently `in_progress`. R5 is the only next eligible row;
+No repair slice is currently `in_progress`. R6 is the only next eligible row;
 PR258, PR259, PR265, and PR266 remain held from merge.
 
 ## Next
 
-1. **R5: Claude queued-prompt activation.** Replace PR259's enqueue-time
-   synthetic anchor with explicit queued, activated, and anchored phases; prove
-   old-turn output cannot complete the new job.
-2. **R6: Kimi exact-session resume.** Replace PR258's default `--continue`
+1. **R6: Kimi exact-session resume.** Replace PR258's default `--continue`
    behavior with CCB-owned exact session identity, fresh first launch, version
    tolerant flags, and same-workdir multi-agent isolation.
-3. **R7: Correlated execution-state model.** Redesign PR265 around an agreed
+2. **R7: Correlated execution-state model.** Redesign PR265 around an agreed
    phase vocabulary, contradictory-evidence `unknown`, attempt/inbound/lease/
    provider correlation, and structured queue, CLI, sidebar, and mobile output.
-4. **R8: Stuck inbound detection.** Implement Issue260 on top of R7 using
+3. **R8: Stuck inbound detection.** Implement Issue260 on top of R7 using
    correlated running-job, active-attempt, provider-idle, and missing-terminal
    evidence. Ship diagnostics first; keep automatic recovery disabled.
-5. **R9: Active-job correction capability.** Design Issue261 only after R4 and
+4. **R9: Active-job correction capability.** Design Issue261 only after R4 and
    R7 establish terminal and phase authority. Target the exact job, preserve
    lineage, define provider capability/refusal, and cover completion races.
-6. **R12: Generic projected-asset ownership hardening.** Inventory remaining
+5. **R12: Generic projected-asset ownership hardening.** Inventory remaining
    `allow_unmarked_replace=True` call sites and migrate them to marker-first
    ownership without breaking packaged CCB skill upgrades.
-7. **R11-C: Copilot plugin/config projection.** Freeze an entry-level ownership
+6. **R11-C: Copilot plugin/config projection.** Freeze an entry-level ownership
    schema and offline/no-login fixture, then project only owned plugin metadata
    while preserving credentials, sessions, permissions, cache, and local data.
-8. **R10: Integrated qualification and release decision.** Run focused,
+7. **R10: Integrated qualification and release decision.** Run focused,
    full Python/Rust/client, clean current-main, external source-runtime, and
    real Codex/Claude project gates; prepare evidence-backed upstream
    dispositions without pushing, merging, closing, publishing, or releasing.

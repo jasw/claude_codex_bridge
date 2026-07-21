@@ -101,3 +101,72 @@ lineage, callback continuation, repeat idempotency, and completion-race
 authority now fail closed around the first persisted terminal job.
 
 Next unlocked row: R5 Claude queued-prompt activation.
+
+## R5: Claude Queued-Prompt Activation
+
+Slice: R5 Claude queued-prompt activation
+
+Commit selector / hash: commit subject `fix: bind Claude queued prompts to
+activation` with trailer `Repair-Slice: R5`
+
+Upstream item: PR259 remained open at unchanged reviewed head `c4bd9427` and
+reported `UNSTABLE` during the 2026-07-21 preflight.
+
+Baseline: R4 commit `38645d475ab2283ee88bd11531727d8f2e7319ad` on
+`origin/main` `aed27abf`.
+
+Counterexample: with seven preserved R5 tests added before the runtime repair,
+the focused gate reported `7 failed`. The failures proved pane dispatch and
+enqueue synthesized activation too early, old main/subagent/tool-only output
+could bind the queued job, exact multi-prompt replay was not required, queue
+state did not survive restart/rotation correctly, and pre-activation hook
+output could terminalize the new job.
+
+Frozen authority: [Decision 002](../decisions/002-claude-queued-prompt-activation.md)
+separates enqueue, bare dequeue observation, exact activation, and anchoring.
+Only a normal top-level user prompt or exact
+`attachment/queued_command.prompt` carrying the current outer request ID may
+activate; tool-result, meta, subagent, assistant, system, hook, pane-idle, and
+API-error records are fenced before that point.
+
+Focused tests: all Claude-specific files passed `98` tests. The combined
+Claude/execution-service/message-bureau gate passed `260` tests. The cumulative
+R11/R3/R4 provider projection, instruction, dispatcher, control-queue,
+ProjectView, cancel, and recovery gate passed all `555` collected tests.
+
+Full/client tests: the first complete run reached `5269 passed`, `2 skipped`,
+and the one adjudicated lifecycle-stopping socket-race deselection before the
+unrelated `restart_replay_pass` fake-runtime scenario missed terminal scheduler
+authority after 96 activations. The exact scenario immediately passed alone
+(`1 passed in 33.09s`). A second complete remainder, deselecting that
+independently green scenario and the existing socket race, passed `5269`
+tests with `2 skipped` and `2 deselected` in `951.69s`. No Rust, Flutter,
+sidebar, or mobile consumer changed.
+
+Real project evidence: external opened Claude project
+`/home/bfly/yunwei/test_ccb2/r5-claude-queue-runtime-20260721-RyGaHI` used
+Claude Code 2.1.206 with displayed model `DeepSeek-V4-pro`. While
+`sleep 25; echo OLD_TURN_SENTINEL` was visibly running, CCB submitted
+`job_aadf1ff01a30`. Persisted activation state recorded enqueue, exact
+activation source UUID `6c43ca6c-6d05-4ccf-a984-8a5c74902706`, and one
+anchor. One attempt and one reply completed with observed reason
+`assistant_end_turn`; the reply was exactly `NEW_QUEUED_SENTINEL_2` and did
+not contain the old sentinel. Compact artifact: `r5-runtime-result.json` in
+that external project.
+
+Source immutability: candidate binary-diff SHA256 remained
+`7a5f721b34fce861551700524338a90468faba31361777727bf290044aa54df2`
+before and after the mounted run; the untracked-set SHA256 remained
+`1ccb87128ffec34330cbbf0afa30fa5f2bc91ce31cd923c17e1e90033bbf3b11`.
+
+Cleanup: candidate `ccb_test kill` returned `kill_status: ok` and left the
+project `unmounted`. The ccbd and tmux sockets were absent, and recorded keeper
+PID 708543, daemon PID 708595, and Claude PID 708960 no longer existed.
+
+Remaining risk: the exact replay contract depends on Claude retaining its
+current `attachment/queued_command.prompt` record. Unknown future record
+shapes fail closed and leave the job pending rather than accepting old output.
+The unrelated restart-replay fake-runtime timing miss remains a test-harness
+flakiness signal; its exact isolated pass is recorded rather than hidden.
+
+Next unlocked row: R6 Kimi exact-session resume.

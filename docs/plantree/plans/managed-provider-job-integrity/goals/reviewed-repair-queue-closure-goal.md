@@ -87,7 +87,7 @@ Allowed states: `waiting`, `ready`, `in_progress`, `blocked`,
 | 0 | R11 completed provider extension candidate | PR257 follow-up | `verified_commit` (`5c1ff83a`) | Goal file accepted and baseline refreshed |
 | 1 | R3 inbound completion routing documentation | PR264 | `verified_commit` (`Repair-Slice: R3`) | Seq 0 clean and recorded |
 | 2 | R4 cancellation and callback terminalization | PR266, Issue263 | `verified_commit` (`Repair-Slice: R4`) | Seq 1 verified commit |
-| 3 | R5 Claude queued-prompt activation | PR259 | `waiting` | Seq 2 verified commit |
+| 3 | R5 Claude queued-prompt activation | PR259 | `verified_commit` (`Repair-Slice: R5`) | Seq 2 verified commit |
 | 4 | R6 Kimi exact-session resume | PR258 | `waiting` | Seq 3 verified commit |
 | 5 | R7 correlated execution-state model | PR265, Issue262 | `waiting` | Seq 4 verified commit |
 | 6 | R8 stuck inbound detection | Issue260 | `waiting` | Seq 5 verified commit |
