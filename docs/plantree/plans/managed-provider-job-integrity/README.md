@@ -1,6 +1,6 @@
 # Managed Provider And Job Integrity
 
-Date: 2026-07-20
+Date: 2026-07-21
 
 ## Purpose
 
@@ -69,6 +69,9 @@ Out of scope:
 - [topics/provider-extension-inheritance-audit.md](topics/provider-extension-inheritance-audit.md):
   official capability/storage evidence, same-defect classification, and
   provider follow-up order.
+- [goals/reviewed-repair-queue-closure-goal.md](goals/reviewed-repair-queue-closure-goal.md):
+  strict serial goal for repairing, testing, and committing every remaining
+  reviewed PR/issue before integrated qualification.
 - [open-questions.md](open-questions.md): decisions that must be frozen before
   their owning slice starts.
 - [history/r1-r2-validation-2026-07-20.md](history/r1-r2-validation-2026-07-20.md):
@@ -80,10 +83,12 @@ Out of scope:
 
 R1 and R2 may land in one main-based PR because they share the same plugin
 authority/writable-state boundary and the user explicitly requested a
-synchronized fix. Later runtime slices are serial. A later slice may be
-analyzed while an earlier slice is under review, but production edits start
-only after the previous slice has landed or has an explicit defer decision
-recorded here. Every slice must:
+synchronized fix. Later runtime slices are serial. By default, production
+edits start only after the previous slice has landed or has an explicit defer
+decision recorded here. When the closure goal above is active, use its local
+stack rule instead: the previous row must have a verified atomic commit before
+the next local slice starts, but that commit is not yet a merge or release.
+A defer or blocker does not unlock the next row. Every slice must:
 
 1. Reproduce the failure or preserve the review counterexample as a test.
 2. Freeze ownership and terminal-state semantics before implementation.
@@ -91,5 +96,5 @@ recorded here. Every slice must:
 4. Pass focused tests after merging the latest `main` into the candidate.
 5. Run source validation only through `/home/bfly/yunwei/ccb_source/ccb_test`
    from `/home/bfly/yunwei/test_ccb2` when runtime evidence is required.
-6. Record landed commit, verification, remaining risk, and next target before
-   advancing the roadmap.
+6. Record the verified commit, verification, remaining risk, and next target
+   before advancing the roadmap; merge and release remain separate gates.

@@ -1,21 +1,22 @@
 # Managed Provider And Job Integrity Roadmap
 
-Date: 2026-07-20
+Date: 2026-07-21
 
 ## Status Summary
 
 - Current status: In progress; R1/R2 landed and the R11 provider-extension
-  candidate is committed on its qualified branch.
+  candidate is committed on its qualified branch. The strict serial closure
+  goal is active.
 - Work mode: execute-ready.
 - Review baseline: PR257 is merged; PR258, PR259, PR264, PR265, and PR266 are
-  open and reported `UNSTABLE`; Issues 260-263 remain open as of 2026-07-20.
+  open and reported `UNSTABLE`; Issues 260-263 remain open as of 2026-07-21.
 - Last verified: R1/R2 landed as `06e1a46a` through merge `aed27abf`. R11 passed
   `282` focused tests, `5389` tests with one adjudicated baseline shutdown test
   excluded, and real clean-home Claude, Gemini, and Droid checks. The external
   project was cleanly unmounted. See the
   [R11 validation record](history/r11-provider-extension-validation-2026-07-20.md).
-- Next target: integrate the committed branch after an explicit push/merge
-  instruction.
+- Next target: activate R3, freeze its documentation-only acceptance boundary,
+  and keep every later row locked.
 
 ## Done
 
@@ -90,8 +91,8 @@ Date: 2026-07-20
 
 ## Advancement Gate
 
-Only one runtime slice may be `In Progress`. Before advancing, update this file
-with the landed commit and link durable evidence from history or the owning
-topic. A PR's own tests passing is necessary but not sufficient; its negative
-counterexample, contract update, merged-main tests, and applicable real runtime
-test must also pass.
+Only one repair slice may be `In Progress`. When the closure goal is active,
+advance only after the current row has a verified atomic commit and linked
+durable evidence; defer/block does not count as completion. A PR's own tests
+passing is necessary but not sufficient: its negative counterexample, contract
+update, current-main tests, and applicable real runtime test must also pass.

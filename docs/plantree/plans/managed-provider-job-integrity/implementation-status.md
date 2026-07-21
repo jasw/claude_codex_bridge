@@ -1,16 +1,17 @@
 # Managed Provider And Job Integrity Status
 
-Date: 2026-07-20
+Date: 2026-07-21
 
 ## Current Phase
 
-R11 provider-extension candidate committed on branch
+R11 provider-extension candidate committed and serial closure goal activated
+on branch
 `fix/unified-provider-extension-inheritance`, based on `origin/main` at
 `aed27abf` (merged PR269).
 
 ## Next Target
 
-Integrate the qualified branch only after an explicit push/merge instruction.
+Activate R3 and freeze its documentation-only behavior and acceptance gate.
 
 ## Last Landed
 
@@ -18,7 +19,9 @@ R1/R2 landed as `06e1a46a` through merge `aed27abf`.
 
 ## Active TODO
 
-1. Push or merge the committed candidate when integration is requested.
+1. Change Seq 1 / R3 to `in_progress`; keep every later row locked.
+2. Reproduce PR264's wording counterexamples in static tests.
+3. Correct only the inbound completion routing documentation and templates.
 
 ## Blocked By
 
