@@ -17,6 +17,7 @@ from ccbd.reload_drain_status import reload_drain_revision, reload_drain_status_
 from ccbd.project_focus.tmux import backend_for_namespace, refresh_sidebar_panes
 from ccbd.services.dispatcher_runtime import comms_recoverability_for_job
 from ccbd.system import parse_utc_timestamp, utc_now
+from execution_phase import derive_execution_phase, execution_phase_evidence_from_records
 from message_bureau import CallbackEdgeState
 from provider_backends.codex.launcher_runtime.command_runtime.home import resolve_codex_home_layout
 from provider_pane_status.codex_pane import (
@@ -111,6 +112,7 @@ class _ProjectViewBuildContext:
     tmux_snapshot: dict[str, dict[str, object]] = field(default_factory=dict)
     pane_text_by_id: dict[str, str | None] = field(default_factory=dict)
     provider_activity_by_agent: dict[str, object | None] = field(default_factory=dict)
+    execution_provider_by_job_id: dict[str, tuple[str | None, bool]] = field(default_factory=dict)
 
     def namespace_backend(self):
         if self.namespace is None or self.deps.namespace_controller is None:
@@ -190,12 +192,20 @@ class _CommsLookup:
     attempt_store: object | None
     reply_store: object | None
     message_store: object | None
+    inbound_store: object | None
+    mailbox_store: object | None
+    lease_store: object | None
+    snapshot_writer: object | None
     attempts_by_job_id: dict[str, object | None] = field(default_factory=dict)
     attempts_by_attempt_id: dict[str, object | None] = field(default_factory=dict)
     attempts_by_message_id: dict[tuple[str, str], object | None] = field(default_factory=dict)
     latest_attempt_by_message_agent: dict[tuple[str, str], object | None] = field(default_factory=dict)
     replies_by_reply_id: dict[str, object | None] = field(default_factory=dict)
     messages_by_message_id: dict[str, object | None] = field(default_factory=dict)
+    inbound_by_attempt: dict[tuple[str, str], object | None] = field(default_factory=dict)
+    mailbox_by_agent: dict[str, object | None] = field(default_factory=dict)
+    lease_by_agent: dict[str, object | None] = field(default_factory=dict)
+    snapshots_by_job_id: dict[str, object | None] = field(default_factory=dict)
 
     def attempt_by_job_id(self, job_id: object) -> object | None:
         key = str(job_id or '').strip()
@@ -258,6 +268,45 @@ class _CommsLookup:
         if key not in self.messages_by_message_id:
             self.messages_by_message_id[key] = _call_store(self.message_store, 'get_latest', key)
         return self.messages_by_message_id[key]
+
+    def inbound_for_attempt(self, agent_name: object, attempt_id: object) -> object | None:
+        agent_key = str(agent_name or '').strip()
+        attempt_key = str(attempt_id or '').strip()
+        if not agent_key or not attempt_key:
+            return None
+        key = (agent_key, attempt_key)
+        if key not in self.inbound_by_attempt:
+            self.inbound_by_attempt[key] = _call_store(
+                self.inbound_store,
+                'get_latest_for_attempt',
+                agent_key,
+                attempt_key,
+            )
+        return self.inbound_by_attempt[key]
+
+    def mailbox_for_agent(self, agent_name: object) -> object | None:
+        key = str(agent_name or '').strip()
+        if not key:
+            return None
+        if key not in self.mailbox_by_agent:
+            self.mailbox_by_agent[key] = _call_store(self.mailbox_store, 'load', key)
+        return self.mailbox_by_agent[key]
+
+    def lease_for_agent(self, agent_name: object) -> object | None:
+        key = str(agent_name or '').strip()
+        if not key:
+            return None
+        if key not in self.lease_by_agent:
+            self.lease_by_agent[key] = _call_store(self.lease_store, 'load', key)
+        return self.lease_by_agent[key]
+
+    def snapshot_for_job(self, job_id: object) -> object | None:
+        key = str(job_id or '').strip()
+        if not key:
+            return None
+        if key not in self.snapshots_by_job_id:
+            self.snapshots_by_job_id[key] = _call_store(self.snapshot_writer, 'load', key)
+        return self.snapshots_by_job_id[key]
 
 
 @dataclass(frozen=True)
@@ -756,6 +805,12 @@ def _agent_view(
         ),
         now=generated_at,
     )
+    if job is not None:
+        context.execution_provider_by_job_id[str(job.job_id)] = _execution_provider_state(
+            provider_activity=provider_activity,
+            provider_runtime_status=provider_runtime_status,
+            job=job,
+        )
     _record_inferred_provider_failure(
         deps=deps,
         agent_name=agent_name,
@@ -807,6 +862,44 @@ def _provider_runtime_source(provider: object, runtime_status: object | None) ->
     if provider_name in {'codex', 'claude'}:
         return f'{provider_name}_runtime'
     return None
+
+
+def _execution_provider_state(
+    *,
+    provider_activity,
+    provider_runtime_status,
+    job,
+) -> tuple[str | None, bool]:
+    runtime_source = str(getattr(provider_runtime_status, 'source', '') or '').strip().lower()
+    if runtime_source in {'pane', 'session'}:
+        state = _execution_provider_state_token(getattr(provider_runtime_status, 'state', None))
+        return (state, True) if state is not None else (None, False)
+    if provider_activity is not None and _provider_activity_is_current(provider_activity, job=job):
+        state = _execution_provider_state_token(getattr(provider_activity, 'state', None))
+        return (state, True) if state is not None else (None, False)
+    return None, False
+
+
+def _execution_provider_state_token(value: object) -> str | None:
+    token = str(value or '').strip().lower()
+    if token in {'active', 'working', 'thinking', 'tool_running'}:
+        return 'active'
+    if token in {'pending', 'start', 'waiting_for_user'}:
+        return 'pending'
+    if token in {'idle', 'free'}:
+        return 'idle'
+    if token in {'failed', 'api_error', 'pane_dead', 'interrupted'}:
+        return 'failed'
+    return None
+
+
+def _provider_activity_is_current(provider_activity, *, job) -> bool:
+    activity_at = str(getattr(provider_activity, 'updated_at', '') or '').strip()
+    job_started_at = str(getattr(job, 'created_at', '') or '').strip()
+    try:
+        return parse_utc_timestamp(activity_at) >= parse_utc_timestamp(job_started_at)
+    except Exception:
+        return False
 
 
 def _codex_runtime_status(
@@ -1493,6 +1586,8 @@ def _comms_view(
                     job,
                     reply_delivery=reply_delivery,
                     configured_agents=configured_agents,
+                    comms_lookup=comms_lookup,
+                    context=context,
                     running_recover_hint=running_recover_hint,
                     lineage_for_recoverability=lineage_for_recoverability,
                 ),
@@ -1575,6 +1670,10 @@ def _comms_lookup(dispatcher) -> _CommsLookup:
         attempt_store=getattr(control, '_attempt_store', None) if control is not None else None,
         reply_store=getattr(control, '_reply_store', None) if control is not None else None,
         message_store=getattr(control, '_message_store', None) if control is not None else None,
+        inbound_store=getattr(control, '_inbound_store', None) if control is not None else None,
+        mailbox_store=getattr(control, '_mailbox_store', None) if control is not None else None,
+        lease_store=getattr(control, '_lease_store', None) if control is not None else None,
+        snapshot_writer=getattr(dispatcher, '_snapshot_writer', None),
     )
 
 
@@ -1813,14 +1912,17 @@ def _reply_delivery_source_job_id(
     job,
     *,
     comms_lookup: _CommsLookup | None = None,
+    allow_body_fallback: bool = True,
 ) -> str | None:
     if comms_lookup is None:
         comms_lookup = _comms_lookup(dispatcher)
-    return (
+    structured = (
         _reply_delivery_source_job_id_from_reply_record(dispatcher, job, comms_lookup=comms_lookup)
         or _reply_delivery_source_job_id_from_message_origin(dispatcher, job, comms_lookup=comms_lookup)
-        or _reply_delivery_source_job_id_from_body(job)
     )
+    if structured or not allow_body_fallback:
+        return structured
+    return _reply_delivery_source_job_id_from_body(job)
 
 
 def _reply_delivery_source_job_id_from_reply_record(
@@ -1946,6 +2048,8 @@ def _comm_record(
     *,
     reply_delivery,
     configured_agents: frozenset[str],
+    comms_lookup: _CommsLookup,
+    context: _ProjectViewBuildContext,
     running_recover_hint: str | None = None,
     lineage_for_recoverability=None,
 ) -> dict[str, object]:
@@ -1966,6 +2070,14 @@ def _comm_record(
         lineage_for_job=lineage_for_recoverability,
     )
     attachments = _comm_attachments(job)
+    execution_phase = _execution_phase_record(
+        job,
+        reply_delivery=reply_delivery,
+        configured_agents=configured_agents,
+        comms_lookup=comms_lookup,
+        context=context,
+        running_recover_hint=running_recover_hint,
+    )
     return {
         'id': job.job_id,
         'short_id': _short_id(job.job_id),
@@ -1981,9 +2093,58 @@ def _comm_record(
         'reply_delivery_job_id': reply_delivery.job_id if reply_delivery is not None else None,
         'chain': bool(getattr(job.request, 'reply_to', None)),
         'short_reason': _short_reason(job),
+        **execution_phase,
         **({'attachments': attachments} if attachments else {}),
         **recoverability.to_record(),
     }
+
+
+def _execution_phase_record(
+    job,
+    *,
+    reply_delivery,
+    configured_agents: frozenset[str],
+    comms_lookup: _CommsLookup,
+    context: _ProjectViewBuildContext,
+    running_recover_hint: str | None,
+) -> dict[str, object]:
+    job_id = str(getattr(job, 'job_id', '') or '').strip()
+    agent_name = str(getattr(job, 'agent_name', '') or '').strip()
+    attempt = comms_lookup.attempt_by_job_id(job_id)
+    inbound = comms_lookup.inbound_for_attempt(agent_name, getattr(attempt, 'attempt_id', None))
+    mailbox = comms_lookup.mailbox_for_agent(agent_name)
+    lease = comms_lookup.lease_for_agent(agent_name)
+    completion = comms_lookup.snapshot_for_job(job_id)
+    provider_state, provider_identity_current = context.execution_provider_by_job_id.get(
+        job_id,
+        (None, False),
+    )
+    orphan_suspected = running_recover_hint == 'provider_prompt_idle'
+    if orphan_suspected:
+        provider_state, provider_identity_current = 'idle', True
+    structured_source_job_id = None
+    if reply_delivery is not None:
+        structured_source_job_id = _reply_delivery_source_job_id(
+            context.deps.dispatcher,
+            reply_delivery,
+            comms_lookup=comms_lookup,
+            allow_body_fallback=False,
+        )
+    evidence = execution_phase_evidence_from_records(
+        job=job,
+        attempt=attempt,
+        inbound=inbound,
+        mailbox=mailbox,
+        lease=lease,
+        completion=completion,
+        provider_state=provider_state,
+        provider_identity_current=provider_identity_current,
+        orphan_suspected=orphan_suspected,
+        reply_expected=_expects_reply_delivery(job, configured_agents),
+        reply_delivery=reply_delivery,
+        reply_delivery_source_job_id=structured_source_job_id,
+    )
+    return derive_execution_phase(evidence).to_record()
 
 
 def _comm_attachments(job) -> list[dict[str, object]]:

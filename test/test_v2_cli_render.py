@@ -641,6 +641,8 @@ def test_render_queue_includes_runtime_health_fields() -> None:
         'agent_name: codex',
         'mailbox_id: mbx_codex',
         'summary_status: ok',
+        'execution_phase: blocked',
+        'execution_phase_reason: None',
         'mailbox_state: blocked',
         'runtime_state: degraded',
         'runtime_health: pane-dead',

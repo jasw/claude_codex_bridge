@@ -4,27 +4,27 @@ Date: 2026-07-21
 
 ## Current Phase
 
-R6 Kimi exact-session resume is a verified atomic commit on the serial closure
-branch. R7 is the next unlocked row; it remains `waiting` until its phase and
-evidence-precedence decision is frozen.
+R7 correlated execution-state modeling is a verified atomic slice on the
+serial closure branch. No later row is active; R8 is the next unlocked row and
+remains waiting for its own preflight and frozen bounded-observation contract.
 
 ## Next Target
 
-Freeze R7's additive execution-phase vocabulary, identity joins, contradictory
-evidence policy, and client fallback contract before changing runtime schemas.
+Begin R8 stuck inbound detection without mutating jobs: refresh Issue260,
+freeze its observation window and evidence ownership, and preserve its false-
+positive counterexamples before production implementation.
 
 ## Last Landed
 
-R6 verified commit selector: `Repair-Slice: R6` (`fix: resume exact Kimi
-sessions`).
+R7 verified commit selector: `Repair-Slice: R7` (`feat: expose correlated
+execution phases`).
 
 ## Active TODO
 
-1. Resolve R7's open phase/schema question and record the decision.
-2. Preserve contradictory/mismatched job-attempt-inbound-lease fixtures before
-   changing PR265's execution-state model.
-3. Implement the frozen field once across queue, CLI, ProjectView, sidebar,
-   and mobile consumers with backward-compatible fallback.
+1. Refresh Issue260 and confirm `origin/main` remains at the recorded baseline.
+2. Freeze R8's bounded idle-prompt observation and no-mutation contract.
+3. Preserve true-stuck and false-positive fixtures before changing production
+   diagnosis code.
 
 ## Blocked By
 
@@ -34,30 +34,30 @@ work is pending, not skipped.
 
 ## Last Verified
 
-- R6 preserved behavioral gate: `3 failed` before production changes; exact
-  restart selection, explicit-session precedence state, and native binding
-  retention were absent.
-- Focused Kimi session/launcher tests: `45 passed`; broader Kimi/native/restart
-  gate: `120 passed`; expanded launch/runtime-binding integration: `193 passed`.
-- Complete Python remainder: `5455 passed`, `2 skipped`, `2 deselected` in
-  `936.97s`. The isolated `restart_replay_pass` scenario passed in `31.92s`;
-  the other deselection is the already-adjudicated lifecycle-stopping socket
-  race from the frozen baseline.
-- Real Kimi 1.47.0 (`kimi-for-coding`) project
-  `/home/bfly/yunwei/test_ccb2/r6-kimi-exact-runtime2-20260721-9hlXai`
-  mounted `kimi1` and `kimi2` in one workdir. First launch was fresh. Their
-  distinct native IDs survived CCB-controlled restart, the visible panes
-  displayed those exact IDs, and continuation jobs returned only their hidden
-  prior tokens: `ALPHA_7A21` and `BETA_9B34`. A later clean full-project
-  remount repeated both exact UUIDs with exactly one selector per command and
-  returned the same distinct tokens from the final candidate.
+- The R7 pure resolver and counterexamples cover all nine frozen phases plus
+  wrong job, attempt, inbound, mailbox, lease, completion, provider, pane, and
+  stale-activity evidence. The cumulative focused Python gate passed `334`
+  tests; the final CLI fallback check passed with its `25`-test focused gate.
+- Rust sidebar tests passed `78`; Flutter focused parsing passed `5`, static
+  analysis reported no issues, and the complete Flutter suite passed `659`.
+- The corrected complete Python run passed `5335` tests with `2` skipped and
+  `2` deselected in `1101.49s`. The isolated `restart_replay_pass` scenario
+  passed in `32.97s`; the other deselection is the adjudicated baseline
+  lifecycle-stopping socket race.
+- External project
+  `/home/bfly/yunwei/test_ccb2/r7-execution-phase-runtime-20260721-cCTNQC`
+  used Claude Code `2.1.206` with displayed model `DeepSeek-V4-pro`. The exact
+  active lineage rendered `executing/provider_active` in ProjectView while
+  queue correctly failed closed as `unknown/provider_identity_mismatch`; the
+  job then reached `terminal/job_completed` with reply `R7_PHASE_DONE`.
 - Candidate tracked-diff and untracked-set hashes were identical before and
   after the mounted run. Candidate `ccb_test kill` left the project
-  `unmounted`; both sockets and the recorded keeper PID were absent.
-- R6 compact evidence:
-  [history/reviewed-repair-queue-evidence.md](history/reviewed-repair-queue-evidence.md#r6-kimi-exact-session-resume).
+  `unmounted`; sockets and recorded keeper, daemon, and provider PIDs were
+  absent.
+- R7 compact evidence:
+  [history/reviewed-repair-queue-evidence.md](history/reviewed-repair-queue-evidence.md#r7-correlated-execution-state-model).
 
-Prior R3-R5 evidence remains indexed in
+Prior R3-R6 evidence remains indexed in
 [history/reviewed-repair-queue-evidence.md](history/reviewed-repair-queue-evidence.md).
 R11 provider-extension qualification remains in
 [history/r11-provider-extension-validation-2026-07-20.md](history/r11-provider-extension-validation-2026-07-20.md).

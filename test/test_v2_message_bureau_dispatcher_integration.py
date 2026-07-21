@@ -2894,6 +2894,24 @@ def test_dispatcher_queue_summary_reflects_mailbox_state_and_pending_reply(tmp_p
     assert agent_running['queue_depth'] == 1
     assert agent_running['active']['job_id'] == job_id
     assert agent_running['active']['event_type'] == 'task_request'
+    assert agent_running['execution_phase'] == 'injecting'
+    assert agent_running['execution_phase_reason'] == 'request_anchor_not_seen'
+
+    completion = dispatcher._snapshot_writer.load(job_id)
+    assert completion is not None
+    completion.state.anchor_seen = True
+    dispatcher._snapshot_writer.write_completion(
+        job_id=completion.job_id,
+        agent_name=completion.agent_name,
+        profile_family=completion.profile_family,
+        state=completion.state,
+        decision=completion.latest_decision,
+        updated_at=completion.updated_at,
+        reply_preview=completion.latest_reply_preview,
+    )
+    queue_anchored = dispatcher.queue('codex', detail=True)['agent']
+    assert queue_anchored['execution_phase'] == 'unknown'
+    assert queue_anchored['execution_phase_reason'] == 'provider_identity_mismatch'
 
     dispatcher.complete(job_id, _decision(reply='reply for claude'))
 
@@ -2906,6 +2924,8 @@ def test_dispatcher_queue_summary_reflects_mailbox_state_and_pending_reply(tmp_p
     assert agent_reply['queue_depth'] == 1
     assert agent_reply['pending_reply_count'] == 1
     assert agent_reply['queued_events'][0]['event_type'] == 'task_reply'
+    assert agent_reply['execution_phase'] == 'reply_queued'
+    assert agent_reply['execution_phase_reason'] == 'reply_delivery_pending'
 
     queue_all = dispatcher.queue('all')
     assert queue_all['target'] == 'all'
@@ -2913,6 +2933,11 @@ def test_dispatcher_queue_summary_reflects_mailbox_state_and_pending_reply(tmp_p
     assert queue_all['queued_agent_count'] == 1
     assert {item['runtime_state'] for item in queue_all['agents']} == {'idle', 'stopped'}
     assert {item['runtime_health'] for item in queue_all['agents']} == {'healthy', 'stopped'}
+
+    dispatcher.tick()
+    delivering_reply = dispatcher.queue('claude', detail=True)['agent']
+    assert delivering_reply['execution_phase'] == 'reply_delivering'
+    assert delivering_reply['execution_phase_reason'] == 'reply_delivery_running'
 
 
 def test_dispatcher_queue_summary_ignores_stale_cmd_mailbox_residue(tmp_path: Path) -> None:

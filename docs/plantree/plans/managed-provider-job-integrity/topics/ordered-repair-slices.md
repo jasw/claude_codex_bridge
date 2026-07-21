@@ -257,6 +257,8 @@ same-workdir two-agent Kimi run.
 
 ## R7: Correlated Execution-State Model
 
+Status: verified atomic commit selected by `Repair-Slice: R7`.
+
 Finding:
 
 - PR265 maps nearly every running job to `executing`, classifies orphan risk
@@ -267,7 +269,9 @@ Finding:
 
 Correction boundary:
 
-- Freeze one additive phase vocabulary and evidence precedence model.
+- Apply the additive phase vocabulary and fail-closed evidence precedence model
+  frozen in
+  [Decision 004](../decisions/004-correlated-execution-phase-schema.md).
 - Derive phase from job, execution runtime, inbound attempt, mailbox, lease,
   provider anchor/activity, and terminal evidence with matching identities.
 - Contradictory or incomplete evidence must be `unknown`, not a confident
@@ -283,8 +287,10 @@ Required evidence:
   field with backward-compatible fallback.
 - Diagnostics and sidebar contracts are updated.
 
-Exit gate: PR265 remains partial until all required consumers and uncertainty
-semantics are implemented; Issue262 stays open until then.
+Exit gate: satisfied by the shared pure resolver, exact-correlated producer
+evidence, contradictory-evidence `unknown`, all required clients, updated
+contracts, cumulative suites, and external real-provider evidence. PR265
+remains held and Issue262 remains open for the final disposition gate.
 
 ## R8: Stuck Inbound Detection
 

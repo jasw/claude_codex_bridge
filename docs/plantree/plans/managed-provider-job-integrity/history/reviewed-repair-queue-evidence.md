@@ -260,3 +260,87 @@ user session controls can intentionally choose broader native behavior. Kimi
 still does not support restoration of an interrupted in-flight CCB job.
 
 Next unlocked row: R7 correlated execution-state model.
+
+## R7: Correlated Execution-State Model
+
+Slice: R7 correlated execution-state model
+
+Commit selector / hash: commit subject `feat: expose correlated execution
+phases` with trailer `Repair-Slice: R7`
+
+Upstream items: PR265 remained open at unchanged reviewed head `2b79d68b` and
+reported `UNSTABLE`; Issue262 remained open during the 2026-07-21 preflight.
+
+Baseline: R6 commit `12a67d6265892f07ee58d72ff3fcc15d9f6d611d` on
+`origin/main` `aed27abf`. PR265 lacked queue, CLI, Rust sidebar, mobile, exact
+identity joins, and explicit contradictory-evidence behavior.
+
+Counterexample: preserved fixtures prove wrong job, attempt, inbound event,
+mailbox head/active id, lease, agent, completion snapshot, provider, pane, and
+stale activity cannot produce a confident non-terminal phase. A completion
+anchor without provider-native evidence also remains `unknown`; terminal
+authority wins over lagging active mailbox/lease state.
+
+Frozen authority: [Decision 004](../decisions/004-correlated-execution-phase-schema.md)
+defines the additive schema-v1 vocabulary `queued`, `injecting`, `executing`,
+`provider_idle_pending_terminal`, `reply_queued`, `reply_delivering`,
+`orphaned`, `terminal`, and `unknown`. Exact correlated workflow and provider
+identity are required; clients fall back to legacy labels only when the field
+is absent. The projection is diagnostic and never mutates or recovers a job.
+
+Implementation: one pure resolver consumes immutable evidence assembled by
+ProjectView and structured queue producers. ProjectView reads exact
+job/attempt/inbound/mailbox/lease/completion/reply and current provider
+evidence; queue intentionally fails closed when it cannot observe provider-
+native identity. CLI retains mailbox state separately, Rust and mobile prefer
+the optional phase with legacy fallback, and maintenance may surface an
+existing blocked-communication concern without introducing recovery.
+
+Focused tests: the cumulative execution-phase, ProjectView, queue,
+maintenance, dispatcher, and mobile-gateway gate passed `334` tests in
+`9.23s`. The final renderer fallback assertion passed in a `25`-test focused
+gate. Python compilation and `git diff --check` passed; Pyflakes found only the
+pre-existing unused local at
+`test/test_v2_message_bureau_dispatcher_integration.py:3108`.
+
+Full/client tests: Rust formatting passed and all `78` sidebar tests passed.
+Flutter formatting passed, the `5` focused model/fixture tests passed,
+`flutter analyze` reported no issues, and all `659` Flutter tests passed. The
+corrected complete Python run passed `5335` tests with `2` skipped and `2`
+deselected in `1101.49s`. The isolated `restart_replay_pass` scenario passed
+(`1 passed in 32.97s`); the other deselection is the lifecycle-stopping socket
+race already adjudicated on the frozen baseline. An earlier full run's `36`
+provider projection failures were proven to be a harness error from forcing
+`CCB_SOURCE_HOME`: all implicated provider files passed `178` tests after the
+global override was removed, and the corrected full run was clean.
+
+Real project evidence: external opened project
+`/home/bfly/yunwei/test_ccb2/r7-execution-phase-runtime-20260721-cCTNQC` used
+the candidate worktree wrapper, inherited real provider state, Claude Code
+`2.1.206`, binary
+`/home/bfly/.local/share/claude/versions/2.1.206`, and displayed model
+`DeepSeek-V4-pro`. While exact job `job_c916976bdeb2`, attempt
+`att_332a5466dfad`, and inbound event `iev_20fc6a1723da` visibly ran a
+30-second Bash sleep, queue reported `unknown/provider_identity_mismatch`
+because it had no provider-native evidence, while ProjectView joined the exact
+lineage and current pane/session as `executing/provider_active`. The job then
+became `terminal/job_completed` with one attempt, one reply, no recovery, and
+reply text exactly `R7_PHASE_DONE`. Compact artifact: `r7-runtime-result.json`
+in that external project.
+
+Source immutability: candidate tracked-diff SHA256 remained
+`b0061e5c57bbb28c12e805059f46f44ef8e578fabb8a33b4a532dcd6368b05f1`
+before and after the mounted run; the untracked-set SHA256 remained
+`b4ef4174c0c1f230efd88ab80b3ac3e1419c87f99bfdc481724a113b63044568`.
+
+Cleanup: candidate `ccb_test kill` returned the external project to
+`unmounted`; ccbd and tmux sockets were absent, and recorded keeper PID
+1162501, daemon PID 1162694, and provider PID 1164751 no longer existed.
+
+Remaining risk: queue does not own provider-native evidence and therefore may
+show `unknown` for an anchored active request that ProjectView can prove is
+`executing`; this is deliberate fail-closed behavior. `orphaned` remains a
+diagnostic phase only. R8 must add bounded observation without turning phase
+projection into automatic restart, resend, cancellation, or terminalization.
+
+Next unlocked row: R8 stuck inbound detection.

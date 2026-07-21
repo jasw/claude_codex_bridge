@@ -596,6 +596,30 @@ Rules:
   - superseded finalize paths should remain visible as `mount_superseded`
     instead of collapsing into missing history
 
+#### ProjectView and queue execution-phase diagnostics
+
+ProjectView Comms records and structured queue agent records may expose the
+optional schema-v1 fields `execution_phase`, `execution_phase_reason`, and
+`execution_evidence`. The stable phase vocabulary is `queued`, `injecting`,
+`executing`, `provider_idle_pending_terminal`, `reply_queued`,
+`reply_delivering`, `orphaned`, `terminal`, and `unknown`.
+
+These fields are a read-only correlated projection. A confident non-terminal
+request phase requires exact job, attempt, inbound event, mailbox head/active,
+lease, completion snapshot, agent, and current provider identity joins. A
+correlated reply record and reply-delivery job determine the reply phases.
+Terminal job/completion authority wins over lagging mailbox or lease cleanup;
+missing, stale, contradictory, or mismatched evidence produces `unknown`.
+`execution_evidence` contains only the compact identity and state facts used by
+the resolver and is diagnostics evidence, not scheduling authority.
+
+ProjectView and queue reads must not poll providers, capture extra state solely
+for this projection, mutate authority, or trigger recovery. In particular,
+`orphaned` reports bounded current-session provider-idle evidence without
+automatically cancelling, retrying, restarting, resending, or terminalizing the
+job. Older producers may omit the fields, and CLI, Rust sidebar, and mobile
+clients must fall back to existing mailbox/job/business status fields.
+
 ### 3.6 Doctor Read Path
 
 `ccb doctor` is the best-effort project diagnostics read path.

@@ -1784,11 +1784,7 @@ fn comms_lines_with_theme(
     if compact {
         return compact_comms_lines(item, width, theme);
     }
-    let status = if item.status_label.trim().is_empty() {
-        empty_dash(&item.status)
-    } else {
-        item.status_label.trim()
-    };
+    let status = comms_display_status(item);
     let preview = item.body_preview.trim();
     let reason = comms_reason(item)
         .map(|value| format!(" {value}"))
@@ -1814,11 +1810,7 @@ fn comms_lines_with_theme(
 }
 
 fn compact_comms_lines(item: &CommsItem, width: usize, theme: SidebarTheme) -> Vec<Line<'static>> {
-    let status = if item.status_label.trim().is_empty() {
-        empty_dash(&item.status)
-    } else {
-        item.status_label.trim()
-    };
+    let status = comms_display_status(item);
     let route = format!(
         "{} > {} ",
         empty_dash(&item.sender),
@@ -1882,6 +1874,15 @@ fn comms_action_spans(_item: &CommsItem, theme: SidebarTheme) -> Vec<Span<'stati
 
 fn compact_comms_status(value: &str) -> &str {
     match value.trim() {
+        "queued" => "que",
+        "injecting" => "inj",
+        "executing" => "run",
+        "provider_idle_pending_terminal" => "idle",
+        "reply_queued" => "r-q",
+        "reply_delivering" => "back",
+        "orphaned" => "orph",
+        "terminal" => "ok",
+        "unknown" => "?",
         "send" | "sending" => "snd",
         "back" | "replying" => "rep",
         "work" | "running" => "run",
@@ -1890,6 +1891,16 @@ fn compact_comms_status(value: &str) -> &str {
         "cancelled" | "canceled" => "cnl",
         other => other,
     }
+}
+
+fn comms_display_status(item: &CommsItem) -> &str {
+    if !item.execution_phase.trim().is_empty() {
+        return item.execution_phase.trim();
+    }
+    if !item.status_label.trim().is_empty() {
+        return item.status_label.trim();
+    }
+    empty_dash(&item.status)
 }
 
 fn truncate_comms_preview(value: &str, width: usize) -> String {
@@ -1908,10 +1919,16 @@ fn comms_reason(item: &CommsItem) -> Option<&str> {
     if comms_is_normal_terminal(item) {
         return None;
     }
-    item.block_reason
+    item.execution_phase_reason
         .as_deref()
         .map(str::trim)
         .filter(|value| !value.is_empty())
+        .or_else(|| {
+            item.block_reason
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+        })
         .or_else(|| {
             item.short_reason
                 .as_deref()
@@ -1921,7 +1938,8 @@ fn comms_reason(item: &CommsItem) -> Option<&str> {
 }
 
 fn comms_is_normal_terminal(item: &CommsItem) -> bool {
-    matches!(item.business_status.trim(), "replied" | "completed")
+    matches!(item.execution_phase.trim(), "terminal")
+        || matches!(item.business_status.trim(), "replied" | "completed")
         || matches!(item.status_label.trim(), "done")
 }
 
@@ -1953,6 +1971,18 @@ fn comms_status_color(item: &CommsItem) -> Color {
 }
 
 fn comms_status_color_with_theme(item: &CommsItem, theme: SidebarTheme) -> Color {
+    match item.execution_phase.trim() {
+        "queued"
+        | "injecting"
+        | "provider_idle_pending_terminal"
+        | "reply_queued"
+        | "reply_delivering" => return theme.warning,
+        "executing" => return theme.success,
+        "orphaned" => return theme.danger,
+        "terminal" => return theme.info,
+        "unknown" => return theme.neutral,
+        _ => {}
+    }
     match item.business_status.trim() {
         "sending" | "delivering" | "blocked" => theme.warning,
         "replying" => theme.success,
@@ -2706,6 +2736,34 @@ mod tests {
             "↻  X  ⌫  agent2 > agent1 err\n   check agent status timeout"
         );
         assert_eq!(comms_status_color(&item), Color::Red);
+    }
+
+    #[test]
+    fn comms_line_prefers_execution_phase_with_legacy_fallback_available() {
+        let item = crate::model::CommsItem {
+            sender: "agent2".into(),
+            target: "agent1".into(),
+            status: "running".into(),
+            business_status: "failed".into(),
+            status_label: "fail".into(),
+            execution_phase: "executing".into(),
+            execution_phase_reason: Some("provider_active".into()),
+            body_preview: "work".into(),
+            ..Default::default()
+        };
+
+        assert_eq!(
+            comms_line_text(&item),
+            "↻  X  ⌫  agent2 > agent1 run\n   work provider_active"
+        );
+        assert_eq!(comms_status_color(&item), Color::Green);
+
+        let legacy = crate::model::CommsItem {
+            execution_phase: String::new(),
+            execution_phase_reason: None,
+            ..item
+        };
+        assert!(comms_line_text(&legacy).contains("agent2 > agent1 err"));
     }
 
     #[test]

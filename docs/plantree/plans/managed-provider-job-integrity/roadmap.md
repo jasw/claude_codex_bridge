@@ -6,7 +6,7 @@ Date: 2026-07-21
 
 - Current status: In progress; R1/R2 landed and the R11 provider-extension
   candidate is committed on its qualified branch, the strict serial closure
-  goal is active, and R3/R4/R5/R6 are verified atomic commits.
+  goal is active, and R3/R4/R5/R6/R7 are verified atomic commits.
 - Work mode: execute-ready.
 - Review baseline: PR257 is merged; PR258, PR259, PR264, PR265, and PR266 are
   open and reported `UNSTABLE`; Issues 260-263 remain open as of 2026-07-21.
@@ -28,8 +28,13 @@ Date: 2026-07-21
   complete `5455`-test Python remainder, and a real same-workdir two-agent Kimi run in
   which each exact native session retained only its own hidden token. See the
   [R6 evidence](history/reviewed-repair-queue-evidence.md#r6-kimi-exact-session-resume).
-- Next target: freeze R7's correlated execution-phase and contradictory-
-  evidence decision before implementation. Every later row remains locked.
+  R7 then passed the `334`-test cumulative focused gate, Rust `78`, Flutter
+  `659`, the complete `5335`-test Python remainder, and a real busy-pane Claude
+  run whose exact ProjectView lineage was `executing` while queue failed closed
+  without provider-native identity. See the
+  [R7 evidence](history/reviewed-repair-queue-evidence.md#r7-correlated-execution-state-model).
+- Next target: R8 stuck inbound detection. It is unlocked but remains waiting
+  for its preflight and frozen bounded-observation decision.
 
 ## Done
 
@@ -68,31 +73,33 @@ Date: 2026-07-21
   is fresh, only an exact observed per-agent native session becomes restart
   authority, invalid authority fails fresh, and same-workdir agents cannot
   cross-resume.
+- Verified R7 as the atomic commit selected by `Repair-Slice: R7`: one pure
+  fail-closed resolver supplies an additive nine-phase vocabulary to
+  ProjectView, queue, CLI, Rust sidebar, and mobile consumers without changing
+  mailbox or terminal authority or triggering recovery.
 
 ## In Progress
 
-No later repair slice has started. R7 is the next unlocked row and remains
-waiting for its frozen phase/schema decision. PR258, PR259, PR265, and PR266
-remain held from merge.
+No later repair slice has started. R8 is the next unlocked row and remains
+waiting for its own preflight and frozen diagnosis contract. PR258, PR259,
+PR265, and PR266 remain held from merge; Issue262 remains open for final
+evidence-backed disposition.
 
 ## Next
 
-1. **R7: Correlated execution-state model.** Redesign PR265 around an agreed
-   phase vocabulary, contradictory-evidence `unknown`, attempt/inbound/lease/
-   provider correlation, and structured queue, CLI, sidebar, and mobile output.
-2. **R8: Stuck inbound detection.** Implement Issue260 on top of R7 using
+1. **R8: Stuck inbound detection.** Implement Issue260 on top of R7 using
    correlated running-job, active-attempt, provider-idle, and missing-terminal
    evidence. Ship diagnostics first; keep automatic recovery disabled.
-3. **R9: Active-job correction capability.** Design Issue261 only after R4 and
+2. **R9: Active-job correction capability.** Design Issue261 only after R4 and
    R7 establish terminal and phase authority. Target the exact job, preserve
    lineage, define provider capability/refusal, and cover completion races.
-4. **R12: Generic projected-asset ownership hardening.** Inventory remaining
+3. **R12: Generic projected-asset ownership hardening.** Inventory remaining
    `allow_unmarked_replace=True` call sites and migrate them to marker-first
    ownership without breaking packaged CCB skill upgrades.
-5. **R11-C: Copilot plugin/config projection.** Freeze an entry-level ownership
+4. **R11-C: Copilot plugin/config projection.** Freeze an entry-level ownership
    schema and offline/no-login fixture, then project only owned plugin metadata
    while preserving credentials, sessions, permissions, cache, and local data.
-6. **R10: Integrated qualification and release decision.** Run focused,
+5. **R10: Integrated qualification and release decision.** Run focused,
    full Python/Rust/client, clean current-main, external source-runtime, and
    real Codex/Claude project gates; prepare evidence-backed upstream
    dispositions without pushing, merging, closing, publishing, or releasing.

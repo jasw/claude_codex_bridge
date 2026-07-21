@@ -83,6 +83,9 @@ Out of scope:
 - [decisions/003-kimi-exact-session-ownership.md](decisions/003-kimi-exact-session-ownership.md):
   R6 policy for observation-bound native session identity, exact resume, and
   fail-fresh recovery.
+- [decisions/004-correlated-execution-phase-schema.md](decisions/004-correlated-execution-phase-schema.md):
+  R7 additive phase vocabulary, exact identity joins, fail-closed precedence,
+  and client fallback policy.
 - [history/r1-r2-validation-2026-07-20.md](history/r1-r2-validation-2026-07-20.md):
   focused, full-suite, and external real-project evidence for landed R1/R2.
 - [history/r11-provider-extension-validation-2026-07-20.md](history/r11-provider-extension-validation-2026-07-20.md):

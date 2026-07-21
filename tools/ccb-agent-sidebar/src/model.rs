@@ -187,6 +187,10 @@ pub struct CommsItem {
     #[serde(default)]
     pub status_label: String,
     #[serde(default)]
+    pub execution_phase: String,
+    #[serde(default)]
+    pub execution_phase_reason: Option<String>,
+    #[serde(default)]
     pub body_preview: String,
     #[serde(default)]
     pub reply_status: Option<String>,
@@ -335,6 +339,8 @@ mod tests {
               "status": "running",
               "business_status": "replying",
               "status_label": "work",
+              "execution_phase": "executing",
+              "execution_phase_reason": "provider_active",
               "body_preview": "work",
               "recoverable": true,
               "recover_target": {"job_id": "job1", "reply_delivery_job_id": null},
@@ -370,6 +376,11 @@ mod tests {
             vec!["C-b d detach"]
         );
         assert_eq!(response.view.comms[0].status_label, "work");
+        assert_eq!(response.view.comms[0].execution_phase, "executing");
+        assert_eq!(
+            response.view.comms[0].execution_phase_reason.as_deref(),
+            Some("provider_active")
+        );
         assert_eq!(response.view.comms[0].body_preview, "work");
         assert!(response.view.comms[0].recoverable);
         assert!(response.view.agents[0].dispatch_blocked_by_reload_drain);

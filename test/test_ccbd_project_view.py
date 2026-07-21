@@ -356,6 +356,81 @@ def _write_active_unload_drain(layout: PathLayout, agent_name: str):
     return record
 
 
+@pytest.mark.parametrize(
+    ('activity_pane', 'activity_updated_at', 'expected_phase', 'expected_reason'),
+    (
+        ('%2', NOW, 'executing', 'provider_active'),
+        ('%99', NOW, 'unknown', 'provider_identity_mismatch'),
+        ('%2', '2026-05-20T11:58:00Z', 'unknown', 'provider_identity_mismatch'),
+    ),
+)
+def test_project_view_correlates_anchored_provider_activity_by_exact_pane(
+    tmp_path: Path,
+    activity_pane: str,
+    activity_updated_at: str,
+    expected_phase: str,
+    expected_reason: str,
+) -> None:
+    project_root = tmp_path / (
+        f'repo-execution-phase-{activity_pane.removeprefix("%")}-{activity_updated_at[11:19]}'
+    )
+    project_root.mkdir()
+    layout = PathLayout(project_root)
+    project_id = compute_project_id(project_root)
+    config = _config()
+    registry = AgentRegistry(layout, config)
+    for agent_name in config.agents:
+        runtime = _runtime(agent_name, project_id=project_id)
+        if agent_name == 'agent2':
+            runtime.state = AgentState.BUSY
+            runtime.session_id = 'ccb-agent2-session'
+        registry.upsert(runtime)
+    dispatcher = JobDispatcher(layout, config, registry, clock=lambda: NOW)
+    job_id = _submit(dispatcher, project_id, sender='agent1', target='agent2')
+    dispatcher.tick()
+    completion = dispatcher._snapshot_writer.load(job_id)
+    assert completion is not None
+    completion.state.anchor_seen = True
+    dispatcher._snapshot_writer.write_completion(
+        job_id=completion.job_id,
+        agent_name=completion.agent_name,
+        profile_family=completion.profile_family,
+        state=completion.state,
+        decision=completion.latest_decision,
+        updated_at=completion.updated_at,
+        reply_preview=completion.latest_reply_preview,
+    )
+    write_activity(
+        provider='claude',
+        project_id=project_id,
+        agent_name='agent2',
+        runtime_dir=layout.agent_provider_runtime_dir('agent2', 'claude'),
+        state='active',
+        source='claude_hook',
+        event_name='UserPromptSubmit',
+        ccb_session_id='ccb-agent2-session',
+        pane_id=activity_pane,
+        workspace_path='/tmp/workspace',
+        updated_at=activity_updated_at,
+    )
+
+    view = _project_view_service(
+        project_root=project_root,
+        project_id=project_id,
+        layout=layout,
+        config=config,
+        registry=registry,
+        dispatcher=dispatcher,
+    ).build_response()['view']
+
+    comm = next(item for item in view['comms'] if item['id'] == job_id)
+    assert comm['execution_phase'] == expected_phase
+    assert comm['execution_phase_reason'] == expected_reason
+    assert comm['execution_evidence']['completion_job_id'] == job_id
+    if expected_phase == 'executing':
+        assert comm['execution_evidence']['provider_identity_current'] is True
+
+
 def test_project_view_exposes_active_reload_drains(tmp_path: Path) -> None:
     project_root = tmp_path / 'repo-drain-view'
     project_root.mkdir()
@@ -2587,6 +2662,9 @@ def test_project_view_comms_folds_reply_delivery_by_reply_record_without_body_jo
     assert comms[0]['reply_status'] == 'completed'
     assert comms[0]['reply_delivery_job_id'] == reply_delivery.job_id
     assert comms[0]['body_preview'] == 'check structured reply delivery folding'
+    assert comms[0]['execution_phase'] == 'terminal'
+    assert comms[0]['execution_phase_reason'] == 'reply_delivery_completed'
+    assert comms[0]['execution_evidence']['reply_delivery_source_job_id'] == source.job_id
 
 
 def test_project_view_resolves_reply_delivery_sources_without_jsonl_list_all(tmp_path: Path, monkeypatch) -> None:
@@ -2985,6 +3063,29 @@ def test_project_view_comms_marks_agent_reply_delivery_pending(tmp_path: Path) -
         updated_at='2026-05-20T12:00:01Z',
     )
     dispatcher._append_job(source)
+    delivering_source = _job(
+        project_id,
+        job_id='job_source_delivering',
+        sender='agent2',
+        target='agent3',
+        status=JobStatus.COMPLETED,
+        updated_at='2026-05-20T12:00:02Z',
+    )
+    dispatcher._append_job(delivering_source)
+    _record_reply_for_source(dispatcher, delivering_source, reply_id='reply_delivering')
+    delivery = _reply_delivery_job(
+        project_id,
+        job_id='job_delivery_running',
+        source_agent='agent3',
+        source_job_id='',
+        target='agent2',
+        status=JobStatus.RUNNING,
+        updated_at='2026-05-20T12:00:03Z',
+        reply_id='reply_delivering',
+        body='CCB_REPLY from=agent3 reply=reply_delivering status=completed\n\nOK',
+    )
+    dispatcher._append_job(delivery)
+    dispatcher._state.mark_active_for(TargetKind.AGENT, delivery.target_name, delivery.job_id)
     cmd_source = _job(
         project_id,
         job_id='job_cmd_source',
@@ -3020,6 +3121,11 @@ def test_project_view_comms_marks_agent_reply_delivery_pending(tmp_path: Path) -
     comms_by_id = {item['id']: item for item in service.build_response()['view']['comms']}
 
     assert comms_by_id[source.job_id]['business_status'] == 'delivering'
+    assert comms_by_id[source.job_id]['execution_phase'] == 'reply_queued'
+    assert comms_by_id[source.job_id]['execution_phase_reason'] == 'reply_delivery_pending'
+    assert comms_by_id[delivering_source.job_id]['business_status'] == 'delivering'
+    assert comms_by_id[delivering_source.job_id]['execution_phase'] == 'reply_delivering'
+    assert comms_by_id[delivering_source.job_id]['execution_phase_reason'] == 'reply_delivery_running'
     assert comms_by_id[cmd_source.job_id]['business_status'] == 'replied'
     assert comms_by_id[silent_source.job_id]['business_status'] == 'completed'
 
@@ -4014,8 +4120,93 @@ def test_project_view_marks_running_job_idle_after_provider_prompt_reappears(tmp
     assert comm['id'] == job.job_id
     assert comm['business_status'] == 'replying'
     assert comm['status_label'] == 'work'
+    assert comm['execution_phase'] == 'injecting'
+    assert comm['execution_phase_reason'] == 'request_anchor_not_seen'
     assert comm['recoverable'] is False
     assert comm['block_reason'] is None
+
+
+def test_project_view_marks_exact_stale_claude_idle_job_as_orphaned(tmp_path: Path) -> None:
+    project_root = tmp_path / 'repo-claude-correlated-orphan'
+    project_root.mkdir()
+    layout = PathLayout(project_root)
+    project_id = compute_project_id(project_root)
+    base = _config()
+    config = replace(base, agents={**base.agents, 'agent3': _spec('agent3', 'claude')})
+    registry = AgentRegistry(layout, config)
+    registry.upsert(_runtime('agent3', project_id=project_id, state=AgentState.BUSY))
+    mount_manager = MountManager(layout, clock=lambda: NOW)
+    mount_manager.mark_mounted(
+        project_id=project_id,
+        pid=123,
+        socket_path=layout.ccbd_socket_path,
+        generation=1,
+        started_at=NOW,
+    )
+    ProjectNamespaceStateStore(layout).save(
+        ProjectNamespaceState(
+            project_id=project_id,
+            namespace_epoch=3,
+            tmux_socket_path=str(layout.ccbd_tmux_socket_path),
+            tmux_session_name='ccb-claude-correlated-orphan',
+            layout_version=2,
+        )
+    )
+    dispatcher = JobDispatcher(layout, config, registry, clock=lambda: NOW)
+    job_id = _submit(dispatcher, project_id, sender='agent1', target='agent3', body='stale running request')
+    dispatcher.tick()
+    job = dispatcher.get(job_id)
+    assert job is not None
+    job = replace(job, updated_at='2026-05-20T11:59:20Z')
+    dispatcher._append_job(job)
+    completion = dispatcher._snapshot_writer.load(job.job_id)
+    assert completion is not None
+    completion.state.anchor_seen = True
+    dispatcher._snapshot_writer.write_completion(
+        job_id=completion.job_id,
+        agent_name=completion.agent_name,
+        profile_family=completion.profile_family,
+        state=completion.state,
+        decision=completion.latest_decision,
+        updated_at=completion.updated_at,
+        reply_preview=completion.latest_reply_preview,
+    )
+    controller = ProjectNamespaceController(
+        layout,
+        project_id,
+        backend_factory=lambda socket_path=None: _ProviderIdleAfterRequestBackend(job.job_id),
+    )
+    service = ProjectViewService(
+        ProjectViewDependencies(
+            project_root=project_root,
+            project_id=project_id,
+            config=config,
+            registry=registry,
+            mount_manager=mount_manager,
+            namespace_state_store=ProjectNamespaceStateStore(layout),
+            dispatcher=dispatcher,
+            namespace_controller=controller,
+            clock=lambda: NOW,
+        )
+    )
+
+    comm = service.build_response()['view']['comms'][0]
+
+    assert comm['id'] == job.job_id
+    assert comm['business_status'] == 'blocked'
+    assert comm['execution_phase'] == 'orphaned'
+    assert comm['execution_phase_reason'] == 'provider_idle_without_terminal'
+    assert comm['block_reason'] == 'provider_prompt_idle'
+    assert comm['recoverable'] is True
+    evidence = comm['execution_evidence']
+    assert evidence['job_id'] == job.job_id
+    assert evidence['attempt_job_id'] == job.job_id
+    assert evidence['inbound_attempt_id'] == evidence['attempt_id']
+    assert evidence['mailbox_active_inbound_event_id'] == evidence['inbound_event_id']
+    assert evidence['lease_inbound_event_id'] == evidence['inbound_event_id']
+    assert evidence['completion_job_id'] == job.job_id
+    assert evidence['completion_anchor_seen'] is True
+    assert evidence['provider_state'] == 'idle'
 
 
 def test_project_view_does_not_mark_fresh_running_prompt_idle_as_recoverable(tmp_path: Path) -> None:
