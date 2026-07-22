@@ -106,6 +106,17 @@ show_toolchain_status() {
 
 require_safe_toolchain() {
   local failed=0 name expected actual
+  # The exact-path split-brain guard only applies to a SOURCE install, where
+  # ccb/ask/ccbm are symlinks into one checkout and a stale sibling symlink to a
+  # different checkout is the real hazard. A packaged/release install emits
+  # generated wrappers in BIN_DIR (not symlinks into CCBM_SOURCE_ROOT) whose
+  # toolchain is coherent by construction, so the exact-path check does not apply
+  # and would wrongly refuse to mount. Detect source by the expected source-tree
+  # launchers existing under CCBM_SOURCE_ROOT (they do in a checkout; a release
+  # layout has no ccb/ask at that path).
+  if [ ! -e "$EXPECTED_CCB" ] || [ ! -e "$EXPECTED_ASK" ]; then
+    return 0
+  fi
   for name in ccb ask; do
     case "$name" in
       ccb) expected="$EXPECTED_CCB" ;;
@@ -232,6 +243,12 @@ force_reset() {
 mount_and_wait() {
   local deadline=$1
   local ps_out total idle
+  # Fail fast if the ccb entrypoint is missing rather than silently treating a
+  # stale cached `ccb ps` as success.
+  if ! command -v ccb >/dev/null 2>&1; then
+    echo "ccbm: ccb not found on PATH; cannot mount" >&2
+    return 1
+  fi
   ps_out=$(ccb ps 2>&1 || true)
   total=$(echo "$ps_out" | grep -c "^agent: name=")
   idle=$( echo "$ps_out" | grep "^agent: " | grep -c "state=idle")
@@ -249,7 +266,9 @@ mount_and_wait() {
     ps_out=$(ccb ps 2>&1)
     total=$(echo "$ps_out" | grep -c "^agent: name=")
     idle=$( echo "$ps_out" | grep "^agent: " | grep -c "state=idle")
-    if (( total > 0 )) && (( idle == total )); then
+    # Require ccbd_state: mounted here too (matching the fast path) so a stale
+    # cached ps showing idle agents without a live mount can't declare success.
+    if echo "$ps_out" | grep -q "^ccbd_state: mounted$" && (( total > 0 )) && (( idle == total )); then
       echo "ready in $((SECONDS - start))s - $total agents idle"
       rm -f "$mount_log"
       return 0

@@ -10,10 +10,17 @@ def tmux_pane_state(session, backend, pane_id: str) -> str:
     existence = pane_existence_state(backend, pane_text)
     if existence is not None:
         return existence
+    ownership = inspect_tmux_pane_ownership(session, backend, pane_text)
     alive_state = pane_alive_state(backend, pane_text)
     if alive_state == 'alive':
+        # Alive panes are authoritative EXCEPT when provably owned by a different
+        # session (state=='foreign' == an ownership-mismatch, i.e. the pane's own
+        # recorded options name another session). Merely stale/unrecorded/
+        # uninspectable ownership (state 'owned'/'unknown') must NOT force a
+        # respawn loop during mount, so we still trust the live pane there.
+        if getattr(ownership, 'state', None) == 'foreign':
+            return 'foreign'
         return 'alive'
-    ownership = inspect_tmux_pane_ownership(session, backend, pane_text)
     if not ownership.is_owned:
         return 'foreign'
     if alive_state is not None:

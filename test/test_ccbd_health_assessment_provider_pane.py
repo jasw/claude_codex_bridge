@@ -75,3 +75,37 @@ def test_assess_provider_pane_trusts_alive_tmux_pane(monkeypatch) -> None:
     assert assessment.terminal == 'tmux'
     assert assessment.pane_state == 'alive'
     assert assessment.health == 'healthy'
+
+
+def test_assess_provider_pane_marks_provably_foreign_tmux_pane(monkeypatch) -> None:
+    # A pane that tmux_pane_state proves belongs to another session ('foreign')
+    # must be reported foreign, not adopted. tmux_pane_state is the single
+    # authority for this now (it rejects provably-foreign alive panes upstream).
+    binding = _binding()
+    session = SimpleNamespace(pane_id='%9')
+    monkeypatch.setattr(
+        'ccbd.services.health_assessment.provider_pane.load_provider_session',
+        lambda binding, workspace_path, agent_name: session,
+    )
+    monkeypatch.setattr(
+        'ccbd.services.health_assessment.provider_pane.session_terminal',
+        lambda session: 'tmux',
+    )
+    monkeypatch.setattr(
+        'ccbd.services.health_assessment.provider_pane.session_backend',
+        lambda session: 'backend',
+    )
+    monkeypatch.setattr(
+        'ccbd.services.health_assessment.provider_pane.tmux_pane_state',
+        lambda session, backend, pane_id: 'foreign',
+    )
+    assessment = assess_provider_pane(
+        runtime=_runtime(),
+        registry=_registry(),
+        session_bindings={'codex': binding},
+        namespace_state_store=object(),
+    )
+
+    assert assessment is not None
+    assert assessment.pane_state == 'foreign'
+    assert assessment.health == 'pane-foreign'

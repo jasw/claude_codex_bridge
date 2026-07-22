@@ -47,10 +47,15 @@ def tmux_rebound_pane(
     if not outcome.allow_replacement:
         return False, outcome.error
 
+    # _respawn_existing_pane may have parsed the crash log and persisted an exact
+    # `--resume <id>` command (session.start_cmd reads data['start_cmd']). Re-read
+    # it so a replacement pane restores the exact session too, not a stale
+    # `--continue` that could resume the wrong worktree session.
+    replacement_cmd = session.start_cmd or start_cmd
     created = create_replacement_pane(
         session,
         backend,
-        start_cmd=start_cmd,
+        start_cmd=replacement_cmd,
         create_pane=create_pane,
         now_str_fn=now_str_fn,
         attach_pane_log_fn=attach_pane_log_fn,
