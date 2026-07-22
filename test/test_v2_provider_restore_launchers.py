@@ -222,7 +222,9 @@ def test_claude_build_start_cmd_uses_exact_resume_args(monkeypatch, tmp_path: Pa
 
     assert '--continue' not in cmd
     assert f'--resume {session_id}' in cmd
-    assert '--permission-mode bypassPermissions' in cmd
+    # v8.3 emits one of two auto-permission bypass flags depending on CLI support
+    # probing; assert the exact-resume args coexist with whichever bypass is used.
+    assert ('--permission-mode bypassPermissions' in cmd) or ('--dangerously-skip-permissions' in cmd)
 
 
 def test_gemini_build_start_cmd_skips_resume_without_history(tmp_path: Path) -> None:
