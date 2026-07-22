@@ -6,7 +6,7 @@
 **Координируйте Codex, Claude, Gemini и другие CLI Agent в видимых и управляемых процессах, которые можно напрямую взять под контроль**
 
 <p>
-  <img src="https://img.shields.io/badge/version-8.2.1-orange.svg" alt="version">
+  <img src="https://img.shields.io/badge/version-8.3.0-orange.svg" alt="version">
   <img src="https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20WSL-lightgrey.svg" alt="platform">
   <img src="https://img.shields.io/badge/providers-17%20CLI%20families-0B7285.svg" alt="providers">
 </p>
@@ -182,9 +182,9 @@ ccb update mobile
 <details>
 <summary><b>Детали Mobile App, граница безопасности и исходники</b></summary>
 
-CCB 8.2.1 включает Flutter source CCB Mobile в [`mobile/`](../mobile/) и публикует Android APK через GitHub Releases:
+CCB 8.3.0 включает Flutter source CCB Mobile в [`mobile/`](../mobile/) и публикует Android APK через GitHub Releases:
 
-- [Скачать CCB Mobile v8.2.1 APK](https://github.com/SeemSeam/claude_codex_bridge/releases/download/v8.2.1/ccb-mobile-v8.2.1.apk)
+- [Скачать CCB Mobile v8.3.0 APK](https://github.com/SeemSeam/claude_codex_bridge/releases/download/v8.3.0/ccb-mobile-v8.3.0.apk)
 - Исходники app: [`mobile/app`](../mobile/app)
 - Исходники server gateway: [`lib/mobile_gateway`](../lib/mobile_gateway)
 
@@ -263,6 +263,17 @@ CCB поддерживает [Agent Roles Spec](https://github.com/SeemSeam/agen
 ## Release Notes
 
 <details open>
+<summary><b>v8.3.0</b> - Точные provider-turn, целостность jobs и Mobile-терминал внутри проекта</summary>
+
+- Kimi, Claude и Qoder привязаны к своим нативным контрактам turn, активации, сессии и завершения.
+- Добавлены follow-up для точного active job, коррелированные фазы выполнения, диагностика потерянных inbound и терминальный результат отмены.
+- Расширения providers и плагины Copilot наследуются с явной защитой ownership проецируемых assets.
+- Обновления npm-managed установок переданы npm, а worktree только с маркерами удаляются консервативно.
+- Чат и терминал Mobile остаются в workspace выбранного проекта; все release-поверхности синхронизированы с 8.3.0.
+
+</details>
+
+<details>
 <summary><b>v8.2.1</b> - Детерминированный запуск, понятное восстановление авторизации и фоновое подключение Android</summary>
 
 - Добавлены ограждение поколений запуска, ограниченная проверка готовности и диагностика операций и временной шкалы.

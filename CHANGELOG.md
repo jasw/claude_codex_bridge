@@ -1,5 +1,49 @@
 # Changelog
 
+## v8.3.0 (2026-07-22)
+
+### Managed Provider Reliability
+
+- **Requests Stay Bound To Their Native Turns**: Kimi resumes the exact native
+  session and accepts replies only from the current wire turn, while Claude
+  queued prompts become eligible only after their activation boundary.
+- **Qoder Follows Its Real CLI Contract**: managed execution uses qodercli's
+  native non-interactive, session, resume, update, storage, and completion
+  behavior instead of assumptions inherited from other providers.
+- **Provider Extensions Are Inherited Safely**: managed Claude, Gemini, Droid,
+  Qwen, and Copilot homes project supported extensions and plugins only with
+  explicit ownership evidence, preserving user-owned assets and cleanup
+  boundaries.
+
+### Job Integrity And Diagnostics
+
+- **Follow-Ups Target The Exact Active Job**: active work can receive bounded
+  follow-up steering without starting a competing request or losing the
+  original job, message, attempt, and provider-turn lineage.
+- **Execution State Is Correlated End To End**: project view, trace, doctor,
+  heartbeat, sidebar, and Mobile surfaces expose shared execution phases and
+  bounded diagnosis for orphaned active inbound work.
+- **Cancelled Callback Chains Terminate Cleanly**: cancellation now records a
+  terminal continuation outcome instead of leaving child callbacks or delivery
+  state indefinitely active.
+
+### Update, Workspace, And Mobile Safety
+
+- **npm Owns npm-Managed Upgrades**: vendored npm payloads delegate updates to
+  the package manager, keeping package metadata and installed files atomic.
+- **Marker-Only Worktrees Retire Conservatively**: CCB removes an owned binding
+  only after proving no user payload is present, while retaining legacy or
+  ambiguous worktrees for recovery.
+- **Mobile Terminal Mode Stays In The Project**: chat and terminal views share
+  the selected project workspace, preserve agent/window navigation, and avoid
+  escaping into a detached screen.
+
+### Release Surface
+
+- **Release Versions Are Synchronized**: CLI, npm, Linux, macOS, Android,
+  localized badges, workflow defaults, download links, and checksums target
+  8.3.0.
+
 ## v8.2.1 (2026-07-17)
 
 ### Startup And Lifecycle Reliability

@@ -6,7 +6,7 @@
 **Coordinate Codex, Claude, Gemini, and other CLI agents in visible, controllable workflows you can take over**
 
 <p>
-  <img src="https://img.shields.io/badge/version-8.2.1-orange.svg" alt="version">
+  <img src="https://img.shields.io/badge/version-8.3.0-orange.svg" alt="version">
   <img src="https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20WSL-lightgrey.svg" alt="platform">
   <img src="https://img.shields.io/badge/providers-17%20CLI%20families-0B7285.svg" alt="providers">
 </p>
@@ -188,9 +188,9 @@ This command guides installation and configuration.
 <details>
 <summary><b>Mobile App details, safety boundary, and source</b></summary>
 
-CCB 8.2.1 includes the Flutter CCB Mobile source in [`mobile/`](mobile/) and publishes the Android APK through GitHub Releases:
+CCB 8.3.0 includes the Flutter CCB Mobile source in [`mobile/`](mobile/) and publishes the Android APK through GitHub Releases:
 
-- [Download CCB Mobile v8.2.1 APK](https://github.com/SeemSeam/claude_codex_bridge/releases/download/v8.2.1/ccb-mobile-v8.2.1.apk)
+- [Download CCB Mobile v8.3.0 APK](https://github.com/SeemSeam/claude_codex_bridge/releases/download/v8.3.0/ccb-mobile-v8.3.0.apk)
 - App source: [`mobile/app`](mobile/app)
 - Server gateway source: [`lib/mobile_gateway`](lib/mobile_gateway)
 
@@ -274,6 +274,17 @@ Thanks to [tmux-agent-sidebar](https://github.com/hiroppy/tmux-agent-sidebar) fo
 ## Release Notes
 
 <details open>
+<summary><b>v8.3.0</b> - Exact provider turns, job integrity, and project-bound Mobile terminal</summary>
+
+- Bound Kimi, Claude, and Qoder execution to their native turn, activation, session, and completion contracts.
+- Added exact active-job follow-ups, correlated execution phases, orphaned-inbound diagnosis, and terminal cancellation outcomes.
+- Inherited provider extensions and Copilot plugins with explicit projected-asset ownership safeguards.
+- Delegated npm-managed upgrades to npm and made marker-only worktree retirement conservative.
+- Kept Mobile chat and terminal modes inside the selected project workspace and synchronized all release surfaces to 8.3.0.
+
+</details>
+
+<details>
 <summary><b>v8.2.1</b> - Deterministic startup, actionable auth recovery, and Android background access</summary>
 
 - Added end-to-end startup generation fencing, bounded readiness proof, and detailed startup operation/timeline diagnostics.
