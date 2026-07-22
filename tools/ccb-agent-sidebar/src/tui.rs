@@ -227,6 +227,7 @@ fn ccb_program_for_sidebar(sidebar_exe: &Path) -> Option<PathBuf> {
 enum ConfigUiLaunchStatus {
     Opening,
     Ready(String),
+    Manual(String),
     Failed(String),
 }
 
@@ -247,16 +248,19 @@ fn monitor_config_ui(
             *target = text;
         }
     });
-    let mut reported_url = false;
+    let mut reported_url = None;
     for line in BufReader::new(stdout).lines().map_while(Result::ok) {
-        if let Some(url) = line.trim().strip_prefix("url: ")
+        let line = line.trim();
+        if let Some(url) = line.strip_prefix("url: ")
             && !url.trim().is_empty()
         {
-            reported_url = true;
-            set_config_ui_launch_status(
-                &launch,
-                ConfigUiLaunchStatus::Ready(url.trim().to_string()),
-            );
+            let url = url.trim().to_string();
+            reported_url = Some(url.clone());
+            set_config_ui_launch_status(&launch, ConfigUiLaunchStatus::Ready(url));
+        } else if line.starts_with("browser_open: failed")
+            && let Some(url) = reported_url.as_ref()
+        {
+            set_config_ui_launch_status(&launch, ConfigUiLaunchStatus::Manual(url.clone()));
         }
     }
     let result = child.wait();
@@ -266,7 +270,7 @@ fn monitor_config_ui(
         .map(|text| text.trim().to_string())
         .unwrap_or_else(|_| "config ui stderr unavailable".to_string());
     match result {
-        Ok(status) if status.success() && reported_url => {
+        Ok(status) if status.success() && reported_url.is_some() => {
             set_config_ui_launch_status(
                 &launch,
                 ConfigUiLaunchStatus::Failed("session closed; click to reopen".to_string()),
@@ -763,6 +767,11 @@ impl SidebarApp {
             Some(ConfigUiLaunchStatus::Failed(_))
         ) {
             Some("config ui ✕")
+        } else if matches!(
+            self.config_ui_launch_status(),
+            Some(ConfigUiLaunchStatus::Manual(_))
+        ) {
+            Some("config ui !")
         } else {
             None
         }
@@ -781,7 +790,11 @@ impl SidebarApp {
     fn config_ui_launch_is_active(&self) -> bool {
         matches!(
             self.config_ui_launch_status(),
-            Some(ConfigUiLaunchStatus::Opening | ConfigUiLaunchStatus::Ready(_))
+            Some(
+                ConfigUiLaunchStatus::Opening
+                    | ConfigUiLaunchStatus::Ready(_)
+                    | ConfigUiLaunchStatus::Manual(_)
+            )
         )
     }
 
@@ -789,6 +802,7 @@ impl SidebarApp {
         match self.config_ui_launch_status()? {
             ConfigUiLaunchStatus::Opening => Some("config ui: opening...".to_string()),
             ConfigUiLaunchStatus::Ready(url) => Some(format!("config ui: {url}")),
+            ConfigUiLaunchStatus::Manual(url) => Some(format!("config ui open manually: {url}")),
             ConfigUiLaunchStatus::Failed(error) => Some(format!("config ui failed: {error}")),
         }
     }
@@ -1546,11 +1560,15 @@ fn draw_comms(frame: &mut Frame<'_>, area: Rect, app: &SidebarApp) {
     if let Some(status) = app.config_ui_status_line() {
         lines.push(Line::from(Span::styled(
             truncate_comms_preview(&status, usize::from(area.width.saturating_sub(2))),
-            Style::default().fg(if status.starts_with("config ui failed:") {
-                app.theme().warning
-            } else {
-                app.theme().info
-            }),
+            Style::default().fg(
+                if status.starts_with("config ui failed:")
+                    || status.starts_with("config ui open manually:")
+                {
+                    app.theme().warning
+                } else {
+                    app.theme().info
+                },
+            ),
         )));
     }
     let prefix_lines = lines.len() as u16;
@@ -2422,6 +2440,22 @@ mod tests {
         assert_eq!(
             ready_status,
             ConfigUiLaunchStatus::Ready("http://127.0.0.1:43123/?token=test".to_string())
+        );
+
+        let manual = dir.join("manual-ccb");
+        std::fs::write(
+            &manual,
+            b"#!/bin/sh\nprintf 'url: http://127.0.0.1:43124/?token=manual\\nbrowser_open: failed; open the URL above manually\\n'\nsleep 1\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&manual, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let launch = launch_config_ui(&dir, &manual).unwrap();
+        let manual_status = wait_for_config_ui_status(&launch, |status| {
+            matches!(status, ConfigUiLaunchStatus::Manual(_))
+        });
+        assert_eq!(
+            manual_status,
+            ConfigUiLaunchStatus::Manual("http://127.0.0.1:43124/?token=manual".to_string())
         );
 
         let failed = dir.join("failed-ccb");

@@ -8,6 +8,7 @@ import re
 import secrets
 import shutil
 import subprocess
+import sys
 import threading
 import time
 import webbrowser
@@ -37,6 +38,7 @@ from provider_profiles import supported_provider_api_shortcuts, validate_provide
 
 DEFAULT_IDLE_TIMEOUT_S = 30 * 60
 MAX_REQUEST_BODY_BYTES = 1024 * 1024
+_BROWSER_OPEN_CONFIRM_TIMEOUT_S = 2.0
 _PROFILE_NAME_PATTERN = re.compile(r'^[A-Za-z][A-Za-z0-9_.-]{0,63}$')
 _PROTOTYPE_RELATIVE_PATH = Path(
     'docs/plantree/plans/agentic-loop-workflow/'
@@ -131,34 +133,72 @@ def prepare_config_ui(
 
 
 def open_config_ui_url(url: str) -> bool:
+    for command in _browser_open_commands(url):
+        if shutil.which(command[0]) is None:
+            continue
+        try:
+            process = subprocess.Popen(
+                command,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
+            )
+            try:
+                return_code = process.wait(timeout=_BROWSER_OPEN_CONFIRM_TIMEOUT_S)
+            except subprocess.TimeoutExpired:
+                threading.Thread(
+                    target=_reap_browser_open_process,
+                    args=(process,),
+                    daemon=True,
+                ).start()
+                return True
+        except (OSError, subprocess.SubprocessError):
+            continue
+        if return_code == 0:
+            return True
     try:
         if webbrowser.open(url, new=2):
             return True
     except Exception:
         pass
-    for command in _browser_open_commands(url):
-        if shutil.which(command[0]) is None:
-            continue
-        try:
-            subprocess.Popen(
-                command,
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-            )
-        except OSError:
-            continue
-        return True
     return False
 
 
+def _reap_browser_open_process(process: subprocess.Popen) -> None:
+    try:
+        process.wait()
+    except (OSError, subprocess.SubprocessError):
+        pass
+
+
 def _browser_open_commands(url: str) -> tuple[tuple[str, ...], ...]:
-    return (
-        ('wslview', url),
-        ('cmd.exe', '/c', 'start', '', url),
-        ('xdg-open', url),
-        ('open', url),
-    )
+    if _is_wsl_environment():
+        return (
+            ('wslview', url),
+            ('cmd.exe', '/c', 'start', '', url),
+            ('explorer.exe', url),
+            ('xdg-open', url),
+        )
+    if sys.platform == 'darwin':
+        return (('open', url),)
+    if sys.platform.startswith(('linux', 'freebsd', 'openbsd')):
+        return (
+            ('xdg-open', url),
+            ('gio', 'open', url),
+        )
+    return ()
+
+
+def _is_wsl_environment() -> bool:
+    if str(os.environ.get('WSL_DISTRO_NAME') or '').strip():
+        return True
+    if str(os.environ.get('WSL_INTEROP') or '').strip():
+        return True
+    try:
+        return 'microsoft' in os.uname().release.lower()
+    except (AttributeError, OSError):
+        return False
 
 
 def config_ui_asset_path() -> Path:

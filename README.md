@@ -281,6 +281,7 @@ Thanks to [tmux-agent-sidebar](https://github.com/hiroppy/tmux-agent-sidebar) fo
 - Inherited provider extensions and Copilot plugins with explicit projected-asset ownership safeguards.
 - Delegated npm-managed upgrades to npm and made marker-only worktree retirement conservative.
 - Kept Mobile chat and terminal modes inside the selected project workspace and synchronized all release surfaces to 8.3.0.
+- Fixed sidebar settings launch on WSL and macOS with native browser fallbacks, refreshed desktop-session environment, and visible manual-open status.
 
 </details>
 

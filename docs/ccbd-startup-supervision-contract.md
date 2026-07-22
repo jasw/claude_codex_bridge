@@ -387,6 +387,11 @@ Managed provider startup mutation rules:
   - examples include `HTTPS_PROXY`, `ALL_PROXY`, `NO_PROXY`,
     `CODEX_CA_CERTIFICATE`, `SSL_CERT_FILE`, `NODE_EXTRA_CA_CERTS`, `BROWSER`,
     `WSL_INTEROP`, and `WSL_DISTRO_NAME`
+  - the project tmux namespace must refresh shell and desktop transport state
+    for command, tool, and sidebar panes; at minimum this includes `PATH`,
+    `SHELL`, `BROWSER`, desktop display/session IPC variables, and WSL/Windows
+    Terminal interop markers, so a sidebar child such as `ccb config ui` does
+    not run with a stale or daemon-only desktop environment
   - those variables are user-session transport or shell-usability state, not managed-provider session authority
   - this allowance must not reopen provider runtime authority inheritance;
     managed variables such as `CODEX_HOME`, `CODEX_SESSION_ROOT`,

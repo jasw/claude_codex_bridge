@@ -972,6 +972,16 @@ Header controls:
 - `⚙`: launch the current project's loopback-only `ccb config ui`
 - `×`: kill the current project
 
+Both controls share the same mouse-down routing and right-aligned hit-test
+surface. The settings action additionally launches an asynchronous child and
+must therefore expose `opening`, ready URL, browser-open fallback, and process
+failure states instead of silently suppressing a second click while its child
+is active. The project tmux environment must carry desktop and WSL interop
+state into the sidebar. WSL host openers (`wslview`, then Windows shell
+fallbacks) and macOS `open` take priority over the generic Python browser
+registry, and an opener counts as successful only after it avoids an immediate
+non-zero exit.
+
 Restart is intentionally keyboard-only because it is disruptive and should not
 share the prominent header click surface with ordinary settings access.
 

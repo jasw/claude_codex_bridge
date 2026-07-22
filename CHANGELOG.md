@@ -37,6 +37,10 @@
 - **Mobile Terminal Mode Stays In The Project**: chat and terminal views share
   the selected project workspace, preserve agent/window navigation, and avoid
   escaping into a detached screen.
+- **Sidebar Settings Open Reliably On WSL And macOS**: project tmux panes retain
+  desktop/browser transport state, host-native openers run before generic
+  browser discovery, immediate opener failures fall through, and the sidebar
+  displays a manual-open warning instead of appearing to ignore the click.
 
 ### Release Surface
 

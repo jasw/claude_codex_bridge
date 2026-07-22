@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import json
 import re
+import sys
 import threading
 import time
 from pathlib import Path
@@ -456,6 +457,7 @@ def _post_json(base_url: str, path: str, payload: dict[str, object]) -> dict[str
 
 def test_config_ui_browser_open_uses_wsl_fallback(monkeypatch) -> None:
     seen: list[tuple[str, ...]] = []
+    monkeypatch.setenv('WSL_DISTRO_NAME', 'Ubuntu')
     monkeypatch.setattr(config_ui_module.webbrowser, 'open', lambda *_args, **_kwargs: False)
     monkeypatch.setattr(
         config_ui_module.shutil,
@@ -465,11 +467,118 @@ def test_config_ui_browser_open_uses_wsl_fallback(monkeypatch) -> None:
     monkeypatch.setattr(
         config_ui_module.subprocess,
         'Popen',
-        lambda command, **_kwargs: seen.append(tuple(command)),
+        lambda command, **_kwargs: (
+            seen.append(tuple(command))
+            or SimpleNamespace(wait=lambda **_wait_kwargs: 0)
+        ),
     )
 
     assert open_config_ui_url('http://127.0.0.1:43123/?token=test') is True
     assert seen == [('wslview', 'http://127.0.0.1:43123/?token=test')]
+
+
+def test_config_ui_browser_open_prefers_wsl_host_opener_over_webbrowser(monkeypatch) -> None:
+    seen: list[object] = []
+    url = 'http://127.0.0.1:43123/?token=test'
+    monkeypatch.setenv('WSL_DISTRO_NAME', 'Ubuntu')
+    monkeypatch.setattr(
+        config_ui_module.webbrowser,
+        'open',
+        lambda *_args, **_kwargs: seen.append('webbrowser') or True,
+    )
+    monkeypatch.setattr(
+        config_ui_module.shutil,
+        'which',
+        lambda name: f'/usr/bin/{name}' if name == 'wslview' else None,
+    )
+    monkeypatch.setattr(
+        config_ui_module.subprocess,
+        'Popen',
+        lambda command, **_kwargs: (
+            seen.append(tuple(command))
+            or SimpleNamespace(wait=lambda **_wait_kwargs: 0)
+        ),
+    )
+
+    assert open_config_ui_url(url) is True
+    assert seen == [('wslview', url)]
+
+
+def test_config_ui_browser_open_prefers_macos_open_over_linux_opener(monkeypatch) -> None:
+    seen: list[tuple[str, ...]] = []
+    url = 'http://127.0.0.1:43123/?token=test'
+    monkeypatch.delenv('WSL_DISTRO_NAME', raising=False)
+    monkeypatch.delenv('WSL_INTEROP', raising=False)
+    monkeypatch.setattr(sys, 'platform', 'darwin')
+    monkeypatch.setattr(config_ui_module.webbrowser, 'open', lambda *_args, **_kwargs: False)
+    monkeypatch.setattr(
+        config_ui_module.shutil,
+        'which',
+        lambda name: f'/usr/bin/{name}' if name in {'open', 'xdg-open'} else None,
+    )
+    monkeypatch.setattr(
+        config_ui_module.subprocess,
+        'Popen',
+        lambda command, **_kwargs: (
+            seen.append(tuple(command))
+            or SimpleNamespace(wait=lambda **_wait_kwargs: 0)
+        ),
+    )
+
+    assert open_config_ui_url(url) is True
+    assert seen == [('open', url)]
+
+
+def test_config_ui_browser_open_retries_after_wsl_opener_exits_nonzero(monkeypatch) -> None:
+    seen: list[tuple[str, ...]] = []
+    url = 'http://127.0.0.1:43123/?token=test'
+    monkeypatch.setenv('WSL_DISTRO_NAME', 'Ubuntu')
+    monkeypatch.setattr(config_ui_module.webbrowser, 'open', lambda *_args, **_kwargs: False)
+    monkeypatch.setattr(
+        config_ui_module.shutil,
+        'which',
+        lambda name: f'/usr/bin/{name}' if name in {'wslview', 'cmd.exe'} else None,
+    )
+
+    def _popen(command, **_kwargs):
+        argv = tuple(command)
+        seen.append(argv)
+        return SimpleNamespace(wait=lambda **_wait_kwargs: 1 if argv[0] == 'wslview' else 0)
+
+    monkeypatch.setattr(config_ui_module.subprocess, 'Popen', _popen)
+
+    assert open_config_ui_url(url) is True
+    assert seen == [
+        ('wslview', url),
+        ('cmd.exe', '/c', 'start', '', url),
+    ]
+
+
+def test_config_ui_browser_open_reaps_opener_that_outlives_confirmation(monkeypatch) -> None:
+    reaped = threading.Event()
+    url = 'http://127.0.0.1:43123/?token=test'
+    monkeypatch.setenv('WSL_DISTRO_NAME', 'Ubuntu')
+    monkeypatch.setattr(
+        config_ui_module.shutil,
+        'which',
+        lambda name: f'/usr/bin/{name}' if name == 'wslview' else None,
+    )
+
+    class _SlowProcess:
+        def wait(self, timeout=None):
+            if timeout is not None:
+                raise config_ui_module.subprocess.TimeoutExpired('wslview', timeout)
+            reaped.set()
+            return 0
+
+    monkeypatch.setattr(
+        config_ui_module.subprocess,
+        'Popen',
+        lambda _command, **_kwargs: _SlowProcess(),
+    )
+
+    assert open_config_ui_url(url) is True
+    assert reaped.wait(timeout=1.0)
 
 
 def test_config_ui_provider_capabilities_use_current_safe_model_sources(tmp_path: Path) -> None:
