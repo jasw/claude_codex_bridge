@@ -4,13 +4,17 @@ set -u
 
 usage() {
   cat <<'USAGE'
-Usage: ccbm [-h|--help]
+Usage: ccbm [-n|--new] [-h|--help]
        ccbm status
 
 Run from inside a CCB project directory (anywhere under a `.ccb/` tree).
 
 Default mode mounts the project, waits until all configured agents reach
 state=idle, then attaches to the tmux session showing the agent panes.
+
+`-n`/`--new` mounts as usual, then sends `/new` (or `/clear`) to each
+configured provider so agents start fresh instead of resuming their previous
+conversation. Session history on disk is untouched.
 
 `ccbm status` is read-only. It prints the resolved project root, configured
 agents, ccbd state, tmux socket, and current pane bindings.
@@ -33,17 +37,19 @@ USAGE
 }
 
 MODE="mount"
-case "${1:-}" in
-  -h|--help) usage; exit 0 ;;
-  status) MODE="status"; shift ;;
-  "")
-    ;;
-  *)
-    echo "ccbm: unknown command: $1" >&2
-    usage >&2
-    exit 2
-    ;;
-esac
+NEW_SESSION=""
+for arg in "$@"; do
+  case "$arg" in
+    -h|--help) usage; exit 0 ;;
+    -n|--new) NEW_SESSION=1 ;;
+    status) MODE="status" ;;
+    *)
+      echo "ccbm: unknown argument: $arg" >&2
+      usage >&2
+      exit 2
+      ;;
+  esac
+done
 
 resolve_path() {
   local path="$1"
@@ -274,6 +280,34 @@ resolve_session() {
     | grep "^ccb-" | head -1
 }
 
+# Reset command that starts a fresh session for a given provider CLI.
+reset_cmd_for() {
+  case "$1" in
+    codex|opencode|droid) echo "/new" ;;
+    *) echo "/clear" ;;  # claude, gemini: /clear discards context, saves history
+  esac
+}
+
+# Send the reset command to each bound provider pane so agents start fresh
+# instead of resuming. Reads pane bindings straight from `ccb ps` and drives
+# the tmux socket directly - autonew's registry lookup is unreliable here.
+# On-disk conversation history is preserved.
+start_new_sessions() {
+  local provider pane cmd
+  ccb ps 2>&1 | awk '
+    /^agent: / { for (i=1;i<=NF;i++) if ($i ~ /^provider=/) { split($i,a,"="); prov=a[2] } }
+    /^binding: / { for (i=1;i<=NF;i++) if ($i ~ /^pane=/) { split($i,a,"="); print prov, a[2] } }
+  ' | while read -r provider pane; do
+    [ -n "$pane" ] || continue
+    cmd=$(reset_cmd_for "$provider")
+    if tmux -S "$SOCK_PATH" send-keys -t "$pane" "$cmd" Enter 2>/dev/null; then
+      echo "ccbm: sent $cmd to $provider ($pane)"
+    else
+      echo "ccbm: WARN: failed to send $cmd to $provider ($pane)" >&2
+    fi
+  done
+}
+
 attach_to_session() {
   local session
   session=$(resolve_session)
@@ -342,5 +376,6 @@ fi
 
 # Show final agent state then attach (or exit).
 ccb ps 2>&1 | grep "^agent: "
+[ -n "$NEW_SESSION" ] && start_new_sessions
 [ -n "$NO_ATTACH" ] && exit 0
 attach_to_session
