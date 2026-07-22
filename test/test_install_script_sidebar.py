@@ -699,12 +699,19 @@ def test_release_artifacts_workflow_accepts_runtime_accelerator_socket_fallback(
     assert 'Unexpected runtime accelerator socket path' in text
 
 
-def test_release_artifacts_workflow_writes_release_notes_from_changelog() -> None:
+def test_release_artifacts_workflow_uses_committed_bilingual_release_notes() -> None:
     text = Path('.github/workflows/release-artifacts.yml').read_text(encoding='utf-8')
+    version = Path('VERSION').read_text(encoding='utf-8').strip()
+    notes = Path(f'docs/releases/v{version}.md').read_text(encoding='utf-8')
 
     assert 'Checkout release notes' in text
-    assert 'changelog = Path(os.environ["GITHUB_WORKSPACE"]) / "CHANGELOG.md"' in text
-    assert 'release notes missing for {tag}' in text
+    assert 'notes_file="$GITHUB_WORKSPACE/docs/releases/${TAG_NAME}.md"' in text
+    assert "grep -Fx '## English' \"$notes_file\"" in text
+    assert "grep -Fx '## 中文' \"$notes_file\"" in text
+    assert '## English' in notes
+    assert '## 中文' in notes
     assert 'gh release edit "$TAG_NAME"' in text
     assert 'gh release create "$TAG_NAME"' in text
+    assert '--verify-tag' in text
+    assert '--fail-on-no-commits' in text
     assert '--notes-file "$notes_file"' in text
