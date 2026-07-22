@@ -43,6 +43,11 @@ Date: 2026-06-04
   and leave the vendored release untouched. The runner retains strict equality
   between the package manifest and payload `VERSION`, so the next invocation
   neither downgrades nor repeats an immediate startup/relaunch loop.
+- 2026-07-22 verification for npm ownership: `92` update/install/package tests
+  passed, `npm pack --dry-run` produced the expected 19-file package surface,
+  and the final cross-feature affected suite passed `418` tests. Explicit
+  update keeps inner `VERSION` byte-identical; startup acceptance defers the
+  prompt, does not invoke tarball update, and does not relaunch.
 
 ## In Progress
 

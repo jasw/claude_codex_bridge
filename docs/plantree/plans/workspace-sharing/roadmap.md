@@ -19,6 +19,11 @@ Date: 2026-06-04
 - Added real Git regressions for marker-only retirement, other untracked files,
   tracked modifications, malformed/foreign/symlink bindings, unmerged branches,
   tracked bindings, and a late user-file race.
+- 2026-07-22 verification: `131` workspace/start/reset/workgroup tests passed,
+  and the final cross-feature affected suite passed `418` tests. The real
+  start-service test now writes the same untracked binding as production before
+  retiring a merged removed agent, while a companion test proves a user
+  untracked artifact is preserved and reported as a blocker.
 
 ## In Progress
 

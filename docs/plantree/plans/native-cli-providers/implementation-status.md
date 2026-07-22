@@ -287,6 +287,46 @@ Kimi hardening focused verification:
   catalog modules: passed.
 - `git diff --check`: passed.
 
+## 2026-07-22 Kimi And Qoder Corrective Verification
+
+Issue/PR review found two provider-contract gaps and closed them on the unified
+repair branch:
+
+- Kimi native observation now binds only the current leading request header,
+  ignores thinking text, accepts only explicit successful terminal states, and
+  supports both legacy `.kimi/sessions/.../wire.jsonl` and current
+  `.kimi-code/sessions/wd_<name>_<hash>/<session>/agents/<agent>/wire.jsonl`
+  layouts. Exact session roots are launcher-recorded and fail fresh on drift.
+- Qoder now uses the real `qodercli` headless surface: `-p`, `-w`,
+  `--config-dir`, `--output-format stream-json`, a deterministic UUID session
+  id, and an explicit permission mode. Completion requires the native result
+  envelope; auth/error results and zero exit without terminal evidence fail
+  closed.
+- The optional execution-registry expectation now includes `qoder`; the
+  duplicate `grok` expectation was removed.
+
+Evidence:
+
+- Kimi focused suites: `202 passed`.
+- Qoder focused suites: `183 passed`.
+- Official `@qoder-ai/qodercli@1.1.2` was installed in an isolated external
+  probe. Its real help and credential-free stream confirmed UUID-only session
+  ids, the documented headless flags, `system/init`, assistant error, and
+  `result is_error=true`. The CCB-generated command reached that native result
+  and failed closed as `Not logged in` without reading credentials.
+- Final cross-feature affected-suite run after all four repairs:
+  `418 passed in 81.18s`.
+- Full repository run before correcting the registry expectation:
+  `5595 passed, 2 skipped, 2 failed in 1026.68s`; the deterministic failure was
+  the stale Qoder expected set and is fixed. Its registry follow-up is
+  `20 passed`. The other failure was an unrelated ccbd heartbeat test timing
+  race under full-suite load; the exact test passed once immediately and then
+  10 consecutive isolated repeats.
+- From `/home/bfly/yunwei/test_ccb2`, the repair worktree's `ccb_test
+  --diagnose` reported `allowed_source_test_project: yes`; `--print-version`
+  returned `v8.2.1`, and `doctor` completed with the repair worktree recorded as
+  `install_path`/source authority.
+
 Historical first-slice verification:
 
 - `node --version` returned `v22.20.0`.
