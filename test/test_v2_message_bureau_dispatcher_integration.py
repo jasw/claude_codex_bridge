@@ -787,6 +787,97 @@ def test_dispatcher_cancelled_chain_child_submits_one_parent_continuation_withou
     assert restarted.watch(parent_job_id, start_line=0)['reply'] == 'final after child cancellation'
 
 
+def test_dispatcher_restart_repairs_continuation_interrupted_before_mailbox_record(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = tmp_path / 'repo-chain-continuation-mailbox-repair'
+    ctx = _bootstrap_test_project(project_root)
+    layout = PathLayout(project_root)
+    config = _provider_config('codex', 'claude')
+    registry = AgentRegistry(layout, config)
+    registry.upsert(_runtime('codex', project_id=ctx.project_id, layout=layout, pid=101))
+    registry.upsert(_runtime('claude', project_id=ctx.project_id, layout=layout, pid=102))
+    dispatcher = JobDispatcher(layout, config, registry, clock=lambda: '2026-03-30T00:00:00Z')
+
+    parent_job_id = dispatcher.submit(
+        MessageEnvelope(
+            project_id=ctx.project_id,
+            to_agent='codex',
+            from_actor='user',
+            body='root task',
+            task_id='task-chain-continuation-mailbox-repair',
+            reply_to=None,
+            message_type='ask',
+            delivery_scope=DeliveryScope.SINGLE,
+        )
+    ).jobs[0].job_id
+    dispatcher.tick()
+    child_job_id = dispatcher.submit(
+        MessageEnvelope(
+            project_id=ctx.project_id,
+            to_agent='claude',
+            from_actor='codex',
+            body='child task',
+            task_id='task-chain-continuation-mailbox-repair',
+            reply_to=None,
+            message_type='ask',
+            delivery_scope=DeliveryScope.SINGLE,
+            route_options={'mode': 'chain'},
+        )
+    ).jobs[0].job_id
+    edge = CallbackEdgeStore(layout).get_latest_for_child_job(child_job_id)
+    assert edge is not None
+
+    def crash_before_mailbox_record(*_args, **_kwargs):
+        raise SystemExit('simulated daemon stop')
+
+    monkeypatch.setattr(dispatcher._message_bureau, 'record_retry_attempt', crash_before_mailbox_record)
+    with pytest.raises(SystemExit, match='simulated daemon stop'):
+        dispatcher.complete(child_job_id, _decision(reply='child complete'))
+
+    partial_edge = CallbackEdgeStore(layout).get_latest(edge.edge_id)
+    assert partial_edge is not None
+    assert partial_edge.state is CallbackEdgeState.CHILD_COMPLETED
+    continuation_jobs = [
+        job
+        for job in dispatcher._job_store.list_agent('codex')
+        if job.request.message_type == 'chain_continuation'
+    ]
+    assert len(continuation_jobs) == 1
+    continuation_job_id = continuation_jobs[0].job_id
+    assert continuation_jobs[0].status is JobStatus.QUEUED
+    assert AttemptStore(layout).get_latest_by_job_id(continuation_job_id) is None
+
+    restarted = JobDispatcher(layout, config, registry, clock=lambda: '2026-03-30T00:00:01Z')
+    assert restarted.tick() == ()
+    repaired_edge = CallbackEdgeStore(layout).get_latest(edge.edge_id)
+    assert repaired_edge is not None
+    assert repaired_edge.state is CallbackEdgeState.CONTINUATION_SUBMITTED
+    assert repaired_edge.continuation_job_id == continuation_job_id
+    repaired_attempt = AttemptStore(layout).get_latest_by_job_id(continuation_job_id)
+    assert repaired_attempt is not None
+    repaired_inbound = InboundEventStore(layout).get_latest_for_attempt(
+        'codex',
+        repaired_attempt.attempt_id,
+    )
+    assert repaired_inbound is not None
+    assert repaired_inbound.status is InboundEventStatus.QUEUED
+
+    restarted.complete(parent_job_id, _decision(reply='delegated'))
+    started = restarted.tick()
+    assert [job.job_id for job in started] == [continuation_job_id]
+    assert len(
+        {
+            attempt.attempt_id
+            for attempt in AttemptStore(layout).list_message(repaired_edge.parent_message_id)
+            if attempt.job_id == continuation_job_id
+        }
+    ) == 1
+    restarted.complete(continuation_job_id, _decision(reply='final after restart repair'))
+    assert restarted.watch(parent_job_id, start_line=0)['reply'] == 'final after restart repair'
+
+
 def test_dispatcher_empty_cancel_preserves_preexisting_caller_mailbox_head(tmp_path: Path) -> None:
     project_root = tmp_path / 'repo-cancel-preexisting-mailbox'
     ctx = _bootstrap_test_project(project_root)
