@@ -908,7 +908,12 @@ def test_health_monitor_preserves_last_binding_when_tmux_pane_missing_and_unreco
     assert degraded.pane_state == 'missing'
 
 
-def test_health_monitor_trusts_live_tmux_pane_with_stale_ownership_metadata(tmp_path: Path) -> None:
+def test_health_monitor_rejects_live_tmux_pane_owned_by_foreign_project(tmp_path: Path) -> None:
+    # A live pane whose OWN recorded options prove it belongs to a different
+    # agent/project ('demo' / 'foreign-project') must NOT be adopted, even though
+    # it is alive — adopting it would bind this agent to another project's pane.
+    # (describe_pane observes the mismatch, so this is a provable foreign, unlike
+    # merely stale/unreadable ownership which is still trusted.)
     project_root = tmp_path / 'repo-foreign-pane'
     project_root.mkdir()
     ctx = bootstrap_project(project_root)
@@ -950,13 +955,13 @@ def test_health_monitor_trusts_live_tmux_pane_with_stale_ownership_metadata(tmp_
         },
     )
 
-    assert monitor.check_all()['codex'] == 'healthy'
+    assert monitor.check_all()['codex'] == 'pane-foreign'
     updated = registry.get('codex')
     assert updated is not None
-    assert updated.state is AgentState.IDLE
-    assert updated.health == 'healthy'
-    assert updated.pane_state == 'alive'
-    assert updated.active_pane_id == '%foreign'
+    assert updated.health == 'pane-foreign'
+    assert updated.pane_state == 'foreign'
+    # the foreign-project pane must NOT be adopted as this agent's active pane
+    assert updated.active_pane_id != '%foreign'
 
 
 def test_health_monitor_trusts_live_tmux_pane_with_detached_namespace_metadata(tmp_path: Path) -> None:

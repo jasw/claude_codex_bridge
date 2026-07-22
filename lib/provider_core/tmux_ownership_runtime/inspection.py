@@ -110,13 +110,24 @@ def inspect_listed_panes(
             expected_options=expected_items,
             actual_options=expected_items,
         )
-    return TmuxPaneOwnership(
-        state='foreign',
-        pane_id=pane_id,
-        expected_options=expected_items,
-        actual_options=(),
-        reason='ownership-mismatch',
-    )
+    if matches:
+        # Non-empty listing that does not include our pane: the query observed
+        # OTHER panes carrying our options while ours is absent — a successfully
+        # observed ownership mismatch.
+        return TmuxPaneOwnership(
+            state='foreign',
+            pane_id=pane_id,
+            expected_options=expected_items,
+            actual_options=(),
+            reason='ownership-mismatch',
+        )
+    # EMPTY listing is inconclusive, NOT proof of foreignness: the underlying
+    # `list_panes_by_user_options` returns [] BOTH when no pane matches AND when
+    # the tmux command itself fails, so an empty result may just be a transient
+    # unreadable query. Fall through to 'inspection-unavailable' → 'owned' rather
+    # than declaring 'foreign' and risking a false-foreign respawn loop on a live
+    # owned pane. (describe_pane remains the authoritative mismatch detector.)
+    return None
 
 
 def listed_pane_matches(
